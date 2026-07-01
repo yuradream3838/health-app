@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#0f172a">
-<title>体調管理 v6.8</title>
+<title>体調管理 v6.9</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:#0f172a;color:#f1f5f9;font-family:'Segoe UI',system-ui,sans-serif;min-height:100vh}
@@ -691,7 +691,7 @@ function renderHeader(){
   titleRow.style.cssText="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px";
   const titleLeft=document.createElement('div');
   titleLeft.style.cssText="display:flex;align-items:center;gap:8px";
-  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v6.8</span>';
+  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v6.9</span>';
   const titleRight=document.createElement('div');
   titleRight.style.cssText="display:flex;align-items:center;gap:5px";
   titleRight.appendChild(savedSpan);
@@ -1383,16 +1383,44 @@ async function doFetchWeather(city){
     state.weatherCity=city;
     try{localStorage.setItem(STORAGE_KEY+"_city",JSON.stringify(city));}catch{}
 
-    // 天気データを日付キーで保存（90日分を保持）
+    // 天気データを日付キーで保存
     const td=todayStr();
     let weatherStore={};
     try{const s=localStorage.getItem(STORAGE_KEY+"_weather");if(s)weatherStore=JSON.parse(s);}catch{}
     weatherStore[td]=state.weather;
 
-    // 90日より古いデータを削除
-    const cutoff=new Date();cutoff.setDate(cutoff.getDate()-90);
-    const cutoffStr=`${cutoff.getFullYear()}-${String(cutoff.getMonth()+1).padStart(2,'0')}-${String(cutoff.getDate()).padStart(2,'0')}`;
-    Object.keys(weatherStore).forEach(k=>{if(k<cutoffStr)delete weatherStore[k];});
+    // 90日の境界日を計算
+    const cutoff90=new Date();cutoff90.setDate(cutoff90.getDate()-90);
+    const cutoff90Str=`${cutoff90.getFullYear()}-${String(cutoff90.getMonth()+1).padStart(2,'0')}-${String(cutoff90.getDate()).padStart(2,'0')}`;
+
+    // 各日付のデータを整理
+    Object.keys(weatherStore).forEach(dateKey=>{
+      if(dateKey>=cutoff90Str){
+        // 90日以内：全時間保持
+        return;
+      }
+      // 90日より前：体調記録のある時間とその前2時間のみ保持
+      const scoredHours=state.logs
+        .filter(l=>l.dateStr===dateKey&&l.score!=null)
+        .map(l=>l.hour);
+      if(scoredHours.length===0){
+        // 体調記録なし→削除
+        delete weatherStore[dateKey];
+        return;
+      }
+      // 保持する時間を計算（記録時間とその前2時間）
+      const keepHours=new Set();
+      scoredHours.forEach(h=>{
+        for(let i=0;i<=2;i++){
+          const t=h-i;
+          if(t>=0)keepHours.add(t);
+        }
+      });
+      // 不要な時間を削除
+      weatherStore[dateKey]=weatherStore[dateKey].filter(w=>keepHours.has(w.hour));
+      if(weatherStore[dateKey].length===0) delete weatherStore[dateKey];
+    });
+
     try{localStorage.setItem(STORAGE_KEY+"_weather",JSON.stringify(weatherStore));}catch{}
   }catch(e){
     state.weatherError=e.message;
