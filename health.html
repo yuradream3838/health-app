@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#0f172a">
-<title>体調管理 v7.6</title>
+<title>体調管理 v7.7</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:#0f172a;color:#f1f5f9;font-family:'Segoe UI',system-ui,sans-serif;min-height:100vh}
@@ -813,7 +813,7 @@ function renderHeader(){
   titleRow.style.cssText="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px";
   const titleLeft=document.createElement('div');
   titleLeft.style.cssText="display:flex;align-items:center;gap:8px";
-  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v7.6</span>';
+  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v7.7</span>';
   const titleRight=document.createElement('div');
   titleRight.style.cssText="display:flex;align-items:center;gap:5px";
   titleRight.appendChild(savedSpan);
@@ -2955,7 +2955,12 @@ async function runAI(card,content,scored,dailies){
       })
     });
     const data=await res.json();
-    if(data.error) throw new Error(data.error);
+    if(data.error){
+      // エラー種別に応じたメッセージ
+      if(data.error==="__DAILY_LIMIT__") throw new Error(data.message||"本日の利用上限に達しました");
+      if(data.error==="__GEMINI_RATE__") throw new Error(data.message||"アクセス集中中。1分お待ちください");
+      throw new Error(data.error);
+    }
     const text=data.text||"";
     const r=JSON.parse(text.replace(/```json|```/g,"").trim());
 
@@ -2975,10 +2980,7 @@ async function runAI(card,content,scored,dailies){
     const reBtn=btn({style:{marginTop:"6px",fontSize:"11px",color:"#475569",background:"transparent",border:"none",cursor:"pointer"},onClick:()=>runAI(card,content,scored,dailies)},"🔄 再分析");
     content.appendChild(reBtn);
   }catch(e){
-    const msg=/429|上限/.test(e.message)
-      ?"本日のAI分析の利用上限に達しました（明日リセットされます）"
-      :`分析に失敗しました: ${e.message}`;
-    content.innerHTML=`<div style="font-size:12px;color:#f87171">${msg}</div>`;
+    content.innerHTML=`<div style="font-size:12px;color:#f87171;line-height:1.6">${e.message}</div>`;
   }
 }
 
