@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#0f172a">
-<title>体調管理 v7.8</title>
+<title>体調管理 v7.9</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:#0f172a;color:#f1f5f9;font-family:'Segoe UI',system-ui,sans-serif;min-height:100vh}
@@ -415,7 +415,7 @@ const state = {
   editSessionItemId:null, editSessionUid:null, editSessionSessions:[],
   cravingExpanded:false,
   newEjacH:0, newEjacM:0, newEjacTag:null,
-  newNapH:0, newNapM:0, newNapDur:30,
+  newNapH:0, newNapM:0, newNapEndH:0, newNapEndM:0, newNapDur:30,
   saved:false
 };
 
@@ -813,7 +813,7 @@ function renderHeader(){
   titleRow.style.cssText="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px";
   const titleLeft=document.createElement('div');
   titleLeft.style.cssText="display:flex;align-items:center;gap:8px";
-  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v7.8</span>';
+  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v7.9</span>';
   const titleRight=document.createElement('div');
   titleRight.style.cssText="display:flex;align-items:center;gap:5px";
   titleRight.appendChild(savedSpan);
@@ -961,7 +961,15 @@ function renderDailyPanel(vd){
           naps.length>0?span({style:{fontSize:"11px",color:"#64748b",marginLeft:"6px"}},`計${Math.floor(napTotal/60)>0?`${Math.floor(napTotal/60)}h`:""}${napTotal%60}m`):null
         ]),
         btn({style:{fontSize:"11px",padding:"3px 10px",background:"#0ea5e918",border:"1px solid #0ea5e9",borderRadius:"8px",color:"#38bdf8",cursor:"pointer",fontWeight:600},
-          onClick:()=>{state.modal="addNap";state.newNapH=new Date().getHours();state.newNapM=new Date().getMinutes();state.newNapDur=30;render();}},"+ 記録")
+          onClick:()=>{
+            const now=new Date();
+            state.modal="addNap";
+            state.newNapH=now.getHours();state.newNapM=now.getMinutes();
+            // 終了時刻の初期値は30分後
+            const end=new Date(now.getTime()+30*60000);
+            state.newNapEndH=end.getHours();state.newNapEndM=end.getMinutes();
+            render();
+          }},"+ 記録")
       ]));
       if(naps.length===0){
         sec.appendChild(div({style:{fontSize:"11px",color:"#475569",textAlign:"center",padding:"6px 0"}},"まだ記録がありません"));
@@ -969,9 +977,10 @@ function renderDailyPanel(vd){
         const list=div({style:{display:"flex",flexWrap:"wrap",gap:"5px"}});
         [...naps].sort((a,b)=>(a.hour*60+(a.min||0))-(b.hour*60+(b.min||0))).forEach((n,i)=>{
           const tL=`${String(n.hour).padStart(2,'0')}:${String(n.min||0).padStart(2,'0')}`;
+          const eL=n.endHour!=null?`${String(n.endHour).padStart(2,'0')}:${String(n.endMin||0).padStart(2,'0')}`:null;
           const durL=n.mins>=60?`${Math.floor(n.mins/60)}h${n.mins%60}m`:`${n.mins}m`;
           const item=div({style:{display:"flex",alignItems:"center",gap:"5px",padding:"3px 10px",background:"#0f172a",borderRadius:"20px",border:"1px solid #1e3a5f"}});
-          item.appendChild(span({style:{fontSize:"11px",color:"#94a3b8"}},`${tL}〜 ${durL}`));
+          item.appendChild(span({style:{fontSize:"11px",color:"#94a3b8"}},eL?`${tL}〜${eL} (${durL})`:`${tL}〜 ${durL}`));
           const del=btn({style:{background:"transparent",border:"none",color:"#334155",cursor:"pointer",fontSize:"14px",padding:"0"}},"×");
           del.addEventListener('click',(()=>{const uid=n.uid;return()=>{
             const nd={...getDaily(vd)};nd.naps=(nd.naps||[]).filter(x=>x.uid!==uid);setDaily(vd,nd);render();
@@ -3016,37 +3025,35 @@ function renderAddNapModal(vd){
   m.addEventListener('click',e=>e.stopPropagation());
   m.appendChild(div({style:{fontSize:"15px",fontWeight:700,color:"#e2e8f0",marginBottom:"16px"}},"💤 昼寝を記録"));
 
-  // 開始時刻
-  m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"5px"}},"開始時刻"));
-  const selH=document.createElement('select');selH.className='sel';
-  const selM=document.createElement('select');selM.className='sel';
-  Array.from({length:24},(_,i)=>{const o=document.createElement('option');o.value=i;o.textContent=`${String(i).padStart(2,'0')}時`;if(i===state.newNapH)o.selected=true;selH.appendChild(o);});
-  Array.from({length:60},(_,i)=>{const o=document.createElement('option');o.value=i;o.textContent=`${String(i).padStart(2,'0')}分`;if(i===state.newNapM)o.selected=true;selM.appendChild(o);});
-  selH.addEventListener('change',e=>{state.newNapH=Number(e.target.value);});
-  selM.addEventListener('change',e=>{state.newNapM=Number(e.target.value);});
-  const timeRow=document.createElement('div');timeRow.style.cssText="display:flex;gap:8px;align-items:center;margin-bottom:14px";
-  timeRow.appendChild(selH);timeRow.appendChild(span({style:{color:"#475569",fontWeight:700}},"："));timeRow.appendChild(selM);
-  m.appendChild(timeRow);
+  const mkTimeSel=(label,valObj,onChange)=>{
+    const wrap2=div({style:{marginBottom:"12px"}});
+    wrap2.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"5px"}},label));
+    const row=document.createElement('div');row.style.cssText="display:flex;gap:8px;align-items:center";
+    const selH=document.createElement('select');selH.className='sel';
+    const selM=document.createElement('select');selM.className='sel';
+    Array.from({length:24},(_,i)=>{const o=document.createElement('option');o.value=i;o.textContent=`${String(i).padStart(2,'0')}時`;if(i===valObj.h)o.selected=true;selH.appendChild(o);});
+    Array.from({length:60},(_,i)=>{const o=document.createElement('option');o.value=i;o.textContent=`${String(i).padStart(2,'0')}分`;if(i===valObj.m)o.selected=true;selM.appendChild(o);});
+    selH.addEventListener('change',e=>onChange({...valObj,h:Number(e.target.value)}));
+    selM.addEventListener('change',e=>onChange({...valObj,m:Number(e.target.value)}));
+    row.appendChild(selH);row.appendChild(span({style:{color:"#475569",fontWeight:700}},"："));row.appendChild(selM);
+    wrap2.appendChild(row);
+    return wrap2;
+  };
 
-  // 長さ
-  m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"7px"}},"長さ"));
-  const durRow=div({style:{display:"flex",flexWrap:"wrap",gap:"6px",marginBottom:"20px"}});
-  [10,15,20,30,45,60,90,120].forEach(min=>{
-    const on=state.newNapDur===min;
-    const b=btn({style:{padding:"6px 14px",borderRadius:"8px",fontSize:"12px",cursor:"pointer",fontWeight:on?700:400,
-      background:on?"#6366f1":"transparent",color:on?"#fff":"#94a3b8",border:`1px solid ${on?"#6366f1":"#334155"}`}},
-      min>=60?`${Math.floor(min/60)}h${min%60>0?`${min%60}m`:""}`:`${min}m`);
-    b.addEventListener('click',()=>{state.newNapDur=min;render();});
-    durRow.appendChild(b);
-  });
-  m.appendChild(durRow);
+  m.appendChild(mkTimeSel("開始時刻",{h:state.newNapH,m:state.newNapM},v=>{state.newNapH=v.h;state.newNapM=v.m;}));
+  m.appendChild(mkTimeSel("起きた時刻",{h:state.newNapEndH,m:state.newNapEndM},v=>{state.newNapEndH=v.h;state.newNapEndM=v.m;}));
 
-  m.appendChild(div({style:{display:"flex",gap:"8px"}},[
+  m.appendChild(div({style:{display:"flex",gap:"8px",marginTop:"8px"}},[
     btn({className:"btn-ghost",style:{flex:1},onClick:()=>{state.modal=null;render();}},"キャンセル"),
     btn({style:{flex:2,padding:"10px",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:600,cursor:"pointer"},
       onClick:()=>{
+        // 分数を計算（日をまたぐ場合は+24h）
+        let startMin=state.newNapH*60+state.newNapM;
+        let endMin=state.newNapEndH*60+state.newNapEndM;
+        if(endMin<startMin) endMin+=1440;
+        const mins=endMin-startMin;
         const nd={...getDaily(vd)};
-        nd.naps=[...(nd.naps||[]),{uid:Date.now(),hour:state.newNapH,min:state.newNapM,mins:state.newNapDur}];
+        nd.naps=[...(nd.naps||[]),{uid:Date.now(),hour:state.newNapH,min:state.newNapM,endHour:state.newNapEndH,endMin:state.newNapEndM,mins}];
         setDaily(vd,nd);state.modal=null;render();
       }},"記録する")
   ]));
