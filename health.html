@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#0f172a">
-<title>体調管理 v7.9</title>
+<title>体調管理 v8.0</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:#0f172a;color:#f1f5f9;font-family:'Segoe UI',system-ui,sans-serif;min-height:100vh}
@@ -415,7 +415,7 @@ const state = {
   editSessionItemId:null, editSessionUid:null, editSessionSessions:[],
   cravingExpanded:false,
   newEjacH:0, newEjacM:0, newEjacTag:null,
-  newNapH:0, newNapM:0, newNapEndH:0, newNapEndM:0, newNapDur:30,
+  newNapH:0, newNapM:0, newNapEndH:0, newNapEndM:0, newNapDur:30, editNapUid:null,
   saved:false
 };
 
@@ -689,6 +689,7 @@ function render(){
   if(state.modal==="editSession")content.appendChild(renderEditSessionModal(vd));
   if(state.modal==="addEjac")  content.appendChild(renderAddEjacModal(vd));
   if(state.modal==="addNap")   content.appendChild(renderAddNapModal(vd));
+  if(state.modal==="editNap")  content.appendChild(renderAddNapModal(vd,true));
   if(state.goalHistoryType)    content.appendChild(renderGoalHistory(vd));
   if(state.goalEditKey)        content.appendChild(renderGoalEditModal());
   if(state.storageAlert)       content.appendChild(renderStorageAlertModal());
@@ -813,7 +814,7 @@ function renderHeader(){
   titleRow.style.cssText="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px";
   const titleLeft=document.createElement('div');
   titleLeft.style.cssText="display:flex;align-items:center;gap:8px";
-  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v7.9</span>';
+  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v8.0</span>';
   const titleRight=document.createElement('div');
   titleRight.style.cssText="display:flex;align-items:center;gap:5px";
   titleRight.appendChild(savedSpan);
@@ -979,10 +980,18 @@ function renderDailyPanel(vd){
           const tL=`${String(n.hour).padStart(2,'0')}:${String(n.min||0).padStart(2,'0')}`;
           const eL=n.endHour!=null?`${String(n.endHour).padStart(2,'0')}:${String(n.endMin||0).padStart(2,'0')}`:null;
           const durL=n.mins>=60?`${Math.floor(n.mins/60)}h${n.mins%60}m`:`${n.mins}m`;
-          const item=div({style:{display:"flex",alignItems:"center",gap:"5px",padding:"3px 10px",background:"#0f172a",borderRadius:"20px",border:"1px solid #1e3a5f"}});
+          const item=div({style:{display:"flex",alignItems:"center",gap:"5px",padding:"3px 10px",background:"#0f172a",borderRadius:"20px",border:"1px solid #1e3a5f",cursor:"pointer"}});
           item.appendChild(span({style:{fontSize:"11px",color:"#94a3b8"}},eL?`${tL}〜${eL} (${durL})`:`${tL}〜 ${durL}`));
+          item.addEventListener('click',(()=>{const nap=n;return()=>{
+            state.modal="editNap";
+            state.editNapUid=nap.uid;
+            state.newNapH=nap.hour;state.newNapM=nap.min||0;
+            state.newNapEndH=nap.endHour!=null?nap.endHour:nap.hour;
+            state.newNapEndM=nap.endHour!=null?(nap.endMin||0):nap.min||0;
+            render();
+          };})()); 
           const del=btn({style:{background:"transparent",border:"none",color:"#334155",cursor:"pointer",fontSize:"14px",padding:"0"}},"×");
-          del.addEventListener('click',(()=>{const uid=n.uid;return()=>{
+          del.addEventListener('click',(()=>{const uid=n.uid;return(e)=>{e.stopPropagation();
             const nd={...getDaily(vd)};nd.naps=(nd.naps||[]).filter(x=>x.uid!==uid);setDaily(vd,nd);render();
           };})()); 
           item.appendChild(del);
@@ -3018,44 +3027,59 @@ function importData(e){
   reader.readAsText(file);e.target.value="";
 }
 
-function renderAddNapModal(vd){
+function renderAddNapModal(vd,isEdit){
   const bg=div({className:"modal-center"});
   const m=div({className:"modal-box"});
   bg.addEventListener('click',()=>{state.modal=null;render();});
   m.addEventListener('click',e=>e.stopPropagation());
-  m.appendChild(div({style:{fontSize:"15px",fontWeight:700,color:"#e2e8f0",marginBottom:"16px"}},"💤 昼寝を記録"));
+  m.appendChild(div({style:{fontSize:"15px",fontWeight:700,color:"#e2e8f0",marginBottom:"16px"}},isEdit?"💤 昼寝を編集":"💤 昼寝を記録"));
 
-  const mkTimeSel=(label,valObj,onChange)=>{
+  const mkTimeSel=(label,getH,getM,setH,setM)=>{
     const wrap2=div({style:{marginBottom:"12px"}});
     wrap2.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"5px"}},label));
     const row=document.createElement('div');row.style.cssText="display:flex;gap:8px;align-items:center";
     const selH=document.createElement('select');selH.className='sel';
     const selM=document.createElement('select');selM.className='sel';
-    Array.from({length:24},(_,i)=>{const o=document.createElement('option');o.value=i;o.textContent=`${String(i).padStart(2,'0')}時`;if(i===valObj.h)o.selected=true;selH.appendChild(o);});
-    Array.from({length:60},(_,i)=>{const o=document.createElement('option');o.value=i;o.textContent=`${String(i).padStart(2,'0')}分`;if(i===valObj.m)o.selected=true;selM.appendChild(o);});
-    selH.addEventListener('change',e=>onChange({...valObj,h:Number(e.target.value)}));
-    selM.addEventListener('change',e=>onChange({...valObj,m:Number(e.target.value)}));
+    Array.from({length:24},(_,i)=>{const o=document.createElement('option');o.value=i;o.textContent=`${String(i).padStart(2,'0')}時`;if(i===getH())o.selected=true;selH.appendChild(o);});
+    Array.from({length:60},(_,i)=>{const o=document.createElement('option');o.value=i;o.textContent=`${String(i).padStart(2,'0')}分`;if(i===getM())o.selected=true;selM.appendChild(o);});
+    selH.addEventListener('change',e=>setH(Number(e.target.value)));
+    selM.addEventListener('change',e=>setM(Number(e.target.value)));
     row.appendChild(selH);row.appendChild(span({style:{color:"#475569",fontWeight:700}},"："));row.appendChild(selM);
     wrap2.appendChild(row);
     return wrap2;
   };
 
-  m.appendChild(mkTimeSel("開始時刻",{h:state.newNapH,m:state.newNapM},v=>{state.newNapH=v.h;state.newNapM=v.m;}));
-  m.appendChild(mkTimeSel("起きた時刻",{h:state.newNapEndH,m:state.newNapEndM},v=>{state.newNapEndH=v.h;state.newNapEndM=v.m;}));
+  m.appendChild(mkTimeSel("開始時刻",
+    ()=>state.newNapH,()=>state.newNapM,
+    v=>{state.newNapH=v;},v=>{state.newNapM=v;}));
+  m.appendChild(mkTimeSel("起きた時刻",
+    ()=>state.newNapEndH,()=>state.newNapEndM,
+    v=>{state.newNapEndH=v;},v=>{state.newNapEndM=v;}));
+
+  if(isEdit){
+    m.appendChild(btn({style:{width:"100%",padding:"7px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#475569",cursor:"pointer",fontSize:"12px",marginBottom:"8px",marginTop:"4px"},
+      onClick:()=>{
+        const nd={...getDaily(vd)};nd.naps=(nd.naps||[]).filter(x=>x.uid!==state.editNapUid);setDaily(vd,nd);state.modal=null;render();
+      }},"この昼寝を削除"));
+  }
 
   m.appendChild(div({style:{display:"flex",gap:"8px",marginTop:"8px"}},[
     btn({className:"btn-ghost",style:{flex:1},onClick:()=>{state.modal=null;render();}},"キャンセル"),
     btn({style:{flex:2,padding:"10px",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:600,cursor:"pointer"},
       onClick:()=>{
-        // 分数を計算（日をまたぐ場合は+24h）
         let startMin=state.newNapH*60+state.newNapM;
         let endMin=state.newNapEndH*60+state.newNapEndM;
         if(endMin<startMin) endMin+=1440;
         const mins=endMin-startMin;
         const nd={...getDaily(vd)};
-        nd.naps=[...(nd.naps||[]),{uid:Date.now(),hour:state.newNapH,min:state.newNapM,endHour:state.newNapEndH,endMin:state.newNapEndM,mins}];
+        if(isEdit){
+          nd.naps=(nd.naps||[]).map(x=>x.uid===state.editNapUid
+            ?{...x,hour:state.newNapH,min:state.newNapM,endHour:state.newNapEndH,endMin:state.newNapEndM,mins}:x);
+        } else {
+          nd.naps=[...(nd.naps||[]),{uid:Date.now(),hour:state.newNapH,min:state.newNapM,endHour:state.newNapEndH,endMin:state.newNapEndM,mins}];
+        }
         setDaily(vd,nd);state.modal=null;render();
-      }},"記録する")
+      }},"保存")
   ]));
   bg.appendChild(m);return bg;
 }
