@@ -5,7 +5,12 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#0f172a">
-<title>体調管理 v8.0</title>
+<title>体調管理 v8.2</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#0f172a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:#0f172a;color:#f1f5f9;font-family:'Segoe UI',system-ui,sans-serif;min-height:100vh}
@@ -415,7 +420,7 @@ const state = {
   editSessionItemId:null, editSessionUid:null, editSessionSessions:[],
   cravingExpanded:false,
   newEjacH:0, newEjacM:0, newEjacTag:null,
-  newNapH:0, newNapM:0, newNapEndH:0, newNapEndM:0, newNapDur:30, editNapUid:null,
+  newNapH:0, newNapM:0, newNapEndH:0, newNapEndM:0, newNapDur:30, editNapUid:null, todoSortMode:false,
   saved:false
 };
 
@@ -796,8 +801,8 @@ function renderHeader(){
     b.textContent=t;
     b.addEventListener('click',()=>{
       state.tab=t;
-      // 体調記録タブに切り替えたとき、今日かつ天気未取得なら自動取得
-      if(t==="体調記録" && state.viewDate===todayStr() && state.weatherCity && state.weather.length===0){
+      // 今日・体調記録タブに切り替えたとき、今日かつ天気未取得なら自動取得
+      if((t==="体調記録"||t==="今日") && state.viewDate===todayStr() && state.weatherCity && state.weather.length===0 && !state.weatherLoading){
         doFetchWeather(state.weatherCity);
       } else {
         render();
@@ -814,7 +819,7 @@ function renderHeader(){
   titleRow.style.cssText="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px";
   const titleLeft=document.createElement('div');
   titleLeft.style.cssText="display:flex;align-items:center;gap:8px";
-  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v8.0</span>';
+  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v8.2</span>';
   const titleRight=document.createElement('div');
   titleRight.style.cssText="display:flex;align-items:center;gap:5px";
   titleRight.appendChild(savedSpan);
@@ -1739,6 +1744,27 @@ function toggleExclude(dateStr, id){
   render();
 }
 
+// ── TODO並び順管理 ────────────────────────────────
+function getOrderedTodoItems(){
+  let order=null;
+  try{const s=localStorage.getItem(STORAGE_KEY+"_todo_order");if(s)order=JSON.parse(s);}catch{}
+  if(!Array.isArray(order)||order.length===0) return [...TODO_ITEMS];
+  const byId=Object.fromEntries(TODO_ITEMS.map(it=>[it.id,it]));
+  const ordered=order.map(id=>byId[id]).filter(Boolean);
+  // 保存順にない新項目は末尾に追加
+  TODO_ITEMS.forEach(it=>{if(!order.includes(it.id))ordered.push(it);});
+  return ordered;
+}
+function moveTodoItem(id, dir){
+  const items=getOrderedTodoItems();
+  const idx=items.findIndex(it=>it.id===id);
+  const to=idx+dir;
+  if(idx<0||to<0||to>=items.length)return;
+  [items[idx],items[to]]=[items[to],items[idx]];
+  try{localStorage.setItem(STORAGE_KEY+"_todo_order",JSON.stringify(items.map(it=>it.id)));}catch{}
+  render();
+}
+
 // ── TODOタブ ──────────────────────────────────────
 
 // 日付を1日前に戻す
@@ -1821,11 +1847,35 @@ function renderTodo(vd, ds, isToday){
     ]),
     div({style:{height:"6px",background:"#0f172a",borderRadius:"4px",overflow:"hidden"}},[
       div({style:{height:"100%",width:`${(done/total)*100}%`,background:done===total?"#22c55e":"#38bdf8",borderRadius:"4px"}})
-    ])
+    ]),
+    // 並べ替えモードトグル
+    (()=>{
+      const on=!!state.todoSortMode;
+      const b=btn({style:{marginTop:"8px",fontSize:"10px",padding:"4px 10px",borderRadius:"6px",cursor:"pointer",
+        border:`1px solid ${on?"#38bdf8":"#334155"}`,background:on?"#0ea5e918":"transparent",color:on?"#38bdf8":"#475569"}},
+        on?"✓ 並べ替え完了":"⇅ 並べ替え");
+      b.addEventListener('click',()=>{state.todoSortMode=!on;render();});
+      return b;
+    })()
   ]));
 
-  // TODOリスト
-  TODO_ITEMS.forEach(item => {
+  // TODOリスト（カスタム並び順）
+  const orderedItems=getOrderedTodoItems();
+  orderedItems.forEach((item, itemIdx) => {
+    // ── 並べ替えモード ──
+    if(state.todoSortMode){
+      const row2=div({style:{border:"1px solid #1e3a5f",borderRadius:"10px",marginBottom:"5px",padding:"8px 12px",background:"#1e293b",display:"flex",alignItems:"center",gap:"10px"}});
+      row2.appendChild(div({style:{fontSize:"11px",color:"#475569",minWidth:"20px"}},String(itemIdx+1)));
+      row2.appendChild(div({style:{flex:1,fontSize:"13px",fontWeight:600,color:"#e2e8f0"}},item.label));
+      const upB=btn({style:{padding:"4px 12px",background:itemIdx>0?"#0ea5e918":"transparent",border:`1px solid ${itemIdx>0?"#0ea5e9":"#1e3a5f"}`,borderRadius:"6px",color:itemIdx>0?"#38bdf8":"#334155",fontSize:"13px",cursor:itemIdx>0?"pointer":"default"}},"↑");
+      if(itemIdx>0)upB.addEventListener('click',(()=>{const id=item.id;return()=>moveTodoItem(id,-1);})());
+      const dnB=btn({style:{padding:"4px 12px",background:itemIdx<orderedItems.length-1?"#0ea5e918":"transparent",border:`1px solid ${itemIdx<orderedItems.length-1?"#0ea5e9":"#1e3a5f"}`,borderRadius:"6px",color:itemIdx<orderedItems.length-1?"#38bdf8":"#334155",fontSize:"13px",cursor:itemIdx<orderedItems.length-1?"pointer":"default"}},"↓");
+      if(itemIdx<orderedItems.length-1)dnB.addEventListener('click',(()=>{const id=item.id;return()=>moveTodoItem(id,1);})());
+      row2.appendChild(upB);row2.appendChild(dnB);
+      wrap.appendChild(row2);
+      return;
+    }
+
     const t = todo[item.id] || {};
     const isDone = isTodoDone(vd, item);
     const isExcluded = !!t.excluded;
@@ -2455,6 +2505,66 @@ function renderAnalysisHub(vd, ds, curH, isToday){
 
 function renderLog(){
   const wrap=div({style:{maxWidth:"600px",margin:"0 auto",padding:"12px 16px 60px"}});
+
+  // ── 月間体調ヒートマップ ──
+  if(state.heatmapMonth===undefined){
+    const n=new Date();
+    state.heatmapMonth={y:n.getFullYear(),m:n.getMonth()+1};
+  }
+  const hm=state.heatmapMonth;
+  const hmCard=div({className:"card"});
+  hmCard.appendChild(div({style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"10px"}},[
+    btn({style:{background:"transparent",border:"1px solid #334155",borderRadius:"7px",color:"#94a3b8",cursor:"pointer",fontSize:"14px",padding:"2px 10px"},
+      onClick:()=>{hm.m--;if(hm.m<1){hm.m=12;hm.y--;}render();}},"‹"),
+    div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0"}},`📅 ${hm.y}年${hm.m}月の体調`),
+    btn({style:{background:"transparent",border:"1px solid #334155",borderRadius:"7px",color:"#94a3b8",cursor:"pointer",fontSize:"14px",padding:"2px 10px"},
+      onClick:()=>{hm.m++;if(hm.m>12){hm.m=1;hm.y++;}render();}},"›")
+  ]));
+
+  // 曜日ヘッダー
+  hmCard.appendChild(div({style:{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:"3px",marginBottom:"3px"}},
+    ["月","火","水","木","金","土","日"].map(w=>div({style:{textAlign:"center",fontSize:"9px",color:"#475569"}},w))));
+
+  // 日ごとの平均スコアマップ
+  const monthPrefix=`${hm.y}-${String(hm.m).padStart(2,'0')}`;
+  const dayScores={};
+  state.logs.filter(l=>l.dateStr.startsWith(monthPrefix)&&l.score!=null).forEach(l=>{
+    if(!dayScores[l.dateStr])dayScores[l.dateStr]=[];
+    dayScores[l.dateStr].push(l.score);
+  });
+
+  // カレンダー描画（月曜始まり）
+  const firstDay=new Date(hm.y,hm.m-1,1);
+  const daysInMonth=new Date(hm.y,hm.m,0).getDate();
+  let startBlank=(firstDay.getDay()+6)%7; // 月曜=0
+  const grid=div({style:{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:"3px"}});
+  for(let i=0;i<startBlank;i++)grid.appendChild(div({},""));
+  const todayD2=todayStr();
+  for(let day=1;day<=daysInMonth;day++){
+    const dsK=`${monthPrefix}-${String(day).padStart(2,'0')}`;
+    const arr=dayScores[dsK];
+    const avg2=arr?arr.reduce((a,b)=>a+b,0)/arr.length:null;
+    const col=avg2==null?"#0f172a":scoreColor(avg2);
+    const isT=dsK===todayD2;
+    const cell=div({style:{
+      aspectRatio:"1",borderRadius:"6px",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
+      background:avg2==null?"#0f172a":col+"33",
+      border:`1px solid ${isT?"#38bdf8":avg2==null?"#1e3a5f":col+"66"}`,
+      cursor:"pointer"
+    }});
+    cell.appendChild(div({style:{fontSize:"9px",color:isT?"#38bdf8":"#64748b",fontWeight:isT?700:400}},String(day)));
+    if(avg2!=null)cell.appendChild(div({style:{fontSize:"10px",fontWeight:700,color:col}},avg2.toFixed(1)));
+    cell.addEventListener('click',(()=>{const k=dsK;return()=>{state.viewDate=k;state.tab="今日";render();};})()); 
+    grid.appendChild(cell);
+  }
+  hmCard.appendChild(grid);
+  hmCard.appendChild(div({style:{display:"flex",gap:"10px",marginTop:"8px",fontSize:"9px",color:"#475569",justifyContent:"center"}},[
+    span({style:{color:"#ef4444"}},"■ 〜3"),span({style:{color:"#f97316"}},"■ 〜5"),
+    span({style:{color:"#eab308"}},"■ 〜7"),span({style:{color:"#22c55e"}},"■ 8〜"),
+    span({},"タップで日付へ")
+  ]));
+  wrap.appendChild(hmCard);
+
   const dates=[...new Set(state.logs.map(l=>l.dateStr))].sort().reverse().slice(0,30);
   if(dates.length===0){wrap.appendChild(div({style:{textAlign:"center",color:"#475569",padding:"40px 0",fontSize:"13px"}},"記録がありません"));return wrap;}
   dates.forEach(ds=>{
@@ -2745,6 +2855,27 @@ function renderAnalysis(){
     {l:"6〜7h", v:ga(sleepG.m),c:"#eab308",sub:`${sleepG.m.length}日`},
     {l:"8h以上",v:ga(sleepG.l),c:"#22c55e",sub:`${sleepG.l.length}日`}
   ]));
+
+  // 😴+💤 合計睡眠（夜＋昼寝）と当日体調
+  const totalSleepG={s:[],m:[],l:[]};
+  let hasNapData=false;
+  state.dailies.forEach(d=>{
+    const a=dayAvgScore(d.dateStr);
+    if(a==null)return;
+    const nightH=d.sleepStart!=null&&d.sleepEnd!=null?((d.sleepEnd-d.sleepStart+24)%24):null;
+    if(nightH==null)return;
+    const napMins=(d.naps||[]).reduce((x,n)=>x+(n.mins||0),0);
+    if(napMins>0)hasNapData=true;
+    const total=nightH+napMins/60;
+    if(total<=5)totalSleepG.s.push(a);else if(total<=7)totalSleepG.m.push(a);else totalSleepG.l.push(a);
+  });
+  if(hasNapData){
+    wrap.appendChild(barCard("💤 合計睡眠（夜＋昼寝）と当日体調",[
+      {l:"5h以下",v:ga(totalSleepG.s),c:"#ef4444",sub:`${totalSleepG.s.length}日`},
+      {l:"6〜7h", v:ga(totalSleepG.m),c:"#eab308",sub:`${totalSleepG.m.length}日`},
+      {l:"8h以上",v:ga(totalSleepG.l),c:"#22c55e",sub:`${totalSleepG.l.length}日`}
+    ]));
+  }
   wrap.appendChild(barCard("🍺 飲酒と翌日体調",[
     {l:"飲まない",v:ga(alcG.n), c:"#22c55e",sub:`${alcG.n.length}日`},
     {l:"〜20g",   v:ga(alcG.l), c:"#eab308",sub:`${alcG.l.length}日`},
@@ -2762,6 +2893,124 @@ function renderAnalysis(){
     {l:"〜1.8L",v:ga(waterG.w18),c:"#22c55e",sub:`${waterG.w18.length}日`},
     {l:"2.0L以上",v:ga(waterG.w20),c:"#38bdf8",sub:`${waterG.w20.length}日`},
   ]));
+
+  // 🏭 仕事シフトと当日体調
+  const shiftG={s1:[],s2:[],off:[]};
+  state.dailies.forEach(d=>{
+    const a=dayAvgScore(d.dateStr);
+    if(a==null)return;
+    if(d.workStart==null){shiftG.off.push(a);}
+    else if(d.workStart<12){shiftG.s1.push(a);}
+    else {shiftG.s2.push(a);}
+  });
+  wrap.appendChild(barCard("🏭 仕事シフトと当日体調",[
+    {l:"1直",v:ga(shiftG.s1), c:"#38bdf8",sub:`${shiftG.s1.length}日`},
+    {l:"2直",v:ga(shiftG.s2), c:"#a78bfa",sub:`${shiftG.s2.length}日`},
+    {l:"休み",v:ga(shiftG.off),c:"#22c55e",sub:`${shiftG.off.length}日`}
+  ]));
+
+  // 🌡️ 飲酒欲求の分析
+  const cravingDays=state.dailies
+    .map(d=>{
+      const cr=d.cravings||{};
+      const vals=Object.values(cr);
+      if(!vals.length)return null;
+      const maxCr=Math.max(...vals);
+      const drinks=(d.drinks||[]).map(dr=>({...dr,drinkType:resolveDT(dr)}));
+      const alcG2=drinks.reduce((x,b)=>x+pureAlcohol(b.ml,b.drinkType.pct),0);
+      return {dateStr:d.dateStr, maxCr, drank:alcG2>0, score:dayAvgScore(d.dateStr)};
+    })
+    .filter(Boolean);
+
+  if(cravingDays.length>=3){
+    const cc=div({className:"card"},[div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0",marginBottom:"10px"}},"🌡️ 飲酒欲求の分析")]);
+
+    // 欲求が高い日に実際飲んだ割合
+    const highCr=cravingDays.filter(c=>c.maxCr>=7);
+    const lowCr=cravingDays.filter(c=>c.maxCr<=4);
+    if(highCr.length>0){
+      const drankPct=Math.round(highCr.filter(c=>c.drank).length/highCr.length*100);
+      cc.appendChild(div({style:{display:"flex",gap:"8px",alignItems:"flex-start",marginBottom:"7px",padding:"7px 10px",borderRadius:"8px",background:drankPct>=70?"#ef444408":"#0f172a",border:`1px solid ${drankPct>=70?"#ef444422":"#1e3a5f"}`}},[
+        span({style:{fontSize:"14px",flexShrink:0}},"🍺"),
+        div({style:{fontSize:"12px",color:"#cbd5e1",lineHeight:1.6}},`欲求7以上の日は${highCr.length}日中${highCr.filter(c=>c.drank).length}日（${drankPct}%）で実際に飲酒しています`)
+      ]));
+    }
+
+    // 欲求が高い日 vs 低い日の当日体調
+    const highScore=highCr.filter(c=>c.score!=null).map(c=>c.score);
+    const lowScore=lowCr.filter(c=>c.score!=null).map(c=>c.score);
+    if(highScore.length>=2&&lowScore.length>=2){
+      const hAvg=highScore.reduce((a,b)=>a+b,0)/highScore.length;
+      const lAvg=lowScore.reduce((a,b)=>a+b,0)/lowScore.length;
+      if(lAvg-hAvg>=0.5){
+        cc.appendChild(div({style:{display:"flex",gap:"8px",alignItems:"flex-start",marginBottom:"7px",padding:"7px 10px",borderRadius:"8px",background:"#ef444408",border:"1px solid #ef444422"}},[
+          span({style:{fontSize:"14px",flexShrink:0}},"📉"),
+          div({style:{fontSize:"12px",color:"#cbd5e1",lineHeight:1.6}},`欲求が高い日（7以上）は体調も低い傾向（平均${hAvg.toFixed(1)} vs ${lAvg.toFixed(1)}）。体調不良が飲酒欲求の引き金になっている可能性があります`)
+        ]));
+      }
+    }
+
+    // 前日の睡眠と欲求の関係
+    const prevSleepHigh=[],prevSleepLow=[];
+    cravingDays.forEach(c=>{
+      const p=c.dateStr.split('-');
+      const prev=new Date(parseInt(p[0]),parseInt(p[1])-1,parseInt(p[2]));
+      prev.setDate(prev.getDate()-1);
+      const prevStr=`${prev.getFullYear()}-${String(prev.getMonth()+1).padStart(2,'0')}-${String(prev.getDate()).padStart(2,'0')}`;
+      const pd=state.dailies.find(d=>d.dateStr===prevStr);
+      if(!pd||pd.sleepStart==null||pd.sleepEnd==null)return;
+      const sh2=((pd.sleepEnd-pd.sleepStart+24)%24);
+      if(c.maxCr>=7)prevSleepHigh.push(sh2);
+      else if(c.maxCr<=4)prevSleepLow.push(sh2);
+    });
+    if(prevSleepHigh.length>=2&&prevSleepLow.length>=2){
+      const hS=prevSleepHigh.reduce((a,b)=>a+b,0)/prevSleepHigh.length;
+      const lS=prevSleepLow.reduce((a,b)=>a+b,0)/prevSleepLow.length;
+      if(lS-hS>=0.5){
+        cc.appendChild(div({style:{display:"flex",gap:"8px",alignItems:"flex-start",marginBottom:"7px",padding:"7px 10px",borderRadius:"8px",background:"#f9731608",border:"1px solid #f9731622"}},[
+          span({style:{fontSize:"14px",flexShrink:0}},"😴"),
+          div({style:{fontSize:"12px",color:"#cbd5e1",lineHeight:1.6}},`欲求が高い日の前日は睡眠が短い傾向（平均${hS.toFixed(1)}h vs ${lS.toFixed(1)}h）。睡眠不足が翌日の欲求を高めている可能性があります`)
+        ]));
+      }
+    }
+
+    if(cc.children.length===1){
+      cc.appendChild(div({style:{fontSize:"12px",color:"#475569",textAlign:"center",padding:"8px 0"}},"記録が増えるとパターンが表示されます"));
+    }
+    cc.appendChild(div({style:{fontSize:"10px",color:"#334155",marginTop:"6px"}},`※ 欲求記録がある${cravingDays.length}日分から分析`));
+    wrap.appendChild(cc);
+  }
+
+  // 💧 射精と体調の関係
+  const ejacDays=state.dailies.filter(d=>(d.ejaculations||[]).length>0).map(d=>d.dateStr);
+  if(ejacDays.length>=2){
+    const withE={same:[],next:[]}, withoutE={same:[],next:[]};
+    state.dailies.forEach(d=>{
+      const a=dayAvgScore(d.dateStr);
+      const aN=dayAvgScore(nextD(d.dateStr));
+      const has=(d.ejaculations||[]).length>0;
+      if(a!=null)(has?withE.same:withoutE.same).push(a);
+      if(aN!=null)(has?withE.next:withoutE.next).push(aN);
+    });
+    const ejacCard=div({className:"card"},[div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0",marginBottom:"4px"}},"💧 射精と体調")]);
+    ejacCard.appendChild(div({style:{fontSize:"10px",color:"#475569",marginBottom:"10px"}},`記録あり${ejacDays.length}日 / 月間平均 ${(ejacDays.length/Math.max(1,state.dailies.length)*30).toFixed(1)}回`));
+    const rows=[
+      {l:"あり日の体調",v:ga(withE.same),c:"#38bdf8",sub:`${withE.same.length}日`},
+      {l:"なし日の体調",v:ga(withoutE.same),c:"#64748b",sub:`${withoutE.same.length}日`},
+      {l:"あり翌日",v:ga(withE.next),c:"#a78bfa",sub:`${withE.next.length}日`},
+      {l:"なし翌日",v:ga(withoutE.next),c:"#64748b",sub:`${withoutE.next.length}日`}
+    ];
+    rows.forEach(({l,v,c,sub})=>{
+      if(!v)return;
+      ejacCard.appendChild(div({style:{display:"flex",alignItems:"center",gap:"8px",marginBottom:"5px"}},[
+        div({style:{fontSize:"11px",color:"#94a3b8",minWidth:"90px"}},l),
+        div({style:{flex:1,height:"6px",background:"#0f172a",borderRadius:"4px",overflow:"hidden"}},[div({style:{height:"100%",width:`${(parseFloat(v)/10)*100}%`,background:c,borderRadius:"4px"}})]),
+        div({style:{fontSize:"12px",fontWeight:700,color:c,minWidth:"26px",textAlign:"right"}},v),
+        div({style:{fontSize:"10px",color:"#475569"}},sub)
+      ]));
+    });
+    wrap.appendChild(ejacCard);
+  }
   if(pd.length>0||ps.length>0) wrap.appendChild(barCard("🌡️ 気圧と体調",[
     {l:"急降下",v:pd.length?(pd.reduce((a,b)=>a+b.score,0)/pd.length).toFixed(1):null,c:"#ef4444",sub:`${pd.length}件`},
     {l:"安定",v:ps.length?(ps.reduce((a,b)=>a+b.score,0)/ps.length).toFixed(1):null,c:"#22c55e",sub:`${ps.length}件`}
@@ -3006,10 +3255,23 @@ async function runAI(card,content,scored,dailies){
 }
 
 // ═══════════════════════════════════════════════════
-// エクスポート・インポート
+// エクスポート・インポート（全データ対応）
 // ═══════════════════════════════════════════════════
 function exportData(){
-  const blob=new Blob([JSON.stringify({logs:state.logs,dailies:state.dailies},null,2)],{type:"application/json"});
+  let weather={}, city=null;
+  try{const w=localStorage.getItem(STORAGE_KEY+"_weather");if(w)weather=JSON.parse(w);}catch{}
+  try{const c=localStorage.getItem(STORAGE_KEY+"_city");if(c)city=JSON.parse(c);}catch{}
+  const payload={
+    version:2,
+    exportedAt:new Date().toISOString(),
+    logs:state.logs,
+    dailies:state.dailies,
+    todos:state.todos,
+    goals:state.goals,
+    weather,
+    city
+  };
+  const blob=new Blob([JSON.stringify(payload,null,2)],{type:"application/json"});
   const url=URL.createObjectURL(blob);const a=document.createElement("a");
   a.href=url;a.download=`health_backup_${todayStr()}.json`;a.click();URL.revokeObjectURL(url);
 }
@@ -3020,8 +3282,25 @@ function importData(e){
     try{
       const p=JSON.parse(ev.target.result);
       if(!p.logs||!p.dailies)throw new Error("形式が違います");
-      state.logs=p.logs;state.dailies=p.dailies;saveStorage();render();
-      alert(`インポート完了！記録: ${p.logs.length}件`);
+      // 確認画面：内容のサマリーを表示して上書き確認
+      const summary=[
+        `体調記録: ${p.logs.length}件`,
+        `日次記録: ${p.dailies.length}日分`,
+        p.todos?`TODO: ${Object.keys(p.todos).length}日分`:null,
+        p.goals?`目標: ${Object.keys(p.goals).length}件`:null,
+        p.weather?`天気: ${Object.keys(p.weather).length}日分`:null,
+        p.exportedAt?`エクスポート日時: ${p.exportedAt.slice(0,10)}`:null
+      ].filter(Boolean).join("\n");
+      if(!confirm(`このバックアップをインポートしますか？\n現在のデータは上書きされます。\n\n${summary}`))return;
+
+      state.logs=p.logs;
+      state.dailies=p.dailies;
+      if(p.todos){state.todos=p.todos;try{localStorage.setItem(STORAGE_KEY+"_todo",JSON.stringify(p.todos));}catch{}}
+      if(p.goals){state.goals=p.goals;try{localStorage.setItem(STORAGE_KEY+"_goals",JSON.stringify(p.goals));}catch{}}
+      if(p.weather){try{localStorage.setItem(STORAGE_KEY+"_weather",JSON.stringify(p.weather));}catch{}}
+      if(p.city){state.weatherCity=p.city;try{localStorage.setItem(STORAGE_KEY+"_city",JSON.stringify(p.city));}catch{}}
+      saveStorage();render();
+      alert(`インポート完了！\n${summary}`);
     }catch(err){alert("インポート失敗: "+err.message);}
   };
   reader.readAsText(file);e.target.value="";
@@ -3238,6 +3517,10 @@ state.forecast=genForecast();
 state.viewDate = todayStr();
 render();
 checkStorageAndAlert();
+// PWA: Service Worker登録
+if('serviceWorker' in navigator){
+  navigator.serviceWorker.register('sw.js').catch(()=>{});
+}
 // 保存済み都市があれば自動で天気取得
 if(state.weatherCity) doFetchWeather(state.weatherCity);
 // 1分ごとに日付変わりをチェック

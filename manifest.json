@@ -1,0 +1,19 @@
+{
+  "name": "体調管理",
+  "short_name": "体調管理",
+  "description": "体調・睡眠・飲酒・TODO・目標を記録するパーソナル健康管理アプリ",
+  "start_url": "./health.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
