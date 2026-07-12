@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#0f172a">
-<title>体調管理 v10.2</title>
+<title>体調管理 v10.3</title>
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#0f172a">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -966,7 +966,7 @@ function renderHeader(){
   titleRow.style.cssText="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px";
   const titleLeft=document.createElement('div');
   titleLeft.style.cssText="display:flex;align-items:center;gap:8px";
-  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v10.2</span>';
+  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v10.3</span>';
   const titleRight=document.createElement('div');
   titleRight.style.cssText="display:flex;align-items:center;gap:5px";
   titleRight.appendChild(savedSpan);
@@ -2023,32 +2023,48 @@ function getActualActivities(vd){
     if(e<=s)e=s+(n.mins||30);
     acts.push({title:"💤 昼寝",startMin:s,endMin:e,color:"#93c5fd"});
   });
-  // ※ 仕事（シフト）は「予定」（左）列へ移動したため、実際列には出さない
+  // 日記で記録した実際の勤務（手動）は実際(右)列に反映。シフトパターン(自動)は予定(左)列
+  const wkA=getWorkForDate(vd);
+  if(wkA.manual&&wkA.start!=null&&wkA.end!=null){
+    const ws=Math.round(wkA.start*60);
+    let we=Math.round((wkA.end+(wkA.overtime||0))*60);
+    if(we>1440)we=1440;
+    if(we>ws) acts.push({title:"💼 仕事",startMin:ws,endMin:we,color:"#2dd4bf"});
+  }
   return acts.sort((a,b)=>a.startMin-b.startMin);
 }
 
-// 左（予定）列に出すパターン由来のブロック（シフト＋パターン予定）
+// 左（予定）列に出すパターン由来のブロック（シフトパターン＋パターン予定）
 function getPlannedExtras(vd){
   const out=[];
-  // シフト（勤務）を予定として（休み・未設定は出さない）
   const sk=currentShiftKey(vd);
   const wk=getWorkForDate(vd);
-  if(sk&&sk!=="off"&&wk.start!=null&&wk.end!=null){
+  // シフト「パターン由来」のみ予定(左)へ。手動勤務は実際(右)列に出す
+  if(sk&&sk!=="off"&&wk.start!=null&&wk.end!=null&&!wk.manual){
     const sh=SHIFT_TYPES[sk];
-    let endTotal=wk.end+(wk.overtime||0); if(endTotal>24)endTotal=24;
+    let endTotal=wk.end; if(endTotal>24)endTotal=24;
     out.push({title:`💼 ${sh?sh.label:"仕事"}`,color:sh?sh.color:"#2dd4bf",
       startH:Math.floor(wk.start),startM:Math.round((wk.start%1)*60),
       endH:Math.floor(endTotal),endM:Math.round((endTotal%1)*60),isPattern:true});
   }
-  // パターン予定（睡眠など）。0時をまたぐものは分割
+  // パターン予定（睡眠など）。シフト連動なら当日のシフトで時間が変わる。0時またぎは分割
   const dow=parseDS(vd).getDay();
+  const dshift=sk||"off";
   (state.planPatterns||[]).forEach(p=>{
     if(p.enabled===false)return;
     if(Array.isArray(p.weekdays)&&p.weekdays.length&&!p.weekdays.includes(dow))return;
-    const s=p.startH*60+(p.startM||0), e=p.endH*60+(p.endM||0);
-    const mk=(sh,sm,eh,em)=>({title:p.title,color:p.color||"#38bdf8",startH:sh,startM:sm,endH:eh,endM:em,isPattern:true});
-    if(e>s){ out.push(mk(p.startH,p.startM||0,p.endH,p.endM||0)); }
-    else { out.push(mk(p.startH,p.startM||0,24,0)); if(e>0) out.push(mk(0,0,p.endH,p.endM||0)); }
+    let sH,sM,eH,eM;
+    if(p.byShift){
+      const st=(p.shiftTimes||{})[dshift];
+      if(!st||st.on===false)return;
+      sH=st.startH;sM=st.startM||0;eH=st.endH;eM=st.endM||0;
+    } else {
+      sH=p.startH;sM=p.startM||0;eH=p.endH;eM=p.endM||0;
+    }
+    const s=sH*60+sM, e=eH*60+eM;
+    const mk=(a,b,c,d)=>({title:p.title,color:p.color||"#38bdf8",startH:a,startM:b,endH:c,endM:d,isPattern:true});
+    if(e>s){ out.push(mk(sH,sM,eH,eM)); }
+    else { out.push(mk(sH,sM,24,0)); if(e>0) out.push(mk(0,0,eH,eM)); }
   });
   return out;
 }
@@ -2196,16 +2212,49 @@ function renderPlanPatternPanel(){
     del.addEventListener('click',()=>{if(confirm("このパターンを削除しますか？")){state.planPatterns=state.planPatterns.filter(x=>x.uid!==p.uid);savePlanPatterns();render();}});
     l1.appendChild(del);
     box.appendChild(l1);
+    // シフト連動トグル
+    const linkRow=div({style:{display:"flex",alignItems:"center",gap:"8px",marginBottom:"6px"}});
+    const lb=btn({style:{fontSize:"10px",padding:"3px 8px",borderRadius:"6px",cursor:"pointer",fontWeight:600,
+      border:`1px solid ${p.byShift?"#a78bfa":"#334155"}`,background:p.byShift?"#a78bfa22":"transparent",color:p.byShift?"#a78bfa":"#64748b"}},p.byShift?"🔗 シフト連動 ON":"🔗 シフト連動 OFF");
+    lb.addEventListener('click',()=>{
+      const ch={byShift:!p.byShift};
+      if(!p.byShift&&!p.shiftTimes) ch.shiftTimes={s1:{on:true,startH:22,startM:0,endH:6,endM:0},s2:{on:true,startH:1,startM:0,endH:9,endM:0},off:{on:true,startH:0,startM:0,endH:8,endM:0}};
+      upd(p.uid,ch);
+    });
+    linkRow.appendChild(lb);
+    linkRow.appendChild(span({style:{fontSize:"10px",color:"#475569"}},p.byShift?"1直/2直/休みで時間が変わります":""));
+    box.appendChild(linkRow);
     // 時刻
-    const l2=div({style:{display:"flex",gap:"5px",alignItems:"center",marginBottom:"6px",fontSize:"11px",color:"#64748b"}});
-    l2.appendChild(span({},"開始"));
-    l2.appendChild(mkSel2(p.startH,Array.from({length:24},(_,i)=>i),v=>`${v}時`,v=>upd(p.uid,{startH:v})));
-    l2.appendChild(mkSel2(p.startM||0,MIN,v=>`${String(v).padStart(2,'0')}分`,v=>upd(p.uid,{startM:v})));
-    l2.appendChild(span({style:{margin:"0 2px"}},"〜"));
-    l2.appendChild(span({},"終了"));
-    l2.appendChild(mkSel2(p.endH,Array.from({length:24},(_,i)=>i),v=>`${v}時`,v=>upd(p.uid,{endH:v})));
-    l2.appendChild(mkSel2(p.endM||0,MIN,v=>`${String(v).padStart(2,'0')}分`,v=>upd(p.uid,{endM:v})));
-    box.appendChild(l2);
+    const timeRow=(getH1,getM1,getH2,getM2,set)=>{
+      const r=div({style:{display:"flex",gap:"4px",alignItems:"center",marginBottom:"5px",fontSize:"11px",color:"#64748b"}});
+      r.appendChild(span({},"開始"));
+      r.appendChild(mkSel2(getH1(),Array.from({length:24},(_,i)=>i),v=>`${v}時`,v=>set({startH:v})));
+      r.appendChild(mkSel2(getM1(),MIN,v=>`${String(v).padStart(2,'0')}分`,v=>set({startM:v})));
+      r.appendChild(span({style:{margin:"0 2px"}},"〜"));
+      r.appendChild(span({},"終了"));
+      r.appendChild(mkSel2(getH2(),Array.from({length:24},(_,i)=>i),v=>`${v}時`,v=>set({endH:v})));
+      r.appendChild(mkSel2(getM2(),MIN,v=>`${String(v).padStart(2,'0')}分`,v=>set({endM:v})));
+      return r;
+    };
+    if(p.byShift){
+      const stAll=p.shiftTimes||{};
+      [["s1","1直"],["s2","2直"],["off","休み"]].forEach(([k,lbl])=>{
+        const st=stAll[k]||{on:true,startH:0,startM:0,endH:8,endM:0};
+        const wrapR=div({style:{marginBottom:"4px"}});
+        const head=div({style:{display:"flex",alignItems:"center",gap:"6px",marginBottom:"2px"}});
+        const onB=btn({style:{fontSize:"10px",padding:"2px 8px",borderRadius:"6px",cursor:"pointer",fontWeight:700,
+          border:`1px solid ${st.on!==false?SHIFT_TYPES[k].color:"#334155"}`,background:st.on!==false?SHIFT_TYPES[k].color+"22":"transparent",color:st.on!==false?SHIFT_TYPES[k].color:"#475569"}},`${lbl}${st.on!==false?"":"（なし）"}`);
+        onB.addEventListener('click',()=>{const cur=p.shiftTimes||{};upd(p.uid,{shiftTimes:{...cur,[k]:{...st,on:st.on===false}}});});
+        head.appendChild(onB);
+        wrapR.appendChild(head);
+        if(st.on!==false){
+          wrapR.appendChild(timeRow(()=>st.startH,()=>st.startM||0,()=>st.endH,()=>st.endM||0,ch=>{const cur=p.shiftTimes||{};upd(p.uid,{shiftTimes:{...cur,[k]:{...st,...ch}}});}));
+        }
+        box.appendChild(wrapR);
+      });
+    } else {
+      box.appendChild(timeRow(()=>p.startH,()=>p.startM||0,()=>p.endH,()=>p.endM||0,ch=>upd(p.uid,ch)));
+    }
     // 曜日
     const l3=div({style:{display:"flex",gap:"4px",marginBottom:"6px"}});
     WEEKDAYS_JP.forEach((lbl,idx)=>{
@@ -2333,7 +2382,7 @@ function renderDaySchedule(vd,ds,isToday){
   tlCard.appendChild(div({style:{display:"flex",marginBottom:"6px"}},[
     div({style:{width:"34px"}},""),
     div({style:{flex:1,fontSize:"10px",fontWeight:700,color:"#38bdf8",textAlign:"center"}},"📅 予定"),
-    div({style:{flex:1,fontSize:"10px",fontWeight:700,color:"#22c55e",textAlign:"center"}},"✔ 実際（TODO・睡眠・飲酒）")
+    div({style:{flex:1,fontSize:"10px",fontWeight:700,color:"#22c55e",textAlign:"center"}},"✔ 実際（TODO・睡眠・仕事・飲酒）")
   ]));
 
   const tl=div({style:{position:"relative",height:`${(END_H-START_H)*HOUR_H}px`}});
