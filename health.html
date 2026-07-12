@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#0f172a">
-<title>体調管理 v9.6</title>
+<title>体調管理 v9.7</title>
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#0f172a">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -209,7 +209,7 @@ function renderStorageAlertModal(){
 }
 // ═══════════════════════════════════════════════════
 const STORAGE_KEY = "health_v2";
-const TABS = ["予定","日記","TODO","目標","体調記録","アルコール","分析"];
+const TABS = ["予定","日記","タスク","分析","設定"];
 const SYMPTOMS = [
   "頭痛","肩こり","腰痛","関節痛",
   "吐き気","胃もたれ",
@@ -424,7 +424,7 @@ const state = {
   newEventTitle:"", newEventSH:9, newEventSM:0, newEventEH:10, newEventEM:0,
   goalHistoryType:null, goalEditKey:null,
   goalEditType:null, goalEditText:"", goalEditProgress:"", goalEditDone:false, goalEditPeriodStr:"",
-  analysisSubTab:"日次ログ",
+  analysisSubTab:"日次ログ", diarySubTab:"生活記録", taskSubTab:"TODO",
   storageAlert:false, storageExportYear:null,
   weather:[], weatherCity:null, weatherLoading:false, weatherError:null,
   editHour:null, editDate:null, editScore:null, editSymptoms:[], editNote:"",
@@ -767,13 +767,11 @@ function render(){
 
   const ds=todayStr(), vd=state.viewDate, curH=new Date().getHours();
   const isToday=vd===ds;
-  if(state.tab==="予定")       content.appendChild(renderScheduleHub(vd,ds,isToday));
-  if(state.tab==="日記")       content.appendChild(renderToday(vd,ds,curH,isToday));
-  if(state.tab==="TODO")       content.appendChild(renderTodo(vd,ds,isToday));
-  if(state.tab==="目標")       content.appendChild(renderGoals(vd,ds));
-  if(state.tab==="体調記録")   content.appendChild(renderKondo(vd,ds,curH,isToday));
-  if(state.tab==="アルコール") content.appendChild(renderAlcohol(vd,isToday));
-  if(state.tab==="分析")       content.appendChild(renderAnalysisHub(vd,ds,curH,isToday));
+  if(state.tab==="予定")   content.appendChild(renderScheduleHub(vd,ds,isToday));
+  if(state.tab==="日記")   content.appendChild(renderDiaryHub(vd,ds,curH,isToday));
+  if(state.tab==="タスク") content.appendChild(renderTaskHub(vd,ds,isToday));
+  if(state.tab==="分析")   content.appendChild(renderAnalysisHub(vd,ds,curH,isToday));
+  if(state.tab==="設定")   content.appendChild(renderSettingsHub());
   if(state.modal==="food")     content.appendChild(renderFoodModal());
   if(state.modal==="addDrink") content.appendChild(renderAddDrinkModal(vd));
   if(state.modal==="editEnd")  content.appendChild(renderEditEndModal(vd));
@@ -782,7 +780,6 @@ function render(){
   if(state.modal==="addEjac")  content.appendChild(renderAddEjacModal(vd));
   if(state.modal==="addNap")   content.appendChild(renderAddNapModal(vd));
   if(state.modal==="addEvent") content.appendChild(renderAddEventModal(vd));
-  if(state.modal==="routineSettings") content.appendChild(renderRoutineSettingsModal());
   if(state.modal==="editNap")  content.appendChild(renderAddNapModal(vd,true));
   if(state.goalHistoryType)    content.appendChild(renderGoalHistory(vd));
   if(state.goalEditKey)        content.appendChild(renderGoalEditModal());
@@ -825,21 +822,6 @@ function updateHeaderDynamic(){
 function renderHeader(){
   const ds=todayStr(), vd=state.viewDate, isToday=vd===ds;
   const showNav=true;
-
-  // エクスポートボタン
-  const exportBtn=document.createElement('button');
-  exportBtn.textContent="💾 出力";
-  exportBtn.style.cssText="font-size:10px;padding:3px 8px;background:#1e3a5f;border:1px solid #334155;border-radius:6px;color:#94a3b8;cursor:pointer;font-family:inherit";
-  exportBtn.addEventListener('click', exportData);
-
-  // インポートラベル
-  const importLbl=document.createElement('label');
-  importLbl.style.cssText="font-size:10px;padding:3px 8px;background:#1e3a5f;border:1px solid #334155;border-radius:6px;color:#94a3b8;cursor:pointer;font-family:inherit";
-  const importInp=document.createElement('input');
-  importInp.type='file'; importInp.accept='.json'; importInp.style.display='none';
-  importInp.addEventListener('change', importData);
-  importLbl.appendChild(importInp);
-  importLbl.appendChild(document.createTextNode("📂 読込"));
 
   // 保存表示
   const savedSpan=document.createElement('span');
@@ -890,8 +872,8 @@ function renderHeader(){
     b.textContent=t;
     b.addEventListener('click',()=>{
       state.tab=t;
-      // 今日・体調記録タブに切り替えたとき、今日かつ天気未取得なら自動取得
-      if((t==="体調記録"||t==="日記") && state.viewDate===todayStr() && state.weatherCity && state.weather.length===0 && !state.weatherLoading){
+      // 日記タブに切り替えたとき、今日かつ天気未取得なら自動取得
+      if(t==="日記" && state.viewDate===todayStr() && state.weatherCity && state.weather.length===0 && !state.weatherLoading){
         doFetchWeather(state.weatherCity);
       } else {
         render();
@@ -908,12 +890,10 @@ function renderHeader(){
   titleRow.style.cssText="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px";
   const titleLeft=document.createElement('div');
   titleLeft.style.cssText="display:flex;align-items:center;gap:8px";
-  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v9.6</span>';
+  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v9.7</span>';
   const titleRight=document.createElement('div');
   titleRight.style.cssText="display:flex;align-items:center;gap:5px";
   titleRight.appendChild(savedSpan);
-  titleRight.appendChild(exportBtn);
-  titleRight.appendChild(importLbl);
   const timeSpan=document.createElement('span');
   timeSpan.style.cssText="font-size:11px;color:#64748b";
   timeSpan.textContent=`${new Date().getHours()}時`;
@@ -1959,18 +1939,54 @@ function getActualActivities(vd){
   return acts.sort((a,b)=>a.startMin-b.startMin);
 }
 
-// ── ルーティン設定モーダル（まとめる項目を編集）──
-function renderRoutineSettingsModal(){
-  const bg=div({className:"modal-center"});
-  const m=div({className:"modal-box",style:{maxHeight:"85vh",overflowY:"auto"}});
-  bg.addEventListener('click',()=>{state.modal=null;render();});
-  m.addEventListener('click',e=>e.stopPropagation());
-  m.appendChild(div({style:{fontSize:"15px",fontWeight:700,color:"#e2e8f0",marginBottom:"4px"}},"⚙ ルーティン設定"));
-  m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"12px",lineHeight:1.6}},
+// 汎用サブタブハブ（サブバー＋本文）
+function padBody(body){return div({style:{maxWidth:"600px",margin:"0 auto",padding:"10px 16px 60px"}},[body]);}
+function renderSubHub(SUB,active,onSel,renderBody){
+  const wrap=div({style:{maxWidth:"600px",margin:"0 auto"}});
+  const subBar=div({style:{display:"flex",borderBottom:"1px solid #1e3a5f",background:"#1e293b",position:"sticky",top:"0",zIndex:50}});
+  SUB.forEach(t=>{
+    const b=btn({style:{flex:1,padding:"10px 2px",border:"none",cursor:"pointer",fontSize:"12px",fontWeight:600,
+      background:"transparent",color:active===t?"#38bdf8":"#475569",
+      borderBottom:`2px solid ${active===t?"#38bdf8":"transparent"}`}},t);
+    b.addEventListener('click',()=>onSel(t));
+    subBar.appendChild(b);
+  });
+  wrap.appendChild(subBar);
+  const body=renderBody();
+  if(body)wrap.appendChild(body);
+  return wrap;
+}
+
+// ── 日記ハブ（生活記録・体調記録・アルコール）──
+function renderDiaryHub(vd,ds,curH,isToday){
+  return renderSubHub(["生活記録","体調記録","アルコール"],state.diarySubTab,t=>{
+    state.diarySubTab=t;
+    if(t==="体調記録"&&state.viewDate===todayStr()&&state.weatherCity&&state.weather.length===0&&!state.weatherLoading){doFetchWeather(state.weatherCity);}
+    else render();
+  },()=>{
+    if(state.diarySubTab==="生活記録") return renderToday(vd,ds,curH,isToday);
+    if(state.diarySubTab==="体調記録") return renderKondo(vd,ds,curH,isToday);
+    if(state.diarySubTab==="アルコール") return renderAlcohol(vd,isToday);
+  });
+}
+
+// ── タスクハブ（TODO・目標・やること・買物）──
+function renderTaskHub(vd,ds,isToday){
+  return renderSubHub(["TODO","目標","やること","買物"],state.taskSubTab,t=>{state.taskSubTab=t;render();},()=>{
+    if(state.taskSubTab==="TODO") return renderTodo(vd,ds,isToday);
+    if(state.taskSubTab==="目標") return renderGoals(vd,ds);
+    if(state.taskSubTab==="やること") return padBody(renderTaskMatrix());
+    if(state.taskSubTab==="買物") return padBody(renderTaskList("shopping","🛒 買物リスト","買うものメモ"));
+  });
+}
+
+// ── 設定タブ：ルーティン設定パネル ──
+function renderRoutinePanel(){
+  const card=div({className:"card"});
+  card.appendChild(div({style:{fontSize:"14px",fontWeight:700,color:"#e2e8f0",marginBottom:"4px"}},"⚙ ルーティン設定"));
+  card.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"12px",lineHeight:1.6}},
     "各TODO項目を、予定タブ「実際」列でどのルーティンにまとめるか選べます。「なし」なら個別に表示されます。"));
-
   const groupOf=id=>{const g=(state.routines||[]).find(r=>(r.ids||[]).includes(id));return g?g.key:"";};
-
   getOrderedTodoItems().forEach(item=>{
     const row=div({style:{display:"flex",alignItems:"center",gap:"8px",padding:"7px 2px",borderBottom:"1px solid #1e3a5f33"}});
     row.appendChild(div({style:{flex:1,fontSize:"13px",color:"#e2e8f0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},item.label));
@@ -1985,21 +2001,39 @@ function renderRoutineSettingsModal(){
       saveRoutines();render();
     };})());
     row.appendChild(sel);
-    m.appendChild(row);
+    card.appendChild(row);
   });
+  card.appendChild(btn({className:"btn-ghost",style:{width:"100%",marginTop:"14px"},onClick:()=>{
+    if(confirm("ルーティンの項目を初期設定に戻しますか？")){state.routines=cloneRoutines();saveRoutines();render();}
+  }},"初期設定に戻す"));
+  return card;
+}
 
-  m.appendChild(div({style:{display:"flex",gap:"8px",marginTop:"14px"}},[
-    btn({className:"btn-ghost",style:{flex:1},onClick:()=>{
-      if(confirm("ルーティンの項目を初期設定に戻しますか？")){state.routines=cloneRoutines();saveRoutines();render();}
-    }},"初期設定に戻す"),
-    btn({style:{flex:1,padding:"10px",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:600,cursor:"pointer"},
-      onClick:()=>{state.modal=null;render();}},"閉じる")
-  ]));
-  bg.appendChild(m);return bg;
+// ── 設定ハブ（ルーティン設定・出力・読込）──
+function renderSettingsHub(){
+  const wrap=div({style:{maxWidth:"600px",margin:"0 auto",padding:"12px 16px 60px"}});
+  wrap.appendChild(renderRoutinePanel());
+  const dataCard=div({className:"card"});
+  dataCard.appendChild(div({style:{fontSize:"14px",fontWeight:700,color:"#e2e8f0",marginBottom:"4px"}},"💾 データ管理"));
+  dataCard.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"10px",lineHeight:1.6}},"全データをJSONで出力・読込できます（機種変更やバックアップに）。"));
+  const pct=(getStorageUsage()||{}).pct;
+  if(pct!=null)dataCard.appendChild(div({style:{fontSize:"11px",color:"#94a3b8",marginBottom:"12px"}},`保存容量の使用状況: 約${pct}%`));
+  dataCard.appendChild(btn({style:{width:"100%",padding:"11px",marginBottom:"8px",background:"#0ea5e918",border:"1px solid #0ea5e9",borderRadius:"8px",color:"#38bdf8",fontSize:"13px",fontWeight:600,cursor:"pointer"},
+    onClick:exportData},"💾 データを出力（バックアップ）"));
+  const importLbl=document.createElement('label');
+  importLbl.style.cssText="display:block;width:100%;padding:11px;text-align:center;background:transparent;border:1px solid #334155;border-radius:8px;color:#94a3b8;font-size:13px;font-weight:600;cursor:pointer;box-sizing:border-box";
+  const importInp=document.createElement('input');
+  importInp.type='file';importInp.accept='.json';importInp.style.display='none';
+  importInp.addEventListener('change',importData);
+  importLbl.appendChild(importInp);
+  importLbl.appendChild(document.createTextNode("📂 データを読込（復元）"));
+  dataCard.appendChild(importLbl);
+  wrap.appendChild(dataCard);
+  return wrap;
 }
 
 function renderScheduleHub(vd,ds,isToday){
-  const SUB=["日","週","月","やること","買物"];
+  const SUB=["日","週","月"];
   const wrap=div({style:{maxWidth:"600px",margin:"0 auto"}});
   const subBar=div({style:{display:"flex",borderBottom:"1px solid #1e3a5f",background:"#1e293b",position:"sticky",top:"0",zIndex:50}});
   SUB.forEach(t=>{
@@ -2011,11 +2045,10 @@ function renderScheduleHub(vd,ds,isToday){
   });
   wrap.appendChild(subBar);
   const inner=div({style:{padding:"12px 16px 60px"}});
+  if(!["日","週","月"].includes(state.scheduleSubTab))state.scheduleSubTab="日";
   if(state.scheduleSubTab==="日")       inner.appendChild(renderDaySchedule(vd,ds,isToday));
   if(state.scheduleSubTab==="週")       inner.appendChild(renderWeekCalendar(vd,ds));
   if(state.scheduleSubTab==="月")       inner.appendChild(renderMonthCalendar(vd,ds));
-  if(state.scheduleSubTab==="やること") inner.appendChild(renderTaskMatrix());
-  if(state.scheduleSubTab==="買物")     inner.appendChild(renderTaskList("shopping","🛒 買物リスト","買うものメモ"));
   wrap.appendChild(inner);
   return wrap;
 }
@@ -2041,9 +2074,6 @@ function renderDaySchedule(vd,ds,isToday){
       onClick:()=>runAISchedule(vd),
       },state.aiScheduleLoading?"🤖 提案中...":"🤖 AI提案")
   ]));
-
-  wrap.appendChild(btn({style:{width:"100%",padding:"7px",marginBottom:"10px",background:"transparent",border:"1px dashed #334155",borderRadius:"8px",color:"#64748b",fontSize:"11px",cursor:"pointer"},
-    onClick:()=>{state.modal="routineSettings";render();}},"⚙ ルーティン設定（まとめる項目を変更）"));
 
   // AI提案結果の確認カード
   if(state.aiScheduleProposal){
@@ -3423,7 +3453,7 @@ function renderLog(){
     }});
     cell.appendChild(div({style:{fontSize:"9px",color:isT?"#38bdf8":"#64748b",fontWeight:isT?700:400}},String(day)));
     if(avg2!=null)cell.appendChild(div({style:{fontSize:"10px",fontWeight:700,color:col}},avg2.toFixed(1)));
-    cell.addEventListener('click',(()=>{const k=dsK;return()=>{state.viewDate=k;state.tab="日記";render();};})()); 
+    cell.addEventListener('click',(()=>{const k=dsK;return()=>{state.viewDate=k;state.tab="日記";state.diarySubTab="体調記録";render();};})());
     grid.appendChild(cell);
   }
   hmCard.appendChild(grid);
