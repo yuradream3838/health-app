@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#0f172a">
-<title>体調管理 v10.4</title>
+<title>体調管理 v10.5</title>
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#0f172a">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -476,7 +476,7 @@ const state = {
   routines:cloneRoutines(),
   shiftPattern:defaultShiftPattern(), swapMode:false, swapFirst:null,
   planPatterns:defaultPlanPatterns(),
-  scheduleSubTab:"日", editEventUid:null, editEventIsRepeat:false, editScope:"all",
+  scheduleSubTab:"日", editEventUid:null, editEventIsRepeat:false, editScope:"all", patternEdit:null,
   newEvH:9, newEvM:0, newEvEndH:10, newEvEndM:0, newEvTitle:"", newEvRepeat:"none", newEvColor:"#38bdf8", newEvWeekdays:[],
   aiScheduleLoading:false, aiScheduleProposal:null,
   aiAnalysisResult:null, aiAnalysisLoading:false, aiAnalysisError:null, aiAnalysisRemaining:null,
@@ -846,6 +846,7 @@ function render(){
   if(state.modal==="addEjac")  content.appendChild(renderAddEjacModal(vd));
   if(state.modal==="addNap")   content.appendChild(renderAddNapModal(vd));
   if(state.modal==="addEvent") content.appendChild(renderAddEventModal(vd));
+  if(state.modal==="patternEdit") content.appendChild(renderPatternEditModal(vd));
   if(state.modal==="editNap")  content.appendChild(renderAddNapModal(vd,true));
   if(state.goalHistoryType)    content.appendChild(renderGoalHistory(vd));
   if(state.goalEditKey)        content.appendChild(renderGoalEditModal());
@@ -956,7 +957,7 @@ function renderHeader(){
   titleRow.style.cssText="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px";
   const titleLeft=document.createElement('div');
   titleLeft.style.cssText="display:flex;align-items:center;gap:8px";
-  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v10.4</span>';
+  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v10.5</span>';
   const titleRight=document.createElement('div');
   titleRight.style.cssText="display:flex;align-items:center;gap:5px";
   titleRight.appendChild(savedSpan);
@@ -2032,29 +2033,95 @@ function getPlannedExtras(vd){
       let endTotal=sh.end; if(endTotal>24)endTotal=24;
       out.push({title:`💼 ${sh.label}`,color:sh.color,
         startH:Math.floor(sh.start),startM:Math.round((sh.start%1)*60),
-        endH:Math.floor(endTotal),endM:Math.round((endTotal%1)*60),isPattern:true});
+        endH:Math.floor(endTotal),endM:Math.round((endTotal%1)*60),isPattern:true,shiftBlock:true});
     }
   }
   // パターン予定（睡眠など）。シフト連動なら当日のシフトで時間が変わる。0時またぎは分割
   const dow=parseDS(vd).getDay();
   const dshift=sk||"off";
+  const ovAll=getDaily(vd).patternOv||{};
   (state.planPatterns||[]).forEach(p=>{
     if(p.enabled===false)return;
-    if(Array.isArray(p.weekdays)&&p.weekdays.length&&!p.weekdays.includes(dow))return;
+    const ov=ovAll[p.uid];
+    if(ov&&ov.hidden)return;
     let sH,sM,eH,eM;
-    if(p.byShift){
-      const st=(p.shiftTimes||{})[dshift];
-      if(!st||st.on===false)return;
-      sH=st.startH;sM=st.startM||0;eH=st.endH;eM=st.endM||0;
-    } else {
-      sH=p.startH;sM=p.startM||0;eH=p.endH;eM=p.endM||0;
+    if(ov&&ov.startH!=null){ sH=ov.startH;sM=ov.startM||0;eH=ov.endH;eM=ov.endM||0; }
+    else {
+      if(Array.isArray(p.weekdays)&&p.weekdays.length&&!p.weekdays.includes(dow))return;
+      if(p.byShift){
+        const st=(p.shiftTimes||{})[dshift];
+        if(!st||st.on===false)return;
+        sH=st.startH;sM=st.startM||0;eH=st.endH;eM=st.endM||0;
+      } else {
+        sH=p.startH;sM=p.startM||0;eH=p.endH;eM=p.endM||0;
+      }
     }
     const s=sH*60+sM, e=eH*60+eM;
-    const mk=(a,b,c,d)=>({title:p.title,color:p.color||"#38bdf8",startH:a,startM:b,endH:c,endM:d,isPattern:true});
+    // 編集用に分割前の元時刻(oSH..)を保持
+    const mk=(a,b,c,d)=>({title:p.title,color:p.color||"#38bdf8",startH:a,startM:b,endH:c,endM:d,isPattern:true,patternUid:p.uid,oSH:sH,oSM:sM,oEH:eH,oEM:eM,ovDay:!!(ov&&ov.startH!=null)});
     if(e>s){ out.push(mk(sH,sM,eH,eM)); }
     else { out.push(mk(sH,sM,24,0)); if(e>0) out.push(mk(0,0,eH,eM)); }
   });
   return out;
+}
+
+// パターン予定ブロックのタップ → 編集モーダル
+function openPatternEdit(ev,vd){
+  if(ev.shiftBlock){ state.patternEdit={kind:"shift"}; }
+  else { state.patternEdit={kind:"plan",uid:ev.patternUid,startH:ev.oSH,startM:ev.oSM,endH:ev.oEH,endM:ev.oEM,ovDay:ev.ovDay}; }
+  state.modal="patternEdit"; render();
+}
+function renderPatternEditModal(vd){
+  const pe=state.patternEdit||{};
+  const bg=div({className:"modal-center"});
+  const m=div({className:"modal-box",style:{maxHeight:"85vh",overflowY:"auto"}});
+  bg.addEventListener('click',()=>{state.modal=null;render();});
+  m.addEventListener('click',e=>e.stopPropagation());
+  const dl=(()=>{const p=vd.split('-');return `${parseInt(p[1])}/${parseInt(p[2])}`;})();
+
+  if(pe.kind==="shift"){
+    m.appendChild(div({style:{fontSize:"15px",fontWeight:700,color:"#e2e8f0",marginBottom:"4px"}},"💼 シフトを変更"));
+    m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"12px"}},`${dl} のシフト（この日のみ変更）`));
+    const row=div({style:{display:"flex",gap:"6px",marginBottom:"10px"}});
+    [["s1","1直"],["s2","2直"],["off","休み"]].forEach(([k,l])=>{
+      const on=getPlanShiftKey(vd)===k;
+      const b=btn({style:{flex:1,padding:"9px",borderRadius:"8px",cursor:"pointer",fontSize:"13px",fontWeight:600,
+        border:`1px solid ${on?SHIFT_TYPES[k].color:"#334155"}`,background:on?SHIFT_TYPES[k].color+"22":"transparent",color:on?SHIFT_TYPES[k].color:"#64748b"}},l);
+      b.addEventListener('click',()=>{setDayShift(vd,k);state.modal=null;render();});
+      row.appendChild(b);
+    });
+    m.appendChild(row);
+    m.appendChild(btn({className:"btn-ghost",style:{width:"100%",marginBottom:"8px"},onClick:()=>{setDayShift(vd,null);state.modal=null;showToast("パターンに戻しました");render();}},"↩ パターンに戻す"));
+    m.appendChild(btn({style:{width:"100%",padding:"9px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#94a3b8",cursor:"pointer",fontSize:"12px"},onClick:()=>{state.modal=null;state.tab="設定";render();}},"⚙ シフトパターン設定を編集"));
+  } else {
+    const p=(state.planPatterns||[]).find(x=>x.uid===pe.uid);
+    m.appendChild(div({style:{fontSize:"15px",fontWeight:700,color:"#e2e8f0",marginBottom:"4px"}},`${p?p.title:"パターン予定"} を変更`));
+    m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"12px"}},`${dl} の時間`));
+    const mkT=(label,gh,gm,setH,setM)=>{
+      const w2=div({style:{marginBottom:"10px"}});
+      w2.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"4px"}},label));
+      const r=document.createElement('div');r.style.cssText="display:flex;gap:8px;align-items:center";
+      const H=document.createElement('select');H.className='sel';const M=document.createElement('select');M.className='sel';
+      Array.from({length:24},(_,i)=>{const o=document.createElement('option');o.value=i;o.textContent=`${i}時`;if(i===gh())o.selected=true;H.appendChild(o);});
+      [0,5,10,15,20,25,30,35,40,45,50,55].forEach(i=>{const o=document.createElement('option');o.value=i;o.textContent=`${String(i).padStart(2,'0')}分`;if(i===gm())o.selected=true;M.appendChild(o);});
+      H.addEventListener('change',e=>setH(+e.target.value));M.addEventListener('change',e=>setM(+e.target.value));
+      r.appendChild(H);r.appendChild(span({style:{color:"#475569"}},"："));r.appendChild(M);
+      w2.appendChild(r);return w2;
+    };
+    m.appendChild(mkT("開始",()=>pe.startH,()=>pe.startM,v=>{state.patternEdit.startH=v;},v=>{state.patternEdit.startM=v;}));
+    m.appendChild(mkT("終了",()=>pe.endH,()=>pe.endM,v=>{state.patternEdit.endH=v;},v=>{state.patternEdit.endM=v;}));
+    m.appendChild(btn({style:{width:"100%",padding:"10px",marginBottom:"8px",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:600,cursor:"pointer"},
+      onClick:()=>{const d=getDaily(vd);const ov={...(d.patternOv||{})};ov[pe.uid]={startH:pe.startH,startM:pe.startM,endH:pe.endH,endM:pe.endM};setDaily(vd,{patternOv:ov});state.modal=null;showToast("この日だけ変更しました");render();}},"✅ この日だけ変更"));
+    m.appendChild(btn({className:"btn-ghost",style:{width:"100%",marginBottom:"8px"},
+      onClick:()=>{const d=getDaily(vd);const ov={...(d.patternOv||{})};ov[pe.uid]={hidden:true};setDaily(vd,{patternOv:ov});state.modal=null;render();}},"🚫 この日は非表示"));
+    if((getDaily(vd).patternOv||{})[pe.uid])
+      m.appendChild(btn({style:{width:"100%",padding:"8px",marginBottom:"8px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#64748b",cursor:"pointer",fontSize:"12px"},
+        onClick:()=>{const d=getDaily(vd);const ov={...(d.patternOv||{})};delete ov[pe.uid];setDaily(vd,{patternOv:ov});state.modal=null;showToast("この日をパターンに戻しました");render();}},"↩ この日をパターンに戻す"));
+    m.appendChild(btn({style:{width:"100%",padding:"9px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#94a3b8",cursor:"pointer",fontSize:"12px"},
+      onClick:()=>{state.modal=null;state.tab="設定";render();}},"⚙ すべての日を変える（パターン設定）"));
+  }
+  m.appendChild(btn({className:"btn-ghost",style:{width:"100%",marginTop:"4px"},onClick:()=>{state.modal=null;render();}},"閉じる"));
+  bg.appendChild(m);return bg;
 }
 
 // 汎用サブタブハブ（サブバー＋本文）
@@ -2438,7 +2505,7 @@ function renderDaySchedule(vd,ds,isToday){
     });
   };
   blockArea(events,"36px","50% - 40px",EV_COLORS[0],ev=>{
-    if(ev.isPattern){ state.tab="設定"; showToast("パターンは設定タブで編集できます"); render(); return; }
+    if(ev.isPattern){ openPatternEdit(ev,vd); return; }
     state.modal="addEvent";state.editEventUid=ev.uid;state.editEventIsRepeat=!!ev.isRepeat;
     state.newEvTitle=ev.title;state.newEvH=ev.startH;state.newEvM=ev.startM;
     state.newEvEndH=ev.endH;state.newEvEndM=ev.endM;
