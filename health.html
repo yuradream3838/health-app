@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#0f172a">
-<title>体調管理 v9.2</title>
+<title>体調管理 v9.3</title>
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#0f172a">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -251,11 +251,13 @@ const TODO_ITEMS = [
   {id:"meditation_pm", label:"夜瞑想",                type:"check"},
 ];
 
-// 予定タブ「実際」列で1つにまとめて表示するルーティン群
-const ROUTINE_GROUPS = [
-  {ids:["meditation_am","bedmaking","grooming","water_am","stretch_am","dressing"], title:"🌅モーニングルーティン", color:"#fb923c"},
-  {ids:["stretch_pm","meditation_pm"],                                              title:"🌙ナイトルーティン",     color:"#a78bfa"},
+// 予定タブ「実際」列で1つにまとめて表示するルーティン群（アプリ内で編集可能・初期値）
+const DEFAULT_ROUTINES = [
+  {key:"morning", title:"🌅モーニングルーティン", color:"#fb923c", ids:["meditation_am","bedmaking","grooming","water_am","stretch_am","dressing"]},
+  {key:"night",   title:"🌙ナイトルーティン",     color:"#a78bfa", ids:["stretch_pm","meditation_pm"]},
 ];
+const cloneRoutines = () => DEFAULT_ROUTINES.map(g=>({...g, ids:[...g.ids]}));
+function saveRoutines(){ try{localStorage.setItem(STORAGE_KEY+"_routines",JSON.stringify(state.routines));}catch{} }
 
 const DRINK_TYPES = [
   {id:"beer",    label:"ビール",     emoji:"🍺",pct:5,  ml:350},
@@ -412,6 +414,7 @@ const state = {
   logs:[], dailies:[], forecast:[],
   todos:{}, weeklyIdx:0, goals:{},
   schedule:{}, repeatEvents:[], tasks:{todo:[],shopping:[]},
+  routines:cloneRoutines(),
   scheduleSubTab:"日", editEventUid:null, editEventIsRepeat:false,
   newEvH:9, newEvM:0, newEvEndH:10, newEvEndM:0, newEvTitle:"", newEvRepeat:"none", newEvColor:"#38bdf8",
   aiScheduleLoading:false, aiScheduleProposal:null,
@@ -463,6 +466,8 @@ function loadStorage(){
     if(rp){state.repeatEvents=JSON.parse(rp);}
     const tk=localStorage.getItem(STORAGE_KEY+"_tasks");
     if(tk){state.tasks=JSON.parse(tk);}
+    const rt=localStorage.getItem(STORAGE_KEY+"_routines");
+    if(rt){const r=JSON.parse(rt); if(Array.isArray(r)&&r.length)state.routines=r;}
     // 旧形式（v8.3 events/taskList/wishList/shopList）からの一度きり移行
     if(!sc && !tk){ migrateOldSchedule(); }
   }catch{}
@@ -777,6 +782,7 @@ function render(){
   if(state.modal==="addEjac")  content.appendChild(renderAddEjacModal(vd));
   if(state.modal==="addNap")   content.appendChild(renderAddNapModal(vd));
   if(state.modal==="addEvent") content.appendChild(renderAddEventModal(vd));
+  if(state.modal==="routineSettings") content.appendChild(renderRoutineSettingsModal());
   if(state.modal==="editNap")  content.appendChild(renderAddNapModal(vd,true));
   if(state.goalHistoryType)    content.appendChild(renderGoalHistory(vd));
   if(state.goalEditKey)        content.appendChild(renderGoalEditModal());
@@ -902,7 +908,7 @@ function renderHeader(){
   titleRow.style.cssText="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px";
   const titleLeft=document.createElement('div');
   titleLeft.style.cssText="display:flex;align-items:center;gap:8px";
-  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v9.2</span>';
+  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v9.3</span>';
   const titleRight=document.createElement('div');
   titleRight.style.cssText="display:flex;align-items:center;gap:5px";
   titleRight.appendChild(savedSpan);
@@ -1874,7 +1880,8 @@ function repeatLabel(t, startDate){
 function getActualActivities(vd){
   const t=state.todos[vd]||{};
   const acts=[];
-  const routineIds=new Set(ROUTINE_GROUPS.flatMap(g=>g.ids));
+  const routines=state.routines||[];
+  const routineIds=new Set(routines.flatMap(g=>g.ids));
   TODO_ITEMS.forEach(item=>{
     if(routineIds.has(item.id))return; // ルーティンは後でまとめて1ブロックに
     const d=t[item.id];
@@ -1894,15 +1901,17 @@ function getActualActivities(vd){
       acts.push({title:"✓"+item.label,startMin:ct.getHours()*60+ct.getMinutes(),endMin:ct.getHours()*60+ct.getMinutes()+12,isPoint:true});
     }
   });
-  // 朝/夜のルーティンは1ブロックにまとめて表示（完了項目の最早〜最遅時刻）
-  ROUTINE_GROUPS.forEach(g=>{
+  // ルーティンは1ブロックにまとめて表示（完了項目の最早〜最遅時刻）
+  const mm=dt=>{const x=new Date(dt);return x.getHours()*60+x.getMinutes();};
+  routines.forEach(g=>{
     const mins=[];
-    g.ids.forEach(id=>{
+    (g.ids||[]).forEach(id=>{
       const d=t[id];
-      if(d&&!d.excluded&&d.checked&&d.time){
-        const ct=new Date(d.time);
-        mins.push(ct.getHours()*60+ct.getMinutes());
-      }
+      if(!d||d.excluded)return;
+      if(d.checked&&d.time) mins.push(mm(d.time));
+      if(d.startTime) mins.push(mm(d.startTime));
+      if(d.endTime) mins.push(mm(d.endTime));
+      (d.sessions||[]).forEach(s=>{ if(s.startTime)mins.push(mm(s.startTime)); if(s.endTime)mins.push(mm(s.endTime)); });
     });
     if(mins.length){
       const s=Math.min(...mins), e=Math.max(...mins);
@@ -1917,6 +1926,45 @@ function getActualActivities(vd){
     acts.push({title:`${dt.emoji}${dt.label}`,startMin:sMin,endMin:sMin+12,isPoint:true,color:"#f59e0b"});
   });
   return acts.sort((a,b)=>a.startMin-b.startMin);
+}
+
+// ── ルーティン設定モーダル（まとめる項目を編集）──
+function renderRoutineSettingsModal(){
+  const bg=div({className:"modal-center"});
+  const m=div({className:"modal-box",style:{maxHeight:"85vh",overflowY:"auto"}});
+  bg.addEventListener('click',()=>{state.modal=null;render();});
+  m.addEventListener('click',e=>e.stopPropagation());
+  m.appendChild(div({style:{fontSize:"15px",fontWeight:700,color:"#e2e8f0",marginBottom:"4px"}},"⚙ ルーティン設定"));
+  m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"12px",lineHeight:1.6}},
+    "各TODO項目を、予定タブ「実際」列でどのルーティンにまとめるか選べます。「なし」なら個別に表示されます。"));
+
+  const groupOf=id=>{const g=(state.routines||[]).find(r=>(r.ids||[]).includes(id));return g?g.key:"";};
+
+  getOrderedTodoItems().forEach(item=>{
+    const row=div({style:{display:"flex",alignItems:"center",gap:"8px",padding:"7px 2px",borderBottom:"1px solid #1e3a5f33"}});
+    row.appendChild(div({style:{flex:1,fontSize:"13px",color:"#e2e8f0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},item.label));
+    const sel=document.createElement('select');sel.className='sel';sel.style.cssText="flex-shrink:0;max-width:170px";
+    const cur=groupOf(item.id);
+    const o0=document.createElement('option');o0.value="";o0.textContent="なし（個別）";if(!cur)o0.selected=true;sel.appendChild(o0);
+    (state.routines||[]).forEach(r=>{const o=document.createElement('option');o.value=r.key;o.textContent=r.title;if(cur===r.key)o.selected=true;sel.appendChild(o);});
+    sel.addEventListener('change',(()=>{const id=item.id;return e=>{
+      const key=e.target.value;
+      state.routines=(state.routines||[]).map(r=>({...r, ids:(r.ids||[]).filter(x=>x!==id)}));
+      if(key){const g=state.routines.find(r=>r.key===key); if(g)g.ids.push(id);}
+      saveRoutines();render();
+    };})());
+    row.appendChild(sel);
+    m.appendChild(row);
+  });
+
+  m.appendChild(div({style:{display:"flex",gap:"8px",marginTop:"14px"}},[
+    btn({className:"btn-ghost",style:{flex:1},onClick:()=>{
+      if(confirm("ルーティンの項目を初期設定に戻しますか？")){state.routines=cloneRoutines();saveRoutines();render();}
+    }},"初期設定に戻す"),
+    btn({style:{flex:1,padding:"10px",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:600,cursor:"pointer"},
+      onClick:()=>{state.modal=null;render();}},"閉じる")
+  ]));
+  bg.appendChild(m);return bg;
 }
 
 function renderScheduleHub(vd,ds,isToday){
@@ -1961,6 +2009,9 @@ function renderDaySchedule(vd,ds,isToday){
       onClick:()=>runAISchedule(vd),
       },state.aiScheduleLoading?"🤖 提案中...":"🤖 AI提案")
   ]));
+
+  wrap.appendChild(btn({style:{width:"100%",padding:"7px",marginBottom:"10px",background:"transparent",border:"1px dashed #334155",borderRadius:"8px",color:"#64748b",fontSize:"11px",cursor:"pointer"},
+    onClick:()=>{state.modal="routineSettings";render();}},"⚙ ルーティン設定（まとめる項目を変更）"));
 
   // AI提案結果の確認カード
   if(state.aiScheduleProposal){
@@ -3999,6 +4050,7 @@ function exportData(){
     schedule:state.schedule,
     repeatEvents:state.repeatEvents,
     tasks:state.tasks,
+    routines:state.routines,
     weather,
     city
   };
@@ -4033,6 +4085,7 @@ function importData(e){
       if(p.schedule){state.schedule=p.schedule;try{localStorage.setItem(STORAGE_KEY+"_schedule",JSON.stringify(p.schedule));}catch{}}
       if(p.repeatEvents){state.repeatEvents=p.repeatEvents;try{localStorage.setItem(STORAGE_KEY+"_repeat",JSON.stringify(p.repeatEvents));}catch{}}
       if(p.tasks){state.tasks=p.tasks;try{localStorage.setItem(STORAGE_KEY+"_tasks",JSON.stringify(p.tasks));}catch{}}
+      if(Array.isArray(p.routines)&&p.routines.length){state.routines=p.routines;saveRoutines();}
       if(p.weather){try{localStorage.setItem(STORAGE_KEY+"_weather",JSON.stringify(p.weather));}catch{}}
       if(p.city){state.weatherCity=p.city;try{localStorage.setItem(STORAGE_KEY+"_city",JSON.stringify(p.city));}catch{}}
       // 旧形式（v8.3）のバックアップは新モデルへ移行して取り込む
