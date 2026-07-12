@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#0f172a">
-<title>体調管理 v9.4</title>
+<title>体調管理 v9.5</title>
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#0f172a">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -908,7 +908,7 @@ function renderHeader(){
   titleRow.style.cssText="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px";
   const titleLeft=document.createElement('div');
   titleLeft.style.cssText="display:flex;align-items:center;gap:8px";
-  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v9.4</span>';
+  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v9.5</span>';
   const titleRight=document.createElement('div');
   titleRight.style.cssText="display:flex;align-items:center;gap:5px";
   titleRight.appendChild(savedSpan);
@@ -1928,6 +1928,24 @@ function getActualActivities(vd){
     const sMin=(dr.hour||0)*60+(dr.min||0);
     acts.push({title:`${dt.emoji}${dt.label}`,startMin:sMin,endMin:sMin+12,isPoint:true,color:"#f59e0b"});
   });
+  // 睡眠（就寝〜起床）も実際の行動として反映。0時をまたぐ場合は深夜0時で2分割
+  if(daily.sleepStart!=null&&daily.sleepEnd!=null){
+    const ss=Math.round(daily.sleepStart*60), se=Math.round(daily.sleepEnd*60);
+    const SC="#60a5fa";
+    if(se>ss){
+      acts.push({title:"😴 睡眠",startMin:ss,endMin:se,color:SC});
+    } else if(se<ss){
+      if(ss<1440) acts.push({title:"😴 睡眠",startMin:ss,endMin:1440,color:SC});
+      if(se>0)    acts.push({title:"😴 睡眠",startMin:0,endMin:se,color:SC});
+    }
+  }
+  // 昼寝も反映
+  (daily.naps||[]).forEach(n=>{
+    const s=(n.hour||0)*60+(n.min||0);
+    let e=n.endHour!=null?(n.endHour*60+(n.endMin||0)):s+(n.mins||30);
+    if(e<=s)e=s+(n.mins||30);
+    acts.push({title:"💤 昼寝",startMin:s,endMin:e,color:"#93c5fd"});
+  });
   return acts.sort((a,b)=>a.startMin-b.startMin);
 }
 
@@ -2049,7 +2067,7 @@ function renderDaySchedule(vd,ds,isToday){
   tlCard.appendChild(div({style:{display:"flex",marginBottom:"6px"}},[
     div({style:{width:"34px"}},""),
     div({style:{flex:1,fontSize:"10px",fontWeight:700,color:"#38bdf8",textAlign:"center"}},"📅 予定"),
-    div({style:{flex:1,fontSize:"10px",fontWeight:700,color:"#22c55e",textAlign:"center"}},"✔ 実際（TODO・飲酒）")
+    div({style:{flex:1,fontSize:"10px",fontWeight:700,color:"#22c55e",textAlign:"center"}},"✔ 実際（TODO・飲酒・睡眠）")
   ]));
 
   const tl=div({style:{position:"relative",height:`${(END_H-START_H)*HOUR_H}px`}});
