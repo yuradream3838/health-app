@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#0f172a">
-<title>体調管理 v9.7</title>
+<title>体調管理 v9.8</title>
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#0f172a">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -890,7 +890,7 @@ function renderHeader(){
   titleRow.style.cssText="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px";
   const titleLeft=document.createElement('div');
   titleLeft.style.cssText="display:flex;align-items:center;gap:8px";
-  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v9.7</span>';
+  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v9.8</span>';
   const titleRight=document.createElement('div');
   titleRight.style.cssText="display:flex;align-items:center;gap:5px";
   titleRight.appendChild(savedSpan);
@@ -4157,15 +4157,17 @@ async function runAI(card,content,scored,dailies){
 // エクスポート・インポート（全データ対応）
 // ═══════════════════════════════════════════════════
 function exportData(){
-  let weather={}, city=null;
+  let weather={}, city=null, todoOrder=null;
   try{const w=localStorage.getItem(STORAGE_KEY+"_weather");if(w)weather=JSON.parse(w);}catch{}
   try{const c=localStorage.getItem(STORAGE_KEY+"_city");if(c)city=JSON.parse(c);}catch{}
+  try{const t=localStorage.getItem(STORAGE_KEY+"_todo_order");if(t)todoOrder=JSON.parse(t);}catch{}
   const payload={
     version:2,
     exportedAt:new Date().toISOString(),
     logs:state.logs,
     dailies:state.dailies,
     todos:state.todos,
+    todoOrder,
     goals:state.goals,
     schedule:state.schedule,
     repeatEvents:state.repeatEvents,
@@ -4201,6 +4203,7 @@ function importData(e){
       state.logs=p.logs;
       state.dailies=p.dailies;
       if(p.todos){state.todos=p.todos;try{localStorage.setItem(STORAGE_KEY+"_todo",JSON.stringify(p.todos));}catch{}}
+      if(p.todoOrder){try{localStorage.setItem(STORAGE_KEY+"_todo_order",JSON.stringify(p.todoOrder));}catch{}}
       if(p.goals){state.goals=p.goals;try{localStorage.setItem(STORAGE_KEY+"_goals",JSON.stringify(p.goals));}catch{}}
       if(p.schedule){state.schedule=p.schedule;try{localStorage.setItem(STORAGE_KEY+"_schedule",JSON.stringify(p.schedule));}catch{}}
       if(p.repeatEvents){state.repeatEvents=p.repeatEvents;try{localStorage.setItem(STORAGE_KEY+"_repeat",JSON.stringify(p.repeatEvents));}catch{}}
