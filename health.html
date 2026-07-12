@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#0f172a">
-<title>体調管理 v9.0</title>
+<title>体調管理 v9.1</title>
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#0f172a">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -896,7 +896,7 @@ function renderHeader(){
   titleRow.style.cssText="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px";
   const titleLeft=document.createElement('div');
   titleLeft.style.cssText="display:flex;align-items:center;gap:8px";
-  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v9.0</span>';
+  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v9.1</span>';
   const titleRight=document.createElement('div');
   titleRight.style.cssText="display:flex;align-items:center;gap:5px";
   titleRight.appendChild(savedSpan);
@@ -1886,6 +1886,13 @@ function getActualActivities(vd){
       acts.push({title:"✓"+item.label,startMin:ct.getHours()*60+ct.getMinutes(),endMin:ct.getHours()*60+ct.getMinutes()+12,isPoint:true});
     }
   });
+  // アルコール記録も実際の行動として反映（琥珀色で区別）
+  const daily=getDaily(vd);
+  (daily.drinks||[]).forEach(dr=>{
+    const dt=resolveDT(dr);
+    const sMin=(dr.hour||0)*60+(dr.min||0);
+    acts.push({title:`${dt.emoji}${dt.label}`,startMin:sMin,endMin:sMin+12,isPoint:true,color:"#f59e0b"});
+  });
   return acts.sort((a,b)=>a.startMin-b.startMin);
 }
 
@@ -1965,7 +1972,7 @@ function renderDaySchedule(vd,ds,isToday){
   tlCard.appendChild(div({style:{display:"flex",marginBottom:"6px"}},[
     div({style:{width:"34px"}},""),
     div({style:{flex:1,fontSize:"10px",fontWeight:700,color:"#38bdf8",textAlign:"center"}},"📅 予定"),
-    div({style:{flex:1,fontSize:"10px",fontWeight:700,color:"#22c55e",textAlign:"center"}},"✔ 実際（TODO連携）")
+    div({style:{flex:1,fontSize:"10px",fontWeight:700,color:"#22c55e",textAlign:"center"}},"✔ 実際（TODO・飲酒）")
   ]));
 
   const tl=div({style:{position:"relative",height:`${(END_H-START_H)*HOUR_H}px`}});
@@ -1982,28 +1989,57 @@ function renderDaySchedule(vd,ds,isToday){
       ]));
     }
   }
-  const blockArea=(items,leftPct,widthPct,defaultColor,onTap)=>{
-    items.forEach(ev=>{
-      const sMin=(ev.startMin!=null?ev.startMin:ev.startH*60+ev.startM);
-      const eMin=(ev.endMin!=null?ev.endMin:ev.endH*60+ev.endM);
+  // 重なりをレーン（横並び）に振り分けて文字被りを防ぐ
+  const layoutLanes=(items)=>{
+    const arr=items.map(ev=>{
+      const s=(ev.startMin!=null?ev.startMin:ev.startH*60+ev.startM);
+      let e=(ev.endMin!=null?ev.endMin:ev.endH*60+ev.endM);
+      if(e<=s)e=s+(ev.isPoint?12:16);
+      return {ev,s,e,lane:0,lanes:1};
+    }).sort((a,b)=>a.s-b.s||a.e-b.e);
+    // 連続して重なるものをクラスタ化し、各クラスタ内でレーン割当
+    let cluster=[], clusterEnd=-1;
+    const flush=()=>{
+      if(!cluster.length)return;
+      const laneEnd=[];
+      cluster.forEach(o=>{
+        let placed=false;
+        for(let i=0;i<laneEnd.length;i++){ if(o.s>=laneEnd[i]){o.lane=i;laneEnd[i]=o.e;placed=true;break;} }
+        if(!placed){ o.lane=laneEnd.length; laneEnd.push(o.e); }
+      });
+      cluster.forEach(o=>o.lanes=laneEnd.length);
+      cluster=[]; clusterEnd=-1;
+    };
+    arr.forEach(o=>{
+      if(cluster.length && o.s>=clusterEnd) flush();
+      cluster.push(o); clusterEnd=Math.max(clusterEnd,o.e);
+    });
+    flush();
+    return arr;
+  };
+  const blockArea=(items,leftBase,widthArea,defaultColor,onTap)=>{
+    layoutLanes(items).forEach(({ev,s:sMin,e:eMin,lane,lanes})=>{
       const color=ev.color||defaultColor;
       const top=((sMin/60)-START_H)*HOUR_H;
       const height=ev.isPoint?14:Math.max(16,((eMin-sMin)/60)*HOUR_H-2);
       if(top+height<0||top>(END_H-START_H)*HOUR_H)return;
+      // レーン位置（横分割）。widthArea/leftBase は calc 用の生の式
+      const left=`calc((${leftBase}) + (${widthArea}) * ${(lane/lanes).toFixed(4)})`;
+      const width=`calc((${widthArea}) * ${(1/lanes).toFixed(4)} - 2px)`;
       const block=div({style:{
-        position:"absolute",top:`${Math.max(0,top)}px`,left:leftPct,width:widthPct,
+        position:"absolute",top:`${Math.max(0,top)}px`,left,width,
         height:`${height}px`,background:color+"22",border:`1px solid ${color}66`,
-        borderLeft:`3px solid ${color}`,borderRadius:"5px",padding:"1px 5px",
+        borderLeft:`3px solid ${color}`,borderRadius:"5px",padding:"1px 4px",
         overflow:"hidden",cursor:onTap?"pointer":"default",zIndex:3,boxSizing:"border-box"
       }});
-      block.appendChild(div({style:{fontSize:"9px",fontWeight:600,color:color,lineHeight:1.3,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},
+      block.appendChild(div({style:{fontSize:"9px",fontWeight:600,color:color,lineHeight:1.25,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},
         (ev.isRepeat?"🔁":"")+ev.title));
-      if(height>30&&!ev.isPoint)block.appendChild(div({style:{fontSize:"8px",color:"#64748b"}},`${Math.floor(sMin/60)}:${String(sMin%60).padStart(2,'0')}〜${Math.floor(eMin/60)}:${String(eMin%60).padStart(2,'0')}`));
+      if(height>30&&!ev.isPoint&&lanes===1)block.appendChild(div({style:{fontSize:"8px",color:"#64748b"}},`${Math.floor(sMin/60)}:${String(sMin%60).padStart(2,'0')}〜${Math.floor(eMin/60)}:${String(eMin%60).padStart(2,'0')}`));
       if(onTap)block.addEventListener('click',()=>onTap(ev));
       tl.appendChild(block);
     });
   };
-  blockArea(events,"36px","calc(50% - 40px)",EV_COLORS[0],ev=>{
+  blockArea(events,"36px","50% - 40px",EV_COLORS[0],ev=>{
     state.modal="addEvent";state.editEventUid=ev.uid;state.editEventIsRepeat=!!ev.isRepeat;
     state.newEvTitle=ev.title;state.newEvH=ev.startH;state.newEvM=ev.startM;
     state.newEvEndH=ev.endH;state.newEvEndM=ev.endM;
@@ -2011,7 +2047,7 @@ function renderDaySchedule(vd,ds,isToday){
     state.newEvColor=ev.color||EV_COLORS[0];
     render();
   });
-  blockArea(actuals,"calc(50% + 2px)","calc(50% - 6px)","#22c55e",null);
+  blockArea(actuals,"50% + 2px","50% - 6px","#22c55e",null);
 
   tlCard.appendChild(tl);
   wrap.appendChild(tlCard);
