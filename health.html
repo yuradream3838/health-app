@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#0f172a">
-<title>体調管理 v9.8</title>
+<title>体調管理 v9.9</title>
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#0f172a">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -418,6 +418,7 @@ const state = {
   scheduleSubTab:"日", editEventUid:null, editEventIsRepeat:false,
   newEvH:9, newEvM:0, newEvEndH:10, newEvEndM:0, newEvTitle:"", newEvRepeat:"none", newEvColor:"#38bdf8", newEvWeekdays:[],
   aiScheduleLoading:false, aiScheduleProposal:null,
+  aiAnalysisResult:null, aiAnalysisLoading:false, aiAnalysisError:null, aiAnalysisRemaining:null,
   events:{}, taskList:[], wishList:[], shopList:[],
   newEventUid:null,
   aiPlanTasks:[], aiPlanResult:null, aiPlanLoading:false, aiPlanSelected:{},
@@ -890,7 +891,7 @@ function renderHeader(){
   titleRow.style.cssText="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px";
   const titleLeft=document.createElement('div');
   titleLeft.style.cssText="display:flex;align-items:center;gap:8px";
-  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v9.8</span>';
+  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v9.9</span>';
   const titleRight=document.createElement('div');
   titleRight.style.cssText="display:flex;align-items:center;gap:5px";
   titleRight.appendChild(savedSpan);
@@ -4089,19 +4090,48 @@ function renderAnalysis(){
     wrap.appendChild(ic);
   }
 
-  // AI分析ボタン
-  const aiCard=div({className:"card"},[div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0",marginBottom:"10px"}},"✨ AI総合分析")]);
-  const aiContent=div({style:{textAlign:"center"}},[
-    h('p',{style:{fontSize:"12px",color:"#64748b",marginBottom:"12px"}},"蓄積データをAIが総合的に分析します（無料・1日20回まで）"),
-    btn({style:{padding:"10px 28px",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"14px",fontWeight:600,cursor:"pointer"},onClick:()=>runAI(aiCard,aiContent,scored,state.dailies)},"AIで分析する")
-  ]);
-  aiCard.appendChild(aiContent);
-  wrap.appendChild(aiCard);
+  // AI分析（結果は state に保持し、再描画で消えないようにする）
+  wrap.appendChild(renderAIAnalysisCard(scored));
   return wrap;
 }
 
-async function runAI(card,content,scored,dailies){
-  content.innerHTML='<div style="text-align:center;padding:20px 0;color:#64748b">🔍 分析中...</div>';
+function renderAIAnalysisCard(scored){
+  const card=div({className:"card"},[div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0",marginBottom:"10px"}},"✨ AI総合分析")]);
+  const content=div({style:{textAlign:"center"}});
+  const reBtnStyle={marginTop:"6px",fontSize:"11px",color:"#475569",background:"transparent",border:"none",cursor:"pointer"};
+  const primaryBtn=(label)=>btn({style:{padding:"10px 28px",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"14px",fontWeight:600,cursor:"pointer"},onClick:()=>runAI(scored,state.dailies)},label);
+  const r=state.aiAnalysisResult;
+  if(state.aiAnalysisLoading){
+    content.appendChild(div({style:{textAlign:"center",padding:"20px 0",color:"#64748b"}},"🔍 分析中..."));
+  } else if(state.aiAnalysisError){
+    content.appendChild(div({style:{fontSize:"12px",color:"#f87171",lineHeight:1.6,marginBottom:"12px"}},state.aiAnalysisError));
+    content.appendChild(primaryBtn("🔄 再試行"));
+  } else if(r){
+    content.style.textAlign="left";
+    content.appendChild(h('p',{style:{fontSize:"13px",color:"#cbd5e1",lineHeight:1.7,marginBottom:"12px"}},r.summary));
+    (r.topFactors||[]).forEach(f=>{
+      content.appendChild(div({style:{display:"flex",alignItems:"center",gap:"8px",marginBottom:"5px",padding:"6px 10px",borderRadius:"8px",background:f.impact==="positive"?"#22c55e11":"#ef444411",border:`1px solid ${f.impact==="positive"?"#22c55e33":"#ef444433"}`}},[
+        span({},f.impact==="positive"?"✅":"⚠️"),
+        div({style:{flex:1}},[div({style:{fontSize:"12px",fontWeight:600,color:f.impact==="positive"?"#4ade80":"#f87171"}},f.factor),div({style:{fontSize:"11px",color:"#94a3b8"}},f.detail)]),
+        div({style:{display:"flex",gap:"2px"}},[1,2,3,4,5].map(j=>div({style:{width:"5px",height:"14px",borderRadius:"2px",background:j<=f.score?(f.impact==="positive"?"#22c55e":"#ef4444"):"#1e3a5f"}})))
+      ]));
+    });
+    if(r.worstCondition) content.appendChild(div({style:{background:"#ef444411",border:"1px solid #ef444433",borderRadius:"8px",padding:"10px 12px",marginBottom:"6px",marginTop:"10px"}},[div({style:{fontSize:"11px",color:"#f87171",marginBottom:"2px"}},"😞 体調が悪くなる条件"),div({style:{fontSize:"12px",color:"#cbd5e1"}},r.worstCondition)]));
+    if(r.bestCondition)  content.appendChild(div({style:{background:"#22c55e11",border:"1px solid #22c55e33",borderRadius:"8px",padding:"10px 12px",marginBottom:"12px"}},[div({style:{fontSize:"11px",color:"#4ade80",marginBottom:"2px"}},"😊 体調が良くなる条件"),div({style:{fontSize:"12px",color:"#cbd5e1"}},r.bestCondition)]));
+    (r.advice||[]).forEach(a=>content.appendChild(div({style:{fontSize:"12px",color:"#cbd5e1",lineHeight:1.6,marginBottom:"5px",paddingLeft:"10px",borderLeft:"2px solid #0ea5e9"}},a)));
+    if(state.aiAnalysisRemaining!=null) content.appendChild(div({style:{fontSize:"10px",color:"#334155",marginTop:"8px",textAlign:"right"}},`本日の残り回数: ${state.aiAnalysisRemaining}回`));
+    content.appendChild(btn({style:reBtnStyle,onClick:()=>runAI(scored,state.dailies)},"🔄 再分析"));
+  } else {
+    content.appendChild(h('p',{style:{fontSize:"12px",color:"#64748b",marginBottom:"12px"}},"蓄積データをAIが総合的に分析します（無料・1日20回まで）"));
+    content.appendChild(primaryBtn("AIで分析する"));
+  }
+  card.appendChild(content);
+  return card;
+}
+
+async function runAI(scored,dailies){
+  if(state.aiAnalysisLoading)return;
+  state.aiAnalysisLoading=true;state.aiAnalysisError=null;render();
   try{
     const ds2=dailies.slice(-14).map(d=>{
       const drinks=(d.drinks||[]).map(dr=>({...dr,drinkType:resolveDT(dr)}));
@@ -4132,25 +4162,13 @@ async function runAI(card,content,scored,dailies){
     }
     const text=data.text||"";
     const r=JSON.parse(text.replace(/```json|```/g,"").trim());
-
-    content.innerHTML='';
-    content.appendChild(h('p',{style:{fontSize:"13px",color:"#cbd5e1",lineHeight:1.7,marginBottom:"12px"}},r.summary));
-    (r.topFactors||[]).forEach(f=>{
-      content.appendChild(div({style:{display:"flex",alignItems:"center",gap:"8px",marginBottom:"5px",padding:"6px 10px",borderRadius:"8px",background:f.impact==="positive"?"#22c55e11":"#ef444411",border:`1px solid ${f.impact==="positive"?"#22c55e33":"#ef444433"}`}},[
-        span({},f.impact==="positive"?"✅":"⚠️"),
-        div({style:{flex:1}},[div({style:{fontSize:"12px",fontWeight:600,color:f.impact==="positive"?"#4ade80":"#f87171"}},f.factor),div({style:{fontSize:"11px",color:"#94a3b8"}},f.detail)]),
-        div({style:{display:"flex",gap:"2px"}},[1,2,3,4,5].map(j=>div({style:{width:"5px",height:"14px",borderRadius:"2px",background:j<=f.score?(f.impact==="positive"?"#22c55e":"#ef4444"):"#1e3a5f"}})))
-      ]));
-    });
-    if(r.worstCondition) content.appendChild(div({style:{background:"#ef444411",border:"1px solid #ef444433",borderRadius:"8px",padding:"10px 12px",marginBottom:"6px",marginTop:"10px"}},[div({style:{fontSize:"11px",color:"#f87171",marginBottom:"2px"}},"😞 体調が悪くなる条件"),div({style:{fontSize:"12px",color:"#cbd5e1"}},r.worstCondition)]));
-    if(r.bestCondition)  content.appendChild(div({style:{background:"#22c55e11",border:"1px solid #22c55e33",borderRadius:"8px",padding:"10px 12px",marginBottom:"12px"}},[div({style:{fontSize:"11px",color:"#4ade80",marginBottom:"2px"}},"😊 体調が良くなる条件"),div({style:{fontSize:"12px",color:"#cbd5e1"}},r.bestCondition)]));
-    (r.advice||[]).forEach(a=>content.appendChild(div({style:{fontSize:"12px",color:"#cbd5e1",lineHeight:1.6,marginBottom:"5px",paddingLeft:"10px",borderLeft:"2px solid #0ea5e9"}},a)));
-    if(data.remaining!=null) content.appendChild(div({style:{fontSize:"10px",color:"#334155",marginTop:"8px",textAlign:"right"}},`本日の残り回数: ${data.remaining}回`));
-    const reBtn=btn({style:{marginTop:"6px",fontSize:"11px",color:"#475569",background:"transparent",border:"none",cursor:"pointer"},onClick:()=>runAI(card,content,scored,dailies)},"🔄 再分析");
-    content.appendChild(reBtn);
+    state.aiAnalysisResult=r;
+    state.aiAnalysisRemaining=(data.remaining!=null?data.remaining:null);
   }catch(e){
-    content.innerHTML=`<div style="font-size:12px;color:#f87171;line-height:1.6">${e.message}</div>`;
+    state.aiAnalysisError=e.message;
+    state.aiAnalysisResult=null;
   }
+  state.aiAnalysisLoading=false;render();
 }
 
 // ═══════════════════════════════════════════════════
@@ -4447,12 +4465,15 @@ if(state.weatherCity) doFetchWeather(state.weatherCity);
 // 1分ごとに日付変わりをチェック
 setInterval(()=>{
   const td = todayStr();
+  let changed=false;
   if(state.viewDate !== td && state.viewDate < td){
     // 今日タブを見ていた場合のみ自動で今日に進む
-    if(state.viewDate === state._lastToday) state.viewDate = td;
+    if(state.viewDate === state._lastToday){ state.viewDate = td; changed=true; }
   }
   state._lastToday = td;
-  render();
+  // 日付が変わったときだけ再描画。操作中（モーダル表示中）は再描画しない
+  // → 入力中のポップアップやAI分析結果が消えるのを防ぐ
+  if(changed && !state.modal) render();
 }, 60000);
 </script>
 </body>
