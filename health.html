@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#0f172a">
-<title>体調管理 v9.9</title>
+<title>体調管理 v10.0</title>
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#0f172a">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -415,7 +415,7 @@ const state = {
   todos:{}, weeklyIdx:0, goals:{},
   schedule:{}, repeatEvents:[], tasks:{todo:[],shopping:[]},
   routines:cloneRoutines(),
-  scheduleSubTab:"日", editEventUid:null, editEventIsRepeat:false,
+  scheduleSubTab:"日", editEventUid:null, editEventIsRepeat:false, editScope:"all",
   newEvH:9, newEvM:0, newEvEndH:10, newEvEndM:0, newEvTitle:"", newEvRepeat:"none", newEvColor:"#38bdf8", newEvWeekdays:[],
   aiScheduleLoading:false, aiScheduleProposal:null,
   aiAnalysisResult:null, aiAnalysisLoading:false, aiAnalysisError:null, aiAnalysisRemaining:null,
@@ -891,7 +891,7 @@ function renderHeader(){
   titleRow.style.cssText="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px";
   const titleLeft=document.createElement('div');
   titleLeft.style.cssText="display:flex;align-items:center;gap:8px";
-  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v9.9</span>';
+  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v10.0</span>';
   const titleRight=document.createElement('div');
   titleRight.style.cssText="display:flex;align-items:center;gap:5px";
   titleRight.appendChild(savedSpan);
@@ -1821,6 +1821,8 @@ function fmtDS(d){return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2
 function repeatMatches(ev, dateStr){
   const d=parseDS(dateStr), s=parseDS(ev.startDate);
   if(d<s)return false;
+  if(ev.endDate){ const e2=parseDS(ev.endDate); if(d>e2)return false; } // これ以降変更で分割した終了日
+  if(ev.exceptions && ev.exceptions.includes(dateStr))return false;     // この予定のみ変更で除外した日
   const t=ev.repeatType;
   if(t==="daily")return true;
   if(t==="w1"||t==="w2"||t==="w3"||t==="w4"){
@@ -2121,7 +2123,7 @@ function renderDaySchedule(vd,ds,isToday){
   if(isToday){
     const now=new Date();const nowY=((now.getHours()+now.getMinutes()/60)-START_H)*HOUR_H;
     if(nowY>0&&nowY<(END_H-START_H)*HOUR_H){
-      tl.appendChild(div({style:{position:"absolute",top:`${nowY}px`,left:"30px",right:0,borderTop:"1.5px solid #38bdf8",zIndex:5}},[
+      tl.appendChild(div({id:"now-line","data-hourh":HOUR_H,"data-starth":START_H,"data-endh":END_H,style:{position:"absolute",top:`${nowY}px`,left:"30px",right:0,borderTop:"1.5px solid #38bdf8",zIndex:5}},[
         div({style:{width:"6px",height:"6px",borderRadius:"50%",background:"#38bdf8",marginTop:"-4px"}})
       ]));
     }
@@ -2183,6 +2185,7 @@ function renderDaySchedule(vd,ds,isToday){
     state.newEvRepeat=ev.isRepeat?ev.repeatType:"none";
     state.newEvColor=ev.color||EV_COLORS[0];
     state.newEvWeekdays=(ev.weekdays&&ev.weekdays.length)?[...ev.weekdays]:[parseDS(ev.startDate||vd).getDay()];
+    state.editScope="this";
     render();
   });
   blockArea(actuals,"50% + 2px","50% - 6px","#22c55e",null);
@@ -2536,19 +2539,42 @@ function renderAddEventModal(vd){
     m.appendChild(wdRow);
   }
 
+  // 繰り返し予定の変更・削除の範囲
+  const isRepEdit=isEdit&&state.editEventIsRepeat;
+  const dayBefore=ds=>{const dd=parseDS(ds);dd.setDate(dd.getDate()-1);return fmtDS(dd);};
+  if(isRepEdit){
+    m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"6px"}},"変更・削除の範囲"));
+    const scRow=div({style:{display:"flex",gap:"6px",marginBottom:"12px"}});
+    [["this","この予定のみ"],["future","これ以降すべて"],["all","すべて"]].forEach(([v,l])=>{
+      const on=(state.editScope||"all")===v;
+      const b=btn({style:{flex:1,padding:"8px 2px",borderRadius:"7px",cursor:"pointer",fontSize:"11px",fontWeight:600,
+        border:`1px solid ${on?"#38bdf8":"#334155"}`,background:on?"#0ea5e922":"transparent",color:on?"#38bdf8":"#475569"}},l);
+      b.addEventListener('click',()=>{state.editScope=v;render();});
+      scRow.appendChild(b);
+    });
+    m.appendChild(scRow);
+    if((state.editScope||"all")==="this")
+      m.appendChild(div({style:{fontSize:"10px",color:"#475569",marginBottom:"10px",lineHeight:1.5}},"※「この予定のみ」はこの日だけ変更し、繰り返し設定は無視されます"));
+  }
+
   if(isEdit){
     m.appendChild(btn({style:{width:"100%",padding:"7px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#475569",cursor:"pointer",fontSize:"12px",marginBottom:"8px"},
       onClick:()=>{
-        if(state.editEventIsRepeat){
-          if(!confirm("この繰り返し予定を全て削除しますか？"))return;
-          state.repeatEvents=(state.repeatEvents||[]).filter(e=>e.uid!==state.editEventUid);
-          saveRepeatEvents();
+        if(isRepEdit){
+          const orig=(state.repeatEvents||[]).find(e=>e.uid===state.editEventUid);
+          const scope=state.editScope||"all";
+          if(orig){
+            if(scope==="this"){ orig.exceptions=[...(orig.exceptions||[]),vd]; }
+            else if(scope==="future"){ orig.endDate=dayBefore(vd); }
+            else { if(!confirm("この繰り返し予定を全て削除しますか？"))return; state.repeatEvents=state.repeatEvents.filter(e=>e.uid!==orig.uid); }
+          }
+          saveRepeatEvents();saveSchedule();
         } else {
           state.schedule[vd]=(state.schedule[vd]||[]).filter(e=>e.uid!==state.editEventUid);
           saveSchedule();
         }
         state.modal=null;render();
-      }},state.editEventIsRepeat?"この繰り返し予定を削除（全て）":"この予定を削除"));
+      }},isRepEdit?"🗑 削除（上の範囲）":"この予定を削除"));
   }
 
   m.appendChild(div({style:{display:"flex",gap:"8px"}},[
@@ -2557,26 +2583,30 @@ function renderAddEventModal(vd){
       onClick:()=>{
         if(!state.newEvTitle.trim()){alert("タイトルを入力してください");return;}
         const evData={title:state.newEvTitle.trim(),startH:state.newEvH,startM:state.newEvM,endH:state.newEvEndH,endM:state.newEvEndM,color:state.newEvColor};
+        const isNone=state.newEvRepeat==="none";
+        const newWds=isW(state.newEvRepeat)?((state.newEvWeekdays&&state.newEvWeekdays.length)?[...state.newEvWeekdays].sort((a,b)=>a-b):[parseDS(vd).getDay()]):null;
+        const addSingle=()=>{ if(!state.schedule[vd])state.schedule[vd]=[]; state.schedule[vd].push({uid:Date.now(),...evData}); };
+        const mkRepeat=(startDate)=>{ const rep={uid:Date.now()+Math.floor(Math.random()*1000),...evData,repeatType:state.newEvRepeat,startDate}; if(newWds)rep.weekdays=newWds; return rep; };
 
-        if(isEdit){
-          // 既存編集：繰り返し⇄単発の変換も対応
-          if(state.editEventIsRepeat){
-            state.repeatEvents=(state.repeatEvents||[]).filter(e=>e.uid!==state.editEventUid);
-          } else {
-            state.schedule[vd]=(state.schedule[vd]||[]).filter(e=>e.uid!==state.editEventUid);
+        if(isRepEdit){
+          const orig=(state.repeatEvents||[]).find(e=>e.uid===state.editEventUid);
+          const scope=state.editScope||"all";
+          if(!orig){ addSingle(); }
+          else if(scope==="this"){
+            orig.exceptions=[...(orig.exceptions||[]),vd];
+            addSingle();
+          } else if(scope==="future"){
+            orig.endDate=dayBefore(vd);
+            if(isNone) addSingle(); else state.repeatEvents.push(mkRepeat(vd));
+          } else { // すべて
+            if(isNone){ state.repeatEvents=state.repeatEvents.filter(e=>e.uid!==orig.uid); addSingle(); }
+            else { Object.assign(orig,evData,{repeatType:state.newEvRepeat}); if(newWds)orig.weekdays=newWds; else delete orig.weekdays; }
           }
-        }
-        if(state.newEvRepeat==="none"){
-          if(!state.schedule[vd])state.schedule[vd]=[];
-          state.schedule[vd].push({uid:Date.now(),...evData});
         } else {
-          if(!state.repeatEvents)state.repeatEvents=[];
-          const rep={uid:Date.now(),...evData,repeatType:state.newEvRepeat,startDate:vd};
-          if(isW(state.newEvRepeat)){
-            let wds=(state.newEvWeekdays&&state.newEvWeekdays.length)?[...state.newEvWeekdays]:[parseDS(vd).getDay()];
-            rep.weekdays=wds.sort((a,b)=>a-b);
-          }
-          state.repeatEvents.push(rep);
+          // 単発の編集 or 新規作成
+          if(isEdit){ state.schedule[vd]=(state.schedule[vd]||[]).filter(e=>e.uid!==state.editEventUid); }
+          if(isNone) addSingle();
+          else { if(!state.repeatEvents)state.repeatEvents=[]; state.repeatEvents.push(mkRepeat(vd)); }
         }
         saveSchedule();saveRepeatEvents();
         state.modal=null;render();
@@ -4475,6 +4505,21 @@ setInterval(()=>{
   // → 入力中のポップアップやAI分析結果が消えるのを防ぐ
   if(changed && !state.modal) render();
 }, 60000);
+
+// 現在時刻ラインだけを再描画なしで自動更新（30秒ごと）
+function updateNowLine(){
+  const el=document.getElementById('now-line');
+  if(!el)return;
+  const hourH=parseFloat(el.getAttribute('data-hourh'))||40;
+  const startH=parseFloat(el.getAttribute('data-starth'))||0;
+  const endH=parseFloat(el.getAttribute('data-endh'))||24;
+  const now=new Date();
+  const y=((now.getHours()+now.getMinutes()/60)-startH)*hourH;
+  if(y<=0||y>=(endH-startH)*hourH){el.style.display='none';return;}
+  el.style.display='block';
+  el.style.top=y+'px';
+}
+setInterval(updateNowLine, 30000);
 </script>
 </body>
 </html>
