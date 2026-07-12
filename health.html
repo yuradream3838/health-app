@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#0f172a">
-<title>体調管理 v10.5</title>
+<title>体調管理 v10.6</title>
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#0f172a">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -296,12 +296,25 @@ function getPatternShift(ds){
   const row=sp.grid[cycleWeek]||sp.grid[cycleWeek%sp.grid.length];
   return row?(row[dow]||null):null;
 }
-// 指定日の勤務（手動優先→パターン）。{start,end,overtime,manual,key}
-// 予定(左)のシフトキー：その日の予定上書き(planShift)→なければパターン
+// 予定(左)のシフトキー：その日の予定上書き(planShift)→なければパターン。
+// planShift は "s1"/"s2"/"off" または カスタム時刻オブジェクト {startH,startM,endH,endM}
 function getPlanShiftKey(ds){
   const d=getDaily(ds);
-  if(d.planShift!=null) return d.planShift; // "s1"/"s2"/"off"
-  return getPatternShift(ds); // パターン or null
+  if(d.planShift&&typeof d.planShift==='object') return d.planShift.startH<12?"s1":"s2"; // カスタムは時間帯で近似
+  if(d.planShift!=null) return d.planShift;
+  return getPatternShift(ds);
+}
+// 予定(左)に描くシフトブロック（キー or カスタム時刻に対応）。休み/なしは null
+function getPlanShiftBlock(ds){
+  const ps=getDaily(ds).planShift;
+  if(ps&&typeof ps==='object'&&ps.startH!=null){
+    return {startH:ps.startH,startM:ps.startM||0,endH:ps.endH,endM:ps.endM||0,label:"勤務",color:ps.startH<12?SHIFT_TYPES.s1.color:SHIFT_TYPES.s2.color,custom:true};
+  }
+  const key=(ps!=null)?ps:getPatternShift(ds);
+  if(!key||key==="off")return null;
+  const sh=SHIFT_TYPES[key]; if(!sh||sh.start==null)return null;
+  let end=sh.end; if(end>24)end=24;
+  return {startH:Math.floor(sh.start),startM:Math.round((sh.start%1)*60),endH:Math.floor(end),endM:Math.round((end%1)*60),label:sh.label,color:sh.color};
 }
 // 週カレンダー等の表示用（＝予定シフト）
 function currentShiftKey(ds){ return getPlanShiftKey(ds); }
@@ -957,7 +970,7 @@ function renderHeader(){
   titleRow.style.cssText="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px";
   const titleLeft=document.createElement('div');
   titleLeft.style.cssText="display:flex;align-items:center;gap:8px";
-  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v10.5</span>';
+  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v10.6</span>';
   const titleRight=document.createElement('div');
   titleRight.style.cssText="display:flex;align-items:center;gap:5px";
   titleRight.appendChild(savedSpan);
@@ -2026,15 +2039,10 @@ function getActualActivities(vd){
 function getPlannedExtras(vd){
   const out=[];
   const sk=getPlanShiftKey(vd);
-  // シフト計画（パターン or 予定上書き）を予定(左)へ。実績(workStart)とは独立
-  if(sk&&sk!=="off"){
-    const sh=SHIFT_TYPES[sk];
-    if(sh&&sh.start!=null&&sh.end!=null){
-      let endTotal=sh.end; if(endTotal>24)endTotal=24;
-      out.push({title:`💼 ${sh.label}`,color:sh.color,
-        startH:Math.floor(sh.start),startM:Math.round((sh.start%1)*60),
-        endH:Math.floor(endTotal),endM:Math.round((endTotal%1)*60),isPattern:true,shiftBlock:true});
-    }
+  // シフト計画（パターン or 予定上書き・カスタム時刻）を予定(左)へ。実績(workStart)とは独立
+  const sb=getPlanShiftBlock(vd);
+  if(sb){
+    out.push({title:`💼 ${sb.label}`,color:sb.color,startH:sb.startH,startM:sb.startM,endH:sb.endH,endM:sb.endM,isPattern:true,shiftBlock:true});
   }
   // パターン予定（睡眠など）。シフト連動なら当日のシフトで時間が変わる。0時またぎは分割
   const dow=parseDS(vd).getDay();
@@ -2067,9 +2075,18 @@ function getPlannedExtras(vd){
 
 // パターン予定ブロックのタップ → 編集モーダル
 function openPatternEdit(ev,vd){
-  if(ev.shiftBlock){ state.patternEdit={kind:"shift"}; }
+  if(ev.shiftBlock){ state.patternEdit={kind:"shift",startH:ev.startH,startM:ev.startM,endH:ev.endH,endM:ev.endM}; }
   else { state.patternEdit={kind:"plan",uid:ev.patternUid,startH:ev.oSH,startM:ev.oSM,endH:ev.oEH,endM:ev.oEM,ovDay:ev.ovDay}; }
   state.modal="patternEdit"; render();
+}
+// 自由入力の時刻フィールド（HH:MM）
+function timeField(getH,getM,setHM){
+  const inp=document.createElement('input');inp.type='time';
+  const clamp=n=>Math.max(0,Math.min(23,n|0));
+  inp.value=`${String(clamp(getH())).padStart(2,'0')}:${String(getM()||0).padStart(2,'0')}`;
+  inp.style.cssText="flex:1;min-width:0;padding:9px 10px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:15px;font-family:inherit;color-scheme:dark";
+  inp.addEventListener('change',e=>{const parts=(e.target.value||"").split(':');const h=Number(parts[0]),mm=Number(parts[1]);if(!isNaN(h)&&!isNaN(mm))setHM(h,mm);});
+  return inp;
 }
 function renderPatternEditModal(vd){
   const pe=state.patternEdit||{};
@@ -2078,38 +2095,42 @@ function renderPatternEditModal(vd){
   bg.addEventListener('click',()=>{state.modal=null;render();});
   m.addEventListener('click',e=>e.stopPropagation());
   const dl=(()=>{const p=vd.split('-');return `${parseInt(p[1])}/${parseInt(p[2])}`;})();
+  const timeRow=(cs)=>{
+    const w2=div({style:{marginBottom:"12px"}});
+    w2.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"4px"}},"時間（自由に入力）"));
+    const r=div({style:{display:"flex",gap:"8px",alignItems:"center"}});
+    r.appendChild(timeField(()=>cs.startH,()=>cs.startM,(h,mm)=>{cs.startH=h;cs.startM=mm;}));
+    r.appendChild(span({style:{color:"#475569"}},"〜"));
+    r.appendChild(timeField(()=>cs.endH,()=>cs.endM,(h,mm)=>{cs.endH=h;cs.endM=mm;}));
+    w2.appendChild(r);
+    w2.appendChild(div({style:{fontSize:"10px",color:"#475569",marginTop:"4px"}},"終了が開始より前なら翌朝まで（0時またぎ）として扱います"));
+    return w2;
+  };
 
   if(pe.kind==="shift"){
     m.appendChild(div({style:{fontSize:"15px",fontWeight:700,color:"#e2e8f0",marginBottom:"4px"}},"💼 シフトを変更"));
     m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"12px"}},`${dl} のシフト（この日のみ変更）`));
     const row=div({style:{display:"flex",gap:"6px",marginBottom:"10px"}});
     [["s1","1直"],["s2","2直"],["off","休み"]].forEach(([k,l])=>{
-      const on=getPlanShiftKey(vd)===k;
+      const on=getPlanShiftKey(vd)===k&&!(typeof getDaily(vd).planShift==='object');
       const b=btn({style:{flex:1,padding:"9px",borderRadius:"8px",cursor:"pointer",fontSize:"13px",fontWeight:600,
         border:`1px solid ${on?SHIFT_TYPES[k].color:"#334155"}`,background:on?SHIFT_TYPES[k].color+"22":"transparent",color:on?SHIFT_TYPES[k].color:"#64748b"}},l);
       b.addEventListener('click',()=>{setDayShift(vd,k);state.modal=null;render();});
       row.appendChild(b);
     });
     m.appendChild(row);
+    // 自由時間指定
+    const cs={startH:pe.startH,startM:pe.startM,endH:pe.endH,endM:pe.endM};
+    m.appendChild(timeRow(cs));
+    m.appendChild(btn({style:{width:"100%",padding:"10px",marginBottom:"8px",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:600,cursor:"pointer"},
+      onClick:()=>{setDaily(vd,{planShift:{startH:cs.startH,startM:cs.startM,endH:cs.endH,endM:cs.endM}});state.modal=null;showToast("この時間で設定しました");render();}},"✅ この時間で設定（この日のみ）"));
     m.appendChild(btn({className:"btn-ghost",style:{width:"100%",marginBottom:"8px"},onClick:()=>{setDayShift(vd,null);state.modal=null;showToast("パターンに戻しました");render();}},"↩ パターンに戻す"));
     m.appendChild(btn({style:{width:"100%",padding:"9px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#94a3b8",cursor:"pointer",fontSize:"12px"},onClick:()=>{state.modal=null;state.tab="設定";render();}},"⚙ シフトパターン設定を編集"));
   } else {
     const p=(state.planPatterns||[]).find(x=>x.uid===pe.uid);
     m.appendChild(div({style:{fontSize:"15px",fontWeight:700,color:"#e2e8f0",marginBottom:"4px"}},`${p?p.title:"パターン予定"} を変更`));
     m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"12px"}},`${dl} の時間`));
-    const mkT=(label,gh,gm,setH,setM)=>{
-      const w2=div({style:{marginBottom:"10px"}});
-      w2.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"4px"}},label));
-      const r=document.createElement('div');r.style.cssText="display:flex;gap:8px;align-items:center";
-      const H=document.createElement('select');H.className='sel';const M=document.createElement('select');M.className='sel';
-      Array.from({length:24},(_,i)=>{const o=document.createElement('option');o.value=i;o.textContent=`${i}時`;if(i===gh())o.selected=true;H.appendChild(o);});
-      [0,5,10,15,20,25,30,35,40,45,50,55].forEach(i=>{const o=document.createElement('option');o.value=i;o.textContent=`${String(i).padStart(2,'0')}分`;if(i===gm())o.selected=true;M.appendChild(o);});
-      H.addEventListener('change',e=>setH(+e.target.value));M.addEventListener('change',e=>setM(+e.target.value));
-      r.appendChild(H);r.appendChild(span({style:{color:"#475569"}},"："));r.appendChild(M);
-      w2.appendChild(r);return w2;
-    };
-    m.appendChild(mkT("開始",()=>pe.startH,()=>pe.startM,v=>{state.patternEdit.startH=v;},v=>{state.patternEdit.startM=v;}));
-    m.appendChild(mkT("終了",()=>pe.endH,()=>pe.endM,v=>{state.patternEdit.endH=v;},v=>{state.patternEdit.endM=v;}));
+    m.appendChild(timeRow(state.patternEdit));
     m.appendChild(btn({style:{width:"100%",padding:"10px",marginBottom:"8px",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:600,cursor:"pointer"},
       onClick:()=>{const d=getDaily(vd);const ov={...(d.patternOv||{})};ov[pe.uid]={startH:pe.startH,startM:pe.startM,endH:pe.endH,endM:pe.endM};setDaily(vd,{patternOv:ov});state.modal=null;showToast("この日だけ変更しました");render();}},"✅ この日だけ変更"));
     m.appendChild(btn({className:"btn-ghost",style:{width:"100%",marginBottom:"8px"},
