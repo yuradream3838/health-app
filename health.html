@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#0f172a">
-<title>体調管理 v8.3</title>
+<title>体調管理 v9.0</title>
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#0f172a">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -237,7 +237,7 @@ const TODO_ITEMS = [
   {id:"dinner_prep",   label:"夕食準備",              type:"check"},
   {id:"dinner",        label:"夕食・片付け",          type:"timer"},
   {id:"return_home",   label:"帰宅",                  type:"timer"},
-  {id:"training",      label:"トレーニング",          type:"timer"},
+  {id:"training",      label:"トレーニング",          type:"timer", multi:true},
   {id:"shower",        label:"シャワー・スキンケア・体重測定", type:"check"},
   {id:"phone_data",    label:"スマホデータ整理",      type:"check"},
   {id:"dl_data",       label:"ダウンロードデータ整理",type:"check"},
@@ -410,7 +410,7 @@ const state = {
   newEvH:9, newEvM:0, newEvEndH:10, newEvEndM:0, newEvTitle:"", newEvRepeat:"none", newEvColor:"#38bdf8",
   aiScheduleLoading:false, aiScheduleProposal:null,
   events:{}, taskList:[], wishList:[], shopList:[],
-  scheduleSubTab:"スケジュール", newEventUid:null,
+  newEventUid:null,
   aiPlanTasks:[], aiPlanResult:null, aiPlanLoading:false, aiPlanSelected:{},
   newEventTitle:"", newEventSH:9, newEventSM:0, newEventEH:10, newEventEM:0,
   goalHistoryType:null, goalEditKey:null,
@@ -450,7 +450,54 @@ function loadStorage(){
     if(wl){state.wishList=JSON.parse(wl);}
     const sl=localStorage.getItem(STORAGE_KEY+"_shoplist");
     if(sl){state.shopList=JSON.parse(sl);}
+    // ── 予定タブ（スケジュール・繰り返し・やること）──
+    const sc=localStorage.getItem(STORAGE_KEY+"_schedule");
+    if(sc){state.schedule=JSON.parse(sc);}
+    const rp=localStorage.getItem(STORAGE_KEY+"_repeat");
+    if(rp){state.repeatEvents=JSON.parse(rp);}
+    const tk=localStorage.getItem(STORAGE_KEY+"_tasks");
+    if(tk){state.tasks=JSON.parse(tk);}
+    // 旧形式（v8.3 events/taskList/wishList/shopList）からの一度きり移行
+    if(!sc && !tk){ migrateOldSchedule(); }
   }catch{}
+  if(!state.tasks||typeof state.tasks!=="object")state.tasks={todo:[],shopping:[]};
+  if(!Array.isArray(state.tasks.todo))state.tasks.todo=[];
+  if(!Array.isArray(state.tasks.shopping))state.tasks.shopping=[];
+  if(!state.schedule||typeof state.schedule!=="object")state.schedule={};
+  if(!Array.isArray(state.repeatEvents))state.repeatEvents=[];
+}
+
+// 旧「予定」タブ（v8.3）のデータを新モデルへ移行
+function migrateOldSchedule(){
+  let migrated=false;
+  // 単発予定: events{ds:[{uid,title,sH,sM,eH,eM}]} → schedule{ds:[{...startH,startM,endH,endM,color}]}
+  if(state.events && Object.keys(state.events).length){
+    Object.keys(state.events).forEach(ds=>{
+      state.schedule[ds]=(state.events[ds]||[]).map(e=>({
+        uid:e.uid, title:e.title,
+        startH:e.sH, startM:e.sM||0, endH:e.eH, endM:e.eM||0,
+        color:"#38bdf8"
+      }));
+    });
+    migrated=true;
+  }
+  // やること＋やりたいこと を統合して tasks.todo（優先度フラグ付き）へ
+  const todo=[];
+  (state.taskList||[]).forEach(t=>todo.push({uid:t.uid,text:t.text,done:!!t.done,imp:false,urg:false}));
+  (state.wishList||[]).forEach(t=>todo.push({uid:t.uid,text:t.text,done:!!t.done,imp:false,urg:false}));
+  if(todo.length){state.tasks.todo=todo;migrated=true;}
+  // 買物
+  if((state.shopList||[]).length){
+    state.tasks.shopping=(state.shopList||[]).map(t=>({uid:t.uid,text:t.text,done:!!t.done}));
+    migrated=true;
+  }
+  if(migrated){
+    try{
+      localStorage.setItem(STORAGE_KEY+"_schedule",JSON.stringify(state.schedule));
+      localStorage.setItem(STORAGE_KEY+"_repeat",JSON.stringify(state.repeatEvents));
+      localStorage.setItem(STORAGE_KEY+"_tasks",JSON.stringify(state.tasks));
+    }catch{}
+  }
 }
 function saveStorage(){
   try{localStorage.setItem(STORAGE_KEY,JSON.stringify({logs:state.logs,dailies:state.dailies}));}catch{}
@@ -724,8 +771,6 @@ function render(){
   if(state.modal==="addEjac")  content.appendChild(renderAddEjacModal(vd));
   if(state.modal==="addNap")   content.appendChild(renderAddNapModal(vd));
   if(state.modal==="addEvent") content.appendChild(renderAddEventModal(vd));
-  if(state.modal==="addEvent") content.appendChild(renderAddEventModal(vd));
-  if(state.modal==="aiPlan")   content.appendChild(renderAiPlanModal(vd));
   if(state.modal==="editNap")  content.appendChild(renderAddNapModal(vd,true));
   if(state.goalHistoryType)    content.appendChild(renderGoalHistory(vd));
   if(state.goalEditKey)        content.appendChild(renderGoalEditModal());
@@ -851,7 +896,7 @@ function renderHeader(){
   titleRow.style.cssText="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px";
   const titleLeft=document.createElement('div');
   titleLeft.style.cssText="display:flex;align-items:center;gap:8px";
-  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v8.3</span>';
+  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v9.0</span>';
   const titleRight=document.createElement('div');
   titleRight.style.cssText="display:flex;align-items:center;gap:5px";
   titleRight.appendChild(savedSpan);
@@ -2427,354 +2472,6 @@ function calcStreak(vd, item){
   return count;
 }
 
-// ═══════════════════════════════════════════════════
-// 予定タブ（スケジュール・やること・やりたいこと・買物）
-// ═══════════════════════════════════════════════════
-
-// TODOタイマー記録から「実際の行動」を取得
-function getActualActivities(vd){
-  const todo=state.todos[vd]||{};
-  const out=[];
-  TODO_ITEMS.forEach(item=>{
-    if(item.type!=="timer")return;
-    const t=todo[item.id]||{};
-    if(item.multi){
-      (t.sessions||[]).forEach(s=>{
-        if(s.startTime&&s.endTime){
-          const st=new Date(s.startTime),en=new Date(s.endTime);
-          out.push({title:item.label,sH:st.getHours(),sM:st.getMinutes(),eH:en.getHours(),eM:en.getMinutes()});
-        }
-      });
-    } else if(t.startTime&&t.endTime){
-      const st=new Date(t.startTime),en=new Date(t.endTime);
-      out.push({title:item.label,sH:st.getHours(),sM:st.getMinutes(),eH:en.getHours(),eM:en.getMinutes()});
-    }
-  });
-  return out.sort((a,b)=>(a.sH*60+a.sM)-(b.sH*60+b.sM));
-}
-
-function renderScheduleHub(vd, ds, isToday){
-  const SUB=["スケジュール","やること","やりたいこと","買物"];
-  const wrap=div({style:{maxWidth:"600px",margin:"0 auto"}});
-
-  const subBar=div({style:{display:"flex",borderBottom:"1px solid #1e3a5f",background:"#1e293b",position:"sticky",top:"0",zIndex:50}});
-  SUB.forEach(t=>{
-    const b=btn({style:{flex:1,padding:"10px 2px",border:"none",cursor:"pointer",fontSize:"11px",fontWeight:600,
-      background:"transparent",color:state.scheduleSubTab===t?"#38bdf8":"#475569",
-      borderBottom:`2px solid ${state.scheduleSubTab===t?"#38bdf8":"transparent"}`}},t);
-    b.addEventListener('click',()=>{state.scheduleSubTab=t;render();});
-    subBar.appendChild(b);
-  });
-  wrap.appendChild(subBar);
-
-  const inner=div({style:{padding:"10px 16px 60px"}});
-  if(state.scheduleSubTab==="スケジュール") inner.appendChild(renderTimeline(vd,ds,isToday));
-  if(state.scheduleSubTab==="やること")     inner.appendChild(renderSimpleList("taskList","✅ やることリスト","タスクを追加...",true,vd));
-  if(state.scheduleSubTab==="やりたいこと") inner.appendChild(renderSimpleList("wishList","🌟 やりたいことリスト","やりたいことを追加...",false,vd));
-  if(state.scheduleSubTab==="買物")         inner.appendChild(renderSimpleList("shopList","🛒 買物リスト","品名を追加...",false,vd));
-  wrap.appendChild(inner);
-  return wrap;
-}
-
-// ── タイムライン（予定 vs 実際の2列）──
-function renderTimeline(vd, ds, isToday){
-  const wrap=div({});
-  const events=[...getEvents(vd)].sort((a,b)=>(a.sH*60+a.sM)-(b.sH*60+b.sM));
-  const actuals=getActualActivities(vd);
-
-  wrap.appendChild(div({style:{display:"flex",gap:"8px",marginBottom:"10px"}},[
-    btn({style:{flex:1,padding:"9px",background:"#0ea5e918",border:"1px solid #0ea5e9",borderRadius:"8px",color:"#38bdf8",fontSize:"12px",fontWeight:600,cursor:"pointer"},
-      onClick:()=>{
-        const now=new Date();
-        state.modal="addEvent";state.newEventUid=null;
-        state.newEventTitle="";
-        state.newEventSH=now.getHours();state.newEventSM=0;
-        state.newEventEH=Math.min(23,now.getHours()+1);state.newEventEM=0;
-        render();
-      }},"＋ 予定を追加"),
-    btn({style:{flex:1,padding:"9px",background:"linear-gradient(135deg,#0ea5e918,#6366f118)",border:"1px solid #6366f1",borderRadius:"8px",color:"#a5b4fc",fontSize:"12px",fontWeight:600,cursor:"pointer"},
-      onClick:()=>{state.modal="aiPlan";state.aiPlanSelected={};state.aiPlanResult=null;render();}},"✨ AIスケジュール提案")
-  ]));
-
-  wrap.appendChild(div({style:{display:"flex",gap:"14px",marginBottom:"8px",fontSize:"10px"}},[
-    span({style:{color:"#38bdf8"}},"■ 予定"),
-    span({style:{color:"#22c55e"}},"■ 実際（TODOタイマーと連動）")
-  ]));
-
-  if(events.length===0&&actuals.length===0){
-    wrap.appendChild(div({className:"card",style:{textAlign:"center",color:"#475569",padding:"30px 16px",fontSize:"12px"}},
-      "予定がありません。「＋ 予定を追加」か「✨ AI提案」で1日を組み立てましょう"));
-  }
-
-  const START_H=5, END_H=25, HPX=44;
-  const tlH=(END_H-START_H)*HPX;
-  const tl=div({style:{position:"relative",height:`${tlH}px`,marginTop:"4px"}});
-
-  for(let hh=START_H;hh<=END_H;hh++){
-    const y=(hh-START_H)*HPX;
-    tl.appendChild(div({style:{position:"absolute",top:`${y}px`,left:0,right:0,borderTop:"1px solid #1e3a5f44"}}));
-    tl.appendChild(div({style:{position:"absolute",top:`${y-7}px`,left:0,fontSize:"9px",color:"#475569",width:"32px"}},`${hh%24}:00`));
-  }
-
-  if(isToday){
-    const now=new Date();
-    const nowY=((now.getHours()+now.getMinutes()/60)-START_H)*HPX;
-    if(nowY>=0&&nowY<=tlH){
-      tl.appendChild(div({style:{position:"absolute",top:`${nowY}px`,left:"32px",right:0,borderTop:"1.5px dashed #38bdf8",zIndex:5}}));
-    }
-  }
-
-  const mkBlock=(ev,col,leftV,widthV,onClick)=>{
-    let sMin=(ev.sH+(ev.sM||0)/60), eMin=(ev.eH+(ev.eM||0)/60);
-    if(eMin<=sMin)eMin+=24;
-    const top=(sMin-START_H)*HPX;
-    const height=Math.max(18,(eMin-sMin)*HPX-2);
-    const block=div({style:{
-      position:"absolute",top:`${top}px`,left:leftV,width:widthV,height:`${height}px`,
-      background:col+"22",border:`1px solid ${col}66`,borderLeft:`3px solid ${col}`,
-      borderRadius:"6px",padding:"2px 6px",overflow:"hidden",cursor:onClick?"pointer":"default",zIndex:3,boxSizing:"border-box"
-    }});
-    block.appendChild(div({style:{fontSize:"10px",fontWeight:600,color:col,lineHeight:1.3}},ev.title));
-    if(height>=30)block.appendChild(div({style:{fontSize:"8px",color:"#64748b"}},`${String(ev.sH).padStart(2,'0')}:${String(ev.sM||0).padStart(2,'0')}〜${String(ev.eH).padStart(2,'0')}:${String(ev.eM||0).padStart(2,'0')}`));
-    if(onClick)block.addEventListener('click',onClick);
-    return block;
-  };
-
-  events.forEach(ev=>{
-    tl.appendChild(mkBlock(ev,"#38bdf8","36px","calc(50% - 40px)",(()=>{const e2=ev;return()=>{
-      state.modal="addEvent";state.newEventUid=e2.uid;
-      state.newEventTitle=e2.title;
-      state.newEventSH=e2.sH;state.newEventSM=e2.sM||0;
-      state.newEventEH=e2.eH;state.newEventEM=e2.eM||0;
-      render();
-    };})()));
-  });
-
-  actuals.forEach(ac=>{
-    tl.appendChild(mkBlock(ac,"#22c55e","calc(50% + 2px)","calc(50% - 6px)",null));
-  });
-
-  wrap.appendChild(tl);
-  return wrap;
-}
-
-// ── 汎用リスト（やること・やりたいこと・買物）──
-function renderSimpleList(key, title, placeholder, withPlanBtn, vd){
-  const wrap=div({});
-  const list=state[key];
-
-  const card=div({className:"card"});
-  card.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0",marginBottom:"10px"}},title));
-
-  const inputRow=div({style:{display:"flex",gap:"6px",marginBottom:"12px"}});
-  const inp=document.createElement('input');
-  inp.type='text';inp.placeholder=placeholder;
-  inp.style.cssText="flex:1;padding:9px 12px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit;min-width:0";
-  const addItem=()=>{
-    const v=inp.value.trim();if(!v)return;
-    state[key]=[{uid:Date.now(),text:v,done:false},...state[key]];
-    saveLists();inp.value="";render();
-  };
-  inp.addEventListener('keydown',e=>{if(e.key==="Enter")addItem();});
-  const addB=btn({style:{padding:"9px 16px",background:"#0ea5e9",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:600,cursor:"pointer",flexShrink:0}},"追加");
-  addB.addEventListener('click',addItem);
-  inputRow.appendChild(inp);inputRow.appendChild(addB);
-  card.appendChild(inputRow);
-
-  const sorted=[...list].sort((a,b)=>(a.done?1:0)-(b.done?1:0));
-  if(sorted.length===0){
-    card.appendChild(div({style:{fontSize:"12px",color:"#475569",textAlign:"center",padding:"12px 0"}},"まだありません"));
-  }
-  sorted.forEach(item=>{
-    const row=div({style:{display:"flex",alignItems:"center",gap:"10px",padding:"8px 4px",borderBottom:"1px solid #1e3a5f33",opacity:item.done?0.5:1}});
-    const cb=btn({style:{width:"22px",height:"22px",borderRadius:"6px",flexShrink:0,
-      border:`2px solid ${item.done?"#22c55e":"#334155"}`,background:item.done?"#22c55e":"transparent",
-      cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"13px",color:"#fff"}},item.done?"✓":"");
-    cb.addEventListener('click',(()=>{const uid=item.uid;return()=>{
-      state[key]=state[key].map(x=>x.uid===uid?{...x,done:!x.done}:x);saveLists();render();
-    };})());
-    row.appendChild(cb);
-    row.appendChild(div({style:{flex:1,fontSize:"13px",color:item.done?"#475569":"#e2e8f0",textDecoration:item.done?"line-through":"none"}},item.text));
-    if(withPlanBtn&&!item.done){
-      const planB=btn({style:{fontSize:"10px",padding:"3px 8px",background:"transparent",border:"1px solid #334155",borderRadius:"6px",color:"#64748b",cursor:"pointer",whiteSpace:"nowrap"}},"→予定");
-      planB.addEventListener('click',(()=>{const text=item.text;return()=>{
-        const now=new Date();
-        state.modal="addEvent";state.newEventUid=null;
-        state.newEventTitle=text;
-        state.newEventSH=now.getHours();state.newEventSM=0;
-        state.newEventEH=Math.min(23,now.getHours()+1);state.newEventEM=0;
-        state.scheduleSubTab="スケジュール";
-        render();
-      };})());
-      row.appendChild(planB);
-    }
-    const del=btn({style:{background:"transparent",border:"none",color:"#334155",cursor:"pointer",fontSize:"16px",padding:"0 4px"}},"×");
-    del.addEventListener('click',(()=>{const uid=item.uid;return()=>{
-      state[key]=state[key].filter(x=>x.uid!==uid);saveLists();render();
-    };})());
-    row.appendChild(del);
-    card.appendChild(row);
-  });
-
-  if(list.some(x=>x.done)){
-    const clearB=btn({style:{marginTop:"10px",fontSize:"11px",padding:"6px 12px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#475569",cursor:"pointer"}},"完了済みをまとめて削除");
-    clearB.addEventListener('click',()=>{state[key]=state[key].filter(x=>!x.done);saveLists();render();});
-    card.appendChild(clearB);
-  }
-
-  wrap.appendChild(card);
-  return wrap;
-}
-
-// ── 予定追加・編集モーダル ──
-function renderAddEventModal(vd){
-  const isEdit=state.newEventUid!=null;
-  const bg=div({className:"modal-center"});
-  const m=div({className:"modal-box"});
-  bg.addEventListener('click',()=>{state.modal=null;render();});
-  m.addEventListener('click',e=>e.stopPropagation());
-  m.appendChild(div({style:{fontSize:"15px",fontWeight:700,color:"#e2e8f0",marginBottom:"14px"}},isEdit?"📅 予定を編集":"📅 予定を追加"));
-
-  m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"4px"}},"タイトル"));
-  const titleInp=document.createElement('input');
-  titleInp.type='text';titleInp.value=state.newEventTitle||"";titleInp.placeholder="予定の名前...";
-  titleInp.style.cssText="width:100%;padding:9px 12px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit;box-sizing:border-box;margin-bottom:12px";
-  titleInp.addEventListener('input',e=>{state.newEventTitle=e.target.value;});
-  m.appendChild(titleInp);
-
-  const mkT=(label,getH,getM,setH,setM)=>{
-    const w2=div({style:{marginBottom:"12px"}});
-    w2.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"5px"}},label));
-    const row=document.createElement('div');row.style.cssText="display:flex;gap:8px;align-items:center";
-    const sH=document.createElement('select');sH.className='sel';
-    const sM=document.createElement('select');sM.className='sel';
-    Array.from({length:24},(_,i)=>{const o=document.createElement('option');o.value=i;o.textContent=`${String(i).padStart(2,'0')}時`;if(i===getH())o.selected=true;sH.appendChild(o);});
-    [0,5,10,15,20,25,30,35,40,45,50,55].forEach(i=>{const o=document.createElement('option');o.value=i;o.textContent=`${String(i).padStart(2,'0')}分`;if(i===getM())o.selected=true;sM.appendChild(o);});
-    sH.addEventListener('change',e=>setH(Number(e.target.value)));
-    sM.addEventListener('change',e=>setM(Number(e.target.value)));
-    row.appendChild(sH);row.appendChild(span({style:{color:"#475569",fontWeight:700}},"："));row.appendChild(sM);
-    w2.appendChild(row);
-    return w2;
-  };
-  m.appendChild(mkT("開始",()=>state.newEventSH,()=>state.newEventSM,v=>{state.newEventSH=v;},v=>{state.newEventSM=v;}));
-  m.appendChild(mkT("終了",()=>state.newEventEH,()=>state.newEventEM,v=>{state.newEventEH=v;},v=>{state.newEventEM=v;}));
-
-  if(isEdit){
-    m.appendChild(btn({style:{width:"100%",padding:"7px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#475569",cursor:"pointer",fontSize:"12px",marginBottom:"8px"},
-      onClick:()=>{
-        setEvents(vd,getEvents(vd).filter(e=>e.uid!==state.newEventUid));
-        state.modal=null;render();
-      }},"この予定を削除"));
-  }
-
-  m.appendChild(div({style:{display:"flex",gap:"8px"}},[
-    btn({className:"btn-ghost",style:{flex:1},onClick:()=>{state.modal=null;render();}},"キャンセル"),
-    btn({style:{flex:2,padding:"10px",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:600,cursor:"pointer"},
-      onClick:()=>{
-        const title=(state.newEventTitle||"").trim();
-        if(!title)return;
-        const ev={uid:isEdit?state.newEventUid:Date.now(),title,sH:state.newEventSH,sM:state.newEventSM,eH:state.newEventEH,eM:state.newEventEM};
-        const cur=getEvents(vd);
-        setEvents(vd,isEdit?cur.map(e=>e.uid===ev.uid?ev:e):[...cur,ev]);
-        state.modal=null;render();
-      }},"保存")
-  ]));
-  bg.appendChild(m);return bg;
-}
-
-// ── AIスケジュール提案モーダル ──
-function renderAiPlanModal(vd){
-  const bg=div({className:"modal-center"});
-  const m=div({className:"modal-box",style:{maxHeight:"85vh",overflowY:"auto"}});
-  bg.addEventListener('click',()=>{if(!state.aiPlanLoading){state.modal=null;render();}});
-  m.addEventListener('click',e=>e.stopPropagation());
-  m.appendChild(div({style:{fontSize:"15px",fontWeight:700,color:"#e2e8f0",marginBottom:"6px"}},"✨ AIスケジュール提案"));
-
-  if(state.aiPlanResult){
-    m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"10px"}},"この案でよければ「予定に追加」を押してください"));
-    state.aiPlanResult.forEach(ev=>{
-      m.appendChild(div({style:{display:"flex",gap:"8px",alignItems:"center",padding:"6px 10px",background:"#0f172a",borderRadius:"8px",marginBottom:"4px"}},[
-        span({style:{fontSize:"11px",color:"#38bdf8",minWidth:"84px"}},`${String(ev.sH).padStart(2,'0')}:${String(ev.sM).padStart(2,'0')}〜${String(ev.eH).padStart(2,'0')}:${String(ev.eM).padStart(2,'0')}`),
-        span({style:{fontSize:"12px",color:"#e2e8f0"}},ev.title)
-      ]));
-    });
-    m.appendChild(div({style:{display:"flex",gap:"8px",marginTop:"12px"}},[
-      btn({className:"btn-ghost",style:{flex:1},onClick:()=>{state.aiPlanResult=null;render();}},"やり直す"),
-      btn({style:{flex:2,padding:"10px",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:600,cursor:"pointer"},
-        onClick:()=>{
-          const cur=getEvents(vd);
-          const added=state.aiPlanResult.map((e,i)=>({uid:Date.now()+i,title:e.title,sH:e.sH,sM:e.sM,eH:e.eH,eM:e.eM}));
-          setEvents(vd,[...cur,...added]);
-          state.modal=null;state.aiPlanResult=null;render();
-          showToast("📅 スケジュールを追加しました");
-        }},"予定に追加")
-    ]));
-    bg.appendChild(m);return bg;
-  }
-
-  if(state.aiPlanLoading){
-    m.appendChild(div({style:{textAlign:"center",padding:"24px 0",color:"#64748b",fontSize:"13px"}},"🔍 スケジュールを考えています..."));
-    bg.appendChild(m);return bg;
-  }
-
-  m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"10px"}},"今日やるタスクを選んでください（やることリストから）"));
-  const pending=state.taskList.filter(t=>!t.done);
-  if(pending.length===0){
-    m.appendChild(div({style:{fontSize:"12px",color:"#475569",textAlign:"center",padding:"10px 0",marginBottom:"8px"}},"やることリストが空です。タスクなしでルーティンのみの提案も可能です"));
-  }
-  pending.forEach(t=>{
-    const on=!!state.aiPlanSelected[t.uid];
-    const row=btn({style:{display:"flex",alignItems:"center",gap:"10px",width:"100%",padding:"8px 12px",marginBottom:"5px",textAlign:"left",
-      background:on?"#0ea5e918":"transparent",border:`1px solid ${on?"#0ea5e9":"#334155"}`,borderRadius:"8px",cursor:"pointer"}});
-    row.appendChild(div({style:{width:"18px",height:"18px",borderRadius:"5px",flexShrink:0,border:`2px solid ${on?"#0ea5e9":"#334155"}`,background:on?"#0ea5e9":"transparent",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"11px",color:"#fff"}},on?"✓":""));
-    row.appendChild(span({style:{fontSize:"12px",color:on?"#38bdf8":"#94a3b8"}},t.text));
-    row.addEventListener('click',(()=>{const uid=t.uid;return()=>{
-      state.aiPlanSelected[uid]=!state.aiPlanSelected[uid];render();
-    };})());
-    m.appendChild(row);
-  });
-
-  m.appendChild(div({style:{display:"flex",gap:"8px",marginTop:"12px"}},[
-    btn({className:"btn-ghost",style:{flex:1},onClick:()=>{state.modal=null;render();}},"キャンセル"),
-    btn({style:{flex:2,padding:"10px",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:600,cursor:"pointer"},
-      onClick:()=>runAiPlan(vd)},"提案してもらう")
-  ]));
-  bg.appendChild(m);return bg;
-}
-
-async function runAiPlan(vd){
-  state.aiPlanLoading=true;render();
-  try{
-    const d=getDaily(vd);
-    const shiftInfo=d.workStart==null?"休み":
-      d.workStart<12?`1直（${d.workStart}時〜${d.workEnd}時勤務、残業${d.overtime||0}h）`:
-      `2直（${d.workStart}時〜${d.workEnd}時勤務、残業${d.overtime||0}h）`;
-    const tasks=state.taskList.filter(t=>!t.done&&state.aiPlanSelected[t.uid]).map(t=>t.text);
-    const routines=getOrderedTodoItems().map(it=>it.label).join("、");
-    const existing=getEvents(vd).map(e=>`${e.sH}:${String(e.sM).padStart(2,'0')}〜${e.eH}:${String(e.eM).padStart(2,'0')} ${e.title}`).join("\n")||"なし";
-
-    const res=await fetch("https://nuts024.com/health/api.php",{
-      method:"POST",
-      headers:{"Content-Type":"application/json","X-Secret-Key":"songof3838"},
-      body:JSON.stringify({
-        system:`あなたは生活プランナーです。ユーザーの1日のスケジュールを提案してください。以下のJSON配列形式のみで返答（説明・Markdown不要）:
-[{"title":"予定名","sH":開始時(0-23),"sM":開始分,"eH":終了時,"eM":終了分}]
-ルール: 睡眠時間を確保する。食事3回を入れる。仕事時間は動かせない。既存の予定と重複させない。タスクは適切な空き時間に配置。朝晩のルーティン時間も考慮。予定は5〜10個程度に。`,
-        prompt:`【日付】${vd}\n【仕事】${shiftInfo}\n【今日やるタスク】${tasks.length?tasks.join("、"):"なし"}\n【毎日のルーティン】${routines}\n【既存の予定】\n${existing}\n\n現実的な1日のスケジュールを提案してください。`
-      })
-    });
-    const data=await res.json();
-    if(data.error) throw new Error(data.message||data.error);
-    const text=(data.text||"").replace(/```json|```/g,"").trim();
-    const arr=JSON.parse(text);
-    if(!Array.isArray(arr)||!arr.length) throw new Error("提案の生成に失敗しました");
-    state.aiPlanResult=arr.filter(e=>e.title&&e.sH!=null&&e.eH!=null).map(e=>({title:String(e.title),sH:+e.sH,sM:+(e.sM||0),eH:+e.eH,eM:+(e.eM||0)}));
-  }catch(e){
-    alert("提案に失敗しました: "+e.message);
-  }
-  state.aiPlanLoading=false;render();
-}
-
 function renderTodo(vd, ds, isToday){
   const wrap=div({style:{maxWidth:"600px",margin:"0 auto",padding:"10px 16px 60px"}});
   const todo=getTodo(vd);
@@ -4240,10 +3937,9 @@ function exportData(){
     dailies:state.dailies,
     todos:state.todos,
     goals:state.goals,
-    events:state.events,
-    taskList:state.taskList,
-    wishList:state.wishList,
-    shopList:state.shopList,
+    schedule:state.schedule,
+    repeatEvents:state.repeatEvents,
+    tasks:state.tasks,
     weather,
     city
   };
@@ -4280,11 +3976,15 @@ function importData(e){
       if(p.tasks){state.tasks=p.tasks;try{localStorage.setItem(STORAGE_KEY+"_tasks",JSON.stringify(p.tasks));}catch{}}
       if(p.weather){try{localStorage.setItem(STORAGE_KEY+"_weather",JSON.stringify(p.weather));}catch{}}
       if(p.city){state.weatherCity=p.city;try{localStorage.setItem(STORAGE_KEY+"_city",JSON.stringify(p.city));}catch{}}
-      if(p.events){state.events=p.events;saveEvents();}
-      if(p.taskList){state.taskList=p.taskList;}
-      if(p.wishList){state.wishList=p.wishList;}
-      if(p.shopList){state.shopList=p.shopList;}
-      saveLists();
+      // 旧形式（v8.3）のバックアップは新モデルへ移行して取り込む
+      if(!p.schedule && !p.tasks && (p.events||p.taskList||p.wishList||p.shopList)){
+        state.events=p.events||{};
+        state.taskList=p.taskList||[];
+        state.wishList=p.wishList||[];
+        state.shopList=p.shopList||[];
+        state.schedule={};state.repeatEvents=[];state.tasks={todo:[],shopping:[]};
+        migrateOldSchedule();
+      }
       saveStorage();render();
       alert(`インポート完了！\n${summary}`);
     }catch(err){alert("インポート失敗: "+err.message);}
