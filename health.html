@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#0f172a">
-<title>体調管理 v8.2</title>
+<title>体調管理 v8.3</title>
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#0f172a">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -209,7 +209,7 @@ function renderStorageAlertModal(){
 }
 // ═══════════════════════════════════════════════════
 const STORAGE_KEY = "health_v2";
-const TABS = ["今日","TODO","目標","体調記録","アルコール","分析"];
+const TABS = ["予定","日記","TODO","目標","体調記録","アルコール","分析"];
 const SYMPTOMS = [
   "頭痛","肩こり","腰痛","関節痛",
   "吐き気","胃もたれ",
@@ -402,9 +402,17 @@ function bacLevel(b){
 // 状態管理
 // ═══════════════════════════════════════════════════
 const state = {
-  tab:"今日", viewDate:todayStr(),
+  tab:"予定", viewDate:todayStr(),
   logs:[], dailies:[], forecast:[],
   todos:{}, weeklyIdx:0, goals:{},
+  schedule:{}, repeatEvents:[], tasks:{todo:[],shopping:[]},
+  scheduleSubTab:"日", editEventUid:null, editEventIsRepeat:false,
+  newEvH:9, newEvM:0, newEvEndH:10, newEvEndM:0, newEvTitle:"", newEvRepeat:"none", newEvColor:"#38bdf8",
+  aiScheduleLoading:false, aiScheduleProposal:null,
+  events:{}, taskList:[], wishList:[], shopList:[],
+  scheduleSubTab:"スケジュール", newEventUid:null,
+  aiPlanTasks:[], aiPlanResult:null, aiPlanLoading:false, aiPlanSelected:{},
+  newEventTitle:"", newEventSH:9, newEventSM:0, newEventEH:10, newEventEM:0,
   goalHistoryType:null, goalEditKey:null,
   goalEditType:null, goalEditText:"", goalEditProgress:"", goalEditDone:false, goalEditPeriodStr:"",
   analysisSubTab:"日次ログ",
@@ -434,6 +442,14 @@ function loadStorage(){
     if(todos){state.todos=JSON.parse(todos);}
     const goals=localStorage.getItem(STORAGE_KEY+"_goals");
     if(goals){state.goals=JSON.parse(goals);}
+    const ev=localStorage.getItem(STORAGE_KEY+"_events");
+    if(ev){state.events=JSON.parse(ev);}
+    const tl=localStorage.getItem(STORAGE_KEY+"_tasklist");
+    if(tl){state.taskList=JSON.parse(tl);}
+    const wl=localStorage.getItem(STORAGE_KEY+"_wishlist");
+    if(wl){state.wishList=JSON.parse(wl);}
+    const sl=localStorage.getItem(STORAGE_KEY+"_shoplist");
+    if(sl){state.shopList=JSON.parse(sl);}
   }catch{}
 }
 function saveStorage(){
@@ -457,6 +473,18 @@ function setLog(dateStr,hour,data){
   nl.push({dateStr,hour,...data});
   state.logs=nl;saveStorage();
 }
+
+// ── 予定・リスト保存ヘルパー ──────────────────────
+function saveEvents(){try{localStorage.setItem(STORAGE_KEY+"_events",JSON.stringify(state.events));}catch{}}
+function saveLists(){
+  try{
+    localStorage.setItem(STORAGE_KEY+"_tasklist",JSON.stringify(state.taskList));
+    localStorage.setItem(STORAGE_KEY+"_wishlist",JSON.stringify(state.wishList));
+    localStorage.setItem(STORAGE_KEY+"_shoplist",JSON.stringify(state.shopList));
+  }catch{}
+}
+function getEvents(dateStr){return state.events[dateStr]||[];}
+function setEvents(dateStr,arr){state.events[dateStr]=arr;saveEvents();render();}
 
 // ═══════════════════════════════════════════════════
 // HTML生成ヘルパー
@@ -681,7 +709,8 @@ function render(){
 
   const ds=todayStr(), vd=state.viewDate, curH=new Date().getHours();
   const isToday=vd===ds;
-  if(state.tab==="今日")       content.appendChild(renderToday(vd,ds,curH,isToday));
+  if(state.tab==="予定")       content.appendChild(renderScheduleHub(vd,ds,isToday));
+  if(state.tab==="日記")       content.appendChild(renderToday(vd,ds,curH,isToday));
   if(state.tab==="TODO")       content.appendChild(renderTodo(vd,ds,isToday));
   if(state.tab==="目標")       content.appendChild(renderGoals(vd,ds));
   if(state.tab==="体調記録")   content.appendChild(renderKondo(vd,ds,curH,isToday));
@@ -694,6 +723,9 @@ function render(){
   if(state.modal==="editSession")content.appendChild(renderEditSessionModal(vd));
   if(state.modal==="addEjac")  content.appendChild(renderAddEjacModal(vd));
   if(state.modal==="addNap")   content.appendChild(renderAddNapModal(vd));
+  if(state.modal==="addEvent") content.appendChild(renderAddEventModal(vd));
+  if(state.modal==="addEvent") content.appendChild(renderAddEventModal(vd));
+  if(state.modal==="aiPlan")   content.appendChild(renderAiPlanModal(vd));
   if(state.modal==="editNap")  content.appendChild(renderAddNapModal(vd,true));
   if(state.goalHistoryType)    content.appendChild(renderGoalHistory(vd));
   if(state.goalEditKey)        content.appendChild(renderGoalEditModal());
@@ -802,7 +834,7 @@ function renderHeader(){
     b.addEventListener('click',()=>{
       state.tab=t;
       // 今日・体調記録タブに切り替えたとき、今日かつ天気未取得なら自動取得
-      if((t==="体調記録"||t==="今日") && state.viewDate===todayStr() && state.weatherCity && state.weather.length===0 && !state.weatherLoading){
+      if((t==="体調記録"||t==="日記") && state.viewDate===todayStr() && state.weatherCity && state.weather.length===0 && !state.weatherLoading){
         doFetchWeather(state.weatherCity);
       } else {
         render();
@@ -819,7 +851,7 @@ function renderHeader(){
   titleRow.style.cssText="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px";
   const titleLeft=document.createElement('div');
   titleLeft.style.cssText="display:flex;align-items:center;gap:8px";
-  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v8.2</span>';
+  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v8.3</span>';
   const titleRight=document.createElement('div');
   titleRight.style.cssText="display:flex;align-items:center;gap:5px";
   titleRight.appendChild(savedSpan);
@@ -1726,6 +1758,598 @@ function saveFoods(){
   render();
 }
 
+
+// ═══════════════════════════════════════════════════
+// 予定タブ（日・週・月・やること・買物）
+// ═══════════════════════════════════════════════════
+const EV_COLORS=["#38bdf8","#22c55e","#eab308","#f97316","#ef4444","#a78bfa"];
+const WEEKDAYS_JP=["日","月","火","水","木","金","土"];
+
+function saveSchedule(){
+  try{localStorage.setItem(STORAGE_KEY+"_schedule",JSON.stringify(state.schedule));}catch{}
+}
+function saveRepeatEvents(){
+  try{localStorage.setItem(STORAGE_KEY+"_repeat",JSON.stringify(state.repeatEvents));}catch{}
+}
+function saveTasks(){
+  try{localStorage.setItem(STORAGE_KEY+"_tasks",JSON.stringify(state.tasks));}catch{}
+}
+
+// 日付ユーティリティ
+function parseDS(ds){const p=ds.split('-');return new Date(parseInt(p[0]),parseInt(p[1])-1,parseInt(p[2]));}
+function fmtDS(d){return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;}
+
+// 繰り返し予定が指定日にマッチするか
+function repeatMatches(ev, dateStr){
+  const d=parseDS(dateStr), s=parseDS(ev.startDate);
+  if(d<s)return false;
+  const t=ev.repeatType;
+  if(t==="daily")return true;
+  if(t==="w1"||t==="w2"||t==="w3"||t==="w4"){
+    if(d.getDay()!==s.getDay())return false;
+    const k=parseInt(t.slice(1));
+    const weeks=Math.round((d-s)/(7*86400000));
+    return weeks%k===0;
+  }
+  if(t==="nth"){
+    if(d.getDay()!==s.getDay())return false;
+    return Math.ceil(d.getDate()/7)===Math.ceil(s.getDate()/7);
+  }
+  if(t==="monthly")return d.getDate()===s.getDate();
+  if(t==="yearly")return d.getMonth()===s.getMonth()&&d.getDate()===s.getDate();
+  return false;
+}
+
+// 指定日の全予定（単発＋繰り返し展開）
+function getEventsForDate(vd){
+  const singles=(state.schedule[vd]||[]).map(e=>({...e,isRepeat:false}));
+  const repeats=(state.repeatEvents||[]).filter(ev=>repeatMatches(ev,vd)).map(e=>({...e,isRepeat:true}));
+  return [...singles,...repeats].sort((a,b)=>(a.startH*60+a.startM)-(b.startH*60+b.startM));
+}
+
+// 繰り返しタイプのラベル
+function repeatLabel(t, startDate){
+  const s=parseDS(startDate);
+  const w=WEEKDAYS_JP[s.getDay()];
+  const nth=Math.ceil(s.getDate()/7);
+  const map={
+    daily:"毎日", w1:`毎週${w}曜`, w2:`2週ごと${w}曜`, w3:`3週ごと${w}曜`, w4:`4週ごと${w}曜`,
+    nth:`第${nth}${w}曜`, monthly:`毎月${s.getDate()}日`, yearly:`毎年${s.getMonth()+1}/${s.getDate()}`
+  };
+  return map[t]||"";
+}
+
+// TODOタブから「実際の行動」を取得（タイマー＋チェック完了）
+function getActualActivities(vd){
+  const t=state.todos[vd]||{};
+  const acts=[];
+  TODO_ITEMS.forEach(item=>{
+    const d=t[item.id];
+    if(!d||d.excluded)return;
+    if(item.multi&&d.sessions){
+      d.sessions.forEach(s=>{
+        if(s.startTime&&s.endTime){
+          const st=new Date(s.startTime),et=new Date(s.endTime);
+          acts.push({title:item.label,startMin:st.getHours()*60+st.getMinutes(),endMin:et.getHours()*60+et.getMinutes()});
+        }
+      });
+    } else if(item.type==="timer"&&d.startTime&&d.endTime){
+      const st=new Date(d.startTime),et=new Date(d.endTime);
+      acts.push({title:item.label,startMin:st.getHours()*60+st.getMinutes(),endMin:et.getHours()*60+et.getMinutes()});
+    } else if(item.type==="check"&&d.checked&&d.time){
+      const ct=new Date(d.time);
+      acts.push({title:"✓"+item.label,startMin:ct.getHours()*60+ct.getMinutes(),endMin:ct.getHours()*60+ct.getMinutes()+12,isPoint:true});
+    }
+  });
+  return acts.sort((a,b)=>a.startMin-b.startMin);
+}
+
+function renderScheduleHub(vd,ds,isToday){
+  const SUB=["日","週","月","やること","買物"];
+  const wrap=div({style:{maxWidth:"600px",margin:"0 auto"}});
+  const subBar=div({style:{display:"flex",borderBottom:"1px solid #1e3a5f",background:"#1e293b",position:"sticky",top:"0",zIndex:50}});
+  SUB.forEach(t=>{
+    const b=btn({style:{flex:1,padding:"10px 2px",border:"none",cursor:"pointer",fontSize:"12px",fontWeight:600,
+      background:"transparent",color:state.scheduleSubTab===t?"#38bdf8":"#475569",
+      borderBottom:`2px solid ${state.scheduleSubTab===t?"#38bdf8":"transparent"}`}},t);
+    b.addEventListener('click',()=>{state.scheduleSubTab=t;render();});
+    subBar.appendChild(b);
+  });
+  wrap.appendChild(subBar);
+  const inner=div({style:{padding:"12px 16px 60px"}});
+  if(state.scheduleSubTab==="日")       inner.appendChild(renderDaySchedule(vd,ds,isToday));
+  if(state.scheduleSubTab==="週")       inner.appendChild(renderWeekCalendar(vd,ds));
+  if(state.scheduleSubTab==="月")       inner.appendChild(renderMonthCalendar(vd,ds));
+  if(state.scheduleSubTab==="やること") inner.appendChild(renderTaskMatrix());
+  if(state.scheduleSubTab==="買物")     inner.appendChild(renderTaskList("shopping","🛒 買物リスト","買うものメモ"));
+  wrap.appendChild(inner);
+  return wrap;
+}
+
+// ── 日スケジュール（予定 vs 実際・0〜24時） ──
+function renderDaySchedule(vd,ds,isToday){
+  const wrap=div({});
+  const events=getEventsForDate(vd);
+  const actuals=getActualActivities(vd);
+
+  wrap.appendChild(div({style:{display:"flex",gap:"8px",marginBottom:"10px"}},[
+    btn({style:{flex:1,padding:"9px",background:"#0ea5e918",border:"1px solid #0ea5e9",borderRadius:"8px",color:"#38bdf8",fontSize:"12px",fontWeight:600,cursor:"pointer"},
+      onClick:()=>{
+        const now=new Date();
+        state.modal="addEvent";state.editEventUid=null;state.editEventIsRepeat=false;
+        state.newEvTitle="";state.newEvH=now.getHours();state.newEvM=0;
+        state.newEvEndH=Math.min(23,now.getHours()+1);state.newEvEndM=0;
+        state.newEvRepeat="none";state.newEvColor=EV_COLORS[0];
+        render();
+      }},"＋ 予定を追加"),
+    btn({style:{flex:1,padding:"9px",background:"linear-gradient(135deg,#0ea5e918,#6366f118)",border:"1px solid #6366f1",borderRadius:"8px",color:"#a5b4fc",fontSize:"12px",fontWeight:600,cursor:"pointer"},
+      onClick:()=>runAISchedule(vd),
+      },state.aiScheduleLoading?"🤖 提案中...":"🤖 AI提案")
+  ]));
+
+  // AI提案結果の確認カード
+  if(state.aiScheduleProposal){
+    const p=state.aiScheduleProposal;
+    const pc=div({className:"card",style:{border:"1px solid #6366f155"}});
+    pc.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#a5b4fc",marginBottom:"8px"}},"🤖 AIのスケジュール提案"));
+    if(p.comment)pc.appendChild(div({style:{fontSize:"11px",color:"#94a3b8",marginBottom:"10px",lineHeight:1.6}},p.comment));
+    (p.events||[]).forEach(ev=>{
+      pc.appendChild(div({style:{display:"flex",gap:"8px",alignItems:"center",padding:"5px 8px",background:"#0f172a",borderRadius:"6px",marginBottom:"4px"}},[
+        span({style:{fontSize:"11px",color:"#64748b",minWidth:"84px"}},`${String(ev.startH).padStart(2,'0')}:${String(ev.startM).padStart(2,'0')}〜${String(ev.endH).padStart(2,'0')}:${String(ev.endM).padStart(2,'0')}`),
+        span({style:{fontSize:"12px",color:"#e2e8f0"}},ev.title)
+      ]));
+    });
+    pc.appendChild(div({style:{display:"flex",gap:"8px",marginTop:"10px"}},[
+      btn({className:"btn-ghost",style:{flex:1},onClick:()=>{state.aiScheduleProposal=null;render();}},"却下"),
+      btn({style:{flex:2,padding:"9px",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"12px",fontWeight:600,cursor:"pointer"},
+        onClick:()=>{
+          if(!state.schedule[vd])state.schedule[vd]=[];
+          (state.aiScheduleProposal.events||[]).forEach(ev=>{
+            state.schedule[vd].push({uid:Date.now()+Math.random(),title:ev.title,startH:ev.startH,startM:ev.startM,endH:ev.endH,endM:ev.endM,color:EV_COLORS[0]});
+          });
+          saveSchedule();state.aiScheduleProposal=null;render();
+          showToast("📅 スケジュールを登録しました");
+        }},"この予定を登録")
+    ]));
+    wrap.appendChild(pc);
+  }
+
+  // タイムライン（0〜24時）
+  const HOUR_H=40, START_H=0, END_H=24;
+  const tlCard=div({className:"card",style:{padding:"10px"}});
+  tlCard.appendChild(div({style:{display:"flex",marginBottom:"6px"}},[
+    div({style:{width:"34px"}},""),
+    div({style:{flex:1,fontSize:"10px",fontWeight:700,color:"#38bdf8",textAlign:"center"}},"📅 予定"),
+    div({style:{flex:1,fontSize:"10px",fontWeight:700,color:"#22c55e",textAlign:"center"}},"✔ 実際（TODO連携）")
+  ]));
+
+  const tl=div({style:{position:"relative",height:`${(END_H-START_H)*HOUR_H}px`}});
+  for(let h2=START_H;h2<END_H;h2++){
+    tl.appendChild(div({style:{position:"absolute",top:`${(h2-START_H)*HOUR_H}px`,left:0,right:0,borderTop:"1px solid #1e3a5f55",display:"flex"}},[
+      div({style:{width:"34px",fontSize:"9px",color:"#475569",marginTop:"-6px"}},`${h2}:00`)
+    ]));
+  }
+  if(isToday){
+    const now=new Date();const nowY=((now.getHours()+now.getMinutes()/60)-START_H)*HOUR_H;
+    if(nowY>0&&nowY<(END_H-START_H)*HOUR_H){
+      tl.appendChild(div({style:{position:"absolute",top:`${nowY}px`,left:"30px",right:0,borderTop:"1.5px solid #38bdf8",zIndex:5}},[
+        div({style:{width:"6px",height:"6px",borderRadius:"50%",background:"#38bdf8",marginTop:"-4px"}})
+      ]));
+    }
+  }
+  const blockArea=(items,leftPct,widthPct,defaultColor,onTap)=>{
+    items.forEach(ev=>{
+      const sMin=(ev.startMin!=null?ev.startMin:ev.startH*60+ev.startM);
+      const eMin=(ev.endMin!=null?ev.endMin:ev.endH*60+ev.endM);
+      const color=ev.color||defaultColor;
+      const top=((sMin/60)-START_H)*HOUR_H;
+      const height=ev.isPoint?14:Math.max(16,((eMin-sMin)/60)*HOUR_H-2);
+      if(top+height<0||top>(END_H-START_H)*HOUR_H)return;
+      const block=div({style:{
+        position:"absolute",top:`${Math.max(0,top)}px`,left:leftPct,width:widthPct,
+        height:`${height}px`,background:color+"22",border:`1px solid ${color}66`,
+        borderLeft:`3px solid ${color}`,borderRadius:"5px",padding:"1px 5px",
+        overflow:"hidden",cursor:onTap?"pointer":"default",zIndex:3,boxSizing:"border-box"
+      }});
+      block.appendChild(div({style:{fontSize:"9px",fontWeight:600,color:color,lineHeight:1.3,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},
+        (ev.isRepeat?"🔁":"")+ev.title));
+      if(height>30&&!ev.isPoint)block.appendChild(div({style:{fontSize:"8px",color:"#64748b"}},`${Math.floor(sMin/60)}:${String(sMin%60).padStart(2,'0')}〜${Math.floor(eMin/60)}:${String(eMin%60).padStart(2,'0')}`));
+      if(onTap)block.addEventListener('click',()=>onTap(ev));
+      tl.appendChild(block);
+    });
+  };
+  blockArea(events,"36px","calc(50% - 40px)",EV_COLORS[0],ev=>{
+    state.modal="addEvent";state.editEventUid=ev.uid;state.editEventIsRepeat=!!ev.isRepeat;
+    state.newEvTitle=ev.title;state.newEvH=ev.startH;state.newEvM=ev.startM;
+    state.newEvEndH=ev.endH;state.newEvEndM=ev.endM;
+    state.newEvRepeat=ev.isRepeat?ev.repeatType:"none";
+    state.newEvColor=ev.color||EV_COLORS[0];
+    render();
+  });
+  blockArea(actuals,"calc(50% + 2px)","calc(50% - 6px)","#22c55e",null);
+
+  tlCard.appendChild(tl);
+  wrap.appendChild(tlCard);
+  return wrap;
+}
+
+// ── 週カレンダー ──
+function renderWeekCalendar(vd,ds){
+  const wrap=div({});
+  // vdの週（月曜始まり）
+  const base=parseDS(vd);
+  const mondayOff=(base.getDay()+6)%7;
+  const monday=new Date(base);monday.setDate(monday.getDate()-mondayOff);
+
+  wrap.appendChild(div({style:{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"10px"}},[
+    btn({style:{background:"transparent",border:"1px solid #334155",borderRadius:"7px",color:"#94a3b8",cursor:"pointer",fontSize:"14px",padding:"2px 10px"},
+      onClick:()=>{const n=new Date(parseDS(state.viewDate));n.setDate(n.getDate()-7);state.viewDate=fmtDS(n);render();}},"‹"),
+    div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0"}},
+      `${monday.getMonth()+1}/${monday.getDate()} 〜 の週`),
+    btn({style:{background:"transparent",border:"1px solid #334155",borderRadius:"7px",color:"#94a3b8",cursor:"pointer",fontSize:"14px",padding:"2px 10px"},
+      onClick:()=>{const n=new Date(parseDS(state.viewDate));n.setDate(n.getDate()+7);state.viewDate=fmtDS(n);render();}},"›")
+  ]));
+
+  const card=div({className:"card",style:{padding:"8px"}});
+  const grid=div({style:{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:"3px"}});
+  const DAY_LBL=["月","火","水","木","金","土","日"];
+  for(let i=0;i<7;i++){
+    const d2=new Date(monday);d2.setDate(d2.getDate()+i);
+    const dsK=fmtDS(d2);
+    const isT=dsK===todayStr();
+    const evs=getEventsForDate(dsK);
+    const col=div({style:{minHeight:"120px",background:"#0f172a",borderRadius:"6px",padding:"4px 3px",border:`1px solid ${isT?"#38bdf8":"#1e3a5f"}`,cursor:"pointer",overflow:"hidden"}});
+    col.appendChild(div({style:{textAlign:"center",fontSize:"9px",color:isT?"#38bdf8":"#64748b",fontWeight:isT?700:400,marginBottom:"3px"}},`${DAY_LBL[i]} ${d2.getDate()}`));
+    evs.slice(0,6).forEach(ev=>{
+      const c=ev.color||EV_COLORS[0];
+      col.appendChild(div({style:{fontSize:"8px",color:c,background:c+"22",borderLeft:`2px solid ${c}`,borderRadius:"3px",padding:"1px 3px",marginBottom:"2px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},
+        `${String(ev.startH).padStart(2,'0')}:${String(ev.startM).padStart(2,'0')} ${ev.title}`));
+    });
+    if(evs.length>6)col.appendChild(div({style:{fontSize:"8px",color:"#475569",textAlign:"center"}},`+${evs.length-6}`));
+    col.addEventListener('click',(()=>{const k=dsK;return()=>{state.viewDate=k;state.scheduleSubTab="日";render();};})());
+    grid.appendChild(col);
+  }
+  card.appendChild(grid);
+  wrap.appendChild(card);
+  wrap.appendChild(div({style:{textAlign:"center",fontSize:"10px",color:"#475569",marginTop:"6px"}},"日をタップで日表示へ"));
+  return wrap;
+}
+
+// ── 月カレンダー ──
+function renderMonthCalendar(vd,ds){
+  const wrap=div({});
+  const base=parseDS(vd);
+  const y=base.getFullYear(),m=base.getMonth()+1;
+
+  wrap.appendChild(div({style:{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"10px"}},[
+    btn({style:{background:"transparent",border:"1px solid #334155",borderRadius:"7px",color:"#94a3b8",cursor:"pointer",fontSize:"14px",padding:"2px 10px"},
+      onClick:()=>{const n=new Date(y,m-2,1);state.viewDate=fmtDS(n);render();}},"‹"),
+    div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0"}},`${y}年${m}月`),
+    btn({style:{background:"transparent",border:"1px solid #334155",borderRadius:"7px",color:"#94a3b8",cursor:"pointer",fontSize:"14px",padding:"2px 10px"},
+      onClick:()=>{const n=new Date(y,m,1);state.viewDate=fmtDS(n);render();}},"›")
+  ]));
+
+  const card=div({className:"card",style:{padding:"8px"}});
+  card.appendChild(div({style:{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:"3px",marginBottom:"3px"}},
+    ["月","火","水","木","金","土","日"].map(w=>div({style:{textAlign:"center",fontSize:"9px",color:"#475569"}},w))));
+
+  const firstDay=new Date(y,m-1,1);
+  const daysInMonth=new Date(y,m,0).getDate();
+  const startBlank=(firstDay.getDay()+6)%7;
+  const grid=div({style:{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:"3px"}});
+  for(let i=0;i<startBlank;i++)grid.appendChild(div({},""));
+  const todayD2=todayStr();
+  for(let day=1;day<=daysInMonth;day++){
+    const dsK=`${y}-${String(m).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+    const evs=getEventsForDate(dsK);
+    const isT=dsK===todayD2;
+    const cell=div({style:{minHeight:"52px",borderRadius:"6px",padding:"3px",
+      background:"#0f172a",border:`1px solid ${isT?"#38bdf8":"#1e3a5f"}`,cursor:"pointer",overflow:"hidden"}});
+    cell.appendChild(div({style:{fontSize:"9px",color:isT?"#38bdf8":"#64748b",fontWeight:isT?700:400,marginBottom:"2px"}},String(day)));
+    evs.slice(0,3).forEach(ev=>{
+      const c=ev.color||EV_COLORS[0];
+      cell.appendChild(div({style:{fontSize:"7px",color:c,background:c+"22",borderRadius:"2px",padding:"0 2px",marginBottom:"1px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},ev.title));
+    });
+    if(evs.length>3)cell.appendChild(div({style:{fontSize:"7px",color:"#475569"}},`+${evs.length-3}`));
+    cell.addEventListener('click',(()=>{const k=dsK;return()=>{state.viewDate=k;state.scheduleSubTab="日";render();};})());
+    grid.appendChild(cell);
+  }
+  card.appendChild(grid);
+  wrap.appendChild(card);
+  wrap.appendChild(div({style:{textAlign:"center",fontSize:"10px",color:"#475569",marginTop:"6px"}},"日をタップで日表示へ"));
+  return wrap;
+}
+
+// ── やることリスト（重要度×緊急度マトリクス） ──
+function renderTaskMatrix(){
+  const wrap=div({});
+  const list=state.tasks.todo||[];
+  const card=div({className:"card"});
+  card.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0",marginBottom:"2px"}},"✅ やることリスト"));
+  card.appendChild(div({style:{fontSize:"10px",color:"#475569",marginBottom:"10px"}},"重要・緊急バッジをタップして優先順位付け"));
+
+  const inputRow=div({style:{display:"flex",gap:"6px",marginBottom:"10px"}});
+  const inp=document.createElement('input');
+  inp.type='text';inp.placeholder="やることを追加...";
+  inp.style.cssText="flex:1;padding:8px 12px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit";
+  const addFn=()=>{
+    const v=inp.value.trim();if(!v)return;
+    state.tasks.todo=[...(state.tasks.todo||[]),{uid:Date.now(),text:v,done:false,imp:false,urg:false}];
+    saveTasks();inp.value="";render();
+  };
+  inp.addEventListener('keydown',e=>{if(e.key==="Enter")addFn();});
+  const addBtn=btn({style:{padding:"8px 16px",background:"#0ea5e918",border:"1px solid #0ea5e9",borderRadius:"8px",color:"#38bdf8",fontSize:"13px",fontWeight:600,cursor:"pointer"}},"＋");
+  addBtn.addEventListener('click',addFn);
+  inputRow.appendChild(inp);inputRow.appendChild(addBtn);
+  card.appendChild(inputRow);
+
+  // 優先度ソート：重×急 → 重 → 急 → なし → 完了
+  const prio=t=>t.done?4:(t.imp&&t.urg)?0:t.imp?1:t.urg?2:3;
+  const prioColor=t=>(t.imp&&t.urg)?"#ef4444":t.imp?"#f97316":t.urg?"#eab308":"#334155";
+  const prioLabel=t=>(t.imp&&t.urg)?"最優先":t.imp?"重要":t.urg?"緊急":"";
+  const sorted=[...list].sort((a,b)=>prio(a)-prio(b));
+
+  if(sorted.length===0){
+    card.appendChild(div({style:{textAlign:"center",fontSize:"11px",color:"#475569",padding:"12px 0"}},"まだありません"));
+  }
+  sorted.forEach(item=>{
+    const pc=prioColor(item);
+    const row=div({style:{display:"flex",alignItems:"center",gap:"8px",padding:"8px 10px",background:"#0f172a",borderRadius:"8px",marginBottom:"4px",borderLeft:`3px solid ${item.done?"#334155":pc}`,opacity:item.done?"0.5":"1"}});
+    const cb=btn({style:{width:"22px",height:"22px",borderRadius:"6px",flexShrink:0,
+      border:`2px solid ${item.done?"#22c55e":"#334155"}`,background:item.done?"#22c55e":"transparent",
+      cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"12px"}},item.done?"✓":"");
+    cb.addEventListener('click',(()=>{const uid=item.uid;return()=>{
+      state.tasks.todo=state.tasks.todo.map(x=>x.uid===uid?{...x,done:!x.done}:x);
+      saveTasks();render();
+    };})());
+    row.appendChild(cb);
+    const label=div({style:{flex:1}});
+    label.appendChild(div({style:{fontSize:"13px",color:item.done?"#64748b":"#e2e8f0",textDecoration:item.done?"line-through":"none"}},item.text));
+    if(prioLabel(item)&&!item.done)label.appendChild(div({style:{fontSize:"9px",color:pc,fontWeight:700}},prioLabel(item)));
+    row.appendChild(label);
+    // 重要トグル
+    const impB=btn({style:{fontSize:"10px",padding:"3px 8px",borderRadius:"6px",cursor:"pointer",whiteSpace:"nowrap",
+      border:`1px solid ${item.imp?"#f97316":"#334155"}`,background:item.imp?"#f9731622":"transparent",color:item.imp?"#f97316":"#475569"}},"重要");
+    impB.addEventListener('click',(()=>{const uid=item.uid;return()=>{
+      state.tasks.todo=state.tasks.todo.map(x=>x.uid===uid?{...x,imp:!x.imp}:x);
+      saveTasks();render();
+    };})());
+    row.appendChild(impB);
+    // 緊急トグル
+    const urgB=btn({style:{fontSize:"10px",padding:"3px 8px",borderRadius:"6px",cursor:"pointer",whiteSpace:"nowrap",
+      border:`1px solid ${item.urg?"#eab308":"#334155"}`,background:item.urg?"#eab30822":"transparent",color:item.urg?"#eab308":"#475569"}},"緊急");
+    urgB.addEventListener('click',(()=>{const uid=item.uid;return()=>{
+      state.tasks.todo=state.tasks.todo.map(x=>x.uid===uid?{...x,urg:!x.urg}:x);
+      saveTasks();render();
+    };})());
+    row.appendChild(urgB);
+    const del=btn({style:{background:"transparent",border:"none",color:"#334155",cursor:"pointer",fontSize:"15px",padding:"0 2px"}},"×");
+    del.addEventListener('click',(()=>{const uid=item.uid;return()=>{
+      state.tasks.todo=state.tasks.todo.filter(x=>x.uid!==uid);
+      saveTasks();render();
+    };})());
+    row.appendChild(del);
+    card.appendChild(row);
+  });
+
+  if(list.some(x=>x.done)){
+    const clearBtn=btn({style:{width:"100%",marginTop:"6px",padding:"6px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#475569",fontSize:"11px",cursor:"pointer"}},"完了済みをまとめて削除");
+    clearBtn.addEventListener('click',()=>{
+      state.tasks.todo=state.tasks.todo.filter(x=>!x.done);
+      saveTasks();render();
+    });
+    card.appendChild(clearBtn);
+  }
+  wrap.appendChild(card);
+  return wrap;
+}
+
+// ── 汎用リスト（買物） ──
+function renderTaskList(key,title,subtitle){
+  const wrap=div({});
+  const list=state.tasks[key]||[];
+  const card=div({className:"card"});
+  card.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0",marginBottom:"2px"}},title));
+  card.appendChild(div({style:{fontSize:"10px",color:"#475569",marginBottom:"10px"}},subtitle));
+  const inputRow=div({style:{display:"flex",gap:"6px",marginBottom:"10px"}});
+  const inp=document.createElement('input');
+  inp.type='text';inp.placeholder="追加...";
+  inp.style.cssText="flex:1;padding:8px 12px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit";
+  const addFn=()=>{
+    const v=inp.value.trim();if(!v)return;
+    state.tasks[key]=[...(state.tasks[key]||[]),{uid:Date.now(),text:v,done:false}];
+    saveTasks();inp.value="";render();
+  };
+  inp.addEventListener('keydown',e=>{if(e.key==="Enter")addFn();});
+  const addBtn=btn({style:{padding:"8px 16px",background:"#0ea5e918",border:"1px solid #0ea5e9",borderRadius:"8px",color:"#38bdf8",fontSize:"13px",fontWeight:600,cursor:"pointer"}},"＋");
+  addBtn.addEventListener('click',addFn);
+  inputRow.appendChild(inp);inputRow.appendChild(addBtn);
+  card.appendChild(inputRow);
+  const sorted=[...list].sort((a,b)=>(a.done?1:0)-(b.done?1:0));
+  if(sorted.length===0){
+    card.appendChild(div({style:{textAlign:"center",fontSize:"11px",color:"#475569",padding:"12px 0"}},"まだありません"));
+  }
+  sorted.forEach(item=>{
+    const row=div({style:{display:"flex",alignItems:"center",gap:"10px",padding:"8px 10px",background:"#0f172a",borderRadius:"8px",marginBottom:"4px",opacity:item.done?"0.5":"1"}});
+    const cb=btn({style:{width:"22px",height:"22px",borderRadius:"6px",flexShrink:0,
+      border:`2px solid ${item.done?"#22c55e":"#334155"}`,background:item.done?"#22c55e":"transparent",
+      cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"12px"}},item.done?"✓":"");
+    cb.addEventListener('click',(()=>{const uid=item.uid;return()=>{
+      state.tasks[key]=state.tasks[key].map(x=>x.uid===uid?{...x,done:!x.done}:x);
+      saveTasks();render();
+    };})());
+    row.appendChild(cb);
+    row.appendChild(div({style:{flex:1,fontSize:"13px",color:item.done?"#64748b":"#e2e8f0",textDecoration:item.done?"line-through":"none"}},item.text));
+    const del=btn({style:{background:"transparent",border:"none",color:"#334155",cursor:"pointer",fontSize:"15px",padding:"0 4px"}},"×");
+    del.addEventListener('click',(()=>{const uid=item.uid;return()=>{
+      state.tasks[key]=state.tasks[key].filter(x=>x.uid!==uid);
+      saveTasks();render();
+    };})());
+    row.appendChild(del);
+    card.appendChild(row);
+  });
+  if(list.some(x=>x.done)){
+    const clearBtn=btn({style:{width:"100%",marginTop:"6px",padding:"6px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#475569",fontSize:"11px",cursor:"pointer"}},"完了済みをまとめて削除");
+    clearBtn.addEventListener('click',()=>{
+      state.tasks[key]=state.tasks[key].filter(x=>!x.done);
+      saveTasks();render();
+    });
+    card.appendChild(clearBtn);
+  }
+  wrap.appendChild(card);
+  return wrap;
+}
+
+// ── 予定追加・編集モーダル ──
+function renderAddEventModal(vd){
+  const isEdit=state.editEventUid!=null;
+  const bg=div({className:"modal-center"});
+  const m=div({className:"modal-box",style:{maxHeight:"85vh",overflowY:"auto"}});
+  bg.addEventListener('click',()=>{state.modal=null;render();});
+  m.addEventListener('click',e=>e.stopPropagation());
+  m.appendChild(div({style:{fontSize:"15px",fontWeight:700,color:"#e2e8f0",marginBottom:"14px"}},isEdit?"📅 予定を編集":"📅 予定を追加"));
+
+  const inp=document.createElement('input');
+  inp.type='text';inp.placeholder="予定のタイトル";inp.value=state.newEvTitle;
+  inp.style.cssText="width:100%;padding:9px 12px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:14px;font-family:inherit;box-sizing:border-box;margin-bottom:12px";
+  inp.addEventListener('input',e=>{state.newEvTitle=e.target.value;});
+  m.appendChild(inp);
+
+  const mkT=(label,getH,getM,setH,setM)=>{
+    const w2=div({style:{marginBottom:"12px"}});
+    w2.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"5px"}},label));
+    const row=document.createElement('div');row.style.cssText="display:flex;gap:8px;align-items:center";
+    const sH=document.createElement('select');sH.className='sel';
+    const sM=document.createElement('select');sM.className='sel';
+    Array.from({length:24},(_,i)=>{const o=document.createElement('option');o.value=i;o.textContent=`${String(i).padStart(2,'0')}時`;if(i===getH())o.selected=true;sH.appendChild(o);});
+    [0,5,10,15,20,25,30,35,40,45,50,55].forEach(i=>{const o=document.createElement('option');o.value=i;o.textContent=`${String(i).padStart(2,'0')}分`;if(i===getM())o.selected=true;sM.appendChild(o);});
+    sH.addEventListener('change',e=>setH(Number(e.target.value)));
+    sM.addEventListener('change',e=>setM(Number(e.target.value)));
+    row.appendChild(sH);row.appendChild(span({style:{color:"#475569",fontWeight:700}},"："));row.appendChild(sM);
+    w2.appendChild(row);return w2;
+  };
+  m.appendChild(mkT("開始",()=>state.newEvH,()=>state.newEvM,v=>{state.newEvH=v;},v=>{state.newEvM=v;}));
+  m.appendChild(mkT("終了",()=>state.newEvEndH,()=>state.newEvEndM,v=>{state.newEvEndH=v;},v=>{state.newEvEndM=v;}));
+
+  // 色選択
+  m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"6px"}},"色"));
+  const colorRow=div({style:{display:"flex",gap:"8px",marginBottom:"12px"}});
+  EV_COLORS.forEach(c=>{
+    const on=state.newEvColor===c;
+    const cb=btn({style:{width:"32px",height:"32px",borderRadius:"8px",cursor:"pointer",
+      background:c+(on?"":"44"),border:`2px solid ${on?c:"transparent"}`,boxShadow:on?`0 0 0 2px #0f172a, 0 0 0 4px ${c}66`:"none"}},"");
+    cb.addEventListener('click',()=>{state.newEvColor=c;render();});
+    colorRow.appendChild(cb);
+  });
+  m.appendChild(colorRow);
+
+  // 繰り返し選択（開始日vdの情報から動的にオプション生成）
+  const s=parseDS(vd);
+  const w=WEEKDAYS_JP[s.getDay()];
+  const nth=Math.ceil(s.getDate()/7);
+  m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"6px"}},"繰り返し"));
+  const repSel=document.createElement('select');
+  repSel.className='sel';
+  repSel.style.cssText="width:100%;margin-bottom:14px";
+  [
+    {v:"none",l:"なし"},
+    {v:"daily",l:"毎日"},
+    {v:"w1",l:`毎週${w}曜日`},
+    {v:"w2",l:`2週に1回 ${w}曜日`},
+    {v:"w3",l:`3週に1回 ${w}曜日`},
+    {v:"w4",l:`4週に1回 ${w}曜日`},
+    {v:"nth",l:`毎月 第${nth}${w}曜日`},
+    {v:"monthly",l:`毎月${s.getDate()}日`},
+    {v:"yearly",l:`毎年${s.getMonth()+1}月${s.getDate()}日`},
+  ].forEach(({v,l})=>{const o=document.createElement('option');o.value=v;o.textContent=l;if(v===state.newEvRepeat)o.selected=true;repSel.appendChild(o);});
+  repSel.addEventListener('change',e=>{state.newEvRepeat=e.target.value;});
+  m.appendChild(repSel);
+
+  if(isEdit){
+    m.appendChild(btn({style:{width:"100%",padding:"7px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#475569",cursor:"pointer",fontSize:"12px",marginBottom:"8px"},
+      onClick:()=>{
+        if(state.editEventIsRepeat){
+          if(!confirm("この繰り返し予定を全て削除しますか？"))return;
+          state.repeatEvents=(state.repeatEvents||[]).filter(e=>e.uid!==state.editEventUid);
+          saveRepeatEvents();
+        } else {
+          state.schedule[vd]=(state.schedule[vd]||[]).filter(e=>e.uid!==state.editEventUid);
+          saveSchedule();
+        }
+        state.modal=null;render();
+      }},state.editEventIsRepeat?"この繰り返し予定を削除（全て）":"この予定を削除"));
+  }
+
+  m.appendChild(div({style:{display:"flex",gap:"8px"}},[
+    btn({className:"btn-ghost",style:{flex:1},onClick:()=>{state.modal=null;render();}},"キャンセル"),
+    btn({style:{flex:2,padding:"10px",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:600,cursor:"pointer"},
+      onClick:()=>{
+        if(!state.newEvTitle.trim()){alert("タイトルを入力してください");return;}
+        const evData={title:state.newEvTitle.trim(),startH:state.newEvH,startM:state.newEvM,endH:state.newEvEndH,endM:state.newEvEndM,color:state.newEvColor};
+
+        if(isEdit){
+          // 既存編集：繰り返し⇄単発の変換も対応
+          if(state.editEventIsRepeat){
+            state.repeatEvents=(state.repeatEvents||[]).filter(e=>e.uid!==state.editEventUid);
+          } else {
+            state.schedule[vd]=(state.schedule[vd]||[]).filter(e=>e.uid!==state.editEventUid);
+          }
+        }
+        if(state.newEvRepeat==="none"){
+          if(!state.schedule[vd])state.schedule[vd]=[];
+          state.schedule[vd].push({uid:Date.now(),...evData});
+        } else {
+          if(!state.repeatEvents)state.repeatEvents=[];
+          state.repeatEvents.push({uid:Date.now(),...evData,repeatType:state.newEvRepeat,startDate:vd});
+        }
+        saveSchedule();saveRepeatEvents();
+        state.modal=null;render();
+      }},"保存")
+  ]));
+  bg.appendChild(m);return bg;
+}
+
+// ── AIスケジュール提案 ──
+async function runAISchedule(vd){
+  if(state.aiScheduleLoading)return;
+  state.aiScheduleLoading=true;state.aiScheduleProposal=null;render();
+  try{
+    const d=getDaily(vd);
+    const shift=d.workStart==null?"休み":d.workStart<12?"1直(7:30-16:00勤務)":"2直(14:30-23:00勤務)";
+    const existing=getEventsForDate(vd).map(e=>`${String(e.startH).padStart(2,'0')}:${String(e.startM).padStart(2,'0')}〜${String(e.endH).padStart(2,'0')}:${String(e.endM).padStart(2,'0')} ${e.title}`).join("\n")||"なし";
+    const prioT=t=>(t.imp&&t.urg)?"[最優先]":t.imp?"[重要]":t.urg?"[緊急]":"";
+    const todoTasks=(state.tasks.todo||[]).filter(t=>!t.done).map(t=>`${prioT(t)}${t.text}`).join(", ")||"なし";
+    const routines=TODO_ITEMS.map(i=>i.label).join(", ");
+    const now=new Date();
+    const isTodayFlag=vd===todayStr();
+    const timeCtx=isTodayFlag?`現在時刻は${now.getHours()}:${String(now.getMinutes()).padStart(2,'0')}です。今の時刻以降のスケジュールだけ提案してください。`:"1日全体のスケジュールを提案してください。";
+
+    const res=await fetch("https://nuts024.com/health/api.php",{
+      method:"POST",
+      headers:{"Content-Type":"application/json","X-Secret-Key":"songof3838"},
+      body:JSON.stringify({
+        system:`あなたは生活プランナーです。ユーザーの1日のスケジュールを提案し、以下のJSON形式のみで返答してください:
+{"comment":"提案の説明1〜2文","events":[{"title":"予定名","startH":9,"startM":0,"endH":10,"endM":30}]}
+ルール: 既存の予定と重複しない時間に配置。勤務時間中には予定を入れない。[最優先][重要][緊急]のタスクを優先的に配置。朝晩のルーティンは「朝ルーティン」「夜ルーティン」でまとめる。食事時間を確保。無理のない量にする。`,
+        prompt:`日付: ${vd}\n勤務: ${shift}\n${timeCtx}\n\n【既存の予定】\n${existing}\n\n【やることリスト(未完了・優先度付き)】\n${todoTasks}\n\n【毎日のルーティン】\n${routines}\n\nスケジュールを提案してください。`
+      })
+    });
+    const data=await res.json();
+    if(data.error){
+      if(data.error==="__DAILY_LIMIT__")throw new Error(data.message||"本日の利用上限に達しました");
+      if(data.error==="__GEMINI_RATE__")throw new Error(data.message||"混雑中です。少し待ってください");
+      throw new Error(data.error);
+    }
+    const text=(data.text||"").replace(/```json|```/g,"").trim();
+    const proposal=JSON.parse(text);
+    if(!proposal.events||!proposal.events.length)throw new Error("提案が生成できませんでした");
+    state.aiScheduleProposal=proposal;
+  }catch(e){
+    showToast(`提案失敗: ${e.message}`,"#ef4444");
+  }
+  state.aiScheduleLoading=false;render();
+}
+
 // ── TODOデータ管理 ────────────────────────────────
 function getTodo(dateStr){
   return state.todos[dateStr] || {};
@@ -1801,6 +2425,354 @@ function calcStreak(vd, item){
     chk = prevDay(chk);
   }
   return count;
+}
+
+// ═══════════════════════════════════════════════════
+// 予定タブ（スケジュール・やること・やりたいこと・買物）
+// ═══════════════════════════════════════════════════
+
+// TODOタイマー記録から「実際の行動」を取得
+function getActualActivities(vd){
+  const todo=state.todos[vd]||{};
+  const out=[];
+  TODO_ITEMS.forEach(item=>{
+    if(item.type!=="timer")return;
+    const t=todo[item.id]||{};
+    if(item.multi){
+      (t.sessions||[]).forEach(s=>{
+        if(s.startTime&&s.endTime){
+          const st=new Date(s.startTime),en=new Date(s.endTime);
+          out.push({title:item.label,sH:st.getHours(),sM:st.getMinutes(),eH:en.getHours(),eM:en.getMinutes()});
+        }
+      });
+    } else if(t.startTime&&t.endTime){
+      const st=new Date(t.startTime),en=new Date(t.endTime);
+      out.push({title:item.label,sH:st.getHours(),sM:st.getMinutes(),eH:en.getHours(),eM:en.getMinutes()});
+    }
+  });
+  return out.sort((a,b)=>(a.sH*60+a.sM)-(b.sH*60+b.sM));
+}
+
+function renderScheduleHub(vd, ds, isToday){
+  const SUB=["スケジュール","やること","やりたいこと","買物"];
+  const wrap=div({style:{maxWidth:"600px",margin:"0 auto"}});
+
+  const subBar=div({style:{display:"flex",borderBottom:"1px solid #1e3a5f",background:"#1e293b",position:"sticky",top:"0",zIndex:50}});
+  SUB.forEach(t=>{
+    const b=btn({style:{flex:1,padding:"10px 2px",border:"none",cursor:"pointer",fontSize:"11px",fontWeight:600,
+      background:"transparent",color:state.scheduleSubTab===t?"#38bdf8":"#475569",
+      borderBottom:`2px solid ${state.scheduleSubTab===t?"#38bdf8":"transparent"}`}},t);
+    b.addEventListener('click',()=>{state.scheduleSubTab=t;render();});
+    subBar.appendChild(b);
+  });
+  wrap.appendChild(subBar);
+
+  const inner=div({style:{padding:"10px 16px 60px"}});
+  if(state.scheduleSubTab==="スケジュール") inner.appendChild(renderTimeline(vd,ds,isToday));
+  if(state.scheduleSubTab==="やること")     inner.appendChild(renderSimpleList("taskList","✅ やることリスト","タスクを追加...",true,vd));
+  if(state.scheduleSubTab==="やりたいこと") inner.appendChild(renderSimpleList("wishList","🌟 やりたいことリスト","やりたいことを追加...",false,vd));
+  if(state.scheduleSubTab==="買物")         inner.appendChild(renderSimpleList("shopList","🛒 買物リスト","品名を追加...",false,vd));
+  wrap.appendChild(inner);
+  return wrap;
+}
+
+// ── タイムライン（予定 vs 実際の2列）──
+function renderTimeline(vd, ds, isToday){
+  const wrap=div({});
+  const events=[...getEvents(vd)].sort((a,b)=>(a.sH*60+a.sM)-(b.sH*60+b.sM));
+  const actuals=getActualActivities(vd);
+
+  wrap.appendChild(div({style:{display:"flex",gap:"8px",marginBottom:"10px"}},[
+    btn({style:{flex:1,padding:"9px",background:"#0ea5e918",border:"1px solid #0ea5e9",borderRadius:"8px",color:"#38bdf8",fontSize:"12px",fontWeight:600,cursor:"pointer"},
+      onClick:()=>{
+        const now=new Date();
+        state.modal="addEvent";state.newEventUid=null;
+        state.newEventTitle="";
+        state.newEventSH=now.getHours();state.newEventSM=0;
+        state.newEventEH=Math.min(23,now.getHours()+1);state.newEventEM=0;
+        render();
+      }},"＋ 予定を追加"),
+    btn({style:{flex:1,padding:"9px",background:"linear-gradient(135deg,#0ea5e918,#6366f118)",border:"1px solid #6366f1",borderRadius:"8px",color:"#a5b4fc",fontSize:"12px",fontWeight:600,cursor:"pointer"},
+      onClick:()=>{state.modal="aiPlan";state.aiPlanSelected={};state.aiPlanResult=null;render();}},"✨ AIスケジュール提案")
+  ]));
+
+  wrap.appendChild(div({style:{display:"flex",gap:"14px",marginBottom:"8px",fontSize:"10px"}},[
+    span({style:{color:"#38bdf8"}},"■ 予定"),
+    span({style:{color:"#22c55e"}},"■ 実際（TODOタイマーと連動）")
+  ]));
+
+  if(events.length===0&&actuals.length===0){
+    wrap.appendChild(div({className:"card",style:{textAlign:"center",color:"#475569",padding:"30px 16px",fontSize:"12px"}},
+      "予定がありません。「＋ 予定を追加」か「✨ AI提案」で1日を組み立てましょう"));
+  }
+
+  const START_H=5, END_H=25, HPX=44;
+  const tlH=(END_H-START_H)*HPX;
+  const tl=div({style:{position:"relative",height:`${tlH}px`,marginTop:"4px"}});
+
+  for(let hh=START_H;hh<=END_H;hh++){
+    const y=(hh-START_H)*HPX;
+    tl.appendChild(div({style:{position:"absolute",top:`${y}px`,left:0,right:0,borderTop:"1px solid #1e3a5f44"}}));
+    tl.appendChild(div({style:{position:"absolute",top:`${y-7}px`,left:0,fontSize:"9px",color:"#475569",width:"32px"}},`${hh%24}:00`));
+  }
+
+  if(isToday){
+    const now=new Date();
+    const nowY=((now.getHours()+now.getMinutes()/60)-START_H)*HPX;
+    if(nowY>=0&&nowY<=tlH){
+      tl.appendChild(div({style:{position:"absolute",top:`${nowY}px`,left:"32px",right:0,borderTop:"1.5px dashed #38bdf8",zIndex:5}}));
+    }
+  }
+
+  const mkBlock=(ev,col,leftV,widthV,onClick)=>{
+    let sMin=(ev.sH+(ev.sM||0)/60), eMin=(ev.eH+(ev.eM||0)/60);
+    if(eMin<=sMin)eMin+=24;
+    const top=(sMin-START_H)*HPX;
+    const height=Math.max(18,(eMin-sMin)*HPX-2);
+    const block=div({style:{
+      position:"absolute",top:`${top}px`,left:leftV,width:widthV,height:`${height}px`,
+      background:col+"22",border:`1px solid ${col}66`,borderLeft:`3px solid ${col}`,
+      borderRadius:"6px",padding:"2px 6px",overflow:"hidden",cursor:onClick?"pointer":"default",zIndex:3,boxSizing:"border-box"
+    }});
+    block.appendChild(div({style:{fontSize:"10px",fontWeight:600,color:col,lineHeight:1.3}},ev.title));
+    if(height>=30)block.appendChild(div({style:{fontSize:"8px",color:"#64748b"}},`${String(ev.sH).padStart(2,'0')}:${String(ev.sM||0).padStart(2,'0')}〜${String(ev.eH).padStart(2,'0')}:${String(ev.eM||0).padStart(2,'0')}`));
+    if(onClick)block.addEventListener('click',onClick);
+    return block;
+  };
+
+  events.forEach(ev=>{
+    tl.appendChild(mkBlock(ev,"#38bdf8","36px","calc(50% - 40px)",(()=>{const e2=ev;return()=>{
+      state.modal="addEvent";state.newEventUid=e2.uid;
+      state.newEventTitle=e2.title;
+      state.newEventSH=e2.sH;state.newEventSM=e2.sM||0;
+      state.newEventEH=e2.eH;state.newEventEM=e2.eM||0;
+      render();
+    };})()));
+  });
+
+  actuals.forEach(ac=>{
+    tl.appendChild(mkBlock(ac,"#22c55e","calc(50% + 2px)","calc(50% - 6px)",null));
+  });
+
+  wrap.appendChild(tl);
+  return wrap;
+}
+
+// ── 汎用リスト（やること・やりたいこと・買物）──
+function renderSimpleList(key, title, placeholder, withPlanBtn, vd){
+  const wrap=div({});
+  const list=state[key];
+
+  const card=div({className:"card"});
+  card.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0",marginBottom:"10px"}},title));
+
+  const inputRow=div({style:{display:"flex",gap:"6px",marginBottom:"12px"}});
+  const inp=document.createElement('input');
+  inp.type='text';inp.placeholder=placeholder;
+  inp.style.cssText="flex:1;padding:9px 12px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit;min-width:0";
+  const addItem=()=>{
+    const v=inp.value.trim();if(!v)return;
+    state[key]=[{uid:Date.now(),text:v,done:false},...state[key]];
+    saveLists();inp.value="";render();
+  };
+  inp.addEventListener('keydown',e=>{if(e.key==="Enter")addItem();});
+  const addB=btn({style:{padding:"9px 16px",background:"#0ea5e9",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:600,cursor:"pointer",flexShrink:0}},"追加");
+  addB.addEventListener('click',addItem);
+  inputRow.appendChild(inp);inputRow.appendChild(addB);
+  card.appendChild(inputRow);
+
+  const sorted=[...list].sort((a,b)=>(a.done?1:0)-(b.done?1:0));
+  if(sorted.length===0){
+    card.appendChild(div({style:{fontSize:"12px",color:"#475569",textAlign:"center",padding:"12px 0"}},"まだありません"));
+  }
+  sorted.forEach(item=>{
+    const row=div({style:{display:"flex",alignItems:"center",gap:"10px",padding:"8px 4px",borderBottom:"1px solid #1e3a5f33",opacity:item.done?0.5:1}});
+    const cb=btn({style:{width:"22px",height:"22px",borderRadius:"6px",flexShrink:0,
+      border:`2px solid ${item.done?"#22c55e":"#334155"}`,background:item.done?"#22c55e":"transparent",
+      cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"13px",color:"#fff"}},item.done?"✓":"");
+    cb.addEventListener('click',(()=>{const uid=item.uid;return()=>{
+      state[key]=state[key].map(x=>x.uid===uid?{...x,done:!x.done}:x);saveLists();render();
+    };})());
+    row.appendChild(cb);
+    row.appendChild(div({style:{flex:1,fontSize:"13px",color:item.done?"#475569":"#e2e8f0",textDecoration:item.done?"line-through":"none"}},item.text));
+    if(withPlanBtn&&!item.done){
+      const planB=btn({style:{fontSize:"10px",padding:"3px 8px",background:"transparent",border:"1px solid #334155",borderRadius:"6px",color:"#64748b",cursor:"pointer",whiteSpace:"nowrap"}},"→予定");
+      planB.addEventListener('click',(()=>{const text=item.text;return()=>{
+        const now=new Date();
+        state.modal="addEvent";state.newEventUid=null;
+        state.newEventTitle=text;
+        state.newEventSH=now.getHours();state.newEventSM=0;
+        state.newEventEH=Math.min(23,now.getHours()+1);state.newEventEM=0;
+        state.scheduleSubTab="スケジュール";
+        render();
+      };})());
+      row.appendChild(planB);
+    }
+    const del=btn({style:{background:"transparent",border:"none",color:"#334155",cursor:"pointer",fontSize:"16px",padding:"0 4px"}},"×");
+    del.addEventListener('click',(()=>{const uid=item.uid;return()=>{
+      state[key]=state[key].filter(x=>x.uid!==uid);saveLists();render();
+    };})());
+    row.appendChild(del);
+    card.appendChild(row);
+  });
+
+  if(list.some(x=>x.done)){
+    const clearB=btn({style:{marginTop:"10px",fontSize:"11px",padding:"6px 12px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#475569",cursor:"pointer"}},"完了済みをまとめて削除");
+    clearB.addEventListener('click',()=>{state[key]=state[key].filter(x=>!x.done);saveLists();render();});
+    card.appendChild(clearB);
+  }
+
+  wrap.appendChild(card);
+  return wrap;
+}
+
+// ── 予定追加・編集モーダル ──
+function renderAddEventModal(vd){
+  const isEdit=state.newEventUid!=null;
+  const bg=div({className:"modal-center"});
+  const m=div({className:"modal-box"});
+  bg.addEventListener('click',()=>{state.modal=null;render();});
+  m.addEventListener('click',e=>e.stopPropagation());
+  m.appendChild(div({style:{fontSize:"15px",fontWeight:700,color:"#e2e8f0",marginBottom:"14px"}},isEdit?"📅 予定を編集":"📅 予定を追加"));
+
+  m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"4px"}},"タイトル"));
+  const titleInp=document.createElement('input');
+  titleInp.type='text';titleInp.value=state.newEventTitle||"";titleInp.placeholder="予定の名前...";
+  titleInp.style.cssText="width:100%;padding:9px 12px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit;box-sizing:border-box;margin-bottom:12px";
+  titleInp.addEventListener('input',e=>{state.newEventTitle=e.target.value;});
+  m.appendChild(titleInp);
+
+  const mkT=(label,getH,getM,setH,setM)=>{
+    const w2=div({style:{marginBottom:"12px"}});
+    w2.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"5px"}},label));
+    const row=document.createElement('div');row.style.cssText="display:flex;gap:8px;align-items:center";
+    const sH=document.createElement('select');sH.className='sel';
+    const sM=document.createElement('select');sM.className='sel';
+    Array.from({length:24},(_,i)=>{const o=document.createElement('option');o.value=i;o.textContent=`${String(i).padStart(2,'0')}時`;if(i===getH())o.selected=true;sH.appendChild(o);});
+    [0,5,10,15,20,25,30,35,40,45,50,55].forEach(i=>{const o=document.createElement('option');o.value=i;o.textContent=`${String(i).padStart(2,'0')}分`;if(i===getM())o.selected=true;sM.appendChild(o);});
+    sH.addEventListener('change',e=>setH(Number(e.target.value)));
+    sM.addEventListener('change',e=>setM(Number(e.target.value)));
+    row.appendChild(sH);row.appendChild(span({style:{color:"#475569",fontWeight:700}},"："));row.appendChild(sM);
+    w2.appendChild(row);
+    return w2;
+  };
+  m.appendChild(mkT("開始",()=>state.newEventSH,()=>state.newEventSM,v=>{state.newEventSH=v;},v=>{state.newEventSM=v;}));
+  m.appendChild(mkT("終了",()=>state.newEventEH,()=>state.newEventEM,v=>{state.newEventEH=v;},v=>{state.newEventEM=v;}));
+
+  if(isEdit){
+    m.appendChild(btn({style:{width:"100%",padding:"7px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#475569",cursor:"pointer",fontSize:"12px",marginBottom:"8px"},
+      onClick:()=>{
+        setEvents(vd,getEvents(vd).filter(e=>e.uid!==state.newEventUid));
+        state.modal=null;render();
+      }},"この予定を削除"));
+  }
+
+  m.appendChild(div({style:{display:"flex",gap:"8px"}},[
+    btn({className:"btn-ghost",style:{flex:1},onClick:()=>{state.modal=null;render();}},"キャンセル"),
+    btn({style:{flex:2,padding:"10px",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:600,cursor:"pointer"},
+      onClick:()=>{
+        const title=(state.newEventTitle||"").trim();
+        if(!title)return;
+        const ev={uid:isEdit?state.newEventUid:Date.now(),title,sH:state.newEventSH,sM:state.newEventSM,eH:state.newEventEH,eM:state.newEventEM};
+        const cur=getEvents(vd);
+        setEvents(vd,isEdit?cur.map(e=>e.uid===ev.uid?ev:e):[...cur,ev]);
+        state.modal=null;render();
+      }},"保存")
+  ]));
+  bg.appendChild(m);return bg;
+}
+
+// ── AIスケジュール提案モーダル ──
+function renderAiPlanModal(vd){
+  const bg=div({className:"modal-center"});
+  const m=div({className:"modal-box",style:{maxHeight:"85vh",overflowY:"auto"}});
+  bg.addEventListener('click',()=>{if(!state.aiPlanLoading){state.modal=null;render();}});
+  m.addEventListener('click',e=>e.stopPropagation());
+  m.appendChild(div({style:{fontSize:"15px",fontWeight:700,color:"#e2e8f0",marginBottom:"6px"}},"✨ AIスケジュール提案"));
+
+  if(state.aiPlanResult){
+    m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"10px"}},"この案でよければ「予定に追加」を押してください"));
+    state.aiPlanResult.forEach(ev=>{
+      m.appendChild(div({style:{display:"flex",gap:"8px",alignItems:"center",padding:"6px 10px",background:"#0f172a",borderRadius:"8px",marginBottom:"4px"}},[
+        span({style:{fontSize:"11px",color:"#38bdf8",minWidth:"84px"}},`${String(ev.sH).padStart(2,'0')}:${String(ev.sM).padStart(2,'0')}〜${String(ev.eH).padStart(2,'0')}:${String(ev.eM).padStart(2,'0')}`),
+        span({style:{fontSize:"12px",color:"#e2e8f0"}},ev.title)
+      ]));
+    });
+    m.appendChild(div({style:{display:"flex",gap:"8px",marginTop:"12px"}},[
+      btn({className:"btn-ghost",style:{flex:1},onClick:()=>{state.aiPlanResult=null;render();}},"やり直す"),
+      btn({style:{flex:2,padding:"10px",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:600,cursor:"pointer"},
+        onClick:()=>{
+          const cur=getEvents(vd);
+          const added=state.aiPlanResult.map((e,i)=>({uid:Date.now()+i,title:e.title,sH:e.sH,sM:e.sM,eH:e.eH,eM:e.eM}));
+          setEvents(vd,[...cur,...added]);
+          state.modal=null;state.aiPlanResult=null;render();
+          showToast("📅 スケジュールを追加しました");
+        }},"予定に追加")
+    ]));
+    bg.appendChild(m);return bg;
+  }
+
+  if(state.aiPlanLoading){
+    m.appendChild(div({style:{textAlign:"center",padding:"24px 0",color:"#64748b",fontSize:"13px"}},"🔍 スケジュールを考えています..."));
+    bg.appendChild(m);return bg;
+  }
+
+  m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"10px"}},"今日やるタスクを選んでください（やることリストから）"));
+  const pending=state.taskList.filter(t=>!t.done);
+  if(pending.length===0){
+    m.appendChild(div({style:{fontSize:"12px",color:"#475569",textAlign:"center",padding:"10px 0",marginBottom:"8px"}},"やることリストが空です。タスクなしでルーティンのみの提案も可能です"));
+  }
+  pending.forEach(t=>{
+    const on=!!state.aiPlanSelected[t.uid];
+    const row=btn({style:{display:"flex",alignItems:"center",gap:"10px",width:"100%",padding:"8px 12px",marginBottom:"5px",textAlign:"left",
+      background:on?"#0ea5e918":"transparent",border:`1px solid ${on?"#0ea5e9":"#334155"}`,borderRadius:"8px",cursor:"pointer"}});
+    row.appendChild(div({style:{width:"18px",height:"18px",borderRadius:"5px",flexShrink:0,border:`2px solid ${on?"#0ea5e9":"#334155"}`,background:on?"#0ea5e9":"transparent",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"11px",color:"#fff"}},on?"✓":""));
+    row.appendChild(span({style:{fontSize:"12px",color:on?"#38bdf8":"#94a3b8"}},t.text));
+    row.addEventListener('click',(()=>{const uid=t.uid;return()=>{
+      state.aiPlanSelected[uid]=!state.aiPlanSelected[uid];render();
+    };})());
+    m.appendChild(row);
+  });
+
+  m.appendChild(div({style:{display:"flex",gap:"8px",marginTop:"12px"}},[
+    btn({className:"btn-ghost",style:{flex:1},onClick:()=>{state.modal=null;render();}},"キャンセル"),
+    btn({style:{flex:2,padding:"10px",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:600,cursor:"pointer"},
+      onClick:()=>runAiPlan(vd)},"提案してもらう")
+  ]));
+  bg.appendChild(m);return bg;
+}
+
+async function runAiPlan(vd){
+  state.aiPlanLoading=true;render();
+  try{
+    const d=getDaily(vd);
+    const shiftInfo=d.workStart==null?"休み":
+      d.workStart<12?`1直（${d.workStart}時〜${d.workEnd}時勤務、残業${d.overtime||0}h）`:
+      `2直（${d.workStart}時〜${d.workEnd}時勤務、残業${d.overtime||0}h）`;
+    const tasks=state.taskList.filter(t=>!t.done&&state.aiPlanSelected[t.uid]).map(t=>t.text);
+    const routines=getOrderedTodoItems().map(it=>it.label).join("、");
+    const existing=getEvents(vd).map(e=>`${e.sH}:${String(e.sM).padStart(2,'0')}〜${e.eH}:${String(e.eM).padStart(2,'0')} ${e.title}`).join("\n")||"なし";
+
+    const res=await fetch("https://nuts024.com/health/api.php",{
+      method:"POST",
+      headers:{"Content-Type":"application/json","X-Secret-Key":"songof3838"},
+      body:JSON.stringify({
+        system:`あなたは生活プランナーです。ユーザーの1日のスケジュールを提案してください。以下のJSON配列形式のみで返答（説明・Markdown不要）:
+[{"title":"予定名","sH":開始時(0-23),"sM":開始分,"eH":終了時,"eM":終了分}]
+ルール: 睡眠時間を確保する。食事3回を入れる。仕事時間は動かせない。既存の予定と重複させない。タスクは適切な空き時間に配置。朝晩のルーティン時間も考慮。予定は5〜10個程度に。`,
+        prompt:`【日付】${vd}\n【仕事】${shiftInfo}\n【今日やるタスク】${tasks.length?tasks.join("、"):"なし"}\n【毎日のルーティン】${routines}\n【既存の予定】\n${existing}\n\n現実的な1日のスケジュールを提案してください。`
+      })
+    });
+    const data=await res.json();
+    if(data.error) throw new Error(data.message||data.error);
+    const text=(data.text||"").replace(/```json|```/g,"").trim();
+    const arr=JSON.parse(text);
+    if(!Array.isArray(arr)||!arr.length) throw new Error("提案の生成に失敗しました");
+    state.aiPlanResult=arr.filter(e=>e.title&&e.sH!=null&&e.eH!=null).map(e=>({title:String(e.title),sH:+e.sH,sM:+(e.sM||0),eH:+e.eH,eM:+(e.eM||0)}));
+  }catch(e){
+    alert("提案に失敗しました: "+e.message);
+  }
+  state.aiPlanLoading=false;render();
 }
 
 function renderTodo(vd, ds, isToday){
@@ -2554,7 +3526,7 @@ function renderLog(){
     }});
     cell.appendChild(div({style:{fontSize:"9px",color:isT?"#38bdf8":"#64748b",fontWeight:isT?700:400}},String(day)));
     if(avg2!=null)cell.appendChild(div({style:{fontSize:"10px",fontWeight:700,color:col}},avg2.toFixed(1)));
-    cell.addEventListener('click',(()=>{const k=dsK;return()=>{state.viewDate=k;state.tab="今日";render();};})()); 
+    cell.addEventListener('click',(()=>{const k=dsK;return()=>{state.viewDate=k;state.tab="日記";render();};})()); 
     grid.appendChild(cell);
   }
   hmCard.appendChild(grid);
@@ -3268,6 +4240,10 @@ function exportData(){
     dailies:state.dailies,
     todos:state.todos,
     goals:state.goals,
+    events:state.events,
+    taskList:state.taskList,
+    wishList:state.wishList,
+    shopList:state.shopList,
     weather,
     city
   };
@@ -3288,6 +4264,8 @@ function importData(e){
         `日次記録: ${p.dailies.length}日分`,
         p.todos?`TODO: ${Object.keys(p.todos).length}日分`:null,
         p.goals?`目標: ${Object.keys(p.goals).length}件`:null,
+        p.schedule?`予定: ${Object.keys(p.schedule).length}日分`:null,
+        p.tasks?`リスト: ${(p.tasks.todo||[]).length+(p.tasks.wish||[]).length+(p.tasks.shopping||[]).length}件`:null,
         p.weather?`天気: ${Object.keys(p.weather).length}日分`:null,
         p.exportedAt?`エクスポート日時: ${p.exportedAt.slice(0,10)}`:null
       ].filter(Boolean).join("\n");
@@ -3297,8 +4275,16 @@ function importData(e){
       state.dailies=p.dailies;
       if(p.todos){state.todos=p.todos;try{localStorage.setItem(STORAGE_KEY+"_todo",JSON.stringify(p.todos));}catch{}}
       if(p.goals){state.goals=p.goals;try{localStorage.setItem(STORAGE_KEY+"_goals",JSON.stringify(p.goals));}catch{}}
+      if(p.schedule){state.schedule=p.schedule;try{localStorage.setItem(STORAGE_KEY+"_schedule",JSON.stringify(p.schedule));}catch{}}
+      if(p.repeatEvents){state.repeatEvents=p.repeatEvents;try{localStorage.setItem(STORAGE_KEY+"_repeat",JSON.stringify(p.repeatEvents));}catch{}}
+      if(p.tasks){state.tasks=p.tasks;try{localStorage.setItem(STORAGE_KEY+"_tasks",JSON.stringify(p.tasks));}catch{}}
       if(p.weather){try{localStorage.setItem(STORAGE_KEY+"_weather",JSON.stringify(p.weather));}catch{}}
       if(p.city){state.weatherCity=p.city;try{localStorage.setItem(STORAGE_KEY+"_city",JSON.stringify(p.city));}catch{}}
+      if(p.events){state.events=p.events;saveEvents();}
+      if(p.taskList){state.taskList=p.taskList;}
+      if(p.wishList){state.wishList=p.wishList;}
+      if(p.shopList){state.shopList=p.shopList;}
+      saveLists();
       saveStorage();render();
       alert(`インポート完了！\n${summary}`);
     }catch(err){alert("インポート失敗: "+err.message);}
