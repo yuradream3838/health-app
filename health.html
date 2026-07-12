@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#0f172a">
-<title>体調管理 v9.3</title>
+<title>体調管理 v9.4</title>
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#0f172a">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -908,7 +908,7 @@ function renderHeader(){
   titleRow.style.cssText="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px";
   const titleLeft=document.createElement('div');
   titleLeft.style.cssText="display:flex;align-items:center;gap:8px";
-  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v9.3</span>';
+  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v9.4</span>';
   const titleRight=document.createElement('div');
   titleRight.style.cssText="display:flex;align-items:center;gap:5px";
   titleRight.appendChild(savedSpan);
@@ -1902,16 +1902,19 @@ function getActualActivities(vd){
     }
   });
   // ルーティンは1ブロックにまとめて表示（完了項目の最早〜最遅時刻）
+  // 日付をまたぐのを防ぐため、そのページ(vd)と同じ日付に記録されたものだけ集約
   const mm=dt=>{const x=new Date(dt);return x.getHours()*60+x.getMinutes();};
+  const sameDay=iso=>{try{return fmtDS(new Date(iso))===vd;}catch{return false;}};
   routines.forEach(g=>{
     const mins=[];
+    const addMin=iso=>{ if(iso&&sameDay(iso)) mins.push(mm(iso)); };
     (g.ids||[]).forEach(id=>{
       const d=t[id];
       if(!d||d.excluded)return;
-      if(d.checked&&d.time) mins.push(mm(d.time));
-      if(d.startTime) mins.push(mm(d.startTime));
-      if(d.endTime) mins.push(mm(d.endTime));
-      (d.sessions||[]).forEach(s=>{ if(s.startTime)mins.push(mm(s.startTime)); if(s.endTime)mins.push(mm(s.endTime)); });
+      if(d.checked&&d.time) addMin(d.time);
+      addMin(d.startTime);
+      addMin(d.endTime);
+      (d.sessions||[]).forEach(s=>{ addMin(s.startTime); addMin(s.endTime); });
     });
     if(mins.length){
       const s=Math.min(...mins), e=Math.max(...mins);
