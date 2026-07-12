@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#0f172a">
-<title>体調管理 v10.1</title>
+<title>体調管理 v10.2</title>
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#0f172a">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -322,6 +322,12 @@ function setDayShift(ds,key){
   setDaily(ds,{workStart:sh.start,workEnd:sh.end,overtime:0,shiftManual:true});
 }
 
+// ── パターン予定（睡眠など・毎週の計画ブロック。予定＝左列に表示）──
+function defaultPlanPatterns(){
+  return [{uid:1, title:"😴 睡眠", color:"#60a5fa", startH:23,startM:0,endH:7,endM:0, weekdays:[0,1,2,3,4,5,6], enabled:false}];
+}
+function savePlanPatterns(){ try{localStorage.setItem(STORAGE_KEY+"_planpatterns",JSON.stringify(state.planPatterns));}catch{} }
+
 const DRINK_TYPES = [
   {id:"beer",    label:"ビール",     emoji:"🍺",pct:5,  ml:350},
   {id:"beer_lg", label:"ビール(中)", emoji:"🍺",pct:5,  ml:500},
@@ -479,6 +485,7 @@ const state = {
   schedule:{}, repeatEvents:[], tasks:{todo:[],shopping:[]},
   routines:cloneRoutines(),
   shiftPattern:defaultShiftPattern(), swapMode:false, swapFirst:null,
+  planPatterns:defaultPlanPatterns(),
   scheduleSubTab:"日", editEventUid:null, editEventIsRepeat:false, editScope:"all",
   newEvH:9, newEvM:0, newEvEndH:10, newEvEndM:0, newEvTitle:"", newEvRepeat:"none", newEvColor:"#38bdf8", newEvWeekdays:[],
   aiScheduleLoading:false, aiScheduleProposal:null,
@@ -535,6 +542,8 @@ function loadStorage(){
     if(rt){const r=JSON.parse(rt); if(Array.isArray(r)&&r.length)state.routines=r;}
     const shp=localStorage.getItem(STORAGE_KEY+"_shift");
     if(shp){const s2=JSON.parse(shp); if(s2&&Array.isArray(s2.grid))state.shiftPattern={...defaultShiftPattern(),...s2};}
+    const pp=localStorage.getItem(STORAGE_KEY+"_planpatterns");
+    if(pp){const a=JSON.parse(pp); if(Array.isArray(a))state.planPatterns=a;}
     // 旧形式（v8.3 events/taskList/wishList/shopList）からの一度きり移行
     if(!sc && !tk){ migrateOldSchedule(); }
   }catch{}
@@ -957,7 +966,7 @@ function renderHeader(){
   titleRow.style.cssText="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px";
   const titleLeft=document.createElement('div');
   titleLeft.style.cssText="display:flex;align-items:center;gap:8px";
-  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v10.1</span>';
+  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v10.2</span>';
   const titleRight=document.createElement('div');
   titleRight.style.cssText="display:flex;align-items:center;gap:5px";
   titleRight.appendChild(savedSpan);
@@ -2014,15 +2023,34 @@ function getActualActivities(vd){
     if(e<=s)e=s+(n.mins||30);
     acts.push({title:"💤 昼寝",startMin:s,endMin:e,color:"#93c5fd"});
   });
-  // 仕事（勤務時間＋残業）も反映。手動が無ければシフトパターンを使用
-  const wk=getWorkForDate(vd);
-  if(wk.start!=null&&wk.end!=null){
-    const ws=Math.round(wk.start*60);
-    let we=Math.round((wk.end+(wk.overtime||0))*60);
-    if(we>1440)we=1440;
-    if(we>ws) acts.push({title:wk.manual?"💼 仕事":"💼 仕事(予定)",startMin:ws,endMin:we,color:"#2dd4bf"});
-  }
+  // ※ 仕事（シフト）は「予定」（左）列へ移動したため、実際列には出さない
   return acts.sort((a,b)=>a.startMin-b.startMin);
+}
+
+// 左（予定）列に出すパターン由来のブロック（シフト＋パターン予定）
+function getPlannedExtras(vd){
+  const out=[];
+  // シフト（勤務）を予定として（休み・未設定は出さない）
+  const sk=currentShiftKey(vd);
+  const wk=getWorkForDate(vd);
+  if(sk&&sk!=="off"&&wk.start!=null&&wk.end!=null){
+    const sh=SHIFT_TYPES[sk];
+    let endTotal=wk.end+(wk.overtime||0); if(endTotal>24)endTotal=24;
+    out.push({title:`💼 ${sh?sh.label:"仕事"}`,color:sh?sh.color:"#2dd4bf",
+      startH:Math.floor(wk.start),startM:Math.round((wk.start%1)*60),
+      endH:Math.floor(endTotal),endM:Math.round((endTotal%1)*60),isPattern:true});
+  }
+  // パターン予定（睡眠など）。0時をまたぐものは分割
+  const dow=parseDS(vd).getDay();
+  (state.planPatterns||[]).forEach(p=>{
+    if(p.enabled===false)return;
+    if(Array.isArray(p.weekdays)&&p.weekdays.length&&!p.weekdays.includes(dow))return;
+    const s=p.startH*60+(p.startM||0), e=p.endH*60+(p.endM||0);
+    const mk=(sh,sm,eh,em)=>({title:p.title,color:p.color||"#38bdf8",startH:sh,startM:sm,endH:eh,endM:em,isPattern:true});
+    if(e>s){ out.push(mk(p.startH,p.startM||0,p.endH,p.endM||0)); }
+    else { out.push(mk(p.startH,p.startM||0,24,0)); if(e>0) out.push(mk(0,0,p.endH,p.endM||0)); }
+  });
+  return out;
 }
 
 // 汎用サブタブハブ（サブバー＋本文）
@@ -2100,7 +2128,7 @@ function renderShiftPanel(){
   const sp=state.shiftPattern||defaultShiftPattern();
   const card=div({className:"card"});
   card.appendChild(div({style:{fontSize:"14px",fontWeight:700,color:"#e2e8f0",marginBottom:"4px"}},"🗓 シフトパターン"));
-  card.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"10px",lineHeight:1.6}},"勤務の繰り返しを設定すると各日に自動反映されます。週カレンダーでタップ上書き・2日入れ替えができます。"));
+  card.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"10px",lineHeight:1.6}},"勤務の繰り返しを設定すると各日に自動反映されます。週カレンダーでタップ上書き・2日入れ替えができます。勤務は予定タブ「日」の左（予定）列に表示されます。"));
   const enRow=div({style:{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"10px"}});
   enRow.appendChild(div({style:{fontSize:"13px",color:"#e2e8f0"}},"パターンを使う"));
   const enBtn=btn({style:{fontSize:"12px",padding:"5px 16px",borderRadius:"7px",cursor:"pointer",fontWeight:600,
@@ -2146,9 +2174,69 @@ function renderShiftPanel(){
   return card;
 }
 
+function renderPlanPatternPanel(){
+  const card=div({className:"card"});
+  card.appendChild(div({style:{fontSize:"14px",fontWeight:700,color:"#e2e8f0",marginBottom:"4px"}},"🔁 パターン予定"));
+  card.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"10px",lineHeight:1.6}},"睡眠など毎週の予定を登録すると、予定タブ「日」の左（予定）列に自動表示されます。"));
+  const upd=(uid,ch)=>{state.planPatterns=state.planPatterns.map(x=>x.uid===uid?{...x,...ch}:x);savePlanPatterns();render();};
+  const mkSel2=(cur,arr,fmt,on)=>{const s=document.createElement('select');s.className='sel';s.style.cssText="padding:4px 2px;font-size:12px";arr.forEach(v=>{const o=document.createElement('option');o.value=v;o.textContent=fmt(v);if(v===cur)o.selected=true;s.appendChild(o);});s.addEventListener('change',e=>on(Number(e.target.value)));return s;};
+  const MIN=[0,5,10,15,20,25,30,35,40,45,50,55];
+  (state.planPatterns||[]).forEach(p=>{
+    const box=div({style:{background:"#0f172a",borderRadius:"8px",padding:"8px 10px",marginBottom:"8px",borderLeft:`3px solid ${p.color||"#38bdf8"}`,opacity:p.enabled===false?0.6:1}});
+    const l1=div({style:{display:"flex",gap:"6px",alignItems:"center",marginBottom:"6px"}});
+    const en=btn({style:{fontSize:"10px",padding:"3px 8px",borderRadius:"6px",cursor:"pointer",fontWeight:600,flexShrink:0,
+      border:`1px solid ${p.enabled!==false?"#22c55e":"#334155"}`,background:p.enabled!==false?"#22c55e22":"transparent",color:p.enabled!==false?"#22c55e":"#64748b"}},p.enabled!==false?"ON":"OFF");
+    en.addEventListener('click',()=>upd(p.uid,{enabled:p.enabled===false}));
+    l1.appendChild(en);
+    const ti=document.createElement('input');ti.type='text';ti.value=p.title||"";ti.placeholder="名前";
+    ti.style.cssText="flex:1;min-width:0;padding:5px 8px;background:#1e293b;border:1px solid #334155;border-radius:6px;color:#e2e8f0;font-size:13px;font-family:inherit";
+    ti.addEventListener('input',e=>{const x=state.planPatterns.find(z=>z.uid===p.uid);if(x){x.title=e.target.value;savePlanPatterns();}});
+    l1.appendChild(ti);
+    const del=btn({style:{background:"transparent",border:"none",color:"#334155",cursor:"pointer",fontSize:"16px",flexShrink:0}},"×");
+    del.addEventListener('click',()=>{if(confirm("このパターンを削除しますか？")){state.planPatterns=state.planPatterns.filter(x=>x.uid!==p.uid);savePlanPatterns();render();}});
+    l1.appendChild(del);
+    box.appendChild(l1);
+    // 時刻
+    const l2=div({style:{display:"flex",gap:"5px",alignItems:"center",marginBottom:"6px",fontSize:"11px",color:"#64748b"}});
+    l2.appendChild(span({},"開始"));
+    l2.appendChild(mkSel2(p.startH,Array.from({length:24},(_,i)=>i),v=>`${v}時`,v=>upd(p.uid,{startH:v})));
+    l2.appendChild(mkSel2(p.startM||0,MIN,v=>`${String(v).padStart(2,'0')}分`,v=>upd(p.uid,{startM:v})));
+    l2.appendChild(span({style:{margin:"0 2px"}},"〜"));
+    l2.appendChild(span({},"終了"));
+    l2.appendChild(mkSel2(p.endH,Array.from({length:24},(_,i)=>i),v=>`${v}時`,v=>upd(p.uid,{endH:v})));
+    l2.appendChild(mkSel2(p.endM||0,MIN,v=>`${String(v).padStart(2,'0')}分`,v=>upd(p.uid,{endM:v})));
+    box.appendChild(l2);
+    // 曜日
+    const l3=div({style:{display:"flex",gap:"4px",marginBottom:"6px"}});
+    WEEKDAYS_JP.forEach((lbl,idx)=>{
+      const on=!p.weekdays||p.weekdays.includes(idx);
+      const wb=btn({style:{flex:1,padding:"5px 0",borderRadius:"6px",cursor:"pointer",fontSize:"11px",fontWeight:600,
+        border:`1px solid ${on?"#38bdf8":"#334155"}`,background:on?"#0ea5e922":"transparent",color:on?"#38bdf8":"#475569"}},lbl);
+      wb.addEventListener('click',()=>{const set=new Set(p.weekdays||[0,1,2,3,4,5,6]);if(set.has(idx))set.delete(idx);else set.add(idx);upd(p.uid,{weekdays:[...set].sort((a,b)=>a-b)});});
+      l3.appendChild(wb);
+    });
+    box.appendChild(l3);
+    // 色
+    const l4=div({style:{display:"flex",gap:"6px"}});
+    [...EV_COLORS,"#60a5fa"].forEach(c=>{const on=p.color===c;const cb=btn({style:{width:"24px",height:"24px",borderRadius:"6px",cursor:"pointer",background:c+(on?"":"55"),border:`2px solid ${on?c:"transparent"}`}},"");cb.addEventListener('click',()=>upd(p.uid,{color:c}));l4.appendChild(cb);});
+    box.appendChild(l4);
+    card.appendChild(box);
+  });
+  const templates=[{t:"😴 睡眠",c:"#60a5fa",s:[23,0],e:[7,0]},{t:"🏋️ 運動",c:"#22c55e",s:[19,0],e:[20,0]},{t:"🍽️ 食事",c:"#fb923c",s:[12,0],e:[13,0]}];
+  const addRow=div({style:{display:"flex",gap:"6px",flexWrap:"wrap",marginTop:"4px"}});
+  templates.forEach(tp=>{
+    const b=btn({style:{fontSize:"11px",padding:"6px 10px",background:"#0ea5e918",border:"1px solid #0ea5e9",borderRadius:"7px",color:"#38bdf8",cursor:"pointer",fontWeight:600},},"＋ "+tp.t);
+    b.addEventListener('click',()=>{state.planPatterns=[...(state.planPatterns||[]),{uid:Date.now(),title:tp.t,color:tp.c,startH:tp.s[0],startM:tp.s[1],endH:tp.e[0],endM:tp.e[1],weekdays:[0,1,2,3,4,5,6],enabled:true}];savePlanPatterns();render();});
+    addRow.appendChild(b);
+  });
+  card.appendChild(addRow);
+  return card;
+}
+
 function renderSettingsHub(){
   const wrap=div({style:{maxWidth:"600px",margin:"0 auto",padding:"12px 16px 60px"}});
   wrap.appendChild(renderShiftPanel());
+  wrap.appendChild(renderPlanPatternPanel());
   wrap.appendChild(renderRoutinePanel());
   const dataCard=div({className:"card"});
   dataCard.appendChild(div({style:{fontSize:"14px",fontWeight:700,color:"#e2e8f0",marginBottom:"4px"}},"💾 データ管理"));
@@ -2193,7 +2281,7 @@ function renderScheduleHub(vd,ds,isToday){
 // ── 日スケジュール（予定 vs 実際・0〜24時） ──
 function renderDaySchedule(vd,ds,isToday){
   const wrap=div({});
-  const events=getEventsForDate(vd);
+  const events=[...getEventsForDate(vd),...getPlannedExtras(vd)];
   const actuals=getActualActivities(vd);
 
   wrap.appendChild(div({style:{display:"flex",gap:"8px",marginBottom:"10px"}},[
@@ -2245,7 +2333,7 @@ function renderDaySchedule(vd,ds,isToday){
   tlCard.appendChild(div({style:{display:"flex",marginBottom:"6px"}},[
     div({style:{width:"34px"}},""),
     div({style:{flex:1,fontSize:"10px",fontWeight:700,color:"#38bdf8",textAlign:"center"}},"📅 予定"),
-    div({style:{flex:1,fontSize:"10px",fontWeight:700,color:"#22c55e",textAlign:"center"}},"✔ 実際（TODO・睡眠・仕事・飲酒）")
+    div({style:{flex:1,fontSize:"10px",fontWeight:700,color:"#22c55e",textAlign:"center"}},"✔ 実際（TODO・睡眠・飲酒）")
   ]));
 
   const tl=div({style:{position:"relative",height:`${(END_H-START_H)*HOUR_H}px`}});
@@ -2313,6 +2401,7 @@ function renderDaySchedule(vd,ds,isToday){
     });
   };
   blockArea(events,"36px","50% - 40px",EV_COLORS[0],ev=>{
+    if(ev.isPattern){ state.tab="設定"; showToast("パターンは設定タブで編集できます"); render(); return; }
     state.modal="addEvent";state.editEventUid=ev.uid;state.editEventIsRepeat=!!ev.isRepeat;
     state.newEvTitle=ev.title;state.newEvH=ev.startH;state.newEvM=ev.startM;
     state.newEvEndH=ev.endH;state.newEvEndM=ev.endM;
@@ -4396,6 +4485,7 @@ function exportData(){
     tasks:state.tasks,
     routines:state.routines,
     shiftPattern:state.shiftPattern,
+    planPatterns:state.planPatterns,
     weather,
     city
   };
@@ -4433,6 +4523,7 @@ function importData(e){
       if(p.tasks){state.tasks=p.tasks;try{localStorage.setItem(STORAGE_KEY+"_tasks",JSON.stringify(p.tasks));}catch{}}
       if(Array.isArray(p.routines)&&p.routines.length){state.routines=p.routines;saveRoutines();}
       if(p.shiftPattern&&Array.isArray(p.shiftPattern.grid)){state.shiftPattern={...defaultShiftPattern(),...p.shiftPattern};saveShiftPattern();}
+      if(Array.isArray(p.planPatterns)){state.planPatterns=p.planPatterns;savePlanPatterns();}
       if(p.weather){try{localStorage.setItem(STORAGE_KEY+"_weather",JSON.stringify(p.weather));}catch{}}
       if(p.city){state.weatherCity=p.city;try{localStorage.setItem(STORAGE_KEY+"_city",JSON.stringify(p.city));}catch{}}
       // 旧形式（v8.3）のバックアップは新モデルへ移行して取り込む
