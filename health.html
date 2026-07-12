@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#0f172a">
-<title>体調管理 v9.1</title>
+<title>体調管理 v9.2</title>
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#0f172a">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -249,6 +249,12 @@ const TODO_ITEMS = [
   {id:"diary",         label:"日記",                  type:"check"},
   {id:"stretch_pm",    label:"夜ストレッチ",          type:"check"},
   {id:"meditation_pm", label:"夜瞑想",                type:"check"},
+];
+
+// 予定タブ「実際」列で1つにまとめて表示するルーティン群
+const ROUTINE_GROUPS = [
+  {ids:["meditation_am","bedmaking","grooming","water_am","stretch_am","dressing"], title:"🌅モーニングルーティン", color:"#fb923c"},
+  {ids:["stretch_pm","meditation_pm"],                                              title:"🌙ナイトルーティン",     color:"#a78bfa"},
 ];
 
 const DRINK_TYPES = [
@@ -896,7 +902,7 @@ function renderHeader(){
   titleRow.style.cssText="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px";
   const titleLeft=document.createElement('div');
   titleLeft.style.cssText="display:flex;align-items:center;gap:8px";
-  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v9.1</span>';
+  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v9.2</span>';
   const titleRight=document.createElement('div');
   titleRight.style.cssText="display:flex;align-items:center;gap:5px";
   titleRight.appendChild(savedSpan);
@@ -1868,7 +1874,9 @@ function repeatLabel(t, startDate){
 function getActualActivities(vd){
   const t=state.todos[vd]||{};
   const acts=[];
+  const routineIds=new Set(ROUTINE_GROUPS.flatMap(g=>g.ids));
   TODO_ITEMS.forEach(item=>{
+    if(routineIds.has(item.id))return; // ルーティンは後でまとめて1ブロックに
     const d=t[item.id];
     if(!d||d.excluded)return;
     if(item.multi&&d.sessions){
@@ -1884,6 +1892,21 @@ function getActualActivities(vd){
     } else if(item.type==="check"&&d.checked&&d.time){
       const ct=new Date(d.time);
       acts.push({title:"✓"+item.label,startMin:ct.getHours()*60+ct.getMinutes(),endMin:ct.getHours()*60+ct.getMinutes()+12,isPoint:true});
+    }
+  });
+  // 朝/夜のルーティンは1ブロックにまとめて表示（完了項目の最早〜最遅時刻）
+  ROUTINE_GROUPS.forEach(g=>{
+    const mins=[];
+    g.ids.forEach(id=>{
+      const d=t[id];
+      if(d&&!d.excluded&&d.checked&&d.time){
+        const ct=new Date(d.time);
+        mins.push(ct.getHours()*60+ct.getMinutes());
+      }
+    });
+    if(mins.length){
+      const s=Math.min(...mins), e=Math.max(...mins);
+      acts.push({title:g.title, startMin:s, endMin:Math.max(e, s+16), color:g.color});
     }
   });
   // アルコール記録も実際の行動として反映（琥珀色で区別）
