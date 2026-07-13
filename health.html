@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#0f172a">
-<title>体調管理 v10.9</title>
+<title>体調管理 v11.0</title>
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#0f172a">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -521,6 +521,7 @@ function loadStorage(){
   try{
     const s=localStorage.getItem(STORAGE_KEY);
     if(s){const p=JSON.parse(s);state.logs=p.logs||[];state.dailies=p.dailies||[];}
+    migrateSleepModel();
     const city=localStorage.getItem(STORAGE_KEY+"_city");
     if(city){const c=JSON.parse(city);state.weatherCity=c;}
     const todos=localStorage.getItem(STORAGE_KEY+"_todo");
@@ -972,7 +973,7 @@ function renderHeader(){
   titleRow.style.cssText="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px";
   const titleLeft=document.createElement('div');
   titleLeft.style.cssText="display:flex;align-items:center;gap:8px";
-  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v10.9</span>';
+  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v11.0</span>';
   const titleRight=document.createElement('div');
   titleRight.style.cssText="display:flex;align-items:center;gap:5px";
   titleRight.appendChild(savedSpan);
@@ -1025,7 +1026,7 @@ function renderDailyPanel(vd){
   const drinks=(d.drinks||[]).map(dr=>({...dr,drinkType:resolveDT(dr)}));
   const totalG=drinks.reduce((a,b)=>a+pureAlcohol(b.ml,b.drinkType.pct),0);
   const foods=d.foods||[];
-  const sh=d.sleepStart!=null&&d.sleepEnd!=null?Math.round(((d.sleepEnd-d.sleepStart+24)%24)*60)/60:null;
+  const sh=getNightSleepHours(vd);
   const wh=d.workStart!=null&&d.workEnd!=null?Math.max(0,Math.round(((d.workEnd-d.workStart+24)%24-1)*10)/10):null;
   const ot=d.overtime||0;
   const scol=sh==null?"#475569":sh>=7?"#22c55e":sh<=5?"#ef4444":"#eab308";
@@ -1044,68 +1045,36 @@ function renderDailyPanel(vd){
   const card=div({className:"card"},[
     div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0",marginBottom:"12px"}},"📋 今日の生活記録"),
 
-    // 睡眠
-    div({style:{marginBottom:"12px"}},[
-      div({style:{display:"flex",justifyContent:"space-between",marginBottom:"5px"}},[
-        span({style:{fontSize:"12px",color:"#94a3b8"}},"😴 睡眠"),
-        span({style:{fontSize:"13px",fontWeight:700,color:scol}},sh!=null?`${Math.floor(sh)}h${Math.round((sh%1)*60)}m`:"—")
-      ]),
-      div({style:{display:"flex",alignItems:"center",gap:"8px"}},[
-        // 就寝
-        div({style:{flex:1}},[
-          div({style:{fontSize:"10px",color:"#64748b",marginBottom:"3px"}},"就寝"),
-          div({style:{display:"flex",gap:"3px"}},[
-            (()=>{
-              const curH=d.sleepStart!=null?Math.floor(d.sleepStart):null;
-              const curM=d.sleepStart!=null?Math.round((d.sleepStart%1)*60):null;
-              const selH=document.createElement('select');selH.className='sel';
-              const optN=document.createElement('option');optN.value="";optN.textContent="—";selH.appendChild(optN);
-              Array.from({length:24},(_,i)=>{const o=document.createElement('option');o.value=i;o.textContent=`${String(i).padStart(2,'0')}時`;if(i===curH)o.selected=true;selH.appendChild(o);});
-              selH.addEventListener('change',e=>{
-                const h=e.target.value===""?null:parseInt(e.target.value);
-                const m=d.sleepStart!=null?Math.round((d.sleepStart%1)*60):0;
-                setDaily(vd,{sleepStart:h===null?null:h+m/60});render();
-              });
-              const selM=document.createElement('select');selM.className='sel';
-              Array.from({length:60},(_,i)=>{const o=document.createElement('option');o.value=i;o.textContent=`${String(i).padStart(2,'0')}分`;if(i===curM)o.selected=true;selM.appendChild(o);});
-              selM.addEventListener('change',e=>{
-                if(d.sleepStart==null)return;
-                const h=Math.floor(d.sleepStart);
-                setDaily(vd,{sleepStart:h+parseInt(e.target.value)/60});render();
-              });
-              const w=document.createElement('div');w.style.cssText="display:flex;gap:3px;";
-              w.appendChild(selH);w.appendChild(selM);return w;
-            })()
-          ])
+    // 睡眠（起床＝今朝の目覚め／就寝＝今夜寝る時刻。別々に記録）
+    (()=>{
+      const sleepRow=(label,key,val,hint)=>{
+        const row=div({style:{display:"flex",alignItems:"center",gap:"6px",marginBottom:"6px"}});
+        row.appendChild(div({style:{fontSize:"11px",color:"#94a3b8",width:"104px",flexShrink:0}},label));
+        const inp=document.createElement('input');inp.type='time';
+        if(val!=null){const h=Math.floor(val),m=Math.round((val%1)*60);inp.value=`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;}
+        inp.style.cssText="flex:1;min-width:0;padding:8px 10px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:15px;font-family:inherit;color-scheme:dark";
+        inp.addEventListener('change',e=>{
+          if(e.target.value===""){setDaily(vd,{[key]:null});render();return;}
+          const parts=e.target.value.split(':');const h=Number(parts[0]),mm=Number(parts[1]);
+          if(!isNaN(h)&&!isNaN(mm)){setDaily(vd,{[key]:h+mm/60});render();}
+        });
+        row.appendChild(inp);
+        const nowBtn=btn({style:{fontSize:"12px",padding:"8px 12px",background:"#0ea5e918",border:"1px solid #0ea5e9",borderRadius:"8px",color:"#38bdf8",cursor:"pointer",fontWeight:700,flexShrink:0}},"今");
+        nowBtn.addEventListener('click',()=>{const now=new Date();setDaily(vd,{[key]:now.getHours()+now.getMinutes()/60});render();});
+        row.appendChild(nowBtn);
+        if(val!=null){const cl=btn({style:{fontSize:"16px",padding:"0 4px",background:"transparent",border:"none",color:"#475569",cursor:"pointer",flexShrink:0}},"×");cl.addEventListener('click',()=>{setDaily(vd,{[key]:null});render();});row.appendChild(cl);}
+        return row;
+      };
+      return div({style:{marginBottom:"12px"}},[
+        div({style:{display:"flex",justifyContent:"space-between",marginBottom:"6px"}},[
+          span({style:{fontSize:"12px",color:"#94a3b8"}},"😴 睡眠"),
+          span({style:{fontSize:"12px",fontWeight:700,color:scol}},sh!=null?`前夜 ${Math.floor(sh)}時間${String(Math.round((sh%1)*60)).padStart(2,'0')}分`:"—")
         ]),
-        span({style:{color:"#475569",marginTop:"14px"}},"→"),
-        // 起床
-        div({style:{flex:1}},[
-          div({style:{fontSize:"10px",color:"#64748b",marginBottom:"3px"}},"起床"),
-          (()=>{
-            const curH=d.sleepEnd!=null?Math.floor(d.sleepEnd):null;
-            const curM=d.sleepEnd!=null?Math.round((d.sleepEnd%1)*60):null;
-            const selH=document.createElement('select');selH.className='sel';
-            const optN=document.createElement('option');optN.value="";optN.textContent="—";selH.appendChild(optN);
-            Array.from({length:24},(_,i)=>{const o=document.createElement('option');o.value=i;o.textContent=`${String(i).padStart(2,'0')}時`;if(i===curH)o.selected=true;selH.appendChild(o);});
-            selH.addEventListener('change',e=>{
-              const h=e.target.value===""?null:parseInt(e.target.value);
-              const m=d.sleepEnd!=null?Math.round((d.sleepEnd%1)*60):0;
-              setDaily(vd,{sleepEnd:h===null?null:h+m/60});render();
-            });
-            const selM=document.createElement('select');selM.className='sel';
-            Array.from({length:60},(_,i)=>{const o=document.createElement('option');o.value=i;o.textContent=`${String(i).padStart(2,'0')}分`;if(i===curM)o.selected=true;selM.appendChild(o);});
-            selM.addEventListener('change',e=>{
-              if(d.sleepEnd==null)return;
-              const h=Math.floor(d.sleepEnd);
-              setDaily(vd,{sleepEnd:h+parseInt(e.target.value)/60});render();
-            });
-            const w=document.createElement('div');w.style.cssText="display:flex;gap:3px;";
-            w.appendChild(selH);w.appendChild(selM);return w;
-          })()
-        ])
-      ])
-    ]),
+        sleepRow("🌅 起床（今朝）","wakeTime",d.wakeTime),
+        sleepRow("🌙 就寝（今夜）","bedTime",d.bedTime),
+        div({style:{fontSize:"10px",color:"#475569"}},"起床＝今朝の目覚め／就寝＝今夜寝る時刻。「今」で現在時刻を記録。予定「実際」列に反映されます")
+      ]);
+    })(),
 
     // 昼寝
     (()=>{
@@ -1911,6 +1880,30 @@ function saveTasks(){
 // 日付ユーティリティ
 function parseDS(ds){const p=ds.split('-');return new Date(parseInt(p[0]),parseInt(p[1])-1,parseInt(p[2]));}
 function fmtDS(d){return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;}
+function addDays(ds,n){const x=parseDS(ds);x.setDate(x.getDate()+n);return fmtDS(x);}
+// その日の朝に起きた睡眠(＝前日の就寝→当日の起床)の時間数。未記録は null
+function getNightSleepHours(ds){
+  const bed=getDaily(addDays(ds,-1)).bedTime, wake=getDaily(ds).wakeTime;
+  if(bed==null||wake==null)return null;
+  return (wake-bed+24)%24;
+}
+// 旧睡眠(sleepStart=就寝/sleepEnd=起床、同日)を新モデル(bedTime=当夜就寝/wakeTime=当朝起床)へ移行
+function migrateSleepModel(){
+  let migrated=false;
+  const byDate=Object.fromEntries(state.dailies.map(d=>[d.dateStr,d]));
+  [...state.dailies].forEach(d=>{
+    if(d.sleepStart==null && d.sleepEnd==null) return;
+    if(d.sleepEnd!=null && d.wakeTime==null) d.wakeTime=d.sleepEnd;   // その朝の起床
+    if(d.sleepStart!=null){                                          // その夜の就寝は前日の夜
+      const prev=addDays(d.dateStr,-1);
+      let pd=byDate[prev];
+      if(!pd){ pd={dateStr:prev}; state.dailies.push(pd); byDate[prev]=pd; }
+      if(pd.bedTime==null) pd.bedTime=d.sleepStart;
+    }
+    delete d.sleepStart; delete d.sleepEnd; migrated=true;
+  });
+  if(migrated){ try{localStorage.setItem(STORAGE_KEY,JSON.stringify({logs:state.logs,dailies:state.dailies}));}catch{} }
+}
 
 // 繰り返し予定が指定日にマッチするか
 function repeatMatches(ev, dateStr){
@@ -2009,15 +2002,20 @@ function getActualActivities(vd){
     const sMin=(dr.hour||0)*60+(dr.min||0);
     acts.push({title:`${dt.emoji}${dt.label}`,startMin:sMin,endMin:sMin+12,isPoint:true,color:"#f59e0b"});
   });
-  // 睡眠（就寝〜起床）も実際の行動として反映。0時をまたぐ場合は深夜0時で2分割
-  if(daily.sleepStart!=null&&daily.sleepEnd!=null){
-    const ss=Math.round(daily.sleepStart*60), se=Math.round(daily.sleepEnd*60);
+  // 睡眠：就寝日(D)を1つの夜として bed(D)→wake(D+1) を span&clip で反映
+  // （その日の就寝と、翌朝の起床。就寝が早朝<12なら翌日就寝として扱う）
+  {
     const SC="#60a5fa";
-    if(se>ss){
-      acts.push({title:"😴 睡眠",startMin:ss,endMin:se,color:SC});
-    } else if(se<ss){
-      if(ss<1440) acts.push({title:"😴 睡眠",startMin:ss,endMin:1440,color:SC});
-      if(se>0)    acts.push({title:"😴 睡眠",startMin:0,endMin:se,color:SC});
+    for(let off=-1; off<=0; off++){
+      const D=addDays(vd,off);
+      const bed=getDaily(D).bedTime, wake=getDaily(addDays(D,1)).wakeTime;
+      if(bed==null && wake==null) continue;
+      let bedAbs = bed!=null ? ((bed<12?off+1:off)*1440 + bed*60) : null;
+      let wakeAbs= wake!=null ? ((off+1)*1440 + wake*60) : null;
+      if(bedAbs==null) bedAbs=wakeAbs-480;   // 就寝未記録→8h仮定
+      if(wakeAbs==null) wakeAbs=bedAbs+480;   // 起床未記録→8h仮定
+      const s=Math.max(0,Math.round(bedAbs)), e=Math.min(1440,Math.round(wakeAbs));
+      if(e>s) acts.push({title:"😴 睡眠",startMin:s,endMin:e,color:SC});
     }
   }
   // 昼寝も反映
@@ -3929,7 +3927,7 @@ function renderLog(){
     const avg=dl.length?(dl.reduce((a,b)=>a+b.score,0)/dl.length).toFixed(1):null;
     const drinks=(d.drinks||[]).map(dr=>({...dr,drinkType:resolveDT(dr)}));
     const tg=drinks.reduce((a,b)=>a+pureAlcohol(b.ml,b.drinkType.pct),0);
-    const sh=d.sleepStart!=null&&d.sleepEnd!=null?Math.round(((d.sleepEnd-d.sleepStart+24)%24)*10)/10:null;
+    const _sh=getNightSleepHours(d.dateStr);const sh=_sh!=null?Math.round(_sh*10)/10:null;
     const parts2=ds.split('-');
     const label=new Date(parseInt(parts2[0]),parseInt(parts2[1])-1,parseInt(parts2[2])).toLocaleDateString("ja-JP",{month:"short",day:"numeric",weekday:"short"});
     const card=div({style:{background:"#1e293b",borderRadius:"12px",border:"1px solid #1e3a5f",marginBottom:"8px",overflow:"hidden"}});
@@ -4015,8 +4013,7 @@ function renderWeekly(){
     const avgScore = logs.length ? logs.reduce((a,b)=>a+b.score,0)/logs.length : null;
     const drinks = (daily.drinks||[]).map(dr=>({...dr,drinkType:resolveDT(dr)}));
     const alcG = drinks.reduce((a,b)=>a+pureAlcohol(b.ml,b.drinkType.pct),0);
-    const sleepH = daily.sleepStart!=null&&daily.sleepEnd!=null
-      ? Math.round(((daily.sleepEnd-daily.sleepStart+24)%24)*10)/10 : null;
+    const sleepH = getNightSleepHours(daily.dateStr)!=null?Math.round(getNightSleepHours(daily.dateStr)*10)/10:null;
     const todo = state.todos[d]||{};
     const todoDone = TODO_ITEMS.filter(item=>isTodoDone(d,item)).length;
     const isFuture = d > todayD;
@@ -4152,7 +4149,7 @@ function renderAnalysis(){
     const aTomorrow=dayAvgScore(nextD(d.dateStr));
     const drinks=(d.drinks||[]).map(dr=>({...dr,drinkType:resolveDT(dr)}));
     const tg=drinks.reduce((x,b)=>x+pureAlcohol(b.ml,b.drinkType.pct),0);
-    const sh=d.sleepStart!=null&&d.sleepEnd!=null?Math.round(((d.sleepEnd-d.sleepStart+24)%24)*10)/10:null;
+    const _sh=getNightSleepHours(d.dateStr);const sh=_sh!=null?Math.round(_sh*10)/10:null;
 
     // 睡眠→当日
     if(sh!=null&&a!=null){
@@ -4218,7 +4215,7 @@ function renderAnalysis(){
   state.dailies.forEach(d=>{
     const a=dayAvgScore(d.dateStr);
     if(a==null)return;
-    const nightH=d.sleepStart!=null&&d.sleepEnd!=null?((d.sleepEnd-d.sleepStart+24)%24):null;
+    const nightH=getNightSleepHours(d.dateStr);
     if(nightH==null)return;
     const napMins=(d.naps||[]).reduce((x,n)=>x+(n.mins||0),0);
     if(napMins>0)hasNapData=true;
@@ -4313,9 +4310,8 @@ function renderAnalysis(){
       const prev=new Date(parseInt(p[0]),parseInt(p[1])-1,parseInt(p[2]));
       prev.setDate(prev.getDate()-1);
       const prevStr=`${prev.getFullYear()}-${String(prev.getMonth()+1).padStart(2,'0')}-${String(prev.getDate()).padStart(2,'0')}`;
-      const pd=state.dailies.find(d=>d.dateStr===prevStr);
-      if(!pd||pd.sleepStart==null||pd.sleepEnd==null)return;
-      const sh2=((pd.sleepEnd-pd.sleepStart+24)%24);
+      const sh2=getNightSleepHours(prevStr);
+      if(sh2==null)return;
       if(c.maxCr>=7)prevSleepHigh.push(sh2);
       else if(c.maxCr<=4)prevSleepLow.push(sh2);
     });
@@ -4592,7 +4588,7 @@ async function runAI(scored,dailies){
     const ds2=dailies.slice(-14).map(d=>{
       const drinks=(d.drinks||[]).map(dr=>({...dr,drinkType:resolveDT(dr)}));
       const g=drinks.reduce((a,b)=>a+pureAlcohol(b.ml,b.drinkType.pct),0);
-      const sh=d.sleepStart!=null&&d.sleepEnd!=null?Math.round(((d.sleepEnd-d.sleepStart+24)%24)*10)/10:null;
+      const _sh=getNightSleepHours(d.dateStr);const sh=_sh!=null?Math.round(_sh*10)/10:null;
       return `${d.dateStr}: 睡眠${sh??'?'}h 水分${d.water??'?'}L 純アルコール${g.toFixed(0)}g 食べたもの[${(d.foods||[]).join(',')}]`;
     }).join('\n');
     const hs=scored.slice(-100).map(l=>`${l.dateStr} ${l.hour}時: 体調${l.score}/10 体調状態[${l.symptoms.join(',')}]${l.note?` メモ:${l.note}`:''}`).join('\n');
