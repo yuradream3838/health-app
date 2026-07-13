@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#0f172a">
-<title>体調管理 v11.0</title>
+<title>体調管理 v11.1</title>
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#0f172a">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -973,7 +973,7 @@ function renderHeader(){
   titleRow.style.cssText="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px";
   const titleLeft=document.createElement('div');
   titleLeft.style.cssText="display:flex;align-items:center;gap:8px";
-  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v11.0</span>';
+  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v11.1</span>';
   const titleRight=document.createElement('div');
   titleRight.style.cssText="display:flex;align-items:center;gap:5px";
   titleRight.appendChild(savedSpan);
@@ -2727,7 +2727,7 @@ function renderTaskMatrix(){
   card.appendChild(inputRow);
 
   // 優先度ソート：重×急 → 重 → 急 → なし → 完了、同順位は期日の早い順
-  const prio=t=>t.done?4:(t.imp&&t.urg)?0:t.imp?1:t.urg?2:3;
+  const prio=t=>t.done?4:(t.imp&&t.urg)?0:t.urg?1:t.imp?2:3;
   const prioColor=t=>(t.imp&&t.urg)?"#ef4444":t.imp?"#f97316":t.urg?"#eab308":"#334155";
   const prioLabel=t=>(t.imp&&t.urg)?"最優先":t.imp?"重要":t.urg?"緊急":"";
   const dueVal=t=>t.due?parseDS(t.due).getTime():Infinity;
