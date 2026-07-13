@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#0f172a">
-<title>体調管理 v10.7</title>
+<title>体調管理 v10.8</title>
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#0f172a">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -508,6 +508,7 @@ const state = {
   newDrink:{typeId:"beer",ml:350,hour:new Date().getHours(),min:new Date().getMinutes(),pct:5},
   editEndUid:null, editEndH:0, editEndM:0,
   editTimerItemId:null, editTimerStart:{h:0,m:0}, editTimerEnd:{h:0,m:0},
+  editCheckItemId:null, editCheckTime:{h:0,m:0},
   editTimerHasStart:false, editTimerHasEnd:false,
   editSessionItemId:null, editSessionUid:null, editSessionSessions:[],
   cravingExpanded:false,
@@ -855,6 +856,7 @@ function render(){
   if(state.modal==="addDrink") content.appendChild(renderAddDrinkModal(vd));
   if(state.modal==="editEnd")  content.appendChild(renderEditEndModal(vd));
   if(state.modal==="editTimer")content.appendChild(renderEditTimerModal(vd));
+  if(state.modal==="editCheckTime")content.appendChild(renderEditCheckTimeModal(vd));
   if(state.modal==="editSession")content.appendChild(renderEditSessionModal(vd));
   if(state.modal==="addEjac")  content.appendChild(renderAddEjacModal(vd));
   if(state.modal==="addNap")   content.appendChild(renderAddNapModal(vd));
@@ -970,7 +972,7 @@ function renderHeader(){
   titleRow.style.cssText="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px";
   const titleLeft=document.createElement('div');
   titleLeft.style.cssText="display:flex;align-items:center;gap:8px";
-  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v10.7</span>';
+  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v10.8</span>';
   const titleRight=document.createElement('div');
   titleRight.style.cssText="display:flex;align-items:center;gap:5px";
   titleRight.appendChild(savedSpan);
@@ -3435,11 +3437,13 @@ function renderTodo(vd, ds, isToday){
       exBtn.addEventListener('click',(()=>{const id=item.id;return e=>{e.stopPropagation();toggleExclude(vd,id);};})()); 
       innerRow.appendChild(exBtn);
 
-      // チェック完了時刻表示
+      // チェック完了時刻表示（タップで修整）
       if(item.type==="check" && isDone && t.time){
         const d2=new Date(t.time);
-        innerRow.appendChild(span({style:{fontSize:"10px",color:"#334155",whiteSpace:"nowrap"}},
-          `${d2.getHours()}:${String(d2.getMinutes()).padStart(2,'0')}`));
+        const tb=btn({style:{fontSize:"10px",color:"#64748b",whiteSpace:"nowrap",background:"transparent",border:"1px solid #1e3a5f",borderRadius:"6px",padding:"2px 6px",cursor:"pointer"}},
+          `${d2.getHours()}:${String(d2.getMinutes()).padStart(2,'0')} ✏️`);
+        tb.addEventListener('click',(()=>{const id=item.id;const cur={h:d2.getHours(),m:d2.getMinutes()};return e=>{e.stopPropagation();state.editCheckItemId=id;state.editCheckTime=cur;state.modal="editCheckTime";render();};})());
+        innerRow.appendChild(tb);
       }
       row.appendChild(innerRow);
     }
@@ -4828,6 +4832,32 @@ function renderEditSessionModal(vd){
           ?{...s,startTime:toISO(vd,state.editTimerStart),endTime:toISO(vd,state.editTimerEnd)}:s);
         setTodo(vd,state.editSessionItemId,{sessions:ns});
         state.modal=null;render();
+      }},"保存")
+  ]));
+  bg.appendChild(m);return bg;
+}
+
+function renderEditCheckTimeModal(vd){
+  const item=TODO_ITEMS.find(i=>i.id===state.editCheckItemId);
+  const bg=div({className:"modal-center"});
+  const m=div({className:"modal-box"});
+  bg.addEventListener('click',()=>{state.modal=null;render();});
+  m.addEventListener('click',e=>e.stopPropagation());
+  m.appendChild(div({style:{fontSize:"15px",fontWeight:700,color:"#e2e8f0",marginBottom:"14px"}},`${item?item.label:""} の完了時刻`));
+  const cs={h:state.editCheckTime.h,m:state.editCheckTime.m};
+  const inp=document.createElement('input');inp.type='time';
+  inp.value=`${String(cs.h).padStart(2,'0')}:${String(cs.m).padStart(2,'0')}`;
+  inp.style.cssText="width:100%;padding:10px 12px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:16px;font-family:inherit;box-sizing:border-box;margin-bottom:14px;color-scheme:dark";
+  inp.addEventListener('change',e=>{const parts=(e.target.value||"").split(':');const h=Number(parts[0]),mm=Number(parts[1]);if(!isNaN(h)&&!isNaN(mm)){cs.h=h;cs.m=mm;}});
+  m.appendChild(inp);
+  m.appendChild(div({style:{display:"flex",gap:"8px"}},[
+    btn({className:"btn-ghost",style:{flex:1},onClick:()=>{state.modal=null;render();}},"キャンセル"),
+    btn({style:{flex:2,padding:"10px",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:600,cursor:"pointer"},
+      onClick:()=>{
+        const p=vd.split('-');const iso=new Date(parseInt(p[0]),parseInt(p[1])-1,parseInt(p[2]),cs.h,cs.m,0).toISOString();
+        const cur=(state.todos[vd]||{})[state.editCheckItemId]||{};
+        setTodo(vd,state.editCheckItemId,{...cur,checked:true,time:iso});
+        state.modal=null;showToast("完了時刻を修整しました");render();
       }},"保存")
   ]));
   bg.appendChild(m);return bg;
