@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#0f172a">
-<title>体調管理 v10.8</title>
+<title>体調管理 v10.9</title>
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#0f172a">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -972,7 +972,7 @@ function renderHeader(){
   titleRow.style.cssText="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px";
   const titleLeft=document.createElement('div');
   titleLeft.style.cssText="display:flex;align-items:center;gap:8px";
-  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v10.8</span>';
+  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v10.9</span>';
   const titleRight=document.createElement('div');
   titleRight.style.cssText="display:flex;align-items:center;gap:5px";
   titleRight.appendChild(savedSpan);
@@ -2050,46 +2050,51 @@ function getPlannedExtras(vd){
   // 日をまたぐ睡眠などは「就寝する日」を1つの夜として扱う：
   //  ・今夜(vd)の就寝→24時 は vd のシフトで
   //  ・今朝(vd)の起床(0時→) は【前日】の夜から継続 → 前日のシフトで描画
-  const prevDS=fmtDS((()=>{const x=parseDS(vd);x.setDate(x.getDate()-1);return x;})());
+  // 各パターンを「所有する日(D)」ごとに絶対時間帯で計算し、表示日(vd)に切り出す（span & clip）。
+  //  ・翌日フラグ(nextDay)で、その日の睡眠を翌日にずらせる（2直明けの睡眠など）
+  //  ・終了<開始 は0時またぎ（翌朝まで）として扱う
+  //  ・1つの夜=1つの所有日、なので境目で重複・欠落が起きない
+  const addD=(ds,n)=>{const x=parseDS(ds);x.setDate(x.getDate()+n);return fmtDS(x);};
   (state.planPatterns||[]).forEach(p=>{
     if(p.enabled===false)return;
-    const today=patternTimesFor(p,vd);
-    const prev=patternTimesFor(p,prevDS);
-    const mk=(a,b,c,d,owner,t)=>({title:p.title,color:p.color||"#38bdf8",startH:a,startM:b,endH:c,endM:d,isPattern:true,patternUid:p.uid,
-      oSH:t.sH,oSM:t.sM,oEH:t.eH,oEM:t.eM,ovDate:owner,ovDay:!!((getDaily(owner).patternOv||{})[p.uid]&&(getDaily(owner).patternOv||{})[p.uid].startH!=null)});
-    if(today){
-      const s=today.sH*60+today.sM, e=today.eH*60+today.eM;
-      if(e>s){ out.push(mk(today.sH,today.sM,today.eH,today.eM,vd,today)); }   // 同日で完結
-      else { out.push(mk(today.sH,today.sM,24,0,vd,today)); }                   // 就寝(夜)→翌0時（翌朝は翌日側で描く）
-    }
-    if(prev){
-      const s=prev.sH*60+prev.sM, e=prev.eH*60+prev.eM;
-      if(e<=s && e>0){ out.push(mk(0,0,prev.eH,prev.eM,prevDS,prev)); }         // 前夜からの継続（今朝の起床）
+    for(let off=-2; off<=0; off++){
+      const D=addD(vd,off);
+      const t=patternTimesFor(p,D);
+      if(!t)continue;
+      const base=off+(t.nextDay?1:0);                 // vd基準の日数（この夜の開始日）
+      let startAbs=base*1440+t.sH*60+(t.sM||0);
+      let endAbs  =base*1440+t.eH*60+(t.eM||0);
+      if(endAbs<=startAbs)endAbs+=1440;               // 0時またぎ
+      const s=Math.max(0,startAbs), e=Math.min(1440,endAbs);
+      if(e<=s)continue;                                // vd に掛からない
+      const ovObj=(getDaily(D).patternOv||{})[p.uid];
+      out.push({title:p.title,color:p.color||"#38bdf8",startH:Math.floor(s/60),startM:s%60,endH:Math.floor(e/60),endM:e%60,
+        isPattern:true,patternUid:p.uid,oSH:t.sH,oSM:t.sM,oEH:t.eH,oEM:t.eM,oNext:!!t.nextDay,ovDate:D,ovDay:!!(ovObj&&ovObj.startH!=null)});
     }
   });
   return out;
 }
-// パターンpの指定日dsでの時刻 {sH,sM,eH,eM}。非表示/対象外は null
+// パターンpの指定日dsでの時刻 {sH,sM,eH,eM,nextDay}。非表示/対象外は null
 function patternTimesFor(p,ds){
   if(!p||p.enabled===false)return null;
   const ov=(getDaily(ds).patternOv||{})[p.uid];
   if(ov&&ov.hidden)return null;
-  if(ov&&ov.startH!=null) return {sH:ov.startH,sM:ov.startM||0,eH:ov.endH,eM:ov.endM||0};
+  if(ov&&ov.startH!=null) return {sH:ov.startH,sM:ov.startM||0,eH:ov.endH,eM:ov.endM||0,nextDay:!!ov.nextDay};
   const dow=parseDS(ds).getDay();
   if(Array.isArray(p.weekdays)&&p.weekdays.length&&!p.weekdays.includes(dow))return null;
   if(p.byShift){
     const dshift=getPlanShiftKey(ds)||"off";
     const st=(p.shiftTimes||{})[dshift];
     if(!st||st.on===false)return null;
-    return {sH:st.startH,sM:st.startM||0,eH:st.endH,eM:st.endM||0};
+    return {sH:st.startH,sM:st.startM||0,eH:st.endH,eM:st.endM||0,nextDay:!!st.nextDay};
   }
-  return {sH:p.startH,sM:p.startM||0,eH:p.endH,eM:p.endM||0};
+  return {sH:p.startH,sM:p.startM||0,eH:p.endH,eM:p.endM||0,nextDay:!!p.nextDay};
 }
 
 // パターン予定ブロックのタップ → 編集モーダル
 function openPatternEdit(ev,vd){
   if(ev.shiftBlock){ state.patternEdit={kind:"shift",startH:ev.startH,startM:ev.startM,endH:ev.endH,endM:ev.endM}; }
-  else { state.patternEdit={kind:"plan",uid:ev.patternUid,date:ev.ovDate||vd,startH:ev.oSH,startM:ev.oSM,endH:ev.oEH,endM:ev.oEM,ovDay:ev.ovDay}; }
+  else { state.patternEdit={kind:"plan",uid:ev.patternUid,date:ev.ovDate||vd,startH:ev.oSH,startM:ev.oSM,endH:ev.oEH,endM:ev.oEM,nextDay:!!ev.oNext,ovDay:ev.ovDay}; }
   state.modal="patternEdit"; render();
 }
 // 自由入力の時刻フィールド（HH:MM）
@@ -2146,8 +2151,12 @@ function renderPatternEditModal(vd){
     m.appendChild(div({style:{fontSize:"15px",fontWeight:700,color:"#e2e8f0",marginBottom:"4px"}},`${p?p.title:"パターン予定"} を変更`));
     m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"12px"}},`${Ddl} の時間${D!==vd?"（前夜からの睡眠）":""}`));
     m.appendChild(timeRow(state.patternEdit));
+    const ndB=btn({style:{width:"100%",padding:"7px",marginBottom:"8px",borderRadius:"8px",cursor:"pointer",fontSize:"12px",fontWeight:600,
+      border:`1px solid ${pe.nextDay?"#38bdf8":"#334155"}`,background:pe.nextDay?"#0ea5e922":"transparent",color:pe.nextDay?"#38bdf8":"#64748b"}},pe.nextDay?"🌙 翌日にずらす: ON":"🌙 翌日にずらす: OFF");
+    ndB.addEventListener('click',()=>{state.patternEdit.nextDay=!pe.nextDay;render();});
+    m.appendChild(ndB);
     m.appendChild(btn({style:{width:"100%",padding:"10px",marginBottom:"8px",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:600,cursor:"pointer"},
-      onClick:()=>{const d=getDaily(D);const ov={...(d.patternOv||{})};ov[pe.uid]={startH:pe.startH,startM:pe.startM,endH:pe.endH,endM:pe.endM};setDaily(D,{patternOv:ov});state.modal=null;showToast("この日だけ変更しました");render();}},"✅ この日だけ変更"));
+      onClick:()=>{const d=getDaily(D);const ov={...(d.patternOv||{})};ov[pe.uid]={startH:pe.startH,startM:pe.startM,endH:pe.endH,endM:pe.endM,nextDay:!!pe.nextDay};setDaily(D,{patternOv:ov});state.modal=null;showToast("この日だけ変更しました");render();}},"✅ この日だけ変更"));
     m.appendChild(btn({className:"btn-ghost",style:{width:"100%",marginBottom:"8px"},
       onClick:()=>{const d=getDaily(D);const ov={...(d.patternOv||{})};ov[pe.uid]={hidden:true};setDaily(D,{patternOv:ov});state.modal=null;render();}},"🚫 この日は非表示"));
     if((getDaily(D).patternOv||{})[pe.uid])
@@ -2309,7 +2318,7 @@ function renderPlanPatternPanel(){
       border:`1px solid ${p.byShift?"#a78bfa":"#334155"}`,background:p.byShift?"#a78bfa22":"transparent",color:p.byShift?"#a78bfa":"#64748b"}},p.byShift?"🔗 シフト連動 ON":"🔗 シフト連動 OFF");
     lb.addEventListener('click',()=>{
       const ch={byShift:!p.byShift};
-      if(!p.byShift&&!p.shiftTimes) ch.shiftTimes={s1:{on:true,startH:22,startM:0,endH:6,endM:0},s2:{on:true,startH:1,startM:0,endH:9,endM:0},off:{on:true,startH:0,startM:0,endH:8,endM:0}};
+      if(!p.byShift&&!p.shiftTimes) ch.shiftTimes={s1:{on:true,startH:22,startM:0,endH:6,endM:0,nextDay:false},s2:{on:true,startH:1,startM:0,endH:9,endM:0,nextDay:true},off:{on:true,startH:1,startM:0,endH:9,endM:0,nextDay:true}};
       upd(p.uid,ch);
     });
     linkRow.appendChild(lb);
@@ -2337,6 +2346,12 @@ function renderPlanPatternPanel(){
           border:`1px solid ${st.on!==false?SHIFT_TYPES[k].color:"#334155"}`,background:st.on!==false?SHIFT_TYPES[k].color+"22":"transparent",color:st.on!==false?SHIFT_TYPES[k].color:"#475569"}},`${lbl}${st.on!==false?"":"（なし）"}`);
         onB.addEventListener('click',()=>{const cur=p.shiftTimes||{};upd(p.uid,{shiftTimes:{...cur,[k]:{...st,on:st.on===false}}});});
         head.appendChild(onB);
+        if(st.on!==false){
+          const ndB=btn({style:{fontSize:"10px",padding:"2px 8px",borderRadius:"6px",cursor:"pointer",fontWeight:600,
+            border:`1px solid ${st.nextDay?"#38bdf8":"#334155"}`,background:st.nextDay?"#0ea5e922":"transparent",color:st.nextDay?"#38bdf8":"#475569"}},st.nextDay?"翌日":"当日");
+          ndB.addEventListener('click',()=>{const cur=p.shiftTimes||{};upd(p.uid,{shiftTimes:{...cur,[k]:{...st,nextDay:!st.nextDay}}});});
+          head.appendChild(ndB);
+        }
         wrapR.appendChild(head);
         if(st.on!==false){
           wrapR.appendChild(timeRow(()=>st.startH,()=>st.startM||0,()=>st.endH,()=>st.endM||0,ch=>{const cur=p.shiftTimes||{};upd(p.uid,{shiftTimes:{...cur,[k]:{...st,...ch}}});}));
@@ -2345,6 +2360,10 @@ function renderPlanPatternPanel(){
       });
     } else {
       box.appendChild(timeRow(()=>p.startH,()=>p.startM||0,()=>p.endH,()=>p.endM||0,ch=>upd(p.uid,ch)));
+      const ndB=btn({style:{fontSize:"10px",padding:"3px 10px",borderRadius:"6px",cursor:"pointer",fontWeight:600,marginBottom:"6px",
+        border:`1px solid ${p.nextDay?"#38bdf8":"#334155"}`,background:p.nextDay?"#0ea5e922":"transparent",color:p.nextDay?"#38bdf8":"#475569"}},p.nextDay?"🌙 翌日にずらす: ON":"🌙 翌日にずらす: OFF");
+      ndB.addEventListener('click',()=>upd(p.uid,{nextDay:!p.nextDay}));
+      box.appendChild(ndB);
     }
     // 曜日
     const l3=div({style:{display:"flex",gap:"4px",marginBottom:"6px"}});
