@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#0f172a">
-<title>体調管理 v11.3</title>
+<title>体調管理 v11.4</title>
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#0f172a">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -976,7 +976,7 @@ function renderHeader(){
   titleRow.style.cssText="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px";
   const titleLeft=document.createElement('div');
   titleLeft.style.cssText="display:flex;align-items:center;gap:8px";
-  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v11.3</span>';
+  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v11.4</span>';
   const titleRight=document.createElement('div');
   titleRight.style.cssText="display:flex;align-items:center;gap:5px";
   titleRight.appendChild(savedSpan);
@@ -2219,8 +2219,9 @@ function renderDiaryHub(vd,ds,curH,isToday){
 
 // ── タスクハブ（TODO・目標・やること・買物）──
 function renderTaskHub(vd,ds,isToday){
-  return renderSubHub(["TODO","目標","やること","買物"],state.taskSubTab,t=>{state.taskSubTab=t;render();},()=>{
+  return renderSubHub(["TODO","たまに","目標","やること","買物"],state.taskSubTab,t=>{state.taskSubTab=t;render();},()=>{
     if(state.taskSubTab==="TODO") return renderTodo(vd,ds,isToday);
+    if(state.taskSubTab==="たまに") return renderOccasional(vd);
     if(state.taskSubTab==="目標") return renderGoals(vd,ds);
     if(state.taskSubTab==="やること") return padBody(renderTaskMatrix());
     if(state.taskSubTab==="買物") return padBody(renderTaskList("shopping","🛒 買物リスト","買うものメモ"));
@@ -3163,18 +3164,34 @@ function customTodoDue(ct, ds){
   const d=parseDS(ds), s=parseDS(ct.startDate);
   if(d<s)return false;
   const n=Math.max(1,ct.n||1);
-  if(ct.itype==="day")  return Math.round((d-s)/86400000)%n===0;
-  if(ct.itype==="week") return Math.round((d-s)/86400000)%(n*7)===0;
-  if(ct.itype==="month"){ const mo=(d.getFullYear()-s.getFullYear())*12+(d.getMonth()-s.getMonth()); return mo>=0 && mo%n===0 && d.getDate()===s.getDate(); }
-  return false;
+  let ok=false;
+  if(ct.itype==="day")  ok=Math.round((d-s)/86400000)%n===0;
+  else if(ct.itype==="week"){
+    const wds=(ct.weekdays&&ct.weekdays.length)?ct.weekdays:null;
+    if(wds){
+      if(!wds.includes(d.getDay())) ok=false;
+      else { const mon=x=>{const m=new Date(x.getFullYear(),x.getMonth(),x.getDate());m.setDate(m.getDate()-((m.getDay()+6)%7));return m;}; ok=Math.round((mon(d)-mon(s))/(7*86400000))%n===0; }
+    } else ok=Math.round((d-s)/86400000)%(n*7)===0;
+  }
+  else if(ct.itype==="month"){ const mo=(d.getFullYear()-s.getFullYear())*12+(d.getMonth()-s.getMonth()); ok=(mo>=0 && mo%n===0 && d.getDate()===s.getDate()); }
+  if(!ok)return false;
+  // シフト連動：対象の直の日だけ
+  if(ct.shifts&&ct.shifts.length){ const k=getPlanShiftKey(ds)||"off"; if(!ct.shifts.includes(k))return false; }
+  return true;
 }
 function dueCustomTodos(ds){ return (state.customTodos||[]).filter(ct=>customTodoDue(ct,ds)); }
 function customTodoIntervalLabel(ct){
   const n=ct.n||1;
-  if(ct.itype==="day")   return n===1?"毎日":`${n}日ごと`;
-  if(ct.itype==="week")  return n===1?"毎週":`${n}週ごと`;
-  if(ct.itype==="month") return n===1?"毎月":`${n}ヶ月ごと`;
-  return "";
+  const WD=["日","月","火","水","木","金","土"];
+  let base="";
+  if(ct.itype==="day")   base=n===1?"毎日":`${n}日ごと`;
+  else if(ct.itype==="week"){
+    const wds=(ct.weekdays&&ct.weekdays.length)?ct.weekdays.slice().sort((a,b)=>a-b).map(i=>WD[i]).join("・"):null;
+    base=(n===1?"毎週":`${n}週ごと`)+(wds?` ${wds}`:"");
+  }
+  else if(ct.itype==="month") base=n===1?"毎月":`${n}ヶ月ごと`;
+  if(ct.shifts&&ct.shifts.length){ const SL={s1:"1直",s2:"2直",off:"休"}; base+=` [${ct.shifts.map(k=>SL[k]||k).join("/")}]`; }
+  return base;
 }
 function nextCustomTodoDate(ct){ let ds=todayStr(); for(let i=0;i<800;i++){ if(customTodoDue(ct,ds))return ds; ds=addDays(ds,1); } return ct.startDate; }
 
@@ -3529,43 +3546,45 @@ function renderTodo(vd, ds, isToday){
     wrap.appendChild(row);
   });
 
-  // ── たまにやること（N日/N週/Nヶ月ごと）──
-  {
-    const mdc=ds=>{const q=ds.split('-');return `${parseInt(q[1])}/${parseInt(q[2])}`;};
-    const card=div({className:"card"});
-    card.appendChild(div({style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"8px"}},[
-      div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0"}},"🔁 たまにやること"),
-      (()=>{const b=btn({style:{fontSize:"11px",padding:"4px 10px",background:"#0ea5e918",border:"1px solid #0ea5e9",borderRadius:"7px",color:"#38bdf8",cursor:"pointer",fontWeight:600}},"＋ 追加");
-        b.addEventListener('click',()=>{state.customTodoModal={uid:null,label:"",itype:"week",n:1,startDate:vd,timeH:null,timeM:0,color:"#38bdf8"};render();});return b;})()
-    ]));
-    const list=state.customTodos||[];
-    if(list.length===0){
-      card.appendChild(div({style:{fontSize:"11px",color:"#475569",textAlign:"center",padding:"8px 0"}},"「＋追加」でN日/N週/Nヶ月ごとの項目を登録"));
-    }
-    [...list].sort((a,b)=>{const da=customTodoDue(a,vd),db=customTodoDue(b,vd);if(da!==db)return da?-1:1;return nextCustomTodoDate(a)<nextCustomTodoDate(b)?-1:1;}).forEach(ct=>{
-      const due=customTodoDue(ct,vd);
-      const rec=(state.todos[vd]||{})[ct.uid]||{};
-      const done=due&&!!rec.checked;
-      const row=div({style:{display:"flex",alignItems:"center",gap:"10px",padding:"8px 2px",borderBottom:"1px solid #1e3a5f33",opacity:due?1:0.6}});
-      if(due){
-        const cb=btn({style:{width:"22px",height:"22px",borderRadius:"6px",flexShrink:0,border:`2px solid ${done?"#22c55e":"#334155"}`,background:done?"#22c55e":"transparent",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"13px",color:"#fff"}},done?"✓":"");
-        cb.addEventListener('click',(()=>{const id=ct.uid,label=ct.label,wasDone=done;return()=>{setTodo(vd,id,{checked:!wasDone,time:!wasDone?new Date().toISOString():null});if(!wasDone){showToast(`✅ ${label}`);}};})());
-        row.appendChild(cb);
-      } else {
-        row.appendChild(div({style:{width:"22px",textAlign:"center",fontSize:"12px",color:"#475569",flexShrink:0}},"🔁"));
-      }
-      const lab=div({style:{flex:1,minWidth:0}});
-      lab.appendChild(div({style:{fontSize:"13px",color:done?"#475569":"#e2e8f0",textDecoration:done?"line-through":"none"}},ct.label||"(無題)"));
-      lab.appendChild(div({style:{fontSize:"9px",color:"#64748b"}},`${customTodoIntervalLabel(ct)}${ct.timeH!=null?` ・ ${ct.timeH}:${String(ct.timeM||0).padStart(2,'0')}`:""}　${due?"今日":"次:"+mdc(nextCustomTodoDate(ct))}`));
-      row.appendChild(lab);
-      const ed=btn({style:{background:"transparent",border:"1px solid #334155",borderRadius:"6px",color:"#64748b",cursor:"pointer",fontSize:"11px",padding:"3px 8px",flexShrink:0}},"✏️");
-      ed.addEventListener('click',(()=>{const c={...ct};return()=>{state.customTodoModal=c;render();};})());
-      row.appendChild(ed);
-      card.appendChild(row);
-    });
-    wrap.appendChild(card);
-  }
+  return wrap;
+}
 
+// ── たまにやること（N日/N週/Nヶ月ごと・曜日/シフト連動）タブ ──
+function renderOccasional(vd){
+  const wrap=div({style:{maxWidth:"600px",margin:"0 auto",padding:"10px 16px 60px"}});
+  const mdc=ds=>{const q=ds.split('-');return `${parseInt(q[1])}/${parseInt(q[2])}`;};
+  const card=div({className:"card"});
+  card.appendChild(div({style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"8px"}},[
+    div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0"}},"🔁 たまにやること"),
+    (()=>{const b=btn({style:{fontSize:"11px",padding:"4px 10px",background:"#0ea5e918",border:"1px solid #0ea5e9",borderRadius:"7px",color:"#38bdf8",cursor:"pointer",fontWeight:600}},"＋ 追加");
+      b.addEventListener('click',()=>{state.customTodoModal={uid:null,label:"",itype:"week",n:1,startDate:vd,timeH:null,timeM:0,color:"#38bdf8",weekdays:[],shifts:[]};render();});return b;})()
+  ]));
+  const list=state.customTodos||[];
+  if(list.length===0){
+    card.appendChild(div({style:{fontSize:"11px",color:"#475569",textAlign:"center",padding:"10px 0"}},"「＋追加」でN日/N週/Nヶ月ごとの項目を登録（曜日・シフト連動も可）"));
+  }
+  [...list].sort((a,b)=>{const da=customTodoDue(a,vd),db=customTodoDue(b,vd);if(da!==db)return da?-1:1;return nextCustomTodoDate(a)<nextCustomTodoDate(b)?-1:1;}).forEach(ct=>{
+    const due=customTodoDue(ct,vd);
+    const rec=(state.todos[vd]||{})[ct.uid]||{};
+    const done=due&&!!rec.checked;
+    const row=div({style:{display:"flex",alignItems:"center",gap:"10px",padding:"8px 2px",borderBottom:"1px solid #1e3a5f33",opacity:due?1:0.6}});
+    if(due){
+      const cb=btn({style:{width:"22px",height:"22px",borderRadius:"6px",flexShrink:0,border:`2px solid ${done?"#22c55e":"#334155"}`,background:done?"#22c55e":"transparent",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"13px",color:"#fff"}},done?"✓":"");
+      cb.addEventListener('click',(()=>{const id=ct.uid,label=ct.label,wasDone=done;return()=>{setTodo(vd,id,{checked:!wasDone,time:!wasDone?new Date().toISOString():null});if(!wasDone){showToast(`✅ ${label}`);}};})());
+      row.appendChild(cb);
+    } else {
+      row.appendChild(div({style:{width:"22px",textAlign:"center",fontSize:"12px",color:"#475569",flexShrink:0}},"🔁"));
+    }
+    const lab=div({style:{flex:1,minWidth:0}});
+    lab.appendChild(div({style:{fontSize:"13px",color:done?"#475569":"#e2e8f0",textDecoration:done?"line-through":"none"}},ct.label||"(無題)"));
+    lab.appendChild(div({style:{fontSize:"9px",color:"#64748b"}},`${customTodoIntervalLabel(ct)}${ct.timeH!=null?` ・ ${ct.timeH}:${String(ct.timeM||0).padStart(2,'0')}`:""}　${due?"今日":"次:"+mdc(nextCustomTodoDate(ct))}`));
+    row.appendChild(lab);
+    const ed=btn({style:{background:"transparent",border:"1px solid #334155",borderRadius:"6px",color:"#64748b",cursor:"pointer",fontSize:"11px",padding:"3px 8px",flexShrink:0}},"✏️");
+    ed.addEventListener('click',(()=>{const c={...ct};return()=>{state.customTodoModal=c;render();};})());
+    row.appendChild(ed);
+    card.appendChild(row);
+  });
+  wrap.appendChild(card);
   return wrap;
 }
 
@@ -4974,9 +4993,32 @@ function renderCustomTodoModal(){
   iRow.appendChild(nInp);
   const unitSel=document.createElement('select');unitSel.className='sel';
   [["day","日ごと"],["week","週ごと"],["month","ヶ月ごと"]].forEach(([v,l])=>{const o=document.createElement('option');o.value=v;o.textContent=l;if(m0.itype===v)o.selected=true;unitSel.appendChild(o);});
-  unitSel.addEventListener('change',e=>{m0.itype=e.target.value;});
+  unitSel.addEventListener('change',e=>{m0.itype=e.target.value;render();});
   iRow.appendChild(unitSel);
   m.appendChild(iRow);
+  // 曜日（週ごとのとき・複数選択可）
+  if(m0.itype==="week"){
+    m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"6px"}},"曜日（複数選択可・未選択なら起点日から数えます）"));
+    const wdRow=div({style:{display:"flex",gap:"5px",marginBottom:"12px"}});
+    ["日","月","火","水","木","金","土"].forEach((lbl,idx)=>{
+      const on=(m0.weekdays||[]).includes(idx);
+      const wb=btn({style:{flex:1,padding:"7px 0",borderRadius:"7px",cursor:"pointer",fontSize:"12px",fontWeight:600,border:`1px solid ${on?"#38bdf8":"#334155"}`,background:on?"#0ea5e922":"transparent",color:on?"#38bdf8":"#475569"}},lbl);
+      wb.addEventListener('click',()=>{const set=new Set(m0.weekdays||[]);if(set.has(idx))set.delete(idx);else set.add(idx);m0.weekdays=[...set].sort((a,b)=>a-b);render();});
+      wdRow.appendChild(wb);
+    });
+    m.appendChild(wdRow);
+  }
+  // シフト連動（対象の直だけ・未選択なら全日）
+  m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"6px"}},"シフト連動（選んだ直の日だけ・設定のシフトと連動）"));
+  const shRow=div({style:{display:"flex",gap:"6px",marginBottom:"12px"}});
+  [["s1","1直"],["s2","2直"],["off","休み"]].forEach(([k,l])=>{
+    const on=(m0.shifts||[]).includes(k);
+    const c=SHIFT_TYPES[k].color;
+    const sb=btn({style:{flex:1,padding:"7px 0",borderRadius:"7px",cursor:"pointer",fontSize:"12px",fontWeight:600,border:`1px solid ${on?c:"#334155"}`,background:on?c+"22":"transparent",color:on?c:"#475569"}},l);
+    sb.addEventListener('click',()=>{const set=new Set(m0.shifts||[]);if(set.has(k))set.delete(k);else set.add(k);m0.shifts=[...set];render();});
+    shRow.appendChild(sb);
+  });
+  m.appendChild(shRow);
   // 起点日
   m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"4px"}},"起点の日（この日から数えます）"));
   const sd=document.createElement('input');sd.type='date';sd.value=m0.startDate||todayStr();
@@ -5006,7 +5048,7 @@ function renderCustomTodoModal(){
     btn({style:{flex:2,padding:"10px",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:600,cursor:"pointer"},
       onClick:()=>{
         if(!(m0.label||"").trim()){alert("名前を入力してください");return;}
-        const data={uid:m0.uid||Date.now(),label:m0.label.trim(),itype:m0.itype||"week",n:Math.max(1,m0.n||1),startDate:m0.startDate||todayStr(),timeH:m0.timeH!=null?m0.timeH:null,timeM:m0.timeH!=null?(m0.timeM||0):0,color:m0.color||"#38bdf8"};
+        const data={uid:m0.uid||Date.now(),label:m0.label.trim(),itype:m0.itype||"week",n:Math.max(1,m0.n||1),startDate:m0.startDate||todayStr(),timeH:m0.timeH!=null?m0.timeH:null,timeM:m0.timeH!=null?(m0.timeM||0):0,color:m0.color||"#38bdf8",weekdays:(m0.itype==="week"&&m0.weekdays)?[...m0.weekdays]:[],shifts:m0.shifts?[...m0.shifts]:[]};
         if(m0.uid) state.customTodos=(state.customTodos||[]).map(x=>x.uid===m0.uid?data:x);
         else state.customTodos=[...(state.customTodos||[]),data];
         saveCustomTodos();state.customTodoModal=null;render();
