@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#0f172a">
-<title>体調管理 v11.5</title>
+<title>体調管理 v11.6</title>
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#0f172a">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -356,7 +356,7 @@ const FOOD_CATS = [
   {id:"snack",   label:"間食・おやつ", emoji:"🍫", items:["ミックスナッツ","ダークチョコレート","蒟蒻畑","ポップコーン","ガム"]},
   {id:"drink",   label:"飲み物",       emoji:"☕", items:["麦茶","ルイボスティー","豆乳","コーヒー"]},
   {id:"topping", label:"食材・調味料", emoji:"🫙", items:["MCTオイル","ヘンプシード","にんにく","味噌","オリーブオイル"]},
-  {id:"dairy",   label:"乳製品・発酵", emoji:"🥛", items:["ヨーグルト・乳酸菌飲料"]},
+  {id:"dairy",   label:"乳製品・発酵", emoji:"🥛", items:["乳酸菌飲料","ヨーグルト","チーズ"]},
 ];
 
 const FOOD_EMOJI = {
@@ -368,7 +368,7 @@ const FOOD_EMOJI = {
   "なつめ":"🔴","旬の果物":"🍑","ミックスナッツ":"🥜","ダークチョコレート":"🍫","蒟蒻畑":"🟤",
   "ポップコーン":"🍿","ガム":"🟦","麦茶":"🍵","ルイボスティー":"🫖","豆乳":"🥛","コーヒー":"☕",
   "MCTオイル":"🫙","ヘンプシード":"🌿","にんにく":"🧄","味噌":"🍶","オリーブオイル":"🫒",
-  "ヨーグルト・乳酸菌飲料":"🥛"
+  "乳酸菌飲料":"🥛","ヨーグルト":"🥛","チーズ":"🧀","ヨーグルト・乳酸菌飲料":"🥛"
 };
 const fe = n => FOOD_EMOJI[n] || "🍽️";
 
@@ -522,6 +522,7 @@ function loadStorage(){
     const s=localStorage.getItem(STORAGE_KEY);
     if(s){const p=JSON.parse(s);state.logs=p.logs||[];state.dailies=p.dailies||[];}
     migrateSleepModel();
+    migrateFoods();
     const city=localStorage.getItem(STORAGE_KEY+"_city");
     if(city){const c=JSON.parse(city);state.weatherCity=c;}
     const todos=localStorage.getItem(STORAGE_KEY+"_todo");
@@ -976,7 +977,7 @@ function renderHeader(){
   titleRow.style.cssText="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px";
   const titleLeft=document.createElement('div');
   titleLeft.style.cssText="display:flex;align-items:center;gap:8px";
-  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v11.5</span>';
+  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v11.6</span>';
   const titleRight=document.createElement('div');
   titleRight.style.cssText="display:flex;align-items:center;gap:5px";
   titleRight.appendChild(savedSpan);
@@ -1889,6 +1890,17 @@ function getNightSleepHours(ds){
   const bed=getDaily(addDays(ds,-1)).bedTime, wake=getDaily(ds).wakeTime;
   if(bed==null||wake==null)return null;
   return (wake-bed+24)%24;
+}
+// 旧食材「ヨーグルト・乳酸菌飲料」を「乳酸菌飲料」に置き換え
+function migrateFoods(){
+  let migrated=false;
+  state.dailies.forEach(d=>{
+    if(Array.isArray(d.foods)&&d.foods.includes("ヨーグルト・乳酸菌飲料")){
+      d.foods=[...new Set(d.foods.map(f=>f==="ヨーグルト・乳酸菌飲料"?"乳酸菌飲料":f))];
+      migrated=true;
+    }
+  });
+  if(migrated){ try{localStorage.setItem(STORAGE_KEY,JSON.stringify({logs:state.logs,dailies:state.dailies}));}catch{} }
 }
 // 旧睡眠(sleepStart=就寝/sleepEnd=起床、同日)を新モデル(bedTime=当夜就寝/wakeTime=当朝起床)へ移行
 function migrateSleepModel(){
