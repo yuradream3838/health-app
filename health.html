@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#0f172a">
-<title>体調管理 v11.6</title>
+<title>体調管理 v11.7</title>
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#0f172a">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -257,7 +257,7 @@ const DEFAULT_ROUTINES = [
   {key:"night",   title:"🌙ナイトルーティン",     color:"#a78bfa", ids:["stretch_pm","meditation_pm"]},
 ];
 const cloneRoutines = () => DEFAULT_ROUTINES.map(g=>({...g, ids:[...g.ids]}));
-function saveRoutines(){ try{localStorage.setItem(STORAGE_KEY+"_routines",JSON.stringify(state.routines));}catch{} }
+function saveRoutines(){ safeSet(STORAGE_KEY+"_routines",JSON.stringify(state.routines)); }
 
 // ── シフトパターン（勤務の週間繰り返し）──
 const SHIFT_TYPES = {
@@ -282,7 +282,7 @@ function defaultShiftPattern(){
     ],
   };
 }
-function saveShiftPattern(){ try{localStorage.setItem(STORAGE_KEY+"_shift",JSON.stringify(state.shiftPattern));}catch{} }
+function saveShiftPattern(){ safeSet(STORAGE_KEY+"_shift",JSON.stringify(state.shiftPattern)); }
 // 指定日のパターン上のシフトキー（s1/s2/off）を返す。無効・範囲外はnull
 function getPatternShift(ds){
   const sp=state.shiftPattern;
@@ -329,7 +329,7 @@ function setDayShift(ds,key){
 function defaultPlanPatterns(){
   return [{uid:1, title:"😴 睡眠", color:"#60a5fa", startH:23,startM:0,endH:7,endM:0, weekdays:[0,1,2,3,4,5,6], enabled:false}];
 }
-function savePlanPatterns(){ try{localStorage.setItem(STORAGE_KEY+"_planpatterns",JSON.stringify(state.planPatterns));}catch{} }
+function savePlanPatterns(){ safeSet(STORAGE_KEY+"_planpatterns",JSON.stringify(state.planPatterns)); }
 
 const DRINK_TYPES = [
   {id:"beer",    label:"ビール",     emoji:"🍺",pct:5,  ml:350},
@@ -594,9 +594,35 @@ function migrateOldSchedule(){
     }catch{}
   }
 }
+// ── 保存の共通ヘルパー（失敗を検知してユーザーに通知）──
+// localStorage への書き込みが失敗（容量超過・プライベートモード等）した場合、
+// 従来は catch{} で握りつぶしていたため、データが保存されていないことに
+// ユーザーが気づけなかった。safeSet は失敗を検知して警告し、成否を返す。
+let saveFailNotified=false;
+function safeSet(key,value){
+  try{
+    localStorage.setItem(key,value);
+    return true;
+  }catch(e){
+    // 容量超過の可能性が高い → アーカイブ用モーダルを開く
+    const quota = e && (e.name==='QuotaExceededError' || e.code===22 || e.code===1014);
+    if(!saveFailNotified){
+      saveFailNotified=true;
+      showToast(quota?"⚠️ 保存できません（容量不足）":"⚠️ データを保存できませんでした","#ef4444");
+      // 少し待ってから再通知できるように（連続表示を防ぐ）
+      setTimeout(()=>{saveFailNotified=false;},4000);
+    }
+    if(quota){ state.storageAlert=true; }
+    return false;
+  }
+}
 function saveStorage(){
-  try{localStorage.setItem(STORAGE_KEY,JSON.stringify({logs:state.logs,dailies:state.dailies}));}catch{}
-  state.saved=true;render();setTimeout(()=>{state.saved=false;render();},2000);
+  const ok=safeSet(STORAGE_KEY,JSON.stringify({logs:state.logs,dailies:state.dailies}));
+  if(ok){
+    state.saved=true;render();setTimeout(()=>{state.saved=false;render();},2000);
+  }else{
+    render(); // 警告モーダル/トーストを反映
+  }
 }
 
 function getDaily(dateStr){
@@ -977,7 +1003,7 @@ function renderHeader(){
   titleRow.style.cssText="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px";
   const titleLeft=document.createElement('div');
   titleLeft.style.cssText="display:flex;align-items:center;gap:8px";
-  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v11.6</span>';
+  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v11.7</span>';
   const titleRight=document.createElement('div');
   titleRight.style.cssText="display:flex;align-items:center;gap:5px";
   titleRight.appendChild(savedSpan);
@@ -1316,7 +1342,7 @@ function getGoal(type, dateStr){
 function setGoal(type, dateStr, data){
   const key=getGoalKey(type,dateStr);
   state.goals[key]={...getGoal(type,dateStr),...data};
-  try{localStorage.setItem(STORAGE_KEY+"_goals",JSON.stringify(state.goals));}catch{}
+  safeSet(STORAGE_KEY+"_goals",JSON.stringify(state.goals));
   render();
 }
 
@@ -1541,7 +1567,7 @@ function renderGoalEditModal(){
           progress:state.goalEditProgress,
           done:state.goalEditDone
         };
-        try{localStorage.setItem(STORAGE_KEY+"_goals",JSON.stringify(state.goals));}catch{}
+        safeSet(STORAGE_KEY+"_goals",JSON.stringify(state.goals));
         state.goalEditKey=null;render();
       }},"保存")
   ]));
@@ -1872,13 +1898,13 @@ const EV_COLORS=["#38bdf8","#22c55e","#eab308","#f97316","#ef4444","#a78bfa"];
 const WEEKDAYS_JP=["日","月","火","水","木","金","土"];
 
 function saveSchedule(){
-  try{localStorage.setItem(STORAGE_KEY+"_schedule",JSON.stringify(state.schedule));}catch{}
+  safeSet(STORAGE_KEY+"_schedule",JSON.stringify(state.schedule));
 }
 function saveRepeatEvents(){
-  try{localStorage.setItem(STORAGE_KEY+"_repeat",JSON.stringify(state.repeatEvents));}catch{}
+  safeSet(STORAGE_KEY+"_repeat",JSON.stringify(state.repeatEvents));
 }
 function saveTasks(){
-  try{localStorage.setItem(STORAGE_KEY+"_tasks",JSON.stringify(state.tasks));}catch{}
+  safeSet(STORAGE_KEY+"_tasks",JSON.stringify(state.tasks));
 }
 
 // 日付ユーティリティ
@@ -3180,14 +3206,14 @@ function getTodo(dateStr){
 function setTodo(dateStr, id, data){
   if(!state.todos[dateStr]) state.todos[dateStr]={};
   state.todos[dateStr][id] = data;
-  try{localStorage.setItem(STORAGE_KEY+"_todo", JSON.stringify(state.todos));}catch{}
+  safeSet(STORAGE_KEY+"_todo", JSON.stringify(state.todos));
   render();
 }
 function toggleExclude(dateStr, id){
   if(!state.todos[dateStr]) state.todos[dateStr]={};
   const cur=state.todos[dateStr][id]||{};
   state.todos[dateStr][id]={...cur, excluded:!cur.excluded};
-  try{localStorage.setItem(STORAGE_KEY+"_todo", JSON.stringify(state.todos));}catch{}
+  safeSet(STORAGE_KEY+"_todo", JSON.stringify(state.todos));
   render();
 }
 
@@ -3208,12 +3234,12 @@ function moveTodoItem(id, dir){
   const to=idx+dir;
   if(idx<0||to<0||to>=items.length)return;
   [items[idx],items[to]]=[items[to],items[idx]];
-  try{localStorage.setItem(STORAGE_KEY+"_todo_order",JSON.stringify(items.map(it=>it.id)));}catch{}
+  safeSet(STORAGE_KEY+"_todo_order",JSON.stringify(items.map(it=>it.id)));
   render();
 }
 
 // ── たまにやること（N日/N週/Nヶ月ごとのカスタムTODO）──
-function saveCustomTodos(){ try{localStorage.setItem(STORAGE_KEY+"_customtodos",JSON.stringify(state.customTodos));}catch{} }
+function saveCustomTodos(){ safeSet(STORAGE_KEY+"_customtodos",JSON.stringify(state.customTodos)); }
 function customTodoDue(ct, ds){
   if(!ct||!ct.startDate)return false;
   const d=parseDS(ds), s=parseDS(ct.startDate);
@@ -4824,6 +4850,23 @@ function exportData(){
   const blob=new Blob([JSON.stringify(payload,null,2)],{type:"application/json"});
   const url=URL.createObjectURL(blob);const a=document.createElement("a");
   a.href=url;a.download=`health_backup_${todayStr()}.json`;a.click();URL.revokeObjectURL(url);
+  // バックアップ日時を記録（バックアップ促進リマインダー用）
+  try{localStorage.setItem(STORAGE_KEY+"_lastbackup",String(Date.now()));}catch{}
+}
+// ── バックアップ促進リマインダー ──
+// localStorage はブラウザ側のみの保存で、キャッシュ削除等で消えるリスクがある。
+// 一定期間バックアップしていない場合、起動時にやさしく促す。
+function checkBackupReminder(){
+  // データが少ないうちは促さない
+  if(state.logs.length + state.dailies.length < 10) return;
+  let last=0;
+  try{const v=localStorage.getItem(STORAGE_KEY+"_lastbackup");if(v)last=parseInt(v)||0;}catch{}
+  const days = last ? (Date.now()-last)/86400000 : 999;
+  if(days>=14){
+    setTimeout(()=>{
+      showToast(last?"💾 前回のバックアップから2週間以上経過。設定からデータ出力をおすすめします":"💾 データのバックアップをおすすめします（設定→データ出力）","#38bdf8");
+    },1500);
+  }
 }
 function importData(e){
   const file=e.target.files[0];if(!file)return;
@@ -5198,6 +5241,7 @@ state.forecast=genForecast();
 state.viewDate = todayStr();
 render();
 checkStorageAndAlert();
+checkBackupReminder();
 // PWA: Service Worker登録
 if('serviceWorker' in navigator){
   navigator.serviceWorker.register('sw.js').catch(()=>{});
