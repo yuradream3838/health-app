@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#0f172a">
-<title>体調管理 v11.8</title>
+<title>体調管理</title>
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#0f172a">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -35,12 +35,18 @@ textarea{font-family:inherit}
 /* トースト */
 #toast{position:fixed;top:70px;left:50%;transform:translateX(-50%) translateY(-20px);z-index:999;background:#1e293b;border:1px solid #22c55e;border-radius:12px;padding:10px 20px;color:#22c55e;font-size:13px;font-weight:600;opacity:0;transition:all 0.3s ease;pointer-events:none;white-space:nowrap;box-shadow:0 4px 20px #00000066}
 #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+/* 取り消しバー */
+#undo-bar{position:fixed;bottom:76px;left:50%;transform:translateX(-50%) translateY(20px);z-index:999;background:#1e293b;border:1px solid #475569;border-radius:12px;padding:8px 8px 8px 16px;color:#e2e8f0;font-size:13px;font-weight:600;opacity:0;transition:all 0.25s ease;pointer-events:none;display:flex;align-items:center;gap:12px;box-shadow:0 4px 20px #00000088;max-width:calc(100% - 32px)}
+#undo-bar.show{opacity:1;transform:translateX(-50%) translateY(0);pointer-events:auto}
+#undo-bar button{background:#0ea5e9;border:none;border-radius:8px;padding:6px 14px;color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap}
+#undo-bar .undo-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* コンフェッティ */
 #confetti-canvas{position:fixed;inset:0;pointer-events:none;z-index:998}
 </style>
 </head>
 <body>
 <div id="toast"></div>
+<div id="undo-bar"></div>
 <canvas id="confetti-canvas"></canvas>
 <div id="root"></div>
 <script>
@@ -208,7 +214,65 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
+const APP_VERSION = "11.9"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
+
+// ── 取り消し（Undo）機構 ──────────────────────────
+// 削除など取り返しのつかない操作の前に pushUndo() でデータ全体のスナップショットを
+// 取り、数秒間「元に戻す」バーを表示する。健康記録など再入力が難しいデータの
+// 誤削除を救済する。スナップショットは永続化される全フィールドの深いコピー。
+let undoSnapshot=null, undoTimer=null;
+const UNDO_FIELDS=["logs","dailies","todos","goals","schedule","repeatEvents","tasks","routines","shiftPattern","planPatterns","customTodos"];
+function snapshotData(){
+  const snap={};
+  UNDO_FIELDS.forEach(k=>{ try{ snap[k]=JSON.parse(JSON.stringify(state[k])); }catch{ snap[k]=state[k]; } });
+  return snap;
+}
+function persistAll(){
+  // スナップショット復元後に全フィールドを保存し直す
+  saveStorage();
+  if(typeof saveSchedule==='function')saveSchedule();
+  if(typeof saveRepeatEvents==='function')saveRepeatEvents();
+  if(typeof saveTasks==='function')saveTasks();
+  if(typeof saveRoutines==='function')saveRoutines();
+  if(typeof saveShiftPattern==='function')saveShiftPattern();
+  if(typeof savePlanPatterns==='function')savePlanPatterns();
+  if(typeof saveCustomTodos==='function')saveCustomTodos();
+  safeSet(STORAGE_KEY+"_goals",JSON.stringify(state.goals));
+  safeSet(STORAGE_KEY+"_todo",JSON.stringify(state.todos));
+}
+function pushUndo(label){
+  undoSnapshot=snapshotData();
+  showUndoBar(label||"削除しました");
+}
+function doUndo(){
+  if(!undoSnapshot)return;
+  UNDO_FIELDS.forEach(k=>{ if(undoSnapshot[k]!==undefined) state[k]=undoSnapshot[k]; });
+  undoSnapshot=null;
+  persistAll();
+  hideUndoBar();
+  showToast("元に戻しました","#22c55e");
+  render();
+}
+function showUndoBar(label){
+  const el=document.getElementById('undo-bar');
+  if(!el)return;
+  el.innerHTML='';
+  const t=document.createElement('span');t.className='undo-label';t.textContent=label;
+  const b=document.createElement('button');b.textContent='元に戻す';
+  b.addEventListener('click',doUndo);
+  el.appendChild(t);el.appendChild(b);
+  el.classList.add('show');
+  if(undoTimer)clearTimeout(undoTimer);
+  undoTimer=setTimeout(hideUndoBar,6000);
+}
+function hideUndoBar(){
+  const el=document.getElementById('undo-bar');
+  if(el)el.classList.remove('show');
+  if(undoTimer){clearTimeout(undoTimer);undoTimer=null;}
+  // バーが消えたらスナップショットも破棄（メモリ節約）
+  setTimeout(()=>{ if(!document.getElementById('undo-bar')?.classList.contains('show'))undoSnapshot=null; },300);
+}
 const TABS = ["予定","日記","タスク","分析","設定"];
 const SYMPTOMS = [
   "頭痛","肩こり","腰痛","関節痛",
@@ -994,7 +1058,7 @@ function renderHeader(){
   titleRow.style.cssText="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px";
   const titleLeft=document.createElement('div');
   titleLeft.style.cssText="display:flex;align-items:center;gap:8px";
-  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v11.8</span>';
+  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v'+APP_VERSION+'</span>';
   const titleRight=document.createElement('div');
   titleRight.style.cssText="display:flex;align-items:center;gap:5px";
   titleRight.appendChild(savedSpan);
@@ -1138,7 +1202,7 @@ function renderDailyPanel(vd){
           };})()); 
           const del=btn({style:{background:"transparent",border:"none",color:"#334155",cursor:"pointer",fontSize:"14px",padding:"0"}},"×");
           del.addEventListener('click',(()=>{const uid=n.uid;return(e)=>{e.stopPropagation();
-            const nd={...getDaily(vd)};nd.naps=(nd.naps||[]).filter(x=>x.uid!==uid);setDaily(vd,nd);render();
+            pushUndo("昼寝を削除しました");const nd={...getDaily(vd)};nd.naps=(nd.naps||[]).filter(x=>x.uid!==uid);setDaily(vd,nd);render();
           };})()); 
           item.appendChild(del);
           list.appendChild(item);
@@ -1261,11 +1325,12 @@ function renderDailyPanel(vd){
             if(e.tag) item.appendChild(span({style:{fontSize:"10px",padding:"1px 7px",borderRadius:"10px",background:"#6366f122",color:"#818cf8",border:"1px solid #6366f133"}},e.tag));
             const delBtn=btn({style:{background:"transparent",border:"none",color:"#334155",cursor:"pointer",fontSize:"14px",padding:"0",lineHeight:"1"}},"×");
             delBtn.addEventListener('click',(()=>{const idx=i;return()=>{
+              pushUndo("記録を削除しました");
               const nd={...getDaily(vd)};
               nd.ejaculations=[...(nd.ejaculations||[])];
               nd.ejaculations.splice(idx,1);
               setDaily(vd,nd);render();
-            };})()); 
+            };})());
             item.appendChild(delBtn);
             return item;
           })
@@ -2356,7 +2421,7 @@ function renderPlanPatternPanel(){
     ti.addEventListener('input',e=>{const x=state.planPatterns.find(z=>z.uid===p.uid);if(x){x.title=e.target.value;savePlanPatterns();}});
     l1.appendChild(ti);
     const del=btn({style:{background:"transparent",border:"none",color:"#334155",cursor:"pointer",fontSize:"16px",flexShrink:0}},"×");
-    del.addEventListener('click',()=>{if(confirm("このパターンを削除しますか？")){state.planPatterns=state.planPatterns.filter(x=>x.uid!==p.uid);savePlanPatterns();render();}});
+    del.addEventListener('click',()=>{if(confirm("このパターンを削除しますか？")){pushUndo("パターンを削除しました");state.planPatterns=state.planPatterns.filter(x=>x.uid!==p.uid);savePlanPatterns();render();}});
     l1.appendChild(del);
     box.appendChild(l1);
     // シフト連動トグル
@@ -2866,7 +2931,7 @@ function renderTaskMatrix(){
     scheduledBadges(item).forEach(b=>label.appendChild(div({style:{fontSize:"9px",color:b.repeat?"#a78bfa":"#38bdf8",fontWeight:600,marginTop:"2px"}},b.text)));
     row1.appendChild(label);
     const del=btn({style:{background:"transparent",border:"none",color:"#334155",cursor:"pointer",fontSize:"15px",padding:"0 2px",flexShrink:0}},"×");
-    del.addEventListener('click',(()=>{const uid=item.uid;return()=>{state.tasks.todo=state.tasks.todo.filter(x=>x.uid!==uid);saveTasks();render();};})());
+    del.addEventListener('click',(()=>{const uid=item.uid;return()=>{pushUndo("TODOを削除しました");state.tasks.todo=state.tasks.todo.filter(x=>x.uid!==uid);saveTasks();render();};})());
     row1.appendChild(del);
     box.appendChild(row1);
     // 2行目：重要・緊急・期日・予定に追加
@@ -2909,6 +2974,7 @@ function renderTaskMatrix(){
   if(list.some(x=>x.done)){
     const clearBtn=btn({style:{width:"100%",marginTop:"6px",padding:"6px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#475569",fontSize:"11px",cursor:"pointer"}},"完了済みをまとめて削除");
     clearBtn.addEventListener('click',()=>{
+      pushUndo("完了済みTODOを削除しました");
       state.tasks.todo=state.tasks.todo.filter(x=>!x.done);
       saveTasks();render();
     });
@@ -2956,6 +3022,7 @@ function renderTaskList(key,title,subtitle){
     row.appendChild(div({style:{flex:1,fontSize:"13px",color:item.done?"#64748b":"#e2e8f0",textDecoration:item.done?"line-through":"none"}},item.text));
     const del=btn({style:{background:"transparent",border:"none",color:"#334155",cursor:"pointer",fontSize:"15px",padding:"0 4px"}},"×");
     del.addEventListener('click',(()=>{const uid=item.uid;return()=>{
+      pushUndo("項目を削除しました");
       state.tasks[key]=state.tasks[key].filter(x=>x.uid!==uid);
       saveTasks();render();
     };})());
@@ -2965,6 +3032,7 @@ function renderTaskList(key,title,subtitle){
   if(list.some(x=>x.done)){
     const clearBtn=btn({style:{width:"100%",marginTop:"6px",padding:"6px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#475569",fontSize:"11px",cursor:"pointer"}},"完了済みをまとめて削除");
     clearBtn.addEventListener('click',()=>{
+      pushUndo("完了済みを削除しました");
       state.tasks[key]=state.tasks[key].filter(x=>!x.done);
       saveTasks();render();
     });
@@ -3096,12 +3164,15 @@ function renderAddEventModal(vd){
           const orig=(state.repeatEvents||[]).find(e=>e.uid===state.editEventUid);
           const scope=state.editScope||"all";
           if(orig){
+            if(scope==="all" && !confirm("この繰り返し予定を全て削除しますか？"))return;
+            pushUndo("予定を削除しました");
             if(scope==="this"){ orig.exceptions=[...(orig.exceptions||[]),vd]; }
             else if(scope==="future"){ orig.endDate=dayBefore(vd); }
-            else { if(!confirm("この繰り返し予定を全て削除しますか？"))return; state.repeatEvents=state.repeatEvents.filter(e=>e.uid!==orig.uid); }
+            else { state.repeatEvents=state.repeatEvents.filter(e=>e.uid!==orig.uid); }
           }
           saveRepeatEvents();saveSchedule();
         } else {
+          pushUndo("予定を削除しました");
           state.schedule[vd]=(state.schedule[vd]||[]).filter(e=>e.uid!==state.editEventUid);
           saveSchedule();
         }
@@ -3516,7 +3587,7 @@ function renderTodo(vd, ds, isToday){
           const delBtn=btn({style:{background:"transparent",border:"none",color:"#334155",cursor:"pointer",fontSize:"14px",padding:"0"}},
             "×");
           delBtn.addEventListener('click',(e2=>{e2.stopPropagation();const uid2=s.uid;
-            setTodo(vd,item.id,{sessions:sessions.filter(x=>x.uid!==uid2)});
+            pushUndo("セッションを削除しました");setTodo(vd,item.id,{sessions:sessions.filter(x=>x.uid!==uid2)});
           }));
           sRow.appendChild(delBtn);
           sessionList.appendChild(sRow);
@@ -3920,7 +3991,7 @@ function getSoberTime(drinks){
   }
   return"12h以上";
 }
-function removeDrink(vd,uid){const d=getDaily(vd);setDaily(vd,{drinks:(d.drinks||[]).filter(x=>x.uid!==uid)});}
+function removeDrink(vd,uid){pushUndo("飲酒記録を削除しました");const d=getDaily(vd);setDaily(vd,{drinks:(d.drinks||[]).filter(x=>x.uid!==uid)});}
 function recordEnd(vd,uid){const n=new Date();const d=getDaily(vd);setDaily(vd,{drinks:(d.drinks||[]).map(x=>x.uid===uid?{...x,endHour:n.getHours(),endMin:n.getMinutes()}:x)});render();}
 function clearEnd(vd,uid){const d=getDaily(vd);setDaily(vd,{drinks:(d.drinks||[]).map(x=>{if(x.uid!==uid)return x;const c={...x};delete c.endHour;delete c.endMin;return c;})});render();}
 
@@ -4953,7 +5024,7 @@ function renderAddNapModal(vd,isEdit){
   if(isEdit){
     m.appendChild(btn({style:{width:"100%",padding:"7px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#475569",cursor:"pointer",fontSize:"12px",marginBottom:"8px",marginTop:"4px"},
       onClick:()=>{
-        const nd={...getDaily(vd)};nd.naps=(nd.naps||[]).filter(x=>x.uid!==state.editNapUid);setDaily(vd,nd);state.modal=null;render();
+        pushUndo("昼寝を削除しました");const nd={...getDaily(vd)};nd.naps=(nd.naps||[]).filter(x=>x.uid!==state.editNapUid);setDaily(vd,nd);state.modal=null;render();
       }},"この昼寝を削除"));
   }
 
@@ -5052,6 +5123,7 @@ function renderEditSessionModal(vd){
   const clearBtn=btn({style:{width:"100%",padding:"7px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#475569",cursor:"pointer",fontSize:"12px",marginBottom:"8px"}},
     "このセッションを削除");
   clearBtn.addEventListener('click',()=>{
+    pushUndo("セッションを削除しました");
     const ns=state.editSessionSessions.filter(s=>s.uid!==state.editSessionUid);
     setTodo(vd,state.editSessionItemId,{sessions:ns});
     state.modal=null;render();
@@ -5142,7 +5214,7 @@ function renderCustomTodoModal(){
   m.appendChild(tRow);
   if(m0.uid){
     m.appendChild(btn({style:{width:"100%",padding:"7px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#475569",cursor:"pointer",fontSize:"12px",marginBottom:"8px"},
-      onClick:()=>{ if(confirm("この項目を削除しますか？")){state.customTodos=(state.customTodos||[]).filter(x=>x.uid!==m0.uid);saveCustomTodos();state.customTodoModal=null;render();} }},"この項目を削除"));
+      onClick:()=>{ if(confirm("この項目を削除しますか？")){pushUndo("たまにやることを削除しました");state.customTodos=(state.customTodos||[]).filter(x=>x.uid!==m0.uid);saveCustomTodos();state.customTodoModal=null;render();} }},"この項目を削除"));
   }
   m.appendChild(div({style:{display:"flex",gap:"8px"}},[
     btn({className:"btn-ghost",style:{flex:1},onClick:()=>{state.customTodoModal=null;render();}},"キャンセル"),
@@ -5243,6 +5315,7 @@ loadStorage();
 state.forecast=genForecast();
 state.viewDate = todayStr();
 render();
+document.title="体調管理 v"+APP_VERSION;
 checkStorageAndAlert();
 checkBackupReminder();
 // PWA: Service Worker登録
