@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#0f172a">
-<title>体調管理 v11.4</title>
+<title>体調管理 v11.5</title>
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#0f172a">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -490,7 +490,7 @@ const state = {
   shiftPattern:defaultShiftPattern(), swapMode:false, swapFirst:null,
   planPatterns:defaultPlanPatterns(), customTodos:[], customTodoModal:null,
   scheduleSubTab:"日", editEventUid:null, editEventIsRepeat:false, editScope:"all", patternEdit:null,
-  newEvH:9, newEvM:0, newEvEndH:10, newEvEndM:0, newEvTitle:"", newEvRepeat:"none", newEvColor:"#38bdf8", newEvWeekdays:[], newEvFromTask:null,
+  newEvH:9, newEvM:0, newEvEndH:10, newEvEndM:0, newEvTitle:"", newEvRepeat:"none", newEvColor:"#38bdf8", newEvWeekdays:[], newEvFromTask:null, newEvAllDay:false,
   aiScheduleLoading:false, aiScheduleProposal:null,
   aiAnalysisResult:null, aiAnalysisLoading:false, aiAnalysisError:null, aiAnalysisRemaining:null,
   events:{}, taskList:[], wishList:[], shopList:[],
@@ -976,7 +976,7 @@ function renderHeader(){
   titleRow.style.cssText="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px";
   const titleLeft=document.createElement('div');
   titleLeft.style.cssText="display:flex;align-items:center;gap:8px";
-  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v11.4</span>';
+  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v11.5</span>';
   const titleRight=document.createElement('div');
   titleRight.style.cssText="display:flex;align-items:center;gap:5px";
   titleRight.appendChild(savedSpan);
@@ -2458,7 +2458,9 @@ function renderScheduleHub(vd,ds,isToday){
 // ── 日スケジュール（予定 vs 実際・0〜24時） ──
 function renderDaySchedule(vd,ds,isToday){
   const wrap=div({});
-  const events=[...getEventsForDate(vd),...getPlannedExtras(vd)];
+  const allEv=getEventsForDate(vd);
+  const events=[...allEv.filter(e=>!e.allDay),...getPlannedExtras(vd)]; // 時刻ありはタイムラインへ
+  const allDayEvents=allEv.filter(e=>e.allDay);                         // 終日は上部エリアへ
   const actuals=getActualActivities(vd);
 
   wrap.appendChild(div({style:{display:"flex",gap:"8px",marginBottom:"10px"}},[
@@ -2470,13 +2472,46 @@ function renderDaySchedule(vd,ds,isToday){
         state.newEvEndH=Math.min(23,now.getHours()+1);state.newEvEndM=0;
         state.newEvRepeat="none";state.newEvColor=EV_COLORS[0];
         state.newEvWeekdays=[parseDS(vd).getDay()];
-        state.newEvFromTask=null;
+        state.newEvFromTask=null;state.newEvAllDay=false;
         render();
       }},"＋ 予定を追加"),
     btn({style:{flex:1,padding:"9px",background:"linear-gradient(135deg,#0ea5e918,#6366f118)",border:"1px solid #6366f1",borderRadius:"8px",color:"#a5b4fc",fontSize:"12px",fontWeight:600,cursor:"pointer"},
       onClick:()=>runAISchedule(vd),
       },state.aiScheduleLoading?"🤖 提案中...":"🤖 AI提案")
   ]));
+
+  // 終日・時間未指定エリア（終日予定＋時間なしのたまにやること）
+  {
+    const untimedCustom=dueCustomTodos(vd).filter(ct=>ct.timeH==null);
+    if(allDayEvents.length||untimedCustom.length){
+      const ad=div({className:"card",style:{padding:"8px 10px",marginBottom:"8px"}});
+      ad.appendChild(div({style:{fontSize:"10px",fontWeight:700,color:"#94a3b8",marginBottom:"6px"}},"📌 終日・時間未指定"));
+      allDayEvents.forEach(ev=>{
+        const c=ev.color||EV_COLORS[0];
+        const chip=div({style:{display:"flex",alignItems:"center",gap:"6px",padding:"5px 8px",background:c+"18",border:`1px solid ${c}55`,borderLeft:`3px solid ${c}`,borderRadius:"6px",marginBottom:"4px",cursor:"pointer"}},[
+          div({style:{flex:1,fontSize:"12px",color:"#e2e8f0"}},(ev.isRepeat?"🔁 ":"")+ev.title)
+        ]);
+        chip.addEventListener('click',(()=>{const e2=ev;return()=>{
+          state.modal="addEvent";state.editEventUid=e2.uid;state.editEventIsRepeat=!!e2.isRepeat;
+          state.newEvTitle=e2.title;state.newEvH=e2.startH||9;state.newEvM=e2.startM||0;state.newEvEndH=e2.endH||10;state.newEvEndM=e2.endM||0;
+          state.newEvRepeat=e2.isRepeat?e2.repeatType:"none";state.newEvColor=e2.color||EV_COLORS[0];
+          state.newEvWeekdays=(e2.weekdays&&e2.weekdays.length)?[...e2.weekdays]:[parseDS(e2.startDate||vd).getDay()];
+          state.newEvFromTask=e2.fromTask||null;state.newEvAllDay=true;state.editScope="this";render();
+        };})());
+        ad.appendChild(chip);
+      });
+      untimedCustom.forEach(ct=>{
+        const rec=(state.todos[vd]||{})[ct.uid]||{};const done=!!rec.checked;
+        const row=div({style:{display:"flex",alignItems:"center",gap:"8px",padding:"4px 2px"}});
+        const cb=btn({style:{width:"20px",height:"20px",borderRadius:"5px",flexShrink:0,border:`2px solid ${done?"#22c55e":"#334155"}`,background:done?"#22c55e":"transparent",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"12px",color:"#fff"}},done?"✓":"");
+        cb.addEventListener('click',(()=>{const id=ct.uid,label=ct.label,wasDone=done;return()=>{setTodo(vd,id,{checked:!wasDone,time:!wasDone?new Date().toISOString():null});if(!wasDone)showToast(`✅ ${label}`);};})());
+        row.appendChild(cb);
+        row.appendChild(div({style:{flex:1,fontSize:"12px",color:done?"#475569":"#e2e8f0",textDecoration:done?"line-through":"none"}},`🔁 ${ct.label}`));
+        ad.appendChild(row);
+      });
+      wrap.appendChild(ad);
+    }
+  }
 
   // AI提案結果の確認カード
   if(state.aiScheduleProposal){
@@ -2588,6 +2623,7 @@ function renderDaySchedule(vd,ds,isToday){
     state.newEvColor=ev.color||EV_COLORS[0];
     state.newEvWeekdays=(ev.weekdays&&ev.weekdays.length)?[...ev.weekdays]:[parseDS(ev.startDate||vd).getDay()];
     state.newEvFromTask=ev.fromTask||null;
+    state.newEvAllDay=!!ev.allDay;
     state.editScope="this";
     render();
   });
@@ -2668,7 +2704,7 @@ function renderWeekCalendar(vd,ds){
     evs.slice(0,5).forEach(ev=>{
       const c=ev.color||EV_COLORS[0];
       col.appendChild(div({style:{fontSize:"8px",color:c,background:c+"22",borderLeft:`2px solid ${c}`,borderRadius:"3px",padding:"1px 3px",marginBottom:"2px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},
-        `${String(ev.startH).padStart(2,'0')}:${String(ev.startM).padStart(2,'0')} ${ev.title}`));
+        `${ev.allDay?"終日":`${String(ev.startH).padStart(2,'0')}:${String(ev.startM).padStart(2,'0')}`} ${ev.title}`));
     });
     if(evs.length>5)col.appendChild(div({style:{fontSize:"8px",color:"#475569",textAlign:"center"}},`+${evs.length-5}`));
     col.addEventListener('click',(()=>{const k=dsK;return()=>onDayTap(k);})());
@@ -2937,8 +2973,15 @@ function renderAddEventModal(vd){
     row.appendChild(sH);row.appendChild(span({style:{color:"#475569",fontWeight:700}},"："));row.appendChild(sM);
     w2.appendChild(row);return w2;
   };
-  m.appendChild(mkT("開始",()=>state.newEvH,()=>state.newEvM,v=>{state.newEvH=v;},v=>{state.newEvM=v;}));
-  m.appendChild(mkT("終了",()=>state.newEvEndH,()=>state.newEvEndM,v=>{state.newEvEndH=v;},v=>{state.newEvEndM=v;}));
+  // 終日（時間指定なし）トグル
+  const adBtn=btn({style:{width:"100%",padding:"8px",marginBottom:"12px",borderRadius:"8px",cursor:"pointer",fontSize:"12px",fontWeight:600,
+    border:`1px solid ${state.newEvAllDay?"#38bdf8":"#334155"}`,background:state.newEvAllDay?"#0ea5e922":"transparent",color:state.newEvAllDay?"#38bdf8":"#64748b"}},state.newEvAllDay?"🗓 終日（時間指定なし）: ON":"🗓 終日（時間指定なし）: OFF");
+  adBtn.addEventListener('click',()=>{state.newEvAllDay=!state.newEvAllDay;render();});
+  m.appendChild(adBtn);
+  if(!state.newEvAllDay){
+    m.appendChild(mkT("開始",()=>state.newEvH,()=>state.newEvM,v=>{state.newEvH=v;},v=>{state.newEvM=v;}));
+    m.appendChild(mkT("終了",()=>state.newEvEndH,()=>state.newEvEndM,v=>{state.newEvEndH=v;},v=>{state.newEvEndM=v;}));
+  }
 
   // 色選択
   m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"6px"}},"色"));
@@ -3043,7 +3086,7 @@ function renderAddEventModal(vd){
       onClick:()=>{
         if(!state.newEvTitle.trim()){alert("タイトルを入力してください");return;}
         const ft=state.newEvFromTask||null;
-        const evData={title:state.newEvTitle.trim(),startH:state.newEvH,startM:state.newEvM,endH:state.newEvEndH,endM:state.newEvEndM,color:state.newEvColor,...(ft?{fromTask:ft}:{})};
+        const evData={title:state.newEvTitle.trim(),startH:state.newEvH,startM:state.newEvM,endH:state.newEvEndH,endM:state.newEvEndM,color:state.newEvColor,allDay:!!state.newEvAllDay,...(ft?{fromTask:ft}:{})};
         const isNone=state.newEvRepeat==="none";
         const newWds=isW(state.newEvRepeat)?((state.newEvWeekdays&&state.newEvWeekdays.length)?[...state.newEvWeekdays].sort((a,b)=>a-b):[parseDS(vd).getDay()]):null;
         const addSingle=()=>{ if(!state.schedule[vd])state.schedule[vd]=[]; state.schedule[vd].push({uid:Date.now(),...evData}); };
