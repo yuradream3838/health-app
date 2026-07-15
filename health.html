@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#0f172a">
-<title>体調管理 v11.7</title>
+<title>体調管理 v11.8</title>
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#0f172a">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -642,17 +642,8 @@ function setLog(dateStr,hour,data){
   state.logs=nl;saveStorage();
 }
 
-// ── 予定・リスト保存ヘルパー ──────────────────────
-function saveEvents(){try{localStorage.setItem(STORAGE_KEY+"_events",JSON.stringify(state.events));}catch{}}
-function saveLists(){
-  try{
-    localStorage.setItem(STORAGE_KEY+"_tasklist",JSON.stringify(state.taskList));
-    localStorage.setItem(STORAGE_KEY+"_wishlist",JSON.stringify(state.wishList));
-    localStorage.setItem(STORAGE_KEY+"_shoplist",JSON.stringify(state.shopList));
-  }catch{}
-}
-function getEvents(dateStr){return state.events[dateStr]||[];}
-function setEvents(dateStr,arr){state.events[dateStr]=arr;saveEvents();render();}
+// （旧スキーマ用の saveEvents/saveLists/getEvents/setEvents は廃止。
+//  旧データの読込は migrate 系で state.schedule / state.tasks へ移行される）
 
 // ═══════════════════════════════════════════════════
 // HTML生成ヘルパー
@@ -1003,7 +994,7 @@ function renderHeader(){
   titleRow.style.cssText="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px";
   const titleLeft=document.createElement('div');
   titleLeft.style.cssText="display:flex;align-items:center;gap:8px";
-  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v11.7</span>';
+  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v11.8</span>';
   const titleRight=document.createElement('div');
   titleRight.style.cssText="display:flex;align-items:center;gap:5px";
   titleRight.appendChild(savedSpan);
@@ -3274,7 +3265,19 @@ function customTodoIntervalLabel(ct){
   if(ct.shifts&&ct.shifts.length){ const SL={s1:"1直",s2:"2直",off:"休"}; base+=` [${ct.shifts.map(k=>SL[k]||k).join("/")}]`; }
   return base;
 }
-function nextCustomTodoDate(ct){ let ds=todayStr(); for(let i=0;i<800;i++){ if(customTodoDue(ct,ds))return ds; ds=addDays(ds,1); } return ct.startDate; }
+// 次回該当日を探す（最大約2年）。ソート比較や各行描画で繰り返し呼ばれるため、
+// 当日単位でメモ化して同一レンダー内の再計算を避ける。
+let _nctCache={day:null,map:new Map()};
+function nextCustomTodoDate(ct){
+  const today=todayStr();
+  if(_nctCache.day!==today){ _nctCache={day:today,map:new Map()}; }
+  const key=ct.uid!=null?ct.uid+"|"+ct.startDate+"|"+ct.itype+"|"+ct.n+"|"+(ct.weekdays||[]).join(",")+"|"+(ct.shifts||[]).join(","):JSON.stringify(ct);
+  if(_nctCache.map.has(key)) return _nctCache.map.get(key);
+  let ds=today, res=ct.startDate;
+  for(let i=0;i<800;i++){ if(customTodoDue(ct,ds)){ res=ds; break; } ds=addDays(ds,1); }
+  _nctCache.map.set(key,res);
+  return res;
+}
 
 // ── TODOタブ ──────────────────────────────────────
 
