@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#0f172a">
-<title>体調管理 v11.2</title>
+<title>体調管理 v11.3</title>
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#0f172a">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -488,7 +488,7 @@ const state = {
   schedule:{}, repeatEvents:[], tasks:{todo:[],shopping:[]},
   routines:cloneRoutines(),
   shiftPattern:defaultShiftPattern(), swapMode:false, swapFirst:null,
-  planPatterns:defaultPlanPatterns(),
+  planPatterns:defaultPlanPatterns(), customTodos:[], customTodoModal:null,
   scheduleSubTab:"日", editEventUid:null, editEventIsRepeat:false, editScope:"all", patternEdit:null,
   newEvH:9, newEvM:0, newEvEndH:10, newEvEndM:0, newEvTitle:"", newEvRepeat:"none", newEvColor:"#38bdf8", newEvWeekdays:[], newEvFromTask:null,
   aiScheduleLoading:false, aiScheduleProposal:null,
@@ -549,6 +549,8 @@ function loadStorage(){
     if(shp){const s2=JSON.parse(shp); if(s2&&Array.isArray(s2.grid))state.shiftPattern={...defaultShiftPattern(),...s2};}
     const pp=localStorage.getItem(STORAGE_KEY+"_planpatterns");
     if(pp){const a=JSON.parse(pp); if(Array.isArray(a))state.planPatterns=a;}
+    const cto=localStorage.getItem(STORAGE_KEY+"_customtodos");
+    if(cto){const a=JSON.parse(cto); if(Array.isArray(a))state.customTodos=a;}
     // 旧形式（v8.3 events/taskList/wishList/shopList）からの一度きり移行
     if(!sc && !tk){ migrateOldSchedule(); }
   }catch{}
@@ -858,6 +860,7 @@ function render(){
   if(state.modal==="editEnd")  content.appendChild(renderEditEndModal(vd));
   if(state.modal==="editTimer")content.appendChild(renderEditTimerModal(vd));
   if(state.modal==="editCheckTime")content.appendChild(renderEditCheckTimeModal(vd));
+  if(state.customTodoModal)content.appendChild(renderCustomTodoModal());
   if(state.modal==="editSession")content.appendChild(renderEditSessionModal(vd));
   if(state.modal==="addEjac")  content.appendChild(renderAddEjacModal(vd));
   if(state.modal==="addNap")   content.appendChild(renderAddNapModal(vd));
@@ -973,7 +976,7 @@ function renderHeader(){
   titleRow.style.cssText="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px";
   const titleLeft=document.createElement('div');
   titleLeft.style.cssText="display:flex;align-items:center;gap:8px";
-  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v11.2</span>';
+  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v11.3</span>';
   const titleRight=document.createElement('div');
   titleRight.style.cssText="display:flex;align-items:center;gap:5px";
   titleRight.appendChild(savedSpan);
@@ -2032,6 +2035,16 @@ function getActualActivities(vd){
     if(we>1440)we=1440;
     if(we>ws) acts.push({title:"💼 仕事",startMin:ws,endMin:we,color:"#2dd4bf"});
   }
+  // たまにやること（カスタムTODO）チェック済みも実際列へ（既存チェックと同じ）
+  dueCustomTodos(vd).forEach(ct=>{
+    const rec=(state.todos[vd]||{})[ct.uid];
+    if(rec&&rec.checked){
+      let mins=null;
+      if(rec.time){ const t2=new Date(rec.time); mins=t2.getHours()*60+t2.getMinutes(); }
+      else if(ct.timeH!=null){ mins=ct.timeH*60+(ct.timeM||0); }
+      if(mins!=null) acts.push({title:"✓"+ct.label,startMin:mins,endMin:mins+12,isPoint:true,color:ct.color||"#22c55e"});
+    }
+  });
   return acts.sort((a,b)=>a.startMin-b.startMin);
 }
 
@@ -2069,6 +2082,12 @@ function getPlannedExtras(vd){
       out.push({title:p.title,color:p.color||"#38bdf8",startH:Math.floor(s/60),startM:s%60,endH:Math.floor(e/60),endM:e%60,
         isPattern:true,patternUid:p.uid,oSH:t.sH,oSM:t.sM,oEH:t.eH,oEM:t.eM,oNext:!!t.nextDay,ovDate:D,ovDay:!!(ovObj&&ovObj.startH!=null)});
     }
+  });
+  // たまにやること（カスタムTODO）で時刻設定があるものは、その日の予定(左)に表示
+  dueCustomTodos(vd).forEach(ct=>{
+    if(ct.timeH==null)return;
+    const s=ct.timeH*60+(ct.timeM||0), e=Math.min(1440,s+12);
+    out.push({title:`☑️ ${ct.label}`,color:ct.color||"#38bdf8",startH:Math.floor(s/60),startM:s%60,endH:Math.floor(e/60),endM:e%60,customTodo:true});
   });
   return out;
 }
@@ -2559,6 +2578,7 @@ function renderDaySchedule(vd,ds,isToday){
     });
   };
   blockArea(events,"36px","50% - 40px",EV_COLORS[0],ev=>{
+    if(ev.customTodo){ state.tab="タスク";state.taskSubTab="TODO";render(); return; }
     if(ev.isPattern){ openPatternEdit(ev,vd); return; }
     state.modal="addEvent";state.editEventUid=ev.uid;state.editEventIsRepeat=!!ev.isRepeat;
     state.newEvTitle=ev.title;state.newEvH=ev.startH;state.newEvM=ev.startM;
@@ -3136,6 +3156,28 @@ function moveTodoItem(id, dir){
   render();
 }
 
+// ── たまにやること（N日/N週/Nヶ月ごとのカスタムTODO）──
+function saveCustomTodos(){ try{localStorage.setItem(STORAGE_KEY+"_customtodos",JSON.stringify(state.customTodos));}catch{} }
+function customTodoDue(ct, ds){
+  if(!ct||!ct.startDate)return false;
+  const d=parseDS(ds), s=parseDS(ct.startDate);
+  if(d<s)return false;
+  const n=Math.max(1,ct.n||1);
+  if(ct.itype==="day")  return Math.round((d-s)/86400000)%n===0;
+  if(ct.itype==="week") return Math.round((d-s)/86400000)%(n*7)===0;
+  if(ct.itype==="month"){ const mo=(d.getFullYear()-s.getFullYear())*12+(d.getMonth()-s.getMonth()); return mo>=0 && mo%n===0 && d.getDate()===s.getDate(); }
+  return false;
+}
+function dueCustomTodos(ds){ return (state.customTodos||[]).filter(ct=>customTodoDue(ct,ds)); }
+function customTodoIntervalLabel(ct){
+  const n=ct.n||1;
+  if(ct.itype==="day")   return n===1?"毎日":`${n}日ごと`;
+  if(ct.itype==="week")  return n===1?"毎週":`${n}週ごと`;
+  if(ct.itype==="month") return n===1?"毎月":`${n}ヶ月ごと`;
+  return "";
+}
+function nextCustomTodoDate(ct){ let ds=todayStr(); for(let i=0;i<800;i++){ if(customTodoDue(ct,ds))return ds; ds=addDays(ds,1); } return ct.startDate; }
+
 // ── TODOタブ ──────────────────────────────────────
 
 // 日付を1日前に戻す
@@ -3486,6 +3528,43 @@ function renderTodo(vd, ds, isToday){
 
     wrap.appendChild(row);
   });
+
+  // ── たまにやること（N日/N週/Nヶ月ごと）──
+  {
+    const mdc=ds=>{const q=ds.split('-');return `${parseInt(q[1])}/${parseInt(q[2])}`;};
+    const card=div({className:"card"});
+    card.appendChild(div({style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"8px"}},[
+      div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0"}},"🔁 たまにやること"),
+      (()=>{const b=btn({style:{fontSize:"11px",padding:"4px 10px",background:"#0ea5e918",border:"1px solid #0ea5e9",borderRadius:"7px",color:"#38bdf8",cursor:"pointer",fontWeight:600}},"＋ 追加");
+        b.addEventListener('click',()=>{state.customTodoModal={uid:null,label:"",itype:"week",n:1,startDate:vd,timeH:null,timeM:0,color:"#38bdf8"};render();});return b;})()
+    ]));
+    const list=state.customTodos||[];
+    if(list.length===0){
+      card.appendChild(div({style:{fontSize:"11px",color:"#475569",textAlign:"center",padding:"8px 0"}},"「＋追加」でN日/N週/Nヶ月ごとの項目を登録"));
+    }
+    [...list].sort((a,b)=>{const da=customTodoDue(a,vd),db=customTodoDue(b,vd);if(da!==db)return da?-1:1;return nextCustomTodoDate(a)<nextCustomTodoDate(b)?-1:1;}).forEach(ct=>{
+      const due=customTodoDue(ct,vd);
+      const rec=(state.todos[vd]||{})[ct.uid]||{};
+      const done=due&&!!rec.checked;
+      const row=div({style:{display:"flex",alignItems:"center",gap:"10px",padding:"8px 2px",borderBottom:"1px solid #1e3a5f33",opacity:due?1:0.6}});
+      if(due){
+        const cb=btn({style:{width:"22px",height:"22px",borderRadius:"6px",flexShrink:0,border:`2px solid ${done?"#22c55e":"#334155"}`,background:done?"#22c55e":"transparent",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"13px",color:"#fff"}},done?"✓":"");
+        cb.addEventListener('click',(()=>{const id=ct.uid,label=ct.label,wasDone=done;return()=>{setTodo(vd,id,{checked:!wasDone,time:!wasDone?new Date().toISOString():null});if(!wasDone){showToast(`✅ ${label}`);}};})());
+        row.appendChild(cb);
+      } else {
+        row.appendChild(div({style:{width:"22px",textAlign:"center",fontSize:"12px",color:"#475569",flexShrink:0}},"🔁"));
+      }
+      const lab=div({style:{flex:1,minWidth:0}});
+      lab.appendChild(div({style:{fontSize:"13px",color:done?"#475569":"#e2e8f0",textDecoration:done?"line-through":"none"}},ct.label||"(無題)"));
+      lab.appendChild(div({style:{fontSize:"9px",color:"#64748b"}},`${customTodoIntervalLabel(ct)}${ct.timeH!=null?` ・ ${ct.timeH}:${String(ct.timeM||0).padStart(2,'0')}`:""}　${due?"今日":"次:"+mdc(nextCustomTodoDate(ct))}`));
+      row.appendChild(lab);
+      const ed=btn({style:{background:"transparent",border:"1px solid #334155",borderRadius:"6px",color:"#64748b",cursor:"pointer",fontSize:"11px",padding:"3px 8px",flexShrink:0}},"✏️");
+      ed.addEventListener('click',(()=>{const c={...ct};return()=>{state.customTodoModal=c;render();};})());
+      row.appendChild(ed);
+      card.appendChild(row);
+    });
+    wrap.appendChild(card);
+  }
 
   return wrap;
 }
@@ -4664,6 +4743,7 @@ function exportData(){
     routines:state.routines,
     shiftPattern:state.shiftPattern,
     planPatterns:state.planPatterns,
+    customTodos:state.customTodos,
     weather,
     city
   };
@@ -4702,6 +4782,7 @@ function importData(e){
       if(Array.isArray(p.routines)&&p.routines.length){state.routines=p.routines;saveRoutines();}
       if(p.shiftPattern&&Array.isArray(p.shiftPattern.grid)){state.shiftPattern={...defaultShiftPattern(),...p.shiftPattern};saveShiftPattern();}
       if(Array.isArray(p.planPatterns)){state.planPatterns=p.planPatterns;savePlanPatterns();}
+      if(Array.isArray(p.customTodos)){state.customTodos=p.customTodos;saveCustomTodos();}
       if(p.weather){try{localStorage.setItem(STORAGE_KEY+"_weather",JSON.stringify(p.weather));}catch{}}
       if(p.city){state.weatherCity=p.city;try{localStorage.setItem(STORAGE_KEY+"_city",JSON.stringify(p.city));}catch{}}
       // 旧形式（v8.3）のバックアップは新モデルへ移行して取り込む
@@ -4866,6 +4947,69 @@ function renderEditSessionModal(vd){
           ?{...s,startTime:toISO(vd,state.editTimerStart),endTime:toISO(vd,state.editTimerEnd)}:s);
         setTodo(vd,state.editSessionItemId,{sessions:ns});
         state.modal=null;render();
+      }},"保存")
+  ]));
+  bg.appendChild(m);return bg;
+}
+
+function renderCustomTodoModal(){
+  const m0=state.customTodoModal; if(!m0)return div({});
+  const bg=div({className:"modal-center"});
+  const m=div({className:"modal-box",style:{maxHeight:"85vh",overflowY:"auto"}});
+  bg.addEventListener('click',()=>{state.customTodoModal=null;render();});
+  m.addEventListener('click',e=>e.stopPropagation());
+  m.appendChild(div({style:{fontSize:"15px",fontWeight:700,color:"#e2e8f0",marginBottom:"14px"}},m0.uid?"🔁 たまにやること 編集":"🔁 たまにやること 追加"));
+  // 名前
+  m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"4px"}},"名前"));
+  const ti=document.createElement('input');ti.type='text';ti.value=m0.label||"";ti.placeholder="例：シーツ交換";
+  ti.style.cssText="width:100%;padding:9px 12px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:14px;font-family:inherit;box-sizing:border-box;margin-bottom:12px";
+  ti.addEventListener('input',e=>{m0.label=e.target.value;});
+  m.appendChild(ti);
+  // 間隔
+  m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"6px"}},"間隔"));
+  const iRow=div({style:{display:"flex",gap:"8px",alignItems:"center",marginBottom:"12px"}});
+  const nInp=document.createElement('input');nInp.type='number';nInp.min="1";nInp.value=String(m0.n||1);
+  nInp.style.cssText="width:70px;padding:9px 10px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:14px;font-family:inherit";
+  nInp.addEventListener('input',e=>{m0.n=Math.max(1,parseInt(e.target.value)||1);});
+  iRow.appendChild(nInp);
+  const unitSel=document.createElement('select');unitSel.className='sel';
+  [["day","日ごと"],["week","週ごと"],["month","ヶ月ごと"]].forEach(([v,l])=>{const o=document.createElement('option');o.value=v;o.textContent=l;if(m0.itype===v)o.selected=true;unitSel.appendChild(o);});
+  unitSel.addEventListener('change',e=>{m0.itype=e.target.value;});
+  iRow.appendChild(unitSel);
+  m.appendChild(iRow);
+  // 起点日
+  m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"4px"}},"起点の日（この日から数えます）"));
+  const sd=document.createElement('input');sd.type='date';sd.value=m0.startDate||todayStr();
+  sd.style.cssText="width:100%;padding:9px 12px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:14px;font-family:inherit;box-sizing:border-box;margin-bottom:12px;color-scheme:dark";
+  sd.addEventListener('change',e=>{if(e.target.value)m0.startDate=e.target.value;});
+  m.appendChild(sd);
+  // 時刻（任意）
+  const hasTime=m0.timeH!=null;
+  const tRow=div({style:{display:"flex",alignItems:"center",gap:"8px",marginBottom:"14px"}});
+  const tg=btn({style:{fontSize:"11px",padding:"6px 10px",borderRadius:"7px",cursor:"pointer",fontWeight:600,border:`1px solid ${hasTime?"#38bdf8":"#334155"}`,background:hasTime?"#0ea5e922":"transparent",color:hasTime?"#38bdf8":"#64748b"}},hasTime?"時刻あり":"時刻なし");
+  tg.addEventListener('click',()=>{ if(m0.timeH!=null){m0.timeH=null;} else {const now=new Date();m0.timeH=now.getHours();m0.timeM=0;} render(); });
+  tRow.appendChild(tg);
+  if(hasTime){
+    const tinp=document.createElement('input');tinp.type='time';tinp.value=`${String(m0.timeH).padStart(2,'0')}:${String(m0.timeM||0).padStart(2,'0')}`;
+    tinp.style.cssText="flex:1;padding:8px 10px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:15px;font-family:inherit;color-scheme:dark";
+    tinp.addEventListener('change',e=>{const parts=(e.target.value||"").split(':');const h=Number(parts[0]),mm=Number(parts[1]);if(!isNaN(h)&&!isNaN(mm)){m0.timeH=h;m0.timeM=mm;}});
+    tRow.appendChild(tinp);
+    tRow.appendChild(span({style:{fontSize:"10px",color:"#475569"}},"予定に表示"));
+  }
+  m.appendChild(tRow);
+  if(m0.uid){
+    m.appendChild(btn({style:{width:"100%",padding:"7px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#475569",cursor:"pointer",fontSize:"12px",marginBottom:"8px"},
+      onClick:()=>{ if(confirm("この項目を削除しますか？")){state.customTodos=(state.customTodos||[]).filter(x=>x.uid!==m0.uid);saveCustomTodos();state.customTodoModal=null;render();} }},"この項目を削除"));
+  }
+  m.appendChild(div({style:{display:"flex",gap:"8px"}},[
+    btn({className:"btn-ghost",style:{flex:1},onClick:()=>{state.customTodoModal=null;render();}},"キャンセル"),
+    btn({style:{flex:2,padding:"10px",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:600,cursor:"pointer"},
+      onClick:()=>{
+        if(!(m0.label||"").trim()){alert("名前を入力してください");return;}
+        const data={uid:m0.uid||Date.now(),label:m0.label.trim(),itype:m0.itype||"week",n:Math.max(1,m0.n||1),startDate:m0.startDate||todayStr(),timeH:m0.timeH!=null?m0.timeH:null,timeM:m0.timeH!=null?(m0.timeM||0):0,color:m0.color||"#38bdf8"};
+        if(m0.uid) state.customTodos=(state.customTodos||[]).map(x=>x.uid===m0.uid?data:x);
+        else state.customTodos=[...(state.customTodos||[]),data];
+        saveCustomTodos();state.customTodoModal=null;render();
       }},"保存")
   ]));
   bg.appendChild(m);return bg;
