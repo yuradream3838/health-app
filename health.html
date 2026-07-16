@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.13"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.14"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -4528,8 +4528,99 @@ function renderWeekly(){
   return wrap;
 }
 
+// 体調スコアの推移（時系列）カード。30日/12週/12ヶ月で平均スコアの変化を表示
+function renderScoreTrend(){
+  const range=state.trendRange||"12w";
+  const scored=state.logs.filter(l=>l.score!=null);
+  const avgOf=arr=>arr.length?arr.reduce((a,b)=>a+b,0)/arr.length:null;
+  const today=todayStr();
+  let points=[]; // {label,value}
+  if(range==="30d"){
+    const byDay={};
+    scored.forEach(l=>{(byDay[l.dateStr]=byDay[l.dateStr]||[]).push(l.score);});
+    for(let i=29;i>=0;i--){ const d=addDays(today,-i); const p=d.split('-'); points.push({label:`${parseInt(p[1])}/${parseInt(p[2])}`,value:byDay[d]?avgOf(byDay[d]):null}); }
+  } else if(range==="12w"){
+    const mondayOf=ds=>{const x=parseDS(ds);const day=x.getDay();const diff=day===0?-6:1-day;x.setDate(x.getDate()+diff);return fmtDS(x);};
+    const thisMon=mondayOf(today);
+    for(let i=11;i>=0;i--){ const mon=addDays(thisMon,-i*7); const sun=addDays(mon,6); const vs=scored.filter(l=>l.dateStr>=mon&&l.dateStr<=sun).map(l=>l.score); const p=mon.split('-'); points.push({label:`${parseInt(p[1])}/${parseInt(p[2])}`,value:avgOf(vs)}); }
+  } else {
+    const now=parseDS(today);
+    for(let i=11;i>=0;i--){ const d=new Date(now.getFullYear(),now.getMonth()-i,1); const pref=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; const vs=scored.filter(l=>l.dateStr.startsWith(pref)).map(l=>l.score); points.push({label:`${d.getMonth()+1}月`,value:avgOf(vs)}); }
+  }
+
+  const card=div({className:"card"});
+  const head=div({style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"10px",flexWrap:"wrap",gap:"6px"}});
+  head.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0"}},"📈 体調スコアの推移"));
+  const toggle=div({style:{display:"flex",gap:"4px"}});
+  [["30d","30日"],["12w","12週"],["12m","12ヶ月"]].forEach(([k,lbl])=>{
+    const on=range===k;
+    toggle.appendChild(btn({style:{fontSize:"11px",padding:"4px 10px",borderRadius:"7px",cursor:"pointer",fontWeight:600,
+      border:`1px solid ${on?"#38bdf8":"#334155"}`,background:on?"#0ea5e922":"transparent",color:on?"#38bdf8":"#64748b"},
+      onClick:()=>{state.trendRange=k;render();}},lbl));
+  });
+  head.appendChild(toggle);
+  card.appendChild(head);
+
+  const vals=points.filter(p=>p.value!=null).map(p=>p.value);
+  if(vals.length===0){
+    card.appendChild(div({style:{fontSize:"12px",color:"#475569",textAlign:"center",padding:"20px 0"}},"体調スコアの記録がまだありません"));
+    return card;
+  }
+  const avg=avgOf(vals), latest=vals[vals.length-1];
+  // 傾向：前半平均と後半平均の差
+  let trendLbl="→ 横ばい", trendCol="#64748b";
+  if(vals.length>=4){
+    const half=Math.floor(vals.length/2);
+    const firstAvg=avgOf(vals.slice(0,half)), lastAvg=avgOf(vals.slice(-half));
+    const delta=lastAvg-firstAvg;
+    if(delta>=0.4){trendLbl="↑ 改善傾向";trendCol="#22c55e";}
+    else if(delta<=-0.4){trendLbl="↓ 悪化傾向";trendCol="#ef4444";}
+  }
+  const stat=(lbl,val,col)=>div({style:{textAlign:"center"}},[
+    div({style:{fontSize:"9px",color:"#64748b",marginBottom:"2px"}},lbl),
+    div({style:{fontSize:"15px",fontWeight:800,color:col}},val)
+  ]);
+  card.appendChild(div({style:{display:"flex",justifyContent:"space-around",marginBottom:"10px",padding:"6px 0",background:"#0f172a",borderRadius:"8px"}},[
+    stat("平均",avg.toFixed(1),scoreColor(avg)),
+    stat("最新",latest.toFixed(1),scoreColor(latest)),
+    stat("傾向",trendLbl,trendCol)
+  ]));
+
+  // ── キャンバス折れ線 ──
+  const cv=document.createElement('canvas');
+  const W=Math.min((window.innerWidth||390)-64,520), H=170;
+  const dpr=window.devicePixelRatio||1;
+  cv.width=W*dpr;cv.height=H*dpr;cv.style.cssText=`width:100%;max-width:${W}px;height:${H}px;display:block;background:#0a1120;border-radius:8px`;
+  const ctx=cv.getContext('2d');ctx.scale(dpr,dpr);
+  const PL=26,PR=10,PT=12,PB=22, cW=W-PL-PR, cH=H-PT-PB;
+  const xAt=i=>PL+(points.length<=1?cW/2:cW*(i/(points.length-1)));
+  const yAt=v=>PT+cH-(v/10)*cH;
+  // グリッド
+  [0,5,10].forEach(g=>{const y=yAt(g);ctx.strokeStyle='#1e293b';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(PL,y);ctx.lineTo(W-PR,y);ctx.stroke();ctx.fillStyle='#475569';ctx.font='9px system-ui';ctx.textAlign='right';ctx.fillText(String(g),PL-4,y+3);});
+  // 平均の点線
+  {const y=yAt(avg);ctx.strokeStyle='#334155';ctx.setLineDash([4,4]);ctx.beginPath();ctx.moveTo(PL,y);ctx.lineTo(W-PR,y);ctx.stroke();ctx.setLineDash([]);}
+  // 折れ線（欠測は分断）
+  ctx.lineWidth=2;ctx.strokeStyle='#38bdf8';
+  let prev=null;
+  points.forEach((p,i)=>{ if(p.value==null){prev=null;return;} const x=xAt(i),y=yAt(p.value); if(prev){ctx.beginPath();ctx.moveTo(prev.x,prev.y);ctx.lineTo(x,y);ctx.stroke();} prev={x,y}; });
+  // 点（スコア色）
+  points.forEach((p,i)=>{ if(p.value==null)return; const x=xAt(i),y=yAt(p.value); ctx.fillStyle=scoreColor(p.value); ctx.beginPath();ctx.arc(x,y,3,0,Math.PI*2);ctx.fill(); });
+  // 最新点を強調＋数値
+  {let li=-1;for(let i=points.length-1;i>=0;i--){if(points[i].value!=null){li=i;break;}} if(li>=0){const x=xAt(li),y=yAt(points[li].value);ctx.fillStyle=scoreColor(points[li].value);ctx.beginPath();ctx.arc(x,y,5,0,Math.PI*2);ctx.fill();ctx.strokeStyle='#0a1120';ctx.lineWidth=2;ctx.stroke();ctx.fillStyle='#e2e8f0';ctx.font='bold 11px system-ui';ctx.textAlign=li>points.length-2?'right':'center';ctx.fillText(points[li].value.toFixed(1),x,y-9);}}
+  // X軸ラベル（間引き）
+  const step=Math.max(1,Math.ceil(points.length/6));
+  ctx.fillStyle='#475569';ctx.font='8px system-ui';ctx.textAlign='center';
+  points.forEach((p,i)=>{ if(i%step!==0 && i!==points.length-1)return; ctx.fillText(p.label,Math.max(PL+8,Math.min(W-PR-8,xAt(i))),H-7); });
+
+  card.appendChild(cv);
+  card.appendChild(div({style:{fontSize:"9px",color:"#475569",marginTop:"6px",textAlign:"center"}},
+    range==="30d"?"直近30日の1日平均スコア":range==="12w"?"直近12週の週平均スコア":"直近12ヶ月の月平均スコア"));
+  return card;
+}
+
 function renderAnalysis(){
   const wrap=div({style:{maxWidth:"600px",margin:"0 auto",padding:"12px 16px 60px"}});
+  wrap.appendChild(renderScoreTrend());
   const scored=state.logs.filter(l=>l.score!=null);
   const bad=scored.filter(l=>l.score<=4);
   const avg=scored.length?(scored.reduce((a,b)=>a+b.score,0)/scored.length).toFixed(1):null;
