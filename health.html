@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.9"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.10"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -2193,6 +2193,11 @@ function patternTimesFor(p,ds){
   if(ov&&ov.startH!=null) return {sH:ov.startH,sM:ov.startM||0,eH:ov.endH,eM:ov.endM||0,nextDay:!!ov.nextDay};
   const dow=parseDS(ds).getDay();
   if(Array.isArray(p.weekdays)&&p.weekdays.length&&!p.weekdays.includes(dow))return null;
+  // 曜日別の時間上書き：設定された曜日はシフト連動/固定の基本時刻より優先
+  const wt=(p.weekdayTimes||{})[dow];
+  if(wt&&wt.startH!=null){
+    return {sH:wt.startH,sM:wt.startM||0,eH:wt.endH,eM:wt.endM||0,nextDay:!!wt.nextDay};
+  }
   if(p.byShift){
     const dshift=getPlanShiftKey(ds)||"off";
     const st=(p.shiftTimes||{})[dshift];
@@ -2487,6 +2492,44 @@ function renderPlanPatternPanel(){
       l3.appendChild(wb);
     });
     box.appendChild(l3);
+    // 曜日別の時間（特定曜日だけ基本時刻を上書き。シフト連動でも有効）
+    const wtMap=p.weekdayTimes||{};
+    const wtWrap=div({style:{marginBottom:"6px",padding:"6px 8px",background:"#0b1220",borderRadius:"6px"}});
+    wtWrap.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"4px"}},"曜日別の時間（タップした曜日だけ別の時間に上書き）"));
+    const wtChips=div({style:{display:"flex",gap:"4px",marginBottom:"4px"}});
+    WEEKDAYS_JP.forEach((lbl,idx)=>{
+      const active=!!(wtMap[idx]&&wtMap[idx].startH!=null);
+      const dayEnabled=!p.weekdays||p.weekdays.includes(idx);
+      const chip=btn({style:{flex:1,padding:"5px 0",borderRadius:"6px",cursor:"pointer",fontSize:"11px",fontWeight:600,opacity:dayEnabled?1:0.4,
+        border:`1px solid ${active?"#f59e0b":"#334155"}`,background:active?"#f59e0b22":"transparent",color:active?"#f59e0b":"#475569"}},lbl);
+      chip.addEventListener('click',()=>{
+        const cur={...(p.weekdayTimes||{})};
+        if(cur[idx]){ delete cur[idx]; }
+        else {
+          let base;
+          if(p.byShift){ const s=(p.shiftTimes||{}).s1||{}; base={startH:s.startH??18,startM:s.startM||0,endH:s.endH??19,endM:s.endM||0,nextDay:!!s.nextDay}; }
+          else { base={startH:p.startH??18,startM:p.startM||0,endH:p.endH??19,endM:p.endM||0,nextDay:!!p.nextDay}; }
+          cur[idx]=base;
+        }
+        upd(p.uid,{weekdayTimes:cur});
+      });
+      wtChips.appendChild(chip);
+    });
+    wtWrap.appendChild(wtChips);
+    WEEKDAYS_JP.forEach((lbl,idx)=>{
+      const o=wtMap[idx]; if(!o||o.startH==null)return;
+      const sub=div({style:{marginBottom:"4px"}});
+      const head=div({style:{display:"flex",alignItems:"center",gap:"6px",marginBottom:"2px"}});
+      head.appendChild(span({style:{fontSize:"11px",color:"#f59e0b",fontWeight:700}},lbl+"曜"));
+      const ndB=btn({style:{fontSize:"10px",padding:"2px 8px",borderRadius:"6px",cursor:"pointer",fontWeight:600,
+        border:`1px solid ${o.nextDay?"#38bdf8":"#334155"}`,background:o.nextDay?"#0ea5e922":"transparent",color:o.nextDay?"#38bdf8":"#475569"}},o.nextDay?"翌日":"当日");
+      ndB.addEventListener('click',()=>{const cur={...(p.weekdayTimes||{})};cur[idx]={...o,nextDay:!o.nextDay};upd(p.uid,{weekdayTimes:cur});});
+      head.appendChild(ndB);
+      sub.appendChild(head);
+      sub.appendChild(timeRow(()=>o.startH,()=>o.startM||0,()=>o.endH,()=>o.endM||0,ch=>{const cur={...(p.weekdayTimes||{})};cur[idx]={...o,...ch};upd(p.uid,{weekdayTimes:cur});}));
+      wtWrap.appendChild(sub);
+    });
+    box.appendChild(wtWrap);
     // 色
     const l4=div({style:{display:"flex",gap:"6px"}});
     [...EV_COLORS,"#60a5fa"].forEach(c=>{const on=p.color===c;const cb=btn({style:{width:"24px",height:"24px",borderRadius:"6px",cursor:"pointer",background:c+(on?"":"55"),border:`2px solid ${on?c:"transparent"}`}},"");cb.addEventListener('click',()=>upd(p.uid,{color:c}));l4.appendChild(cb);});
