@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.10"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.11"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -2135,7 +2135,7 @@ function getActualActivities(vd){
     if(rec&&rec.checked){
       let mins=null;
       if(rec.time){ const t2=new Date(rec.time); mins=t2.getHours()*60+t2.getMinutes(); }
-      else if(ct.timeH!=null){ mins=ct.timeH*60+(ct.timeM||0); }
+      else { const tt=customTodoTimeFor(ct,vd); if(tt)mins=tt.h*60+tt.m; }
       if(mins!=null) acts.push({title:"✓"+ct.label,startMin:mins,endMin:mins+12,isPoint:true,color:ct.color||"#22c55e"});
     }
   });
@@ -2179,8 +2179,8 @@ function getPlannedExtras(vd){
   });
   // たまにやること（カスタムTODO）で時刻設定があるものは、その日の予定(左)に表示
   dueCustomTodos(vd).forEach(ct=>{
-    if(ct.timeH==null)return;
-    const s=ct.timeH*60+(ct.timeM||0), e=Math.min(1440,s+12);
+    const tt=customTodoTimeFor(ct,vd); if(!tt)return;
+    const s=tt.h*60+tt.m, e=Math.min(1440,s+12);
     out.push({title:`☑️ ${ct.label}`,color:ct.color||"#38bdf8",startH:Math.floor(s/60),startM:s%60,endH:Math.floor(e/60),endM:e%60,customTodo:true});
   });
   return out;
@@ -2193,10 +2193,17 @@ function patternTimesFor(p,ds){
   if(ov&&ov.startH!=null) return {sH:ov.startH,sM:ov.startM||0,eH:ov.endH,eM:ov.endM||0,nextDay:!!ov.nextDay};
   const dow=parseDS(ds).getDay();
   if(Array.isArray(p.weekdays)&&p.weekdays.length&&!p.weekdays.includes(dow))return null;
-  // 曜日別の時間上書き：設定された曜日はシフト連動/固定の基本時刻より優先
+  // 曜日別の時間上書き：設定された曜日はシフト連動/固定の基本時刻より優先。
+  // 各曜日上書きはさらに「直で分ける」ことができ、その場合は当日のシフトで時間が変わる。
   const wt=(p.weekdayTimes||{})[dow];
-  if(wt&&wt.startH!=null){
-    return {sH:wt.startH,sM:wt.startM||0,eH:wt.endH,eM:wt.endM||0,nextDay:!!wt.nextDay};
+  if(wt){
+    if(wt.byShift){
+      const dshift=getPlanShiftKey(ds)||"off";
+      const st=(wt.shiftTimes||{})[dshift];
+      if(st&&st.on!==false&&st.startH!=null) return {sH:st.startH,sM:st.startM||0,eH:st.endH,eM:st.endM||0,nextDay:!!st.nextDay};
+      return null; // その直は非表示指定
+    }
+    if(wt.startH!=null) return {sH:wt.startH,sM:wt.startM||0,eH:wt.endH,eM:wt.endM||0,nextDay:!!wt.nextDay};
   }
   if(p.byShift){
     const dshift=getPlanShiftKey(ds)||"off";
@@ -2498,7 +2505,7 @@ function renderPlanPatternPanel(){
     wtWrap.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"4px"}},"曜日別の時間（タップした曜日だけ別の時間に上書き）"));
     const wtChips=div({style:{display:"flex",gap:"4px",marginBottom:"4px"}});
     WEEKDAYS_JP.forEach((lbl,idx)=>{
-      const active=!!(wtMap[idx]&&wtMap[idx].startH!=null);
+      const active=!!wtMap[idx];
       const dayEnabled=!p.weekdays||p.weekdays.includes(idx);
       const chip=btn({style:{flex:1,padding:"5px 0",borderRadius:"6px",cursor:"pointer",fontSize:"11px",fontWeight:600,opacity:dayEnabled?1:0.4,
         border:`1px solid ${active?"#f59e0b":"#334155"}`,background:active?"#f59e0b22":"transparent",color:active?"#f59e0b":"#475569"}},lbl);
@@ -2517,16 +2524,51 @@ function renderPlanPatternPanel(){
     });
     wtWrap.appendChild(wtChips);
     WEEKDAYS_JP.forEach((lbl,idx)=>{
-      const o=wtMap[idx]; if(!o||o.startH==null)return;
-      const sub=div({style:{marginBottom:"4px"}});
-      const head=div({style:{display:"flex",alignItems:"center",gap:"6px",marginBottom:"2px"}});
+      const o=wtMap[idx]; if(!o)return;
+      const setWt=ch=>{const cur={...(p.weekdayTimes||{})};cur[idx]={...cur[idx],...ch};upd(p.uid,{weekdayTimes:cur});};
+      const sub=div({style:{marginBottom:"6px",paddingTop:"2px",borderTop:"1px solid #1e293b"}});
+      const head=div({style:{display:"flex",alignItems:"center",gap:"6px",marginBottom:"3px",flexWrap:"wrap"}});
       head.appendChild(span({style:{fontSize:"11px",color:"#f59e0b",fontWeight:700}},lbl+"曜"));
-      const ndB=btn({style:{fontSize:"10px",padding:"2px 8px",borderRadius:"6px",cursor:"pointer",fontWeight:600,
-        border:`1px solid ${o.nextDay?"#38bdf8":"#334155"}`,background:o.nextDay?"#0ea5e922":"transparent",color:o.nextDay?"#38bdf8":"#475569"}},o.nextDay?"翌日":"当日");
-      ndB.addEventListener('click',()=>{const cur={...(p.weekdayTimes||{})};cur[idx]={...o,nextDay:!o.nextDay};upd(p.uid,{weekdayTimes:cur});});
-      head.appendChild(ndB);
+      // 直で分ける トグル
+      const byB=btn({style:{fontSize:"10px",padding:"2px 8px",borderRadius:"6px",cursor:"pointer",fontWeight:600,
+        border:`1px solid ${o.byShift?"#a78bfa":"#334155"}`,background:o.byShift?"#a78bfa22":"transparent",color:o.byShift?"#a78bfa":"#475569"}},o.byShift?"🔗 直で分ける ON":"🔗 直で分ける OFF");
+      byB.addEventListener('click',()=>{
+        if(o.byShift){ setWt({byShift:false}); }
+        else {
+          const base={on:true,startH:o.startH??18,startM:o.startM||0,endH:o.endH??19,endM:o.endM||0,nextDay:!!o.nextDay};
+          setWt({byShift:true,shiftTimes:o.shiftTimes||{s1:{...base},s2:{...base},off:{...base}}});
+        }
+      });
+      head.appendChild(byB);
+      if(!o.byShift){
+        const ndB=btn({style:{fontSize:"10px",padding:"2px 8px",borderRadius:"6px",cursor:"pointer",fontWeight:600,
+          border:`1px solid ${o.nextDay?"#38bdf8":"#334155"}`,background:o.nextDay?"#0ea5e922":"transparent",color:o.nextDay?"#38bdf8":"#475569"}},o.nextDay?"翌日":"当日");
+        ndB.addEventListener('click',()=>setWt({nextDay:!o.nextDay}));
+        head.appendChild(ndB);
+      }
       sub.appendChild(head);
-      sub.appendChild(timeRow(()=>o.startH,()=>o.startM||0,()=>o.endH,()=>o.endM||0,ch=>{const cur={...(p.weekdayTimes||{})};cur[idx]={...o,...ch};upd(p.uid,{weekdayTimes:cur});}));
+      if(o.byShift){
+        const stAll=o.shiftTimes||{};
+        [["s1","1直"],["s2","2直"],["off","休み"]].forEach(([k,slbl])=>{
+          const st=stAll[k]||{on:true,startH:o.startH??18,startM:o.startM||0,endH:o.endH??19,endM:o.endM||0};
+          const setSt=ch=>{const cur=o.shiftTimes||{};setWt({shiftTimes:{...cur,[k]:{...st,...ch}}});};
+          const sh=div({style:{display:"flex",alignItems:"center",gap:"6px",marginBottom:"2px"}});
+          const onB=btn({style:{fontSize:"10px",padding:"2px 8px",borderRadius:"6px",cursor:"pointer",fontWeight:700,flexShrink:0,
+            border:`1px solid ${st.on!==false?SHIFT_TYPES[k].color:"#334155"}`,background:st.on!==false?SHIFT_TYPES[k].color+"22":"transparent",color:st.on!==false?SHIFT_TYPES[k].color:"#475569"}},`${slbl}${st.on!==false?"":"（なし）"}`);
+          onB.addEventListener('click',()=>setSt({on:st.on===false}));
+          sh.appendChild(onB);
+          if(st.on!==false){
+            const ndB=btn({style:{fontSize:"10px",padding:"2px 8px",borderRadius:"6px",cursor:"pointer",fontWeight:600,
+              border:`1px solid ${st.nextDay?"#38bdf8":"#334155"}`,background:st.nextDay?"#0ea5e922":"transparent",color:st.nextDay?"#38bdf8":"#475569"}},st.nextDay?"翌日":"当日");
+            ndB.addEventListener('click',()=>setSt({nextDay:!st.nextDay}));
+            sh.appendChild(ndB);
+          }
+          sub.appendChild(sh);
+          if(st.on!==false) sub.appendChild(timeRow(()=>st.startH,()=>st.startM||0,()=>st.endH,()=>st.endM||0,ch=>setSt(ch)));
+        });
+      } else {
+        sub.appendChild(timeRow(()=>o.startH,()=>o.startM||0,()=>o.endH,()=>o.endM||0,ch=>setWt(ch)));
+      }
       wtWrap.appendChild(sub);
     });
     box.appendChild(wtWrap);
@@ -2619,7 +2661,7 @@ function renderDaySchedule(vd,ds,isToday){
 
   // 終日・時間未指定エリア（終日予定＋時間なしのたまにやること）
   {
-    const untimedCustom=dueCustomTodos(vd).filter(ct=>ct.timeH==null);
+    const untimedCustom=dueCustomTodos(vd).filter(ct=>!customTodoTimeFor(ct,vd));
     if(allDayEvents.length||untimedCustom.length){
       const ad=div({className:"card",style:{padding:"8px 10px",marginBottom:"8px"}});
       ad.appendChild(div({style:{fontSize:"10px",fontWeight:700,color:"#94a3b8",marginBottom:"6px"}},"📌 終日・時間未指定"));
@@ -3366,6 +3408,23 @@ function customTodoDue(ct, ds){
   return true;
 }
 function dueCustomTodos(ds){ return (state.customTodos||[]).filter(ct=>customTodoDue(ct,ds)); }
+// たまにやることの指定日dsでの時刻 {h,m}。時刻なしは null。
+// 曜日別の時間（さらに直で分けられる）があれば優先、なければ基本の timeH/timeM。
+function customTodoTimeFor(ct, ds){
+  const dow=parseDS(ds).getDay();
+  const wt=(ct.weekdayTimes||{})[dow];
+  if(wt){
+    if(wt.byShift){
+      const k=getPlanShiftKey(ds)||"off";
+      const st=(wt.shiftTimes||{})[k];
+      if(st&&st.on!==false&&st.timeH!=null) return {h:st.timeH,m:st.timeM||0};
+      return null;
+    }
+    if(wt.timeH!=null) return {h:wt.timeH,m:wt.timeM||0};
+  }
+  if(ct.timeH!=null) return {h:ct.timeH,m:ct.timeM||0};
+  return null;
+}
 function customTodoIntervalLabel(ct){
   const n=ct.n||1;
   const WD=["日","月","火","水","木","金","土"];
@@ -3775,7 +3834,9 @@ function renderOccasional(vd){
     }
     const lab=div({style:{flex:1,minWidth:0}});
     lab.appendChild(div({style:{fontSize:"13px",color:done?"#475569":"#e2e8f0",textDecoration:done?"line-through":"none"}},ct.label||"(無題)"));
-    lab.appendChild(div({style:{fontSize:"9px",color:"#64748b"}},`${customTodoIntervalLabel(ct)}${ct.timeH!=null?` ・ ${ct.timeH}:${String(ct.timeM||0).padStart(2,'0')}`:""}　${due?"今日":"次:"+mdc(nextCustomTodoDate(ct))}`));
+    const _tt=customTodoTimeFor(ct,vd), _hasWd=ct.weekdayTimes&&Object.keys(ct.weekdayTimes).length;
+    const _timeStr=_tt?` ・ ${_tt.h}:${String(_tt.m||0).padStart(2,'0')}${_hasWd?"(曜日別)":""}`:(_hasWd?" ・ 曜日別":"");
+    lab.appendChild(div({style:{fontSize:"9px",color:"#64748b"}},`${customTodoIntervalLabel(ct)}${_timeStr}　${due?"今日":"次:"+mdc(nextCustomTodoDate(ct))}`));
     row.appendChild(lab);
     const ed=btn({style:{background:"transparent",border:"1px solid #334155",borderRadius:"6px",color:"#64748b",cursor:"pointer",fontSize:"11px",padding:"3px 8px",flexShrink:0}},"✏️");
     ed.addEventListener('click',(()=>{const c={...ct};return()=>{state.customTodoModal=c;render();};})());
@@ -5255,6 +5316,57 @@ function renderCustomTodoModal(){
     tRow.appendChild(span({style:{fontSize:"10px",color:"#475569"}},"予定に表示"));
   }
   m.appendChild(tRow);
+  // 曜日別の時間（特定曜日だけ別の時刻に。さらに直で分けることも可）
+  const timeInp=(h,mm,set)=>{const i=document.createElement('input');i.type='time';i.value=`${String(h??0).padStart(2,'0')}:${String(mm||0).padStart(2,'0')}`;i.style.cssText="flex:1;min-width:0;padding:6px 8px;background:#1e293b;border:1px solid #334155;border-radius:6px;color:#e2e8f0;font-size:14px;font-family:inherit;color-scheme:dark";i.addEventListener('change',e=>{const q=(e.target.value||'').split(':');const H=Number(q[0]),M=Number(q[1]);if(!isNaN(H)&&!isNaN(M))set(H,M);});return i;};
+  const cwt=m0.weekdayTimes||{};
+  const cwWrap=div({style:{marginBottom:"14px",padding:"8px 10px",background:"#0f172a",borderRadius:"8px"}});
+  cwWrap.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"6px"}},"曜日別の時間（タップした曜日だけ別の時刻に。直で分けることも可）"));
+  const cwChips=div({style:{display:"flex",gap:"4px",marginBottom:"6px"}});
+  ["日","月","火","水","木","金","土"].forEach((lbl,idx)=>{
+    const active=!!cwt[idx];
+    const wb=btn({style:{flex:1,padding:"6px 0",borderRadius:"6px",cursor:"pointer",fontSize:"12px",fontWeight:600,
+      border:`1px solid ${active?"#f59e0b":"#334155"}`,background:active?"#f59e0b22":"transparent",color:active?"#f59e0b":"#475569"}},lbl);
+    wb.addEventListener('click',()=>{
+      if(!m0.weekdayTimes)m0.weekdayTimes={};
+      if(m0.weekdayTimes[idx]) delete m0.weekdayTimes[idx];
+      else { const now=new Date(); m0.weekdayTimes[idx]={timeH:m0.timeH!=null?m0.timeH:now.getHours(),timeM:m0.timeH!=null?(m0.timeM||0):0}; }
+      render();
+    });
+    cwChips.appendChild(wb);
+  });
+  cwWrap.appendChild(cwChips);
+  ["日","月","火","水","木","金","土"].forEach((lbl,idx)=>{
+    const o=cwt[idx]; if(!o)return;
+    const sub=div({style:{marginBottom:"6px",borderTop:"1px solid #1e293b",paddingTop:"5px"}});
+    const head=div({style:{display:"flex",alignItems:"center",gap:"6px",marginBottom:"4px",flexWrap:"wrap"}});
+    head.appendChild(span({style:{fontSize:"11px",color:"#f59e0b",fontWeight:700}},lbl+"曜"));
+    const byB=btn({style:{fontSize:"10px",padding:"3px 8px",borderRadius:"6px",cursor:"pointer",fontWeight:600,
+      border:`1px solid ${o.byShift?"#a78bfa":"#334155"}`,background:o.byShift?"#a78bfa22":"transparent",color:o.byShift?"#a78bfa":"#475569"}},o.byShift?"🔗 直で分ける ON":"🔗 直で分ける OFF");
+    byB.addEventListener('click',()=>{
+      if(o.byShift){ delete o.byShift; delete o.shiftTimes; }
+      else { const base={on:true,timeH:o.timeH??(new Date()).getHours(),timeM:o.timeM||0}; o.byShift=true; o.shiftTimes={s1:{...base},s2:{...base},off:{...base}}; }
+      render();
+    });
+    head.appendChild(byB);
+    sub.appendChild(head);
+    if(o.byShift){
+      const stAll=o.shiftTimes||{};
+      [["s1","1直"],["s2","2直"],["off","休み"]].forEach(([k,slbl])=>{
+        const st=stAll[k]||{on:true,timeH:o.timeH??0,timeM:o.timeM||0};
+        const r=div({style:{display:"flex",alignItems:"center",gap:"6px",marginBottom:"3px"}});
+        const onB=btn({style:{fontSize:"10px",padding:"3px 8px",borderRadius:"6px",cursor:"pointer",fontWeight:700,flexShrink:0,width:"64px",
+          border:`1px solid ${st.on!==false?SHIFT_TYPES[k].color:"#334155"}`,background:st.on!==false?SHIFT_TYPES[k].color+"22":"transparent",color:st.on!==false?SHIFT_TYPES[k].color:"#475569"}},`${slbl}${st.on!==false?"":"✕"}`);
+        onB.addEventListener('click',()=>{o.shiftTimes={...(o.shiftTimes||{}),[k]:{...st,on:st.on===false}};render();});
+        r.appendChild(onB);
+        if(st.on!==false){ r.appendChild(timeInp(st.timeH,st.timeM,(H,M)=>{o.shiftTimes={...(o.shiftTimes||{}),[k]:{...st,timeH:H,timeM:M}};})); }
+        sub.appendChild(r);
+      });
+    } else {
+      sub.appendChild(timeInp(o.timeH,o.timeM,(H,M)=>{o.timeH=H;o.timeM=M;}));
+    }
+    cwWrap.appendChild(sub);
+  });
+  m.appendChild(cwWrap);
   if(m0.uid){
     m.appendChild(btn({style:{width:"100%",padding:"7px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#475569",cursor:"pointer",fontSize:"12px",marginBottom:"8px"},
       onClick:()=>{ if(confirm("この項目を削除しますか？")){pushUndo("たまにやることを削除しました");state.customTodos=(state.customTodos||[]).filter(x=>x.uid!==m0.uid);saveCustomTodos();state.customTodoModal=null;render();} }},"この項目を削除"));
@@ -5264,7 +5376,7 @@ function renderCustomTodoModal(){
     btn({style:{flex:2,padding:"10px",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:600,cursor:"pointer"},
       onClick:()=>{
         if(!(m0.label||"").trim()){alert("名前を入力してください");return;}
-        const data={uid:m0.uid||Date.now(),label:m0.label.trim(),itype:m0.itype||"week",n:Math.max(1,m0.n||1),startDate:m0.startDate||todayStr(),timeH:m0.timeH!=null?m0.timeH:null,timeM:m0.timeH!=null?(m0.timeM||0):0,color:m0.color||"#38bdf8",weekdays:(m0.itype==="week"&&m0.weekdays)?[...m0.weekdays]:[],shifts:m0.shifts?[...m0.shifts]:[]};
+        const data={uid:m0.uid||Date.now(),label:m0.label.trim(),itype:m0.itype||"week",n:Math.max(1,m0.n||1),startDate:m0.startDate||todayStr(),timeH:m0.timeH!=null?m0.timeH:null,timeM:m0.timeH!=null?(m0.timeM||0):0,color:m0.color||"#38bdf8",weekdays:(m0.itype==="week"&&m0.weekdays)?[...m0.weekdays]:[],shifts:m0.shifts?[...m0.shifts]:[],weekdayTimes:(m0.weekdayTimes&&Object.keys(m0.weekdayTimes).length)?JSON.parse(JSON.stringify(m0.weekdayTimes)):undefined};
         if(m0.uid) state.customTodos=(state.customTodos||[]).map(x=>x.uid===m0.uid?data:x);
         else state.customTodos=[...(state.customTodos||[]),data];
         saveCustomTodos();state.customTodoModal=null;render();
