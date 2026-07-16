@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.11"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.12"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -967,15 +967,16 @@ function updateHeaderDynamic(){
   // 日付ナビ
   const nav=document.getElementById('hdr-nav');
   if(nav){
-    nav.style.display=showNav?'flex':'none';
-    const dateLabel=document.getElementById('hdr-date-label');
-    if(dateLabel){
+    nav.style.display=showNav?'grid':'none';
+    const dateBtn=document.getElementById('hdr-date-label');
+    const dateText=document.getElementById('hdr-date-text');
+    if(dateText){
       const p=vd.split('-');
-      dateLabel.textContent=new Date(parseInt(p[0]),parseInt(p[1])-1,parseInt(p[2])).toLocaleDateString("ja-JP",{month:"short",day:"numeric",weekday:"short"})+(isToday?" 今日":"");
-      dateLabel.style.color=isToday?"#38bdf8":"#e2e8f0";
+      dateText.textContent=new Date(parseInt(p[0]),parseInt(p[1])-1,parseInt(p[2])).toLocaleDateString("ja-JP",{month:"short",day:"numeric",weekday:"short"})+(isToday?" 今日":"");
     }
+    if(dateBtn){dateBtn.style.color=isToday?"#38bdf8":"#e2e8f0";}
     const backBtn=document.getElementById('hdr-back-btn');
-    if(backBtn){backBtn.style.display=isToday?'none':'block';}
+    if(backBtn){backBtn.style.display=isToday?'none':'inline-flex';}
     const nextBtn=document.getElementById('hdr-next-btn');
     if(nextBtn){nextBtn.style.color="#94a3b8";}
   }
@@ -997,42 +998,55 @@ function renderHeader(){
   savedSpan.style.cssText="font-size:10px;color:#22c55e;display:"+(state.saved?'':'none');
   savedSpan.textContent="✓ 保存";
 
-  // 日付ラベル
+  // 日付ラベル（タップで日付選択ジャンプ）
   const p=vd.split('-');
-  const dateLabel=document.createElement('span');
-  dateLabel.id='hdr-date-label';
-  dateLabel.style.cssText=`font-size:13px;font-weight:700;color:${isToday?"#38bdf8":"#e2e8f0"}`;
-  dateLabel.textContent=new Date(parseInt(p[0]),parseInt(p[1])-1,parseInt(p[2])).toLocaleDateString("ja-JP",{month:"short",day:"numeric",weekday:"short"})+(isToday?" 今日":"");
+  const dObj=new Date(parseInt(p[0]),parseInt(p[1])-1,parseInt(p[2]));
+  const dateBtn=document.createElement('button');
+  dateBtn.id='hdr-date-label';
+  dateBtn.style.cssText=`display:inline-flex;align-items:center;gap:6px;font-size:15px;font-weight:700;color:${isToday?"#38bdf8":"#e2e8f0"};background:transparent;border:none;cursor:pointer;font-family:inherit;padding:5px 8px;border-radius:8px`;
+  const dateText=document.createElement('span');
+  dateText.id='hdr-date-text';
+  dateText.textContent=dObj.toLocaleDateString("ja-JP",{month:"short",day:"numeric",weekday:"short"})+(isToday?" 今日":"");
+  dateBtn.innerHTML='<span style="font-size:13px">📅</span>';
+  dateBtn.appendChild(dateText);
 
+  // 隠し date input（タップで日付ジャンプ）
+  const dateInput=document.createElement('input');
+  dateInput.type='date'; dateInput.value=vd;
+  dateInput.style.cssText="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none";
+  dateInput.addEventListener('change',e=>{ if(e.target.value){state.viewDate=e.target.value;render();} });
+  dateBtn.addEventListener('click',()=>{ if(dateInput.showPicker){try{dateInput.showPicker();return;}catch(_){}} dateInput.focus();dateInput.click(); });
+
+  // 前後移動（大きめのタップ領域）
+  const mkArrow=(label,id,fn)=>{const b=document.createElement('button');if(id)b.id=id;b.textContent=label;b.style.cssText="background:#0f172a;border:1px solid #334155;border-radius:9px;color:#94a3b8;cursor:pointer;font-size:18px;padding:6px 15px;line-height:1;font-family:inherit;flex-shrink:0";b.addEventListener('click',fn);return b;};
+  const prevBtn=mkArrow("‹",null,prevDate);
+  const nextBtn=mkArrow("›","hdr-next-btn",nextDate);
+
+  // 今日へ戻るピル（今日でないときだけ・タブから離して右側に配置）
   const backBtn2=document.createElement('button');
   backBtn2.id='hdr-back-btn';
-  backBtn2.textContent="今日に戻る";
-  backBtn2.style.cssText="display:"+(isToday?'none':'block')+";margin:2px auto 0;font-size:10px;color:#0ea5e9;background:transparent;border:none;cursor:pointer;font-family:inherit";
+  backBtn2.textContent="↩ 今日へ";
+  backBtn2.style.cssText="display:"+(isToday?'none':'inline-flex')+";align-items:center;font-size:12px;font-weight:600;color:#0ea5e9;background:#0ea5e918;border:1px solid #0ea5e955;border-radius:14px;cursor:pointer;font-family:inherit;padding:5px 12px;white-space:nowrap";
   backBtn2.addEventListener('click',()=>{state.viewDate=todayStr();render();});
 
-  const prevBtn=document.createElement('button');
-  prevBtn.textContent="‹";
-  prevBtn.style.cssText="background:transparent;border:1px solid #334155;border-radius:7px;color:#94a3b8;cursor:pointer;font-size:16px;padding:2px 10px;line-height:1;font-family:inherit";
-  prevBtn.addEventListener('click',prevDate);
-
-  const nextBtn=document.createElement('button');
-  nextBtn.id='hdr-next-btn';
-  nextBtn.textContent="›";
-  nextBtn.style.cssText=`background:transparent;border:1px solid #334155;border-radius:7px;color:#94a3b8;cursor:pointer;font-size:16px;padding:2px 10px;line-height:1;font-family:inherit`;
-  nextBtn.addEventListener('click',nextDate);
-
+  // ナビ行：左スペーサ｜中央=‹ 日付 ›｜右=今日へ（3カラムで日付を中央固定）
   const nav=document.createElement('div');
   nav.id='hdr-nav';
-  nav.style.cssText="display:"+(showNav?"flex":"none")+";align-items:center;justify-content:space-between;padding:4px 0";
-  const dateCenter=document.createElement('div');
-  dateCenter.style.textAlign='center';
-  dateCenter.appendChild(dateLabel);
-  dateCenter.appendChild(backBtn2);
-  nav.appendChild(prevBtn); nav.appendChild(dateCenter); nav.appendChild(nextBtn);
+  nav.style.cssText="display:"+(showNav?"grid":"none")+";grid-template-columns:1fr auto 1fr;align-items:center;gap:6px;padding:8px 0 12px";
+  const leftGroup=document.createElement('div');
+  leftGroup.appendChild(dateInput); // 不可視なのでどこでも可
+  const centerGroup=document.createElement('div');
+  centerGroup.style.cssText="display:flex;align-items:center;justify-content:center;gap:8px";
+  centerGroup.appendChild(prevBtn); centerGroup.appendChild(dateBtn); centerGroup.appendChild(nextBtn);
+  const rightGroup=document.createElement('div');
+  rightGroup.style.cssText="display:flex;justify-content:flex-end;align-items:center";
+  rightGroup.appendChild(backBtn2);
+  nav.appendChild(leftGroup); nav.appendChild(centerGroup); nav.appendChild(rightGroup);
 
-  // タブバー
+  // タブバー（日付ナビとの境界を明確にする）
   const tabBar=document.createElement('div');
   tabBar.className='tab-bar';
+  tabBar.style.cssText="border-top:1px solid #1e3a5f";
   TABS.forEach(t=>{
     const b=document.createElement('button');
     b.className='tab-btn'+(state.tab===t?' active':'');
