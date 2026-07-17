@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.19"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.20"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -317,10 +317,25 @@ const TODO_ITEMS = [
 
 // 予定タブ「実際」列で1つにまとめて表示するルーティン群（アプリ内で編集可能・初期値）
 const DEFAULT_ROUTINES = [
-  {key:"morning", title:"🌅モーニングルーティン", color:"#fb923c", ids:["meditation_am","bedmaking","grooming","water_am","stretch_am","dressing"]},
-  {key:"night",   title:"🌙ナイトルーティン",     color:"#a78bfa", ids:["stretch_pm","meditation_pm"]},
+  {key:"morning",   title:"🌅モーニングルーティン", color:"#fb923c", ids:["meditation_am","bedmaking","grooming","water_am","stretch_am","dressing"]},
+  {key:"breakfast", title:"🍳朝食",                 color:"#fbbf24", ids:["breakfast_prep","breakfast"]},
+  {key:"lunch",     title:"🍱昼食",                 color:"#84cc16", ids:["lunch_prep","lunch"]},
+  {key:"dinner",    title:"🍽夕食",                 color:"#f97316", ids:["dinner_prep","dinner"]},
+  {key:"night",     title:"🌙ナイトルーティン",     color:"#a78bfa", ids:["stretch_pm","meditation_pm"]},
 ];
 const cloneRoutines = () => DEFAULT_ROUTINES.map(g=>({...g, ids:[...g.ids]}));
+// 既存ユーザーに不足しているルーティン群（朝食/昼食/夕食など）を追加する一度きりの移行。
+// 既存の割り当ては変更せず、他グループに未割り当ての項目だけを新グループへ入れる。
+function migrateRoutines(){
+  const cur=state.routines||[];
+  const have=new Set(cur.map(r=>r.key));
+  const assigned=new Set(); cur.forEach(r=>(r.ids||[]).forEach(id=>assigned.add(id)));
+  const additions=DEFAULT_ROUTINES.filter(g=>!have.has(g.key)).map(g=>({...g, ids:g.ids.filter(id=>!assigned.has(id))}));
+  if(!additions.length) return;
+  const nightIdx=cur.findIndex(r=>r.key==="night");
+  state.routines = nightIdx>=0 ? [...cur.slice(0,nightIdx),...additions,...cur.slice(nightIdx)] : [...cur,...additions];
+  saveRoutines();
+}
 function saveRoutines(){ safeSet(STORAGE_KEY+"_routines",JSON.stringify(state.routines)); }
 
 // ── シフトパターン（勤務の週間繰り返し）──
@@ -612,6 +627,7 @@ function loadStorage(){
     if(tk){state.tasks=JSON.parse(tk);}
     const rt=localStorage.getItem(STORAGE_KEY+"_routines");
     if(rt){const r=JSON.parse(rt); if(Array.isArray(r)&&r.length)state.routines=r;}
+    migrateRoutines(); // 朝食/昼食/夕食などの新ルーティン群を既存データに補完
     const shp=localStorage.getItem(STORAGE_KEY+"_shift");
     if(shp){const s2=JSON.parse(shp); if(s2&&Array.isArray(s2.grid))state.shiftPattern={...defaultShiftPattern(),...s2};}
     const pp=localStorage.getItem(STORAGE_KEY+"_planpatterns");
