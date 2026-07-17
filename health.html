@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.14"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.15"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -4632,8 +4632,8 @@ function renderAnalysis(){
 
   // 睡眠と当日体調
   const sleepG={s:[],m:[],l:[]};
-  // 飲酒と翌日体調
-  const alcG={n:[],l:[],hv:[]};
+  // 飲酒と翌日体調（大きい量も細かく区分）
+  const alcG={n:[],l:[],m:[],h:[],vh:[]};
   // 飲水と当日体調（0.2L単位）
   const waterG={w02:[],w04:[],w06:[],w08:[],w10:[],w12:[],w14:[],w16:[],w18:[],w20:[]};
 
@@ -4650,7 +4650,11 @@ function renderAnalysis(){
     }
     // 飲酒→翌日（翌日データがある場合のみ）
     if(aTomorrow!=null){
-      if(!tg)alcG.n.push(aTomorrow);else if(tg<=20)alcG.l.push(aTomorrow);else alcG.hv.push(aTomorrow);
+      if(!tg)alcG.n.push(aTomorrow);
+      else if(tg<=20)alcG.l.push(aTomorrow);
+      else if(tg<=40)alcG.m.push(aTomorrow);
+      else if(tg<=60)alcG.h.push(aTomorrow);
+      else alcG.vh.push(aTomorrow);
     }
     // 飲水→当日（0.2L単位）
     if(a!=null&&d.water!=null){
@@ -4722,11 +4726,14 @@ function renderAnalysis(){
       {l:"8h以上",v:ga(totalSleepG.l),c:"#22c55e",sub:`${totalSleepG.l.length}日`}
     ]));
   }
-  wrap.appendChild(barCard("🍺 飲酒と翌日体調",[
+  wrap.appendChild(barCard("🍺 飲酒と翌日体調（純アルコール量）",[
     {l:"飲まない",v:ga(alcG.n), c:"#22c55e",sub:`${alcG.n.length}日`},
-    {l:"〜20g",   v:ga(alcG.l), c:"#eab308",sub:`${alcG.l.length}日`},
-    {l:"20g超",   v:ga(alcG.hv),c:"#ef4444",sub:`${alcG.hv.length}日`}
+    {l:"〜20g",   v:ga(alcG.l), c:"#a3e635",sub:`${alcG.l.length}日`},
+    {l:"〜40g",   v:ga(alcG.m), c:"#eab308",sub:`${alcG.m.length}日`},
+    {l:"〜60g",   v:ga(alcG.h), c:"#f97316",sub:`${alcG.h.length}日`},
+    {l:"60g超",   v:ga(alcG.vh),c:"#ef4444",sub:`${alcG.vh.length}日`}
   ]));
+  wrap.appendChild(div({style:{fontSize:"9px",color:"#475569",margin:"-6px 0 10px",paddingLeft:"2px"}},"目安: 20g≒ビール中瓶1本 / 40g≒2本 / 60g≒3本"));
   wrap.appendChild(barCard("💧 飲水と当日体調（0.2L単位）",[
     {l:"〜0.2L",v:ga(waterG.w02),c:"#ef4444",sub:`${waterG.w02.length}日`},
     {l:"〜0.4L",v:ga(waterG.w04),c:"#ef4444",sub:`${waterG.w04.length}日`},
@@ -4739,6 +4746,25 @@ function renderAnalysis(){
     {l:"〜1.8L",v:ga(waterG.w18),c:"#22c55e",sub:`${waterG.w18.length}日`},
     {l:"2.0L以上",v:ga(waterG.w20),c:"#38bdf8",sub:`${waterG.w20.length}日`},
   ]));
+
+  // 🕐 時間帯別の体調（別観点：1日の中でいつ調子が良い/悪いか）
+  const todG={morning:[],afternoon:[],evening:[],night:[]};
+  scored.forEach(l=>{
+    const h=l.hour;
+    if(h>=5&&h<11)todG.morning.push(l.score);
+    else if(h>=11&&h<17)todG.afternoon.push(l.score);
+    else if(h>=17&&h<22)todG.evening.push(l.score);
+    else todG.night.push(l.score);
+  });
+  const todRow=(l,arr)=>{const v=ga(arr);return {l,v,c:v?scoreColor(parseFloat(v)):"#475569",sub:`${arr.length}件`};};
+  if(scored.length>=3){
+    wrap.appendChild(barCard("🕐 時間帯別の体調",[
+      todRow("朝 5-11時",todG.morning),
+      todRow("昼 11-17時",todG.afternoon),
+      todRow("夕 17-22時",todG.evening),
+      todRow("夜 22-5時",todG.night)
+    ]));
+  }
 
   // 🏭 仕事シフトと当日体調
   const shiftG={s1:[],s2:[],off:[]};
@@ -4990,11 +5016,12 @@ function renderAnalysis(){
   const insights=(()=>{
     const out=[];
     const gaN=arr=>arr.length?arr.reduce((a,b)=>a+b,0)/arr.length:null;
-    // 飲酒→翌日
-    const an=gaN(alcG.n), ah=gaN(alcG.hv);
-    if(an!=null&&ah!=null&&alcG.n.length>=2&&alcG.hv.length>=2){
+    // 飲酒→翌日（20g超＝m/h/vhを合算）
+    const alcHeavy=[...alcG.m,...alcG.h,...alcG.vh];
+    const an=gaN(alcG.n), ah=gaN(alcHeavy);
+    if(an!=null&&ah!=null&&alcG.n.length>=2&&alcHeavy.length>=2){
       const diff=an-ah;
-      if(diff>=0.5) out.push({icon:"🍺",text:`飲酒20g超の翌日は、飲まない日の翌日より平均${diff.toFixed(1)}点低い（${alcG.hv.length}日 vs ${alcG.n.length}日）`,neg:true});
+      if(diff>=0.5) out.push({icon:"🍺",text:`飲酒20g超の翌日は、飲まない日の翌日より平均${diff.toFixed(1)}点低い（${alcHeavy.length}日 vs ${alcG.n.length}日）`,neg:true});
     }
     // 睡眠
     const ss=gaN(sleepG.s), sl=gaN(sleepG.l);
@@ -5064,6 +5091,10 @@ function renderAIAnalysisCard(scored){
     if(r.worstCondition) content.appendChild(div({style:{background:"#ef444411",border:"1px solid #ef444433",borderRadius:"8px",padding:"10px 12px",marginBottom:"6px",marginTop:"10px"}},[div({style:{fontSize:"11px",color:"#f87171",marginBottom:"2px"}},"😞 体調が悪くなる条件"),div({style:{fontSize:"12px",color:"#cbd5e1"}},r.worstCondition)]));
     if(r.bestCondition)  content.appendChild(div({style:{background:"#22c55e11",border:"1px solid #22c55e33",borderRadius:"8px",padding:"10px 12px",marginBottom:"12px"}},[div({style:{fontSize:"11px",color:"#4ade80",marginBottom:"2px"}},"😊 体調が良くなる条件"),div({style:{fontSize:"12px",color:"#cbd5e1"}},r.bestCondition)]));
     (r.advice||[]).forEach(a=>content.appendChild(div({style:{fontSize:"12px",color:"#cbd5e1",lineHeight:1.6,marginBottom:"5px",paddingLeft:"10px",borderLeft:"2px solid #0ea5e9"}},a)));
+    if(r.newPerspective) content.appendChild(div({style:{background:"#6366f118",border:"1px solid #6366f144",borderRadius:"8px",padding:"10px 12px",marginTop:"12px",marginBottom:"4px"}},[
+      div({style:{fontSize:"11px",color:"#a5b4fc",marginBottom:"3px",fontWeight:700}},"💡 別の視点"),
+      div({style:{fontSize:"12px",color:"#cbd5e1",lineHeight:1.6}},r.newPerspective)
+    ]));
     if(state.aiAnalysisRemaining!=null) content.appendChild(div({style:{fontSize:"10px",color:"#334155",marginTop:"8px",textAlign:"right"}},`本日の残り回数: ${state.aiAnalysisRemaining}回`));
     content.appendChild(btn({style:reBtnStyle,onClick:()=>runAI(scored,state.dailies)},"🔄 再分析"));
   } else {
@@ -5082,17 +5113,30 @@ async function runAI(scored,dailies){
       const drinks=(d.drinks||[]).map(dr=>({...dr,drinkType:resolveDT(dr)}));
       const g=drinks.reduce((a,b)=>a+pureAlcohol(b.ml,b.drinkType.pct),0);
       const _sh=getNightSleepHours(d.dateStr);const sh=_sh!=null?Math.round(_sh*10)/10:null;
-      return `${d.dateStr}: 睡眠${sh??'?'}h 水分${d.water??'?'}L 純アルコール${g.toFixed(0)}g 食べたもの[${(d.foods||[]).join(',')}]`;
+      const shift=d.workStart==null?'休み':(d.workStart<12?'1直':'2直');
+      // その日の実際の行動（スケジュール／実績）を反映
+      const acts=getActualActivities(d.dateStr).map(a=>a.title.replace(/^[✓]/,'')).slice(0,10).join(',');
+      return `${d.dateStr}(${shift}): 睡眠${sh??'?'}h 水分${d.water??'?'}L 純アルコール${g.toFixed(0)}g 食べたもの[${(d.foods||[]).join(',')}] 実際の行動[${acts||'記録なし'}]`;
     }).join('\n');
     const hs=scored.slice(-100).map(l=>`${l.dateStr} ${l.hour}時: 体調${l.score}/10 体調状態[${l.symptoms.join(',')}]${l.note?` メモ:${l.note}`:''}`).join('\n');
+    // 今後の予定（直近1週間）も渡して、負荷の偏りなどを見てもらう
+    const upcoming=(()=>{
+      const lines=[];
+      for(let i=0;i<7;i++){
+        const dd=addDays(todayStr(),i);
+        const pl=getPlannedExtras(dd).map(e=>e.title).slice(0,8);
+        if(pl.length) lines.push(`${dd}: ${pl.join(',')}`);
+      }
+      return lines.join('\n')||'なし';
+    })();
 
     const res=await fetch("https://nuts024.com/health/api.php",{
       method:"POST",
       headers:{"Content-Type":"application/json","X-Secret-Key":"songof3838"},
       body:JSON.stringify({
-        system:`あなたは健康データアナリストです。ユーザーの体調記録を分析し、以下のJSON形式のみで返答してください。前後に説明文やMarkdownの装飾は不要です:
-{"summary":"全体傾向の要約2〜3文","topFactors":[{"factor":"要因名","impact":"positive または negative","detail":"具体的な説明","score":1から5の整数}],"worstCondition":"体調が悪くなる条件","bestCondition":"体調が良くなる条件","advice":["具体的なアドバイス1","2","3"]}`,
-        prompt:`【日次記録】\n${ds2}\n\n【時間別体調】\n${hs}\n\n分析してください。`
+        system:`あなたは健康データアナリストです。ユーザーはシフト勤務者（1直/2直/休み）です。体調・睡眠・飲酒・飲水・食事に加え、仕事シフトやその日の実際の行動（スケジュール）、今後の予定も踏まえて総合的に分析してください。以下のJSON形式のみで返答してください。前後に説明文やMarkdownの装飾は不要です:
+{"summary":"全体傾向の要約2〜3文","topFactors":[{"factor":"要因名","impact":"positive または negative","detail":"具体的な説明","score":1から5の整数}],"worstCondition":"体調が悪くなる条件","bestCondition":"体調が良くなる条件","advice":["具体的で実行可能なアドバイスを、睡眠・栄養・運動・生活リズム・シフト勤務・メンタルなど毎回できるだけ異なる観点から3〜4個"],"newPerspective":"表面的な相関ではなく、データから読み取れる本人が気づきにくい別の観点・仮説を1〜2文で"}`,
+        prompt:`【日次記録（シフト・実際の行動つき）】\n${ds2}\n\n【時間別体調】\n${hs}\n\n【今後1週間の予定】\n${upcoming}\n\n分析してください。`
       })
     });
     const data=await res.json();
