@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.18"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.19"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -445,6 +445,8 @@ const todayStr = () => {
   return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}-${String(n.getDate()).padStart(2,'0')}`;
 };
 const scoreColor = s => !s?"#475569":s<=3?"#ef4444":s<=5?"#f97316":s<=7?"#eab308":"#22c55e";
+// 背景色に対して読みやすい文字色（明るい背景→濃色 / 暗い背景→白）を返す
+const textOn = hex => { const c=(hex||"#38bdf8").replace('#',''); const r=parseInt(c.slice(0,2),16)||0,g=parseInt(c.slice(2,4),16)||0,b=parseInt(c.slice(4,6),16)||0; return (0.299*r+0.587*g+0.114*b)>150?"#0a1120":"#ffffff"; };
 const scoreLabel = s => !s?"—":s<=2?"最悪":s<=4?"悪い":s<=6?"普通":s<=8?"良好":"絶好調";
 
 function pressureLevel(diff){
@@ -1989,7 +1991,7 @@ function saveFoods(){
 // ═══════════════════════════════════════════════════
 // 予定タブ（日・週・月・やること・買物）
 // ═══════════════════════════════════════════════════
-const EV_COLORS=["#38bdf8","#22c55e","#eab308","#f97316","#ef4444","#a78bfa"];
+const EV_COLORS=["#38bdf8","#22c55e","#eab308","#f97316","#ef4444","#a78bfa","#ec4899","#14b8a6","#6366f1","#84cc16","#06b6d4","#fb7185"];
 const WEEKDAYS_JP=["日","月","火","水","木","金","土"];
 
 function saveSchedule(){
@@ -2721,8 +2723,8 @@ function renderDaySchedule(vd,ds,isToday){
       ad.appendChild(div({style:{fontSize:"10px",fontWeight:700,color:"#94a3b8",marginBottom:"6px"}},"📌 終日・時間未指定"));
       allDayEvents.forEach(ev=>{
         const c=ev.color||EV_COLORS[0];
-        const chip=div({style:{display:"flex",alignItems:"center",gap:"6px",padding:"5px 8px",background:c+"18",border:`1px solid ${c}55`,borderLeft:`3px solid ${c}`,borderRadius:"6px",marginBottom:"4px",cursor:"pointer"}},[
-          div({style:{flex:1,fontSize:"12px",color:"#e2e8f0"}},(ev.isRepeat?"🔁 ":"")+ev.title)
+        const chip=div({style:{display:"flex",alignItems:"center",gap:"6px",padding:"6px 10px",background:c,border:`1px solid ${c}`,borderRadius:"6px",marginBottom:"4px",cursor:"pointer"}},[
+          div({style:{flex:1,fontSize:"13px",fontWeight:600,color:textOn(c)}},(ev.isRepeat?"🔁 ":"")+ev.title)
         ]);
         chip.addEventListener('click',(()=>{const e2=ev;return()=>{
           state.modal="addEvent";state.editEventUid=e2.uid;state.editEventIsRepeat=!!e2.isRepeat;
@@ -2797,7 +2799,7 @@ function renderDaySchedule(vd,ds,isToday){
   const tl=div({style:{position:"relative",height:`${(END_H-START_H)*HOUR_H}px`}});
   for(let h2=START_H;h2<END_H;h2++){
     tl.appendChild(div({style:{position:"absolute",top:`${(h2-START_H)*HOUR_H}px`,left:0,right:0,borderTop:"1px solid #1e3a5f55",display:"flex"}},[
-      div({style:{width:"34px",fontSize:"9px",color:"#475569",marginTop:"-6px"}},`${h2}:00`)
+      div({style:{width:"34px",fontSize:"11px",color:"#64748b",marginTop:"-7px"}},`${h2}:00`)
     ]));
   }
   if(isToday){
@@ -2845,15 +2847,16 @@ function renderDaySchedule(vd,ds,isToday){
       // レーン位置（横分割）。widthArea/leftBase は calc 用の生の式
       const left=`calc((${leftBase}) + (${widthArea}) * ${(lane/lanes).toFixed(4)})`;
       const width=`calc((${widthArea}) * ${(1/lanes).toFixed(4)} - 2px)`;
+      const tcol=textOn(color);
       const block=div({style:{
         position:"absolute",top:`${Math.max(0,top)}px`,left,width,
-        height:`${height}px`,background:color+"22",border:`1px solid ${color}66`,
-        borderLeft:`3px solid ${color}`,borderRadius:"5px",padding:"1px 4px",
+        height:`${height}px`,background:color,border:`1px solid ${color}`,
+        borderRadius:"5px",padding:"1px 5px",
         overflow:"hidden",cursor:onTap?"pointer":"default",zIndex:3,boxSizing:"border-box"
       }});
-      block.appendChild(div({style:{fontSize:"9px",fontWeight:600,color:color,lineHeight:1.25,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},
+      block.appendChild(div({style:{fontSize:"12px",fontWeight:700,color:tcol,lineHeight:1.2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},
         (ev.isRepeat?"🔁":"")+ev.title));
-      if(height>30&&!ev.isPoint&&lanes===1)block.appendChild(div({style:{fontSize:"8px",color:"#64748b"}},`${Math.floor(sMin/60)}:${String(sMin%60).padStart(2,'0')}〜${Math.floor(eMin/60)}:${String(eMin%60).padStart(2,'0')}`));
+      if(height>34&&!ev.isPoint&&lanes===1)block.appendChild(div({style:{fontSize:"10px",color:tcol==="#ffffff"?"#ffffffcc":"#0a1120aa",lineHeight:1.2}},`${Math.floor(sMin/60)}:${String(sMin%60).padStart(2,'0')}〜${Math.floor(eMin/60)}:${String(eMin%60).padStart(2,'0')}`));
       if(onTap)block.addEventListener('click',()=>onTap(ev));
       tl.appendChild(block);
     });
@@ -3283,7 +3286,7 @@ function renderAddEventModal(vd){
 
   // 色選択
   m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"6px"}},"色"));
-  const colorRow=div({style:{display:"flex",gap:"8px",marginBottom:"12px"}});
+  const colorRow=div({style:{display:"flex",flexWrap:"wrap",gap:"8px",marginBottom:"12px"}});
   EV_COLORS.forEach(c=>{
     const on=state.newEvColor===c;
     const cb=btn({style:{width:"32px",height:"32px",borderRadius:"8px",cursor:"pointer",
