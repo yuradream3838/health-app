@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.15"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.16"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -664,6 +664,8 @@ function migrateOldSchedule(){
 // ユーザーが気づけなかった。safeSet は失敗を検知して警告し、成否を返す。
 let saveFailNotified=false;
 function safeSet(key,value){
+  // バックアップ閲覧中は一切保存しない（現在のデータを守る）
+  if(typeof state!=='undefined' && state && state.viewingBackup) return true;
   try{
     localStorage.setItem(key,value);
     return true;
@@ -681,6 +683,7 @@ function safeSet(key,value){
   }
 }
 function saveStorage(){
+  if(state && state.viewingBackup){ render(); return; } // 閲覧中は保存しない
   const ok=safeSet(STORAGE_KEY,JSON.stringify({logs:state.logs,dailies:state.dailies}));
   if(ok){
     state.saved=true;render();setTimeout(()=>{state.saved=false;render();},2000);
@@ -953,6 +956,18 @@ function render(){
   if(state.goalEditKey)        content.appendChild(renderGoalEditModal());
   if(state.storageAlert)       content.appendChild(renderStorageAlertModal());
   if(state.editHour!==null)    content.appendChild(renderScoreModal());
+
+  // バックアップ閲覧中バナー（画面下部に常時表示）
+  if(state.viewingBackup){
+    const banner=div({style:{position:"fixed",left:"0",right:"0",bottom:"0",zIndex:300,background:"#6366f1",color:"#fff",padding:"9px 14px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:"10px",boxShadow:"0 -2px 14px #00000077"}});
+    banner.appendChild(div({style:{minWidth:0,overflow:"hidden"}},[
+      div({style:{fontSize:"12px",fontWeight:700,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},`📁 バックアップ閲覧中（保存されません）`),
+      div({style:{fontSize:"10px",opacity:0.85,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},`${state.viewingBackup}${state.viewingBackupInfo?" ・ "+state.viewingBackupInfo:""}`)
+    ]));
+    const exitB=btn({style:{background:"#ffffff26",border:"1px solid #ffffff88",borderRadius:"8px",color:"#fff",padding:"6px 14px",fontSize:"12px",fontWeight:700,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0},onClick:exitBackupView},"閲覧終了");
+    banner.appendChild(exitB);
+    content.appendChild(banner);
+  }
 }
 
 function updateHeaderDynamic(){
@@ -2633,8 +2648,18 @@ function renderSettingsHub(){
   importInp.type='file';importInp.accept='.json';importInp.style.display='none';
   importInp.addEventListener('change',importData);
   importLbl.appendChild(importInp);
-  importLbl.appendChild(document.createTextNode("📂 データを読込（復元）"));
+  importLbl.appendChild(document.createTextNode("📂 データを読込（復元・上書き）"));
   dataCard.appendChild(importLbl);
+  // バックアップ閲覧（上書きせず内容を確認）
+  const viewLbl=document.createElement('label');
+  viewLbl.style.cssText="display:block;width:100%;padding:11px;margin-top:8px;text-align:center;background:transparent;border:1px solid #6366f1;border-radius:8px;color:#a5b4fc;font-size:13px;font-weight:600;cursor:pointer;box-sizing:border-box";
+  const viewInp=document.createElement('input');
+  viewInp.type='file';viewInp.accept='.json';viewInp.style.display='none';
+  viewInp.addEventListener('change',viewBackupFile);
+  viewLbl.appendChild(viewInp);
+  viewLbl.appendChild(document.createTextNode("👁 バックアップを閲覧（上書きしない）"));
+  dataCard.appendChild(viewLbl);
+  dataCard.appendChild(div({style:{fontSize:"10px",color:"#475569",marginTop:"6px",lineHeight:1.6}},"「閲覧」は現在のデータを変更せず、バックアップの内容をアプリと同じ画面で確認できます。"));
   wrap.appendChild(dataCard);
   return wrap;
 }
@@ -5255,6 +5280,55 @@ function importData(e){
     }catch(err){alert("インポート失敗: "+err.message);}
   };
   reader.readAsText(file);e.target.value="";
+}
+
+// ── バックアップの閲覧（読み取り専用・現在のデータは上書きしない）──
+const VIEW_FIELDS=["logs","dailies","todos","goals","schedule","repeatEvents","tasks","routines","shiftPattern","planPatterns","customTodos","weatherCity","events","taskList","wishList","shopList"];
+function viewBackupFile(e){
+  const file=e.target.files[0];if(!file)return;
+  const reader=new FileReader();
+  reader.onload=ev=>{
+    try{
+      const p=JSON.parse(ev.target.result);
+      if(!p.logs||!p.dailies)throw new Error("体調管理アプリのバックアップ形式ではありません");
+      // 現在の生データをメモリに退避（localStorageには触れない）
+      const snap={}; VIEW_FIELDS.forEach(k=>{ snap[k]=state[k]; });
+      state._liveSnapshot=snap;
+      // バックアップを state に読み込み（保存はしない）
+      state.logs=p.logs||[];
+      state.dailies=p.dailies||[];
+      state.todos=p.todos||{};
+      if(p.goals)state.goals=p.goals;
+      state.schedule=p.schedule||{};
+      state.repeatEvents=p.repeatEvents||[];
+      state.tasks=p.tasks||{todo:[],shopping:[]};
+      if(Array.isArray(p.routines)&&p.routines.length)state.routines=p.routines;
+      if(p.shiftPattern&&Array.isArray(p.shiftPattern.grid))state.shiftPattern={...defaultShiftPattern(),...p.shiftPattern};
+      if(Array.isArray(p.planPatterns))state.planPatterns=p.planPatterns;
+      if(Array.isArray(p.customTodos))state.customTodos=p.customTodos;
+      if(p.city)state.weatherCity=p.city;
+      // 旧形式（v8.3）バックアップも移行して閲覧
+      if(!p.schedule && !p.tasks && (p.events||p.taskList||p.wishList||p.shopList)){
+        state.events=p.events||{};state.taskList=p.taskList||[];state.wishList=p.wishList||[];state.shopList=p.shopList||[];
+        state.schedule={};state.repeatEvents=[];state.tasks={todo:[],shopping:[]};
+        migrateOldSchedule();
+      }
+      state.viewingBackup=file.name||"バックアップ";
+      state.viewingBackupInfo=p.exportedAt?`エクスポート: ${p.exportedAt.slice(0,10)}`:"";
+      state.tab="日記"; state.viewDate=todayStr(); state.modal=null; state.storageAlert=false;
+      showToast("バックアップを閲覧中（保存されません）","#818cf8");
+      render();
+    }catch(err){alert("閲覧できませんでした: "+err.message);}
+  };
+  reader.readAsText(file);e.target.value="";
+}
+function exitBackupView(){
+  const snap=state._liveSnapshot;
+  if(snap){ Object.keys(snap).forEach(k=>{ state[k]=snap[k]; }); }
+  state._liveSnapshot=null; state.viewingBackup=null; state.viewingBackupInfo=null;
+  state.modal=null;
+  showToast("通常のデータに戻りました","#22c55e");
+  render();
 }
 
 function renderAddNapModal(vd,isEdit){
