@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.16"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.17"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -1070,7 +1070,7 @@ function renderHeader(){
     b.addEventListener('click',()=>{
       state.tab=t;
       // 日記タブに切り替えたとき、今日かつ天気未取得なら自動取得
-      if(t==="日記" && state.viewDate===todayStr() && state.weatherCity && state.weather.length===0 && !state.weatherLoading){
+      if(t==="日記" && !state.viewingBackup && state.viewDate===todayStr() && state.weatherCity && state.weather.length===0 && !state.weatherLoading){
         doFetchWeather(state.weatherCity);
       } else {
         render();
@@ -1669,9 +1669,11 @@ function renderGoalEditModal(){
 function renderKondo(vd,ds,curH,isToday){
   const wrap=div({style:{maxWidth:"600px",margin:"0 auto",padding:"10px 16px 60px"}},[]);
 
-  // 天気データ取得（今日=APIデータ、過去=保存済み）
+  // 天気データ取得（閲覧中=バックアップの天気、今日=APIデータ、過去=保存済み）
   let weatherData=[];
-  if(isToday){
+  if(state.viewingBackup){
+    weatherData=(state._viewWeather&&state._viewWeather[vd])||[];
+  } else if(isToday){
     weatherData=state.weather;
   } else if(vd<ds){
     try{
@@ -1716,7 +1718,7 @@ function renderKondo(vd,ds,curH,isToday){
         const changeBtn=document.createElement('button');
         changeBtn.textContent="🗾 都市変更";
         changeBtn.style.cssText="margin-top:5px;font-size:10px;color:#475569;background:transparent;border:none;cursor:pointer;font-family:inherit";
-        changeBtn.addEventListener('click',()=>{state.weather=[];state.weatherCity=null;try{localStorage.removeItem(STORAGE_KEY+"_city");}catch{}render();});
+        changeBtn.addEventListener('click',()=>{state.weather=[];state.weatherCity=null;if(!state.viewingBackup){try{localStorage.removeItem(STORAGE_KEY+"_city");}catch{}}render();});
         wCard.appendChild(refreshBtn);
         wCard.appendChild(changeBtn);
       } else {
@@ -1812,6 +1814,7 @@ function renderKondo(vd,ds,curH,isToday){
 }
 
 async function doFetchWeather(city){
+  if(state.viewingBackup)return; // 閲覧中は取得・保存しない
   state.weatherLoading=true;state.weatherError=null;state.weather=[];render();
   try{
     state.weather=await fetchWeatherAPI(city.lat,city.lon);
@@ -2355,7 +2358,7 @@ function renderSubHub(SUB,active,onSel,renderBody){
 function renderDiaryHub(vd,ds,curH,isToday){
   return renderSubHub(["生活記録","体調記録","アルコール"],state.diarySubTab,t=>{
     state.diarySubTab=t;
-    if(t==="体調記録"&&state.viewDate===todayStr()&&state.weatherCity&&state.weather.length===0&&!state.weatherLoading){doFetchWeather(state.weatherCity);}
+    if(t==="体調記録"&&!state.viewingBackup&&state.viewDate===todayStr()&&state.weatherCity&&state.weather.length===0&&!state.weatherLoading){doFetchWeather(state.weatherCity);}
     else render();
   },()=>{
     if(state.diarySubTab==="生活記録") return renderToday(vd,ds,curH,isToday);
@@ -5307,6 +5310,7 @@ function viewBackupFile(e){
       if(Array.isArray(p.planPatterns))state.planPatterns=p.planPatterns;
       if(Array.isArray(p.customTodos))state.customTodos=p.customTodos;
       if(p.city)state.weatherCity=p.city;
+      state._viewWeather=p.weather||{}; // 閲覧用の天気（localStorageには入れない）
       // 旧形式（v8.3）バックアップも移行して閲覧
       if(!p.schedule && !p.tasks && (p.events||p.taskList||p.wishList||p.shopList)){
         state.events=p.events||{};state.taskList=p.taskList||[];state.wishList=p.wishList||[];state.shopList=p.shopList||[];
@@ -5325,7 +5329,7 @@ function viewBackupFile(e){
 function exitBackupView(){
   const snap=state._liveSnapshot;
   if(snap){ Object.keys(snap).forEach(k=>{ state[k]=snap[k]; }); }
-  state._liveSnapshot=null; state.viewingBackup=null; state.viewingBackupInfo=null;
+  state._liveSnapshot=null; state.viewingBackup=null; state.viewingBackupInfo=null; state._viewWeather=null;
   state.modal=null;
   showToast("通常のデータに戻りました","#22c55e");
   render();
