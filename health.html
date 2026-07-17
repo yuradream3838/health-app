@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.20"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.21"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -222,7 +222,7 @@ const STORAGE_KEY = "health_v2";
 // 取り、数秒間「元に戻す」バーを表示する。健康記録など再入力が難しいデータの
 // 誤削除を救済する。スナップショットは永続化される全フィールドの深いコピー。
 let undoSnapshot=null, undoTimer=null;
-const UNDO_FIELDS=["logs","dailies","todos","goals","schedule","repeatEvents","tasks","routines","shiftPattern","planPatterns","customTodos"];
+const UNDO_FIELDS=["logs","dailies","todos","goals","goalTree","schedule","repeatEvents","tasks","routines","shiftPattern","planPatterns","customTodos"];
 function snapshotData(){
   const snap={};
   UNDO_FIELDS.forEach(k=>{ try{ snap[k]=JSON.parse(JSON.stringify(state[k])); }catch{ snap[k]=state[k]; } });
@@ -238,6 +238,7 @@ function persistAll(){
   if(typeof saveShiftPattern==='function')saveShiftPattern();
   if(typeof savePlanPatterns==='function')savePlanPatterns();
   if(typeof saveCustomTodos==='function')saveCustomTodos();
+  if(typeof saveGoalTree==='function')saveGoalTree();
   safeSet(STORAGE_KEY+"_goals",JSON.stringify(state.goals));
   safeSet(STORAGE_KEY+"_todo",JSON.stringify(state.todos));
 }
@@ -580,6 +581,7 @@ const state = {
   newEventTitle:"", newEventSH:9, newEventSM:0, newEventEH:10, newEventEM:0,
   goalHistoryType:null, goalEditKey:null,
   goalEditType:null, goalEditText:"", goalEditProgress:"", goalEditDone:false, goalEditPeriodStr:"",
+  goalView:"tree", goalTree:[], goalTreeModal:null,
   analysisSubTab:"日次ログ", diarySubTab:"生活記録", taskSubTab:"TODO",
   storageAlert:false, storageExportYear:null,
   weather:[], weatherCity:null, weatherLoading:false, weatherError:null,
@@ -610,6 +612,8 @@ function loadStorage(){
     if(todos){state.todos=JSON.parse(todos);}
     const goals=localStorage.getItem(STORAGE_KEY+"_goals");
     if(goals){state.goals=JSON.parse(goals);}
+    const gtree=localStorage.getItem(STORAGE_KEY+"_goaltree");
+    if(gtree){const a=JSON.parse(gtree); if(Array.isArray(a))state.goalTree=a;}
     const ev=localStorage.getItem(STORAGE_KEY+"_events");
     if(ev){state.events=JSON.parse(ev);}
     const tl=localStorage.getItem(STORAGE_KEY+"_tasklist");
@@ -972,6 +976,7 @@ function render(){
   if(state.modal==="editNap")  content.appendChild(renderAddNapModal(vd,true));
   if(state.goalHistoryType)    content.appendChild(renderGoalHistory(vd));
   if(state.goalEditKey)        content.appendChild(renderGoalEditModal());
+  if(state.goalTreeModal)      content.appendChild(renderGoalTreeModal());
   if(state.storageAlert)       content.appendChild(renderStorageAlertModal());
   if(state.editHour!==null)    content.appendChild(renderScoreModal());
 
@@ -1474,8 +1479,130 @@ function goalPeriodLabel(type, dateStr){
   }
 }
 
+// ══ 目標ツリー（年間目標→下位目標へ掘り下げる階層構造）══
+function saveGoalTree(){ safeSet(STORAGE_KEY+"_goaltree",JSON.stringify(state.goalTree)); }
+function gtNewId(){ return "g"+Date.now().toString(36)+Math.floor(Math.random()*1000); }
+// 再帰探索：id のノードと親配列を返す
+function gtFind(id, list=state.goalTree, parent=null){
+  for(const n of list){
+    if(n.id===id) return {node:n, siblings:list, parent};
+    if(n.children&&n.children.length){ const r=gtFind(id,n.children,n); if(r)return r; }
+  }
+  return null;
+}
+// サブツリーの葉（子を持たないノード）の達成数/総数
+function gtProgress(node){
+  if(!node.children||!node.children.length) return {done:node.done?1:0, total:1};
+  let d=0,t=0; node.children.forEach(c=>{const r=gtProgress(c);d+=r.done;t+=r.total;});
+  return {done:d,total:t};
+}
+function gtAddChild(parentId, text){
+  const node={id:gtNewId(), text:text.trim(), done:false, collapsed:false, children:[]};
+  if(parentId==null){ state.goalTree=[...state.goalTree, node]; }
+  else { const f=gtFind(parentId); if(f){ f.node.children=[...(f.node.children||[]), node]; f.node.collapsed=false; } }
+  saveGoalTree();
+}
+function gtUpdate(id, patch){ const f=gtFind(id); if(f){ Object.assign(f.node, patch); saveGoalTree(); } }
+function gtDelete(id){ const f=gtFind(id); if(f){ pushUndo("目標を削除しました"); const i=f.siblings.indexOf(f.node); if(i>=0)f.siblings.splice(i,1); saveGoalTree(); } }
+
+function renderGoalTreeNode(node, depth){
+  const rows=[];
+  const prog=gtProgress(node);
+  const hasKids=node.children&&node.children.length;
+  const pct=prog.total?Math.round(prog.done/prog.total*100):0;
+  const barCol=pct>=100?"#22c55e":pct>=50?"#eab308":"#38bdf8";
+  const row=div({style:{display:"flex",alignItems:"center",gap:"7px",padding:"7px 4px",borderBottom:"1px solid #1e3a5f33",
+    marginLeft:`${depth*16}px`,borderLeft:depth>0?"2px solid #1e3a5f":"none",paddingLeft:depth>0?"8px":"4px"}});
+  // 展開/折りたたみ
+  if(hasKids){
+    const tg=btn({style:{width:"18px",height:"18px",flexShrink:0,background:"transparent",border:"none",color:"#64748b",cursor:"pointer",fontSize:"11px"}},node.collapsed?"▶":"▼");
+    tg.addEventListener('click',()=>{gtUpdate(node.id,{collapsed:!node.collapsed});render();});
+    row.appendChild(tg);
+  } else { row.appendChild(div({style:{width:"18px",flexShrink:0}})); }
+  // チェック
+  const cb=btn({style:{width:"20px",height:"20px",flexShrink:0,borderRadius:"5px",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"12px",color:"#fff",
+    border:`2px solid ${node.done?"#22c55e":"#334155"}`,background:node.done?"#22c55e":"transparent"}},node.done?"✓":"");
+  cb.addEventListener('click',()=>{gtUpdate(node.id,{done:!node.done});render();});
+  row.appendChild(cb);
+  // テキスト（タップで編集）
+  const label=div({style:{flex:1,minWidth:0,cursor:"pointer"}});
+  label.appendChild(div({style:{fontSize:depth===0?"14px":"13px",fontWeight:depth===0?700:500,color:node.done?"#475569":"#e2e8f0",textDecoration:node.done?"line-through":"none",lineHeight:1.3,wordBreak:"break-word"}},node.text||"(無題)"));
+  if(hasKids){
+    label.appendChild(div({style:{display:"flex",alignItems:"center",gap:"6px",marginTop:"3px"}},[
+      div({style:{flex:1,maxWidth:"120px",height:"5px",background:"#0f172a",borderRadius:"3px",overflow:"hidden"}},[div({style:{height:"100%",width:`${pct}%`,background:barCol,borderRadius:"3px"}})]),
+      span({style:{fontSize:"9px",color:"#64748b"}},`${prog.done}/${prog.total} (${pct}%)`)
+    ]));
+  }
+  label.addEventListener('click',()=>{state.goalTreeModal={mode:"edit",id:node.id,text:node.text||""};render();});
+  row.appendChild(label);
+  // ＋下位目標
+  const addB=btn({style:{flexShrink:0,fontSize:"11px",padding:"3px 8px",borderRadius:"6px",cursor:"pointer",fontWeight:600,background:"#0ea5e918",border:"1px solid #0ea5e955",color:"#38bdf8"}},"＋");
+  addB.addEventListener('click',()=>{state.goalTreeModal={mode:"add",parentId:node.id,text:""};render();});
+  row.appendChild(addB);
+  rows.push(row);
+  if(hasKids && !node.collapsed){ node.children.forEach(c=>{ renderGoalTreeNode(c,depth+1).forEach(r=>rows.push(r)); }); }
+  return rows;
+}
+
+function renderGoalTreeModal(){
+  const m0=state.goalTreeModal; if(!m0)return div({});
+  const bg=div({className:"modal-center"});
+  const m=div({className:"modal-box"});
+  bg.addEventListener('click',()=>{state.goalTreeModal=null;render();});
+  m.addEventListener('click',e=>e.stopPropagation());
+  m.appendChild(div({style:{fontSize:"15px",fontWeight:700,color:"#e2e8f0",marginBottom:"4px"}},m0.mode==="add"?(m0.parentId==null?"🏆 年間目標を追加":"🎯 下位目標を追加"):"目標を編集"));
+  if(m0.mode==="add"&&m0.parentId!=null){ const f=gtFind(m0.parentId); if(f)m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"10px"}},`「${f.node.text}」を達成するための小さな目標`)); }
+  const ta=document.createElement('textarea');
+  ta.style.cssText="width:100%;height:80px;padding:10px 12px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:14px;font-family:inherit;box-sizing:border-box;resize:vertical;margin:6px 0 12px";
+  ta.value=m0.text||"";ta.placeholder="目標を入力...";
+  ta.addEventListener('input',e=>{state.goalTreeModal.text=e.target.value;});
+  m.appendChild(ta);
+  const btns=[];
+  if(m0.mode==="edit"){
+    btns.push(btn({style:{padding:"9px 12px",background:"transparent",border:"1px solid #ef444455",borderRadius:"8px",color:"#f87171",cursor:"pointer",fontSize:"12px",fontWeight:600},
+      onClick:()=>{ const f=gtFind(m0.id); const kids=f&&f.node.children&&f.node.children.length; if(confirm(kids?"下位目標も含めて削除しますか？":"この目標を削除しますか？")){ gtDelete(m0.id); state.goalTreeModal=null; render(); } }},"🗑 削除"));
+  }
+  btns.push(btn({className:"btn-ghost",style:{flex:1},onClick:()=>{state.goalTreeModal=null;render();}},"キャンセル"));
+  btns.push(btn({style:{flex:1,padding:"10px",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:600,cursor:"pointer"},
+    onClick:()=>{
+      const text=(state.goalTreeModal.text||"").trim();
+      if(!text){ alert("目標を入力してください"); return; }
+      if(m0.mode==="add") gtAddChild(m0.parentId==null?null:m0.parentId, text);
+      else gtUpdate(m0.id,{text});
+      state.goalTreeModal=null; render();
+    }},"保存"));
+  m.appendChild(div({style:{display:"flex",gap:"8px",alignItems:"center"}},btns));
+  bg.appendChild(m);return bg;
+}
+
+function renderGoalTree(){
+  const card=div({className:"card"});
+  card.appendChild(div({style:{fontSize:"12px",color:"#64748b",marginBottom:"10px",lineHeight:1.6}},
+    "🏆 年間目標を最終到達点として、それを達成するための下位目標へ「＋」でどんどん掘り下げられます。子目標の達成率が親に集計されます。"));
+  if(!state.goalTree.length){
+    card.appendChild(div({style:{fontSize:"12px",color:"#475569",textAlign:"center",padding:"18px 0"}},"まだ目標がありません。下のボタンから年間目標を追加してください。"));
+  } else {
+    state.goalTree.forEach(root=>{ renderGoalTreeNode(root,0).forEach(r=>card.appendChild(r)); });
+  }
+  card.appendChild(btn({style:{width:"100%",marginTop:"12px",padding:"11px",background:"#0ea5e918",border:"1px solid #0ea5e9",borderRadius:"8px",color:"#38bdf8",fontSize:"13px",fontWeight:600,cursor:"pointer"},
+    onClick:()=>{state.goalTreeModal={mode:"add",parentId:null,text:""};render();}},"🏆 年間目標を追加"));
+  return card;
+}
+
 function renderGoals(vd, ds){
   const wrap=div({style:{maxWidth:"600px",margin:"0 auto",padding:"10px 16px 60px"}});
+
+  // モード切替：目標ツリー / 期間別
+  const modeRow=div({style:{display:"flex",gap:"6px",marginBottom:"10px"}});
+  [["tree","🌳 目標ツリー"],["period","📅 期間別"]].forEach(([k,lbl])=>{
+    const on=(state.goalView||"tree")===k;
+    modeRow.appendChild(btn({style:{flex:1,padding:"9px",borderRadius:"8px",cursor:"pointer",fontSize:"12px",fontWeight:600,
+      border:`1px solid ${on?"#38bdf8":"#334155"}`,background:on?"#0ea5e922":"transparent",color:on?"#38bdf8":"#64748b"},
+      onClick:()=>{state.goalView=k;render();}},lbl));
+  });
+  wrap.appendChild(modeRow);
+  if((state.goalView||"tree")==="tree"){ wrap.appendChild(renderGoalTree()); return wrap; }
+
 
   const GOAL_TYPES=[
     {type:"yearly",    icon:"🏆",label:"年間目標",    hasProgress:true},
@@ -5292,6 +5419,7 @@ function exportData(){
     shiftPattern:state.shiftPattern,
     planPatterns:state.planPatterns,
     customTodos:state.customTodos,
+    goalTree:state.goalTree,
     weather,
     city
   };
@@ -5348,6 +5476,7 @@ function importData(e){
       if(p.shiftPattern&&Array.isArray(p.shiftPattern.grid)){state.shiftPattern={...defaultShiftPattern(),...p.shiftPattern};saveShiftPattern();}
       if(Array.isArray(p.planPatterns)){state.planPatterns=p.planPatterns;savePlanPatterns();}
       if(Array.isArray(p.customTodos)){state.customTodos=p.customTodos;saveCustomTodos();}
+      if(Array.isArray(p.goalTree)){state.goalTree=p.goalTree;saveGoalTree();}
       if(p.weather){try{localStorage.setItem(STORAGE_KEY+"_weather",JSON.stringify(p.weather));}catch{}}
       if(p.city){state.weatherCity=p.city;try{localStorage.setItem(STORAGE_KEY+"_city",JSON.stringify(p.city));}catch{}}
       // 旧形式（v8.3）のバックアップは新モデルへ移行して取り込む
@@ -5367,7 +5496,7 @@ function importData(e){
 }
 
 // ── バックアップの閲覧（読み取り専用・現在のデータは上書きしない）──
-const VIEW_FIELDS=["logs","dailies","todos","goals","schedule","repeatEvents","tasks","routines","shiftPattern","planPatterns","customTodos","weatherCity","events","taskList","wishList","shopList"];
+const VIEW_FIELDS=["logs","dailies","todos","goals","goalTree","schedule","repeatEvents","tasks","routines","shiftPattern","planPatterns","customTodos","weatherCity","events","taskList","wishList","shopList"];
 function viewBackupFile(e){
   const file=e.target.files[0];if(!file)return;
   const reader=new FileReader();
@@ -5390,6 +5519,7 @@ function viewBackupFile(e){
       if(p.shiftPattern&&Array.isArray(p.shiftPattern.grid))state.shiftPattern={...defaultShiftPattern(),...p.shiftPattern};
       if(Array.isArray(p.planPatterns))state.planPatterns=p.planPatterns;
       if(Array.isArray(p.customTodos))state.customTodos=p.customTodos;
+      state.goalTree=Array.isArray(p.goalTree)?p.goalTree:[];
       if(p.city)state.weatherCity=p.city;
       state._viewWeather=p.weather||{}; // 閲覧用の天気（localStorageには入れない）
       // 旧形式（v8.3）バックアップも移行して閲覧
