@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.22"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.23"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -1505,6 +1505,48 @@ function gtCollectByPeriod(type, key, list=state.goalTree, out=[]){
   });
   return out;
 }
+// periodKey（例 quarterly_2026-Q1）の解析・表示・生成
+function pkParse(key){
+  if(!key) return null;
+  if(key.startsWith('yearly_')) return {y:+key.slice(7)};
+  if(key.startsWith('quarterly_')){ const s=key.slice(10).split('-Q'); return {y:+s[0], q:+s[1]}; }
+  if(key.startsWith('monthly_')){ const s=key.slice(8).split('-'); return {y:+s[0], m:+s[1]}; }
+  if(key.startsWith('weekly_')) return {monday:key.slice(7)};
+  if(key.startsWith('daily_')) return {date:key.slice(6)};
+  return null;
+}
+function pkLabel(key){
+  const p=pkParse(key); if(!p) return "—";
+  if(key.startsWith('yearly_')) return `${p.y}年`;
+  if(key.startsWith('quarterly_')) return `${p.y}年 Q${p.q}`;
+  if(key.startsWith('monthly_')) return `${p.y}年${p.m}月`;
+  if(key.startsWith('weekly_')) return goalPeriodLabel('weekly',p.monday);
+  if(key.startsWith('daily_')) return goalPeriodLabel('daily',p.date);
+  return "—";
+}
+function pkShort(key){
+  const p=pkParse(key); if(!p) return "";
+  if(key.startsWith('yearly_')) return `${p.y}`;
+  if(key.startsWith('quarterly_')) return `${p.y} Q${p.q}`;
+  if(key.startsWith('monthly_')) return `${p.y}/${p.m}`;
+  if(key.startsWith('weekly_')){ const d=p.monday.split('-'); return `${+d[1]}/${+d[2]}週`; }
+  if(key.startsWith('daily_')){ const d=p.date.split('-'); return `${+d[1]}/${+d[2]}`; }
+  return "";
+}
+// 期間タイプ選択時の既定 periodKey（親の年に合わせ、閲覧中の日付を基準に）
+function pkDefault(type, parentKey, viewDate){
+  const vp=(viewDate||todayStr()).split('-'); const cy=+vp[0], cm=+vp[1];
+  const pp=parentKey?pkParse(parentKey):null;
+  const by=(pp&&pp.y)?pp.y:cy;
+  switch(type){
+    case 'yearly': return `yearly_${by}`;
+    case 'quarterly': return `quarterly_${by}-Q${Math.ceil(cm/3)}`;
+    case 'monthly': return `monthly_${by}-${String(cm).padStart(2,'0')}`;
+    case 'weekly': return getGoalKey('weekly', viewDate||todayStr());
+    case 'daily': return `daily_${viewDate||todayStr()}`;
+  }
+  return null;
+}
 function gtAddChild(parentId, text){
   const node={id:gtNewId(), text:text.trim(), done:false, collapsed:false, children:[]};
   if(parentId==null){ state.goalTree=[...state.goalTree, node]; }
@@ -1538,7 +1580,8 @@ function renderGoalTreeNode(node, depth){
   const titleRow=div({style:{display:"flex",alignItems:"center",gap:"6px",flexWrap:"wrap"}});
   titleRow.appendChild(div({style:{fontSize:depth===0?"14px":"13px",fontWeight:depth===0?700:500,color:node.done?"#475569":"#e2e8f0",textDecoration:node.done?"line-through":"none",lineHeight:1.3,wordBreak:"break-word"}},node.text||"(無題)"));
   if(node.periodType&&GT_PERIOD_LABELS[node.periodType]){
-    titleRow.appendChild(span({style:{fontSize:"9px",padding:"1px 6px",borderRadius:"8px",background:"#6366f122",color:"#a5b4fc",border:"1px solid #6366f155",whiteSpace:"nowrap"}},"📅 "+GT_PERIOD_LABELS[node.periodType]));
+    const badge=node.periodKey?`${GT_PERIOD_LABELS[node.periodType]} ${pkShort(node.periodKey)}`:GT_PERIOD_LABELS[node.periodType];
+    titleRow.appendChild(span({style:{fontSize:"9px",padding:"1px 6px",borderRadius:"8px",background:"#6366f122",color:"#a5b4fc",border:"1px solid #6366f155",whiteSpace:"nowrap"}},"📅 "+badge));
   }
   label.appendChild(titleRow);
   if(hasKids){
@@ -1571,18 +1614,62 @@ function renderGoalTreeModal(){
   ta.value=m0.text||"";ta.placeholder="目標を入力...";
   ta.addEventListener('input',e=>{state.goalTreeModal.text=e.target.value;});
   m.appendChild(ta);
-  // 期間連動：この目標を期間別のどの目標に紐付けるか
-  if(m0.periodType===undefined && m0.mode==="edit"){ const f=gtFind(m0.id); m0.periodType=f&&f.node.periodType||null; }
+  // 期間連動：どの期間タイプ＋どの特定期（Q1/Q2…、○月など）に紐付けるか
+  if(m0.periodType===undefined && m0.mode==="edit"){ const f=gtFind(m0.id); m0.periodType=(f&&f.node.periodType)||null; if(f&&f.node.periodKey)m0.periodKey=f.node.periodKey; }
+  let parentKey=null;
+  if(m0.mode==="add" && m0.parentId!=null){ const pf=gtFind(m0.parentId); parentKey=pf&&pf.node.periodKey; }
+  else if(m0.mode==="edit"){ const ef=gtFind(m0.id); parentKey=ef&&ef.parent&&ef.parent.periodKey; }
   m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"6px"}},"期間別目標に連動（任意）"));
-  const perRow=div({style:{display:"flex",flexWrap:"wrap",gap:"5px",marginBottom:"12px"}});
+  const perRow=div({style:{display:"flex",flexWrap:"wrap",gap:"5px",marginBottom:"8px"}});
   [["","なし"],["yearly","年間"],["quarterly","四半期"],["monthly","月次"],["weekly","週間"],["daily","日次"]].forEach(([k,lbl])=>{
     const on=(m0.periodType||"")===k;
     perRow.appendChild(btn({style:{fontSize:"11px",padding:"5px 10px",borderRadius:"7px",cursor:"pointer",fontWeight:600,
       border:`1px solid ${on?"#6366f1":"#334155"}`,background:on?"#6366f122":"transparent",color:on?"#a5b4fc":"#64748b"},
-      onClick:()=>{state.goalTreeModal.periodType=k||null;render();}},lbl));
+      onClick:()=>{ if(!k){m0.periodType=null;m0.periodKey=null;} else {m0.periodType=k;m0.periodKey=pkDefault(k,parentKey,state.viewDate||todayStr());} render(); }},lbl));
   });
   m.appendChild(perRow);
-  if(m0.periodType){ m.appendChild(div({style:{fontSize:"10px",color:"#475569",marginTop:"-6px",marginBottom:"12px"}},`「${goalPeriodLabel(m0.periodType, state.viewDate||todayStr())}」の${GT_PERIOD_LABELS[m0.periodType]}目標として期間別タブにも表示されます`)); }
+  // 特定期間ピッカー（同じ親でもQ1/Q2…や各月など複数の期に割り当て可能）
+  if(m0.periodType){
+    if(!m0.periodKey)m0.periodKey=pkDefault(m0.periodType,parentKey,state.viewDate||todayStr());
+    const parsed=pkParse(m0.periodKey)||{};
+    const picker=div({style:{background:"#0f172a",borderRadius:"8px",padding:"9px 10px",marginBottom:"12px"}});
+    const chip=(lbl,on,fn)=>{const bb=btn({style:{fontSize:"11px",padding:"5px 9px",borderRadius:"6px",cursor:"pointer",fontWeight:600,border:`1px solid ${on?"#38bdf8":"#334155"}`,background:on?"#0ea5e922":"transparent",color:on?"#38bdf8":"#64748b"}},lbl);bb.addEventListener('click',fn);return bb;};
+    if(["yearly","quarterly","monthly"].includes(m0.periodType)){
+      const yr=parsed.y||new Date().getFullYear();
+      const yrow=div({style:{display:"flex",alignItems:"center",justifyContent:"center",gap:"14px",marginBottom:m0.periodType==="yearly"?"0":"8px"}});
+      const yb=(lbl,d)=>{const bb=btn({style:{width:"30px",height:"26px",border:"1px solid #334155",borderRadius:"6px",background:"transparent",color:"#94a3b8",cursor:"pointer",fontSize:"15px"}},lbl);bb.addEventListener('click',()=>{
+        const y=yr+d;
+        if(m0.periodType==="yearly")m0.periodKey=`yearly_${y}`;
+        else if(m0.periodType==="quarterly")m0.periodKey=`quarterly_${y}-Q${parsed.q||1}`;
+        else m0.periodKey=`monthly_${y}-${String(parsed.m||1).padStart(2,'0')}`;
+        render();
+      });return bb;};
+      yrow.appendChild(yb("‹",-1));
+      yrow.appendChild(span({style:{fontSize:"15px",fontWeight:700,color:"#e2e8f0"}},`${yr}年`));
+      yrow.appendChild(yb("›",1));
+      picker.appendChild(yrow);
+    }
+    if(m0.periodType==="quarterly"){
+      const qrow=div({style:{display:"flex",gap:"6px",justifyContent:"center"}});
+      [1,2,3,4].forEach(q=>qrow.appendChild(chip(`Q${q}`,parsed.q===q,()=>{m0.periodKey=`quarterly_${parsed.y}-Q${q}`;render();})));
+      picker.appendChild(qrow);
+    }
+    if(m0.periodType==="monthly"){
+      const mrow=div({style:{display:"flex",flexWrap:"wrap",gap:"4px",justifyContent:"center"}});
+      for(let mo=1;mo<=12;mo++)mrow.appendChild(chip(`${mo}月`,parsed.m===mo,()=>{m0.periodKey=`monthly_${parsed.y}-${String(mo).padStart(2,'0')}`;render();}));
+      picker.appendChild(mrow);
+    }
+    if(m0.periodType==="weekly"||m0.periodType==="daily"){
+      picker.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"5px"}}, m0.periodType==="weekly"?"その週（月曜起点）に紐付け":"その日に紐付け"));
+      const di=document.createElement('input');di.type='date';
+      di.value = m0.periodType==="daily" ? (parsed.date||todayStr()) : (parsed.monday||todayStr());
+      di.style.cssText="width:100%;padding:8px;background:#1e293b;border:1px solid #334155;border-radius:7px;color:#e2e8f0;font-size:14px;color-scheme:dark;font-family:inherit;box-sizing:border-box";
+      di.addEventListener('change',e=>{ if(e.target.value){ m0.periodKey = m0.periodType==="daily"?`daily_${e.target.value}`:getGoalKey('weekly',e.target.value); render(); } });
+      picker.appendChild(di);
+    }
+    picker.appendChild(div({style:{fontSize:"10px",color:"#a5b4fc",marginTop:"8px",textAlign:"center",fontWeight:600}},"連動先: "+pkLabel(m0.periodKey)));
+    m.appendChild(picker);
+  }
   const btns=[];
   if(m0.mode==="edit"){
     btns.push(btn({style:{padding:"9px 12px",background:"transparent",border:"1px solid #ef444455",borderRadius:"8px",color:"#f87171",cursor:"pointer",fontSize:"12px",fontWeight:600},
@@ -1594,7 +1681,7 @@ function renderGoalTreeModal(){
       const text=(state.goalTreeModal.text||"").trim();
       if(!text){ alert("目標を入力してください"); return; }
       const pt=state.goalTreeModal.periodType||null;
-      const pk=pt?getGoalKey(pt, state.viewDate||todayStr()):null;
+      const pk=pt?(state.goalTreeModal.periodKey||pkDefault(pt,null,state.viewDate||todayStr())):null;
       if(m0.mode==="add"){
         gtAddChild(m0.parentId==null?null:m0.parentId, text);
         // 追加直後のノード（末尾）に期間連動を設定
