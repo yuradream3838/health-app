@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.21"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.22"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -1496,6 +1496,15 @@ function gtProgress(node){
   let d=0,t=0; node.children.forEach(c=>{const r=gtProgress(c);d+=r.done;t+=r.total;});
   return {done:d,total:t};
 }
+// 期間連動：ノードに periodType（yearly等）を割り当て、periodKey で特定の期間に紐付ける
+const GT_PERIOD_LABELS={yearly:"年間",quarterly:"四半期",monthly:"月次",weekly:"週間",daily:"日次"};
+function gtCollectByPeriod(type, key, list=state.goalTree, out=[]){
+  (list||[]).forEach(n=>{
+    if(n.periodType===type && n.periodKey===key) out.push(n);
+    if(n.children&&n.children.length) gtCollectByPeriod(type,key,n.children,out);
+  });
+  return out;
+}
 function gtAddChild(parentId, text){
   const node={id:gtNewId(), text:text.trim(), done:false, collapsed:false, children:[]};
   if(parentId==null){ state.goalTree=[...state.goalTree, node]; }
@@ -1526,7 +1535,12 @@ function renderGoalTreeNode(node, depth){
   row.appendChild(cb);
   // テキスト（タップで編集）
   const label=div({style:{flex:1,minWidth:0,cursor:"pointer"}});
-  label.appendChild(div({style:{fontSize:depth===0?"14px":"13px",fontWeight:depth===0?700:500,color:node.done?"#475569":"#e2e8f0",textDecoration:node.done?"line-through":"none",lineHeight:1.3,wordBreak:"break-word"}},node.text||"(無題)"));
+  const titleRow=div({style:{display:"flex",alignItems:"center",gap:"6px",flexWrap:"wrap"}});
+  titleRow.appendChild(div({style:{fontSize:depth===0?"14px":"13px",fontWeight:depth===0?700:500,color:node.done?"#475569":"#e2e8f0",textDecoration:node.done?"line-through":"none",lineHeight:1.3,wordBreak:"break-word"}},node.text||"(無題)"));
+  if(node.periodType&&GT_PERIOD_LABELS[node.periodType]){
+    titleRow.appendChild(span({style:{fontSize:"9px",padding:"1px 6px",borderRadius:"8px",background:"#6366f122",color:"#a5b4fc",border:"1px solid #6366f155",whiteSpace:"nowrap"}},"📅 "+GT_PERIOD_LABELS[node.periodType]));
+  }
+  label.appendChild(titleRow);
   if(hasKids){
     label.appendChild(div({style:{display:"flex",alignItems:"center",gap:"6px",marginTop:"3px"}},[
       div({style:{flex:1,maxWidth:"120px",height:"5px",background:"#0f172a",borderRadius:"3px",overflow:"hidden"}},[div({style:{height:"100%",width:`${pct}%`,background:barCol,borderRadius:"3px"}})]),
@@ -1557,6 +1571,18 @@ function renderGoalTreeModal(){
   ta.value=m0.text||"";ta.placeholder="目標を入力...";
   ta.addEventListener('input',e=>{state.goalTreeModal.text=e.target.value;});
   m.appendChild(ta);
+  // 期間連動：この目標を期間別のどの目標に紐付けるか
+  if(m0.periodType===undefined && m0.mode==="edit"){ const f=gtFind(m0.id); m0.periodType=f&&f.node.periodType||null; }
+  m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"6px"}},"期間別目標に連動（任意）"));
+  const perRow=div({style:{display:"flex",flexWrap:"wrap",gap:"5px",marginBottom:"12px"}});
+  [["","なし"],["yearly","年間"],["quarterly","四半期"],["monthly","月次"],["weekly","週間"],["daily","日次"]].forEach(([k,lbl])=>{
+    const on=(m0.periodType||"")===k;
+    perRow.appendChild(btn({style:{fontSize:"11px",padding:"5px 10px",borderRadius:"7px",cursor:"pointer",fontWeight:600,
+      border:`1px solid ${on?"#6366f1":"#334155"}`,background:on?"#6366f122":"transparent",color:on?"#a5b4fc":"#64748b"},
+      onClick:()=>{state.goalTreeModal.periodType=k||null;render();}},lbl));
+  });
+  m.appendChild(perRow);
+  if(m0.periodType){ m.appendChild(div({style:{fontSize:"10px",color:"#475569",marginTop:"-6px",marginBottom:"12px"}},`「${goalPeriodLabel(m0.periodType, state.viewDate||todayStr())}」の${GT_PERIOD_LABELS[m0.periodType]}目標として期間別タブにも表示されます`)); }
   const btns=[];
   if(m0.mode==="edit"){
     btns.push(btn({style:{padding:"9px 12px",background:"transparent",border:"1px solid #ef444455",borderRadius:"8px",color:"#f87171",cursor:"pointer",fontSize:"12px",fontWeight:600},
@@ -1567,8 +1593,15 @@ function renderGoalTreeModal(){
     onClick:()=>{
       const text=(state.goalTreeModal.text||"").trim();
       if(!text){ alert("目標を入力してください"); return; }
-      if(m0.mode==="add") gtAddChild(m0.parentId==null?null:m0.parentId, text);
-      else gtUpdate(m0.id,{text});
+      const pt=state.goalTreeModal.periodType||null;
+      const pk=pt?getGoalKey(pt, state.viewDate||todayStr()):null;
+      if(m0.mode==="add"){
+        gtAddChild(m0.parentId==null?null:m0.parentId, text);
+        // 追加直後のノード（末尾）に期間連動を設定
+        if(pt){ const list=m0.parentId==null?state.goalTree:(gtFind(m0.parentId)?.node.children||[]); const created=list[list.length-1]; if(created){created.periodType=pt;created.periodKey=pk;saveGoalTree();} }
+      } else {
+        gtUpdate(m0.id,{text, periodType:pt, periodKey:pk});
+      }
       state.goalTreeModal=null; render();
     }},"保存"));
   m.appendChild(div({style:{display:"flex",gap:"8px",alignItems:"center"}},btns));
@@ -1665,6 +1698,27 @@ function renderGoals(vd, ds){
       pr.addEventListener('change',e=>setGoal(type,vd,{progress:e.target.value}));
       pr.addEventListener('blur',e=>setGoal(type,vd,{progress:e.target.value}));
       card.appendChild(pr);
+    }
+
+    // 目標ツリーから連動している目標
+    const linked=gtCollectByPeriod(type, getGoalKey(type,vd));
+    if(linked.length){
+      card.appendChild(div({style:{fontSize:"10px",color:"#a5b4fc",marginTop:"10px",marginBottom:"4px",fontWeight:600}},"🌳 目標ツリーから連動"));
+      linked.forEach(n=>{
+        const prog=gtProgress(n); const hasKids=n.children&&n.children.length; const pct=prog.total?Math.round(prog.done/prog.total*100):0;
+        const rrow=div({style:{display:"flex",alignItems:"center",gap:"8px",padding:"6px 8px",background:"#6366f111",border:"1px solid #6366f133",borderRadius:"7px",marginBottom:"4px"}});
+        const cb=btn({style:{width:"20px",height:"20px",flexShrink:0,borderRadius:"5px",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"12px",color:"#fff",
+          border:`2px solid ${n.done?"#22c55e":"#334155"}`,background:n.done?"#22c55e":"transparent"}},n.done?"✓":"");
+        cb.addEventListener('click',()=>{gtUpdate(n.id,{done:!n.done});render();});
+        rrow.appendChild(cb);
+        const tx=div({style:{flex:1,minWidth:0,cursor:"pointer"}},[
+          div({style:{fontSize:"12px",color:n.done?"#475569":"#e2e8f0",textDecoration:n.done?"line-through":"none",wordBreak:"break-word"}},n.text||"(無題)"),
+          hasKids?div({style:{fontSize:"9px",color:"#64748b",marginTop:"2px"}},`下位目標 ${prog.done}/${prog.total} (${pct}%)`):null
+        ]);
+        tx.addEventListener('click',()=>{state.goalView="tree";state.goalTreeModal={mode:"edit",id:n.id,text:n.text||""};render();});
+        rrow.appendChild(tx);
+        card.appendChild(rrow);
+      });
     }
 
     wrap.appendChild(card);
