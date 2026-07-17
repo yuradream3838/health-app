@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.17"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.18"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -2773,9 +2773,21 @@ function renderDaySchedule(vd,ds,isToday){
     wrap.appendChild(pc);
   }
 
-  // タイムライン（0〜24時）
-  const HOUR_H=40, START_H=0, END_H=24;
+  // タイムライン（0〜24時）。1時間の高さは調整可能（既定56px・ピンチ/ボタンで変更）
+  if(state.scheduleHourH==null){ let v=null; try{v=localStorage.getItem(STORAGE_KEY+"_hourh");}catch{} state.scheduleHourH=v?Math.max(30,Math.min(150,parseFloat(v)||56)):56; }
+  const HOUR_H=state.scheduleHourH, START_H=0, END_H=24;
+  const setHourH=nh=>{ state.scheduleHourH=Math.max(30,Math.min(150,Math.round(nh))); try{localStorage.setItem(STORAGE_KEY+"_hourh",String(state.scheduleHourH));}catch{} render(); };
   const tlCard=div({className:"card",style:{padding:"10px"}});
+  // ズーム操作＋操作ヒント
+  const zoomRow=div({style:{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"6px"}});
+  zoomRow.appendChild(span({style:{fontSize:"9px",color:"#475569"}},"← スワイプで前後日 / 2本指ピンチで拡大"));
+  const zoomCtl=div({style:{display:"flex",alignItems:"center",gap:"5px"}});
+  zoomCtl.appendChild(span({style:{fontSize:"10px",color:"#475569"}},"幅"));
+  const zBtn=(lbl,delta)=>btn({style:{width:"26px",height:"24px",border:"1px solid #334155",borderRadius:"6px",background:"#0f172a",color:"#94a3b8",fontSize:"14px",fontWeight:700,cursor:"pointer",lineHeight:1},onClick:()=>setHourH((state.scheduleHourH||56)+delta)},lbl);
+  zoomCtl.appendChild(zBtn("−",-8));
+  zoomCtl.appendChild(zBtn("＋",8));
+  zoomRow.appendChild(zoomCtl);
+  tlCard.appendChild(zoomRow);
   tlCard.appendChild(div({style:{display:"flex",marginBottom:"6px"}},[
     div({style:{width:"34px"}},""),
     div({style:{flex:1,fontSize:"10px",fontWeight:700,color:"#38bdf8",textAlign:"center"}},"📅 予定"),
@@ -2864,7 +2876,57 @@ function renderDaySchedule(vd,ds,isToday){
 
   tlCard.appendChild(tl);
   wrap.appendChild(tlCard);
+  attachScheduleGestures(wrap, tl);
   return wrap;
+}
+
+// 予定タブ「日」のジェスチャー：単一指の左右スワイプで前後日、2本指ピンチで1時間の高さ調整
+function attachScheduleGestures(dayWrap, tl){
+  let sx=0,sy=0,st=0,singleActive=false,multi=false;
+  let pStartDist=0,pStartH=0,pinching=false,pinchF=1;
+  const D=t=>Math.hypot(t[0].clientX-t[1].clientX,t[0].clientY-t[1].clientY);
+  // 単一指スワイプ（前後日）
+  dayWrap.addEventListener('touchstart',e=>{
+    if(e.touches.length>1){ multi=true; singleActive=false; return; }
+    multi=false; const t=e.touches[0]; sx=t.clientX; sy=t.clientY; st=Date.now(); singleActive=true;
+  },{passive:true});
+  dayWrap.addEventListener('touchend',e=>{
+    if(singleActive && !multi && !pinching && e.changedTouches.length){
+      const t=e.changedTouches[0]; const dx=t.clientX-sx, dy=t.clientY-sy;
+      if(Math.abs(dx)>55 && Math.abs(dx)>Math.abs(dy)*1.6 && (Date.now()-st)<700){
+        singleActive=false;
+        if(dx>0) prevDate(); else nextDate();
+        return;
+      }
+    }
+    singleActive=false;
+  },{passive:true});
+  // 2本指ピンチ（1時間の高さ）— タイムライン上で
+  if(tl){
+    tl.addEventListener('touchstart',e=>{
+      if(e.touches.length===2){ pinching=true; multi=true; pStartDist=D(e.touches)||1; pStartH=state.scheduleHourH||56; pinchF=1; tl.style.transformOrigin='top center'; }
+    },{passive:false});
+    tl.addEventListener('touchmove',e=>{
+      if(pinching && e.touches.length===2){
+        e.preventDefault();
+        const raw=D(e.touches)/pStartDist;
+        pinchF=Math.max(30/pStartH, Math.min(150/pStartH, raw));
+        tl.style.transform=`scaleY(${pinchF.toFixed(3)})`;
+      }
+    },{passive:false});
+    tl.addEventListener('touchend',e=>{
+      if(pinching && e.touches.length<2){
+        pinching=false;
+        tl.style.transform=''; tl.style.transformOrigin='';
+        const nh=Math.round(Math.max(30,Math.min(150,pStartH*pinchF)));
+        if(nh!==state.scheduleHourH){
+          state.scheduleHourH=nh;
+          try{localStorage.setItem(STORAGE_KEY+"_hourh",String(nh));}catch{}
+        }
+        render();
+      }
+    },{passive:true});
+  }
 }
 
 // ── 週カレンダー ──
