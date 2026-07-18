@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.35"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.36"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -2483,10 +2483,11 @@ function getActualActivities(vd){
     if(e<=s)e=s+(n.mins||30);
     acts.push({title:"💤 昼寝",startMin:s,endMin:e,color:"#93c5fd"});
   });
-  // 射精も実際の行動として反映（ピンクで区別・点イベント）
+  // 射精も実際の行動として反映（ピンクで区別・点イベント）。タグは略記表示（自慰→ON / セックス→SE）
   (daily.ejaculations||[]).forEach(ej=>{
     const s=(ej.hour||0)*60+(ej.min||0);
-    acts.push({title:`💧 射精${ej.tag?"("+ej.tag+")":""}`,startMin:s,endMin:s+12,isPoint:true,color:"#ec4899"});
+    const tagAbbr = ej.tag==="自慰"?"ON":ej.tag==="セックス"?"SE":(ej.tag||"");
+    acts.push({title:`💧 射精${tagAbbr?"("+tagAbbr+")":""}`,startMin:s,endMin:s+12,isPoint:true,color:"#ec4899"});
   });
   // 日記で記録した実際の勤務は実際(右)列に反映（予定シフトとは独立）
   if(daily.workStart!=null&&daily.workEnd!=null){
