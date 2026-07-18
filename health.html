@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.28"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.29"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -1625,7 +1625,7 @@ function renderGoalTreeModal(){
   const m=div({className:"modal-box"});
   bg.addEventListener('click',()=>{state.goalTreeModal=null;render();});
   m.addEventListener('click',e=>e.stopPropagation());
-  m.appendChild(div({style:{fontSize:"15px",fontWeight:700,color:"#e2e8f0",marginBottom:"4px"}},m0.mode==="add"?(m0.parentId==null?"🏆 年間目標を追加":"🎯 下位目標を追加"):"目標を編集"));
+  m.appendChild(div({style:{fontSize:"15px",fontWeight:700,color:"#e2e8f0",marginBottom:"4px"}},m0.mode==="add"?(m0.parentId==null?("🎯 "+((m0.periodType&&GT_PERIOD_LABELS[m0.periodType])?GT_PERIOD_LABELS[m0.periodType]+"目標":"目標")+"を追加"):"🎯 下位目標を追加"):"目標を編集"));
   if(m0.mode==="add"&&m0.parentId!=null){ const f=gtFind(m0.parentId); if(f)m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"10px"}},`「${f.node.text}」を達成するための小さな目標`)); }
   const ta=document.createElement('textarea');
   ta.style.cssText="width:100%;height:80px;padding:10px 12px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:14px;font-family:inherit;box-sizing:border-box;resize:vertical;margin:6px 0 12px";
@@ -1716,14 +1716,21 @@ function renderGoalTreeModal(){
 function renderGoalTree(){
   const card=div({className:"card"});
   card.appendChild(div({style:{fontSize:"12px",color:"#64748b",marginBottom:"10px",lineHeight:1.6}},
-    "🏆 年間目標を最終到達点として、それを達成するための下位目標へ「＋」でどんどん掘り下げられます。子目標の達成率が親に集計されます。"));
+    "🎯 最上位の目標（年間・四半期・月次など任意の期間）を置き、達成のための下位目標へ「＋」でどんどん掘り下げられます。子目標の達成率が親に集計されます。"));
   if(!state.goalTree.length){
-    card.appendChild(div({style:{fontSize:"12px",color:"#475569",textAlign:"center",padding:"18px 0"}},"まだ目標がありません。下のボタンから年間目標を追加してください。"));
+    card.appendChild(div({style:{fontSize:"12px",color:"#475569",textAlign:"center",padding:"18px 0"}},"まだ目標がありません。下のボタンから目標を追加してください。"));
   } else {
     state.goalTree.forEach(root=>{ renderGoalTreeNode(root,0).forEach(r=>card.appendChild(r)); });
   }
-  card.appendChild(btn({style:{width:"100%",marginTop:"12px",padding:"11px",background:"#0ea5e918",border:"1px solid #0ea5e9",borderRadius:"8px",color:"#38bdf8",fontSize:"13px",fontWeight:600,cursor:"pointer"},
-    onClick:()=>{state.goalTreeModal={mode:"add",parentId:null,text:""};render();}},"🏆 年間目標を追加"));
+  // 最上位の目標を任意の期間から追加
+  card.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginTop:"14px",marginBottom:"6px"}},"最上位の目標を追加"));
+  const addRow=div({style:{display:"flex",flexWrap:"wrap",gap:"6px"}});
+  const addRoot=pt=>{ state.goalTreeModal={mode:"add",parentId:null,text:"",periodType:pt,periodKey:pt?pkDefault(pt,null,state.viewDate||todayStr()):null}; render(); };
+  [["yearly","🏆 年間"],["quarterly","📅 四半期"],["monthly","🗓 月次"],["weekly","📆 週間"],["daily","☀️ 日次"],[null,"＋ 期間なし"]].forEach(([pt,lbl])=>{
+    addRow.appendChild(btn({style:{flex:"1 1 30%",minWidth:"90px",padding:"9px 6px",background:"#0ea5e918",border:"1px solid #0ea5e955",borderRadius:"8px",color:"#38bdf8",fontSize:"12px",fontWeight:600,cursor:"pointer"},
+      onClick:()=>addRoot(pt)},lbl));
+  });
+  card.appendChild(addRow);
   return card;
 }
 
