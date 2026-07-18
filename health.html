@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.32"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.33"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -1564,6 +1564,26 @@ function pkDefault(type, parentKey, viewDate){
     case 'daily': return `daily_${viewDate||todayStr()}`;
   }
   return null;
+}
+// 旧・期間別の自由記入目標(state.goals)を目標ツリーへ一度だけ移行する
+function migrateGoalsToTree(){
+  let done=false; try{ done=localStorage.getItem(STORAGE_KEY+"_goalsmigrated")==="1"; }catch{}
+  if(done) return;
+  const goals=state.goals||{};
+  const existing=new Set();
+  (function walk(list){ (list||[]).forEach(n=>{ existing.add((n.periodKey||"")+"|"+(n.text||"")); if(n.children)walk(n.children); }); })(state.goalTree||[]);
+  let n=0;
+  Object.keys(goals).forEach(k=>{
+    const g=goals[k]; if(!g) return;
+    const text=(g.text||"").trim(); if(!text) return;
+    const type=k.split('_')[0];
+    if(!GT_PERIOD_LABELS[type]||!pkParse(k)) return; // 期間形式のキーのみ
+    const sig=k+"|"+text; if(existing.has(sig)) return;
+    state.goalTree.push({id:gtNewId(), text, done:!!g.done, note:(g.progress||"").trim(), collapsed:false, children:[], periodType:type, periodKey:k});
+    existing.add(sig); n++;
+  });
+  if(n>0){ saveGoalTree(); state._goalsMigratedCount=n; }
+  try{ localStorage.setItem(STORAGE_KEY+"_goalsmigrated","1"); }catch{}
 }
 function gtAddChild(parentId, text){
   const node={id:gtNewId(), text:text.trim(), done:false, collapsed:false, children:[]};
@@ -6259,8 +6279,10 @@ function renderEditTimerModal(vd){
 loadStorage();
 state.forecast=genForecast();
 state.viewDate = todayStr();
+migrateGoalsToTree(); // 旧・期間別の記入内容を目標ツリーへ一度だけ移行
 render();
 document.title="体調管理 v"+APP_VERSION;
+if(state._goalsMigratedCount){ setTimeout(()=>{ showToast(`過去の目標 ${state._goalsMigratedCount}件を目標ツリーに移動しました`,"#22c55e"); state._goalsMigratedCount=0; },900); }
 checkStorageAndAlert();
 checkBackupReminder();
 // PWA: Service Worker登録＋自動更新
