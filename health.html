@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.29"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.30"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -3859,7 +3859,14 @@ async function runAISchedule(vd){
     const existing=getEventsForDate(vd).map(e=>`${String(e.startH).padStart(2,'0')}:${String(e.startM).padStart(2,'0')}〜${String(e.endH).padStart(2,'0')}:${String(e.endM).padStart(2,'0')} ${e.title}`).join("\n")||"なし";
     const prioT=t=>(t.imp&&t.urg)?"[最優先]":t.imp?"[重要]":t.urg?"[緊急]":"";
     const todoTasks=(state.tasks.todo||[]).filter(t=>!t.done).map(t=>`${prioT(t)}${t.text}`).join(", ")||"なし";
-    const routines=TODO_ITEMS.map(i=>i.label).join(", ");
+    // ルーティン設定でまとめられているグループは「ひとかたまりの予定」として渡す
+    const routineGroups=(state.routines||[]).filter(g=>g.ids&&g.ids.length);
+    const routineIdSet=new Set(routineGroups.flatMap(g=>g.ids));
+    const routineDesc=routineGroups.map(g=>{
+      const labels=g.ids.map(id=>{const it=TODO_ITEMS.find(x=>x.id===id);return it?it.label:null;}).filter(Boolean);
+      return `「${g.title}」= ${labels.join("・")}`;
+    }).join("\n")||"なし";
+    const soloItems=TODO_ITEMS.filter(it=>!routineIdSet.has(it.id)).map(it=>it.label).join(", ")||"なし";
     const now=new Date();
     const isTodayFlag=vd===todayStr();
     const timeCtx=isTodayFlag?`現在時刻は${now.getHours()}:${String(now.getMinutes()).padStart(2,'0')}です。今の時刻以降のスケジュールだけ提案してください。`:"1日全体のスケジュールを提案してください。";
@@ -3870,8 +3877,9 @@ async function runAISchedule(vd){
       body:JSON.stringify({
         system:`あなたは生活プランナーです。ユーザーの1日のスケジュールを提案し、以下のJSON形式のみで返答してください:
 {"comment":"提案の説明1〜2文","events":[{"title":"予定名","startH":9,"startM":0,"endH":10,"endM":30}]}
-ルール: 既存の予定と重複しない時間に配置。勤務時間中には予定を入れない。[最優先][重要][緊急]のタスクを優先的に配置。朝晩のルーティンは「朝ルーティン」「夜ルーティン」でまとめる。食事時間を確保。無理のない量にする。`,
-        prompt:`日付: ${vd}\n勤務: ${shift}\n${timeCtx}\n\n【既存の予定】\n${existing}\n\n【やることリスト(未完了・優先度付き)】\n${todoTasks}\n\n【毎日のルーティン】\n${routines}\n\nスケジュールを提案してください。`
+ルール: 既存の予定と重複しない時間に配置。勤務時間中には予定を入れない。[最優先][重要][緊急]のタスクを優先的に配置。食事時間を確保。無理のない量にする。
+重要: 「ルーティン」に挙げたグループは、中の個々の項目を別々に配置せず、必ずグループ名（例: 🌅モーニングルーティン）のまま【1つのまとまった予定】として1件だけ配置すること。各ルーティンの所要は含まれる項目数に応じて15〜45分程度を目安にする。その他の項目は必要に応じて個別に配置してよい。`,
+        prompt:`日付: ${vd}\n勤務: ${shift}\n${timeCtx}\n\n【既存の予定】\n${existing}\n\n【やることリスト(未完了・優先度付き)】\n${todoTasks}\n\n【ルーティン（各グループはまとめて1件の予定として配置。titleはグループ名のまま）】\n${routineDesc}\n\n【その他の毎日の項目（個別に配置してよい）】\n${soloItems}\n\nスケジュールを提案してください。`
       })
     });
     const data=await res.json();
