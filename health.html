@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.25"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.26"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -572,7 +572,7 @@ const state = {
   shiftPattern:defaultShiftPattern(), swapMode:false, swapFirst:null,
   planPatterns:defaultPlanPatterns(), customTodos:[], customTodoModal:null,
   scheduleSubTab:"日", editEventUid:null, editEventIsRepeat:false, editScope:"all", patternEdit:null,
-  newEvH:9, newEvM:0, newEvEndH:10, newEvEndM:0, newEvTitle:"", newEvRepeat:"none", newEvColor:"#38bdf8", newEvWeekdays:[], newEvFromTask:null, newEvAllDay:false,
+  newEvH:9, newEvM:0, newEvEndH:10, newEvEndM:0, newEvEndNextDay:false, newEvTitle:"", newEvRepeat:"none", newEvColor:"#38bdf8", newEvWeekdays:[], newEvFromTask:null, newEvAllDay:false,
   aiScheduleLoading:false, aiScheduleProposal:null,
   aiAnalysisResult:null, aiAnalysisLoading:false, aiAnalysisError:null, aiAnalysisRemaining:null,
   events:{}, taskList:[], wishList:[], shopList:[],
@@ -582,7 +582,7 @@ const state = {
   goalHistoryType:null, goalEditKey:null,
   goalEditType:null, goalEditText:"", goalEditProgress:"", goalEditDone:false, goalEditPeriodStr:"",
   goalView:"tree", goalTree:[], goalTreeModal:null,
-  actEditUid:null, actTitle:"", actSH:9, actSM:0, actEH:10, actEM:0, actColor:"#f472b6", actUnplanned:true, actDate:null,
+  actEditUid:null, actTitle:"", actSH:9, actSM:0, actEH:10, actEM:0, actEndNextDay:false, actColor:"#f472b6", actUnplanned:true, actDate:null,
   analysisSubTab:"日次ログ", diarySubTab:"生活記録", taskSubTab:"TODO",
   storageAlert:false, storageExportYear:null,
   weather:[], weatherCity:null, weatherLoading:false, weatherError:null,
@@ -2375,6 +2375,19 @@ function repeatLabel(t, startDate){
 }
 
 // TODOタブから「実際の行動」を取得（タイマー＋チェック完了）
+// 日跨ぎ対応：予定/実績の絶対分スパン（endNextDay または 終了<開始 で翌日へ延長）
+function itemAbsSpan(it){
+  let s=(it.startH||0)*60+(it.startM||0);
+  let e=(it.endH!=null?it.endH*60+(it.endM||0):s+15);
+  if(it.endNextDay) e+=1440;
+  if(e<=s) e+=1440;
+  return {s,e};
+}
+// 所有日(vd)に表示する部分：[start, min(1440,end)]
+function crossOwnerSeg(it){ const {s,e}=itemAbsSpan(it); if(s>=1440) return null; return {...it, startMin:s, endMin:Math.min(1440,e)}; }
+// 翌日にまたがった尾部：[0, end-1440]
+function crossTailSeg(it){ const {s,e}=itemAbsSpan(it); if(e<=1440) return null; return {...it, startMin:0, endMin:Math.min(1440,e-1440), _tail:true}; }
+
 function getActualActivities(vd){
   const t=state.todos[vd]||{};
   const acts=[];
@@ -2471,27 +2484,41 @@ function getActualActivities(vd){
       if(mins!=null) acts.push({title:"✓"+ct.label,startMin:mins,endMin:mins+12,isPoint:true,color:ct.color||"#22c55e"});
     }
   });
-  // 手動登録した実績（予定外・突発的な行動を含む）
+  // 手動登録した実績（予定外・突発的な行動を含む）。日跨ぎは当日側を末尾までクリップ
   (daily.actuals||[]).forEach(a=>{
-    const s=a.startH*60+(a.startM||0);
-    let e=a.endH!=null?a.endH*60+(a.endM||0):s+15;
-    if(e<=s)e=s+15;
+    const {s,e}=itemAbsSpan(a);
+    if(s>=1440)return;
     acts.push({title:(a.unplanned?"⚡ ":"")+a.title,startMin:s,endMin:Math.min(1440,e),color:a.color||"#f472b6",manualUid:a.uid,unplanned:!!a.unplanned});
   });
   return acts.sort((a,b)=>a.startMin-b.startMin);
 }
 
+// 予定の新規追加（時刻タップからも利用）
+function openAddEvent(vd, startH, startM){
+  const now=new Date();
+  const sh = startH!=null?startH:now.getHours();
+  const sm = startM!=null?startM:0;
+  state.modal="addEvent";state.editEventUid=null;state.editEventIsRepeat=false;
+  state.newEvTitle="";state.newEvH=sh;state.newEvM=sm;
+  state.newEvEndH=(sh+1)%24;state.newEvEndM=sm;state.newEvEndNextDay=(sh+1)>=24;
+  state.newEvRepeat="none";state.newEvColor=EV_COLORS[0];
+  state.newEvWeekdays=[parseDS(vd).getDay()];
+  state.newEvFromTask=null;state.newEvAllDay=false;
+  render();
+}
 // 実績（予定外の突発的な行動を含む）の追加・編集
-function openActualEdit(vd, uid){
+function openActualEdit(vd, uid, startH){
   const d=getDaily(vd);
   const ex=uid?(d.actuals||[]).find(a=>a.uid===uid):null;
   const now=new Date();
+  const sh = startH!=null?startH:now.getHours();
   state.actEditUid=uid||null;
   state.actTitle=ex?ex.title:"";
-  state.actSH=ex?ex.startH:now.getHours();
+  state.actSH=ex?ex.startH:sh;
   state.actSM=ex?(ex.startM||0):0;
-  state.actEH=ex&&ex.endH!=null?ex.endH:Math.min(23,now.getHours()+1);
+  state.actEH=ex&&ex.endH!=null?ex.endH:((sh+1)%24);
   state.actEM=ex?(ex.endM||0):0;
+  state.actEndNextDay=ex?!!ex.endNextDay:((sh+1)>=24);
   state.actColor=ex?(ex.color||"#f472b6"):"#f472b6";
   state.actUnplanned=ex?!!ex.unplanned:true;
   state.actDate=vd;
@@ -2511,11 +2538,15 @@ function renderActualModal(){
   m.appendChild(ti);
   const timeInput=(h,mm,set)=>{const i=document.createElement('input');i.type='time';i.value=`${String(h??0).padStart(2,'0')}:${String(mm||0).padStart(2,'0')}`;i.style.cssText="flex:1;min-width:0;padding:8px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:15px;color-scheme:dark;font-family:inherit";i.addEventListener('change',e=>{const q=(e.target.value||'').split(':');const H=Number(q[0]),M=Number(q[1]);if(!isNaN(H)&&!isNaN(M))set(H,M);});return i;};
   m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"4px"}},"時刻"));
-  m.appendChild(div({style:{display:"flex",gap:"8px",alignItems:"center",marginBottom:"12px"}},[
+  m.appendChild(div({style:{display:"flex",gap:"8px",alignItems:"center",marginBottom:"6px"}},[
     timeInput(state.actSH,state.actSM,(H,M)=>{state.actSH=H;state.actSM=M;}),
     span({style:{color:"#64748b"}},"〜"),
     timeInput(state.actEH,state.actEM,(H,M)=>{state.actEH=H;state.actEM=M;})
   ]));
+  const ndB=btn({style:{width:"100%",padding:"8px",borderRadius:"8px",cursor:"pointer",fontWeight:600,fontSize:"12px",marginBottom:"12px",
+    border:`1px solid ${state.actEndNextDay?"#38bdf8":"#334155"}`,background:state.actEndNextDay?"#0ea5e922":"transparent",color:state.actEndNextDay?"#38bdf8":"#64748b"}},state.actEndNextDay?"🌙 終了は翌日: ON":"🌙 終了は翌日: OFF");
+  ndB.addEventListener('click',()=>{state.actEndNextDay=!state.actEndNextDay;render();});
+  m.appendChild(ndB);
   const ub=btn({style:{width:"100%",padding:"9px",borderRadius:"8px",cursor:"pointer",fontWeight:600,fontSize:"12px",marginBottom:"12px",
     border:`1px solid ${state.actUnplanned?"#f59e0b":"#334155"}`,background:state.actUnplanned?"#f59e0b22":"transparent",color:state.actUnplanned?"#f59e0b":"#64748b"}},state.actUnplanned?"⚡ 突発的（予定外）: ON":"⚡ 突発的（予定外）: OFF");
   ub.addEventListener('click',()=>{state.actUnplanned=!state.actUnplanned;render();});
@@ -2538,7 +2569,7 @@ function renderActualModal(){
       const title=(state.actTitle||"").trim();
       if(!title){alert("内容を入力してください");return;}
       const d=getDaily(state.actDate);
-      const rec={uid:state.actEditUid||Date.now(),title,startH:state.actSH,startM:state.actSM,endH:state.actEH,endM:state.actEM,color:state.actColor,unplanned:!!state.actUnplanned};
+      const rec={uid:state.actEditUid||Date.now(),title,startH:state.actSH,startM:state.actSM,endH:state.actEH,endM:state.actEM,endNextDay:!!state.actEndNextDay,color:state.actColor,unplanned:!!state.actUnplanned};
       const list=(d.actuals||[]).filter(a=>a.uid!==rec.uid); list.push(rec);
       state.modal=null;
       setDaily(state.actDate,{actuals:list});
@@ -3053,22 +3084,21 @@ function renderScheduleHub(vd,ds,isToday){
 function renderDaySchedule(vd,ds,isToday){
   const wrap=div({});
   const allEv=getEventsForDate(vd);
-  const events=[...allEv.filter(e=>!e.allDay),...getPlannedExtras(vd)]; // 時刻ありはタイムラインへ
+  const prevEv=getEventsForDate(addDays(vd,-1)).filter(e=>!e.allDay); // 前日始まりの日跨ぎ予定
+  const events=[
+    ...allEv.filter(e=>!e.allDay).map(crossOwnerSeg).filter(Boolean),  // 当日分（日跨ぎは末尾までクリップ）
+    ...prevEv.map(crossTailSeg).filter(Boolean),                        // 前日からの尾部（0時〜）
+    ...getPlannedExtras(vd)                                             // パターン等は既にクリップ済み
+  ];
   const allDayEvents=allEv.filter(e=>e.allDay);                         // 終日は上部エリアへ
-  const actuals=getActualActivities(vd);
+  const prevActuals=(getDaily(addDays(vd,-1)).actuals||[])
+    .map(a=>{const t=crossTailSeg(a); return t?{title:(a.unplanned?"⚡ ":"")+a.title,startMin:t.startMin,endMin:t.endMin,color:a.color||"#f472b6",manualUid:a.uid,_tail:true}:null;})
+    .filter(Boolean);
+  const actuals=[...getActualActivities(vd), ...prevActuals];
 
   wrap.appendChild(div({style:{display:"flex",gap:"8px",marginBottom:"10px"}},[
     btn({style:{flex:1,padding:"9px",background:"#0ea5e918",border:"1px solid #0ea5e9",borderRadius:"8px",color:"#38bdf8",fontSize:"12px",fontWeight:600,cursor:"pointer"},
-      onClick:()=>{
-        const now=new Date();
-        state.modal="addEvent";state.editEventUid=null;state.editEventIsRepeat=false;
-        state.newEvTitle="";state.newEvH=now.getHours();state.newEvM=0;
-        state.newEvEndH=Math.min(23,now.getHours()+1);state.newEvEndM=0;
-        state.newEvRepeat="none";state.newEvColor=EV_COLORS[0];
-        state.newEvWeekdays=[parseDS(vd).getDay()];
-        state.newEvFromTask=null;state.newEvAllDay=false;
-        render();
-      }},"＋ 予定を追加"),
+      onClick:()=>openAddEvent(vd)},"＋ 予定を追加"),
     btn({style:{flex:1,padding:"9px",background:"linear-gradient(135deg,#0ea5e918,#6366f118)",border:"1px solid #6366f1",borderRadius:"8px",color:"#a5b4fc",fontSize:"12px",fontWeight:600,cursor:"pointer"},
       onClick:()=>runAISchedule(vd),
       },state.aiScheduleLoading?"🤖 提案中...":"🤖 AI提案")
@@ -3145,7 +3175,7 @@ function renderDaySchedule(vd,ds,isToday){
   const tlCard=div({className:"card",style:{padding:"10px"}});
   // ズーム操作＋操作ヒント
   const zoomRow=div({style:{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"6px"}});
-  zoomRow.appendChild(span({style:{fontSize:"9px",color:"#475569"}},"← スワイプで前後日 / 2本指ピンチで拡大"));
+  zoomRow.appendChild(span({style:{fontSize:"9px",color:"#475569"}},"空き時間タップで追加 / スワイプで前後日 / ピンチで拡大"));
   const zoomCtl=div({style:{display:"flex",alignItems:"center",gap:"5px"}});
   zoomCtl.appendChild(span({style:{fontSize:"10px",color:"#475569"}},"幅"));
   const zBtn=(lbl,delta)=>btn({style:{width:"26px",height:"24px",border:"1px solid #334155",borderRadius:"6px",background:"#0f172a",color:"#94a3b8",fontSize:"14px",fontWeight:700,cursor:"pointer",lineHeight:1},onClick:()=>setHourH((state.scheduleHourH||56)+delta)},lbl);
@@ -3224,7 +3254,17 @@ function renderDaySchedule(vd,ds,isToday){
       tl.appendChild(block);
     });
   };
+  // 空き時間タップで作成（左半分=予定 / 右半分=実績）。ブロック(z3)の下(z1)に敷く
+  const tapLayer=div({style:{position:"absolute",inset:"0",zIndex:1,cursor:"pointer"}});
+  tapLayer.addEventListener('click',e=>{
+    const rect=tapLayer.getBoundingClientRect();
+    const y=e.clientY-rect.top, x=e.clientX-rect.left;
+    const hour=Math.max(0,Math.min(23,Math.floor(y/HOUR_H)+START_H));
+    if(x > rect.width*0.5) openActualEdit(vd,null,hour); else openAddEvent(vd,hour);
+  });
+  tl.appendChild(tapLayer);
   blockArea(events,"36px","50% - 40px",EV_COLORS[0],ev=>{
+    if(ev._tail){ state.viewDate=addDays(vd,-1); render(); return; } // 前日の予定 → 前日へ移動して編集
     if(ev.customTodo){ state.tab="タスク";state.taskSubTab="TODO";render(); return; }
     if(ev.isPattern){ openPatternEdit(ev,vd); return; }
     state.modal="addEvent";state.editEventUid=ev.uid;state.editEventIsRepeat=!!ev.isRepeat;
@@ -3238,7 +3278,7 @@ function renderDaySchedule(vd,ds,isToday){
     state.editScope="this";
     render();
   });
-  blockArea(actuals,"50% + 2px","50% - 6px","#22c55e",(ev)=>{ if(ev.manualUid) openActualEdit(vd, ev.manualUid); });
+  blockArea(actuals,"50% + 2px","50% - 6px","#22c55e",(ev)=>{ if(ev._tail){ state.viewDate=addDays(vd,-1); render(); return; } if(ev.manualUid) openActualEdit(vd, ev.manualUid); });
 
   tlCard.appendChild(tl);
   wrap.appendChild(tlCard);
@@ -3645,6 +3685,11 @@ function renderAddEventModal(vd){
   if(!state.newEvAllDay){
     m.appendChild(mkT("開始",()=>state.newEvH,()=>state.newEvM,v=>{state.newEvH=v;},v=>{state.newEvM=v;}));
     m.appendChild(mkT("終了",()=>state.newEvEndH,()=>state.newEvEndM,v=>{state.newEvEndH=v;},v=>{state.newEvEndM=v;}));
+    const ndB=btn({style:{width:"100%",padding:"8px",borderRadius:"8px",cursor:"pointer",fontWeight:600,fontSize:"12px",marginBottom:"6px",
+      border:`1px solid ${state.newEvEndNextDay?"#38bdf8":"#334155"}`,background:state.newEvEndNextDay?"#0ea5e922":"transparent",color:state.newEvEndNextDay?"#38bdf8":"#64748b"}},state.newEvEndNextDay?"🌙 終了は翌日: ON":"🌙 終了は翌日: OFF");
+    ndB.addEventListener('click',()=>{state.newEvEndNextDay=!state.newEvEndNextDay;render();});
+    m.appendChild(ndB);
+    m.appendChild(div({style:{fontSize:"10px",color:"#475569",marginBottom:"12px"}},"終了が開始より前、または「終了は翌日」ONで日をまたぐ予定になります"));
   }
 
   // 色選択
@@ -3753,7 +3798,7 @@ function renderAddEventModal(vd){
       onClick:()=>{
         if(!state.newEvTitle.trim()){alert("タイトルを入力してください");return;}
         const ft=state.newEvFromTask||null;
-        const evData={title:state.newEvTitle.trim(),startH:state.newEvH,startM:state.newEvM,endH:state.newEvEndH,endM:state.newEvEndM,color:state.newEvColor,allDay:!!state.newEvAllDay,...(ft?{fromTask:ft}:{})};
+        const evData={title:state.newEvTitle.trim(),startH:state.newEvH,startM:state.newEvM,endH:state.newEvEndH,endM:state.newEvEndM,endNextDay:!!state.newEvEndNextDay,color:state.newEvColor,allDay:!!state.newEvAllDay,...(ft?{fromTask:ft}:{})};
         const isNone=state.newEvRepeat==="none";
         const newWds=isW(state.newEvRepeat)?((state.newEvWeekdays&&state.newEvWeekdays.length)?[...state.newEvWeekdays].sort((a,b)=>a-b):[parseDS(vd).getDay()]):null;
         const addSingle=()=>{ if(!state.schedule[vd])state.schedule[vd]=[]; state.schedule[vd].push({uid:Date.now(),...evData}); };
