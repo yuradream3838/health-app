@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.33"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.34"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -583,7 +583,7 @@ const state = {
   goalEditType:null, goalEditText:"", goalEditProgress:"", goalEditDone:false, goalEditPeriodStr:"",
   goalView:"tree", goalTree:[], goalTreeModal:null,
   actEditUid:null, actTitle:"", actSH:9, actSM:0, actEH:10, actEM:0, actEndNextDay:false, actColor:"#f472b6", actUnplanned:true, actDate:null,
-  analysisSubTab:"日次ログ", diarySubTab:"生活記録", taskSubTab:"TODO",
+  analysisSubTab:"日次ログ", diarySubTab:"生活記録", taskSubTab:"ルーティン",
   storageAlert:false, storageExportYear:null,
   weather:[], weatherCity:null, weatherLoading:false, weatherError:null,
   editHour:null, editDate:null, editScore:null, editSymptoms:[], editNote:"",
@@ -2782,11 +2782,12 @@ function renderDiaryHub(vd,ds,curH,isToday){
 
 // ── タスクハブ（TODO・目標・やること・買物）──
 function renderTaskHub(vd,ds,isToday){
-  return renderSubHub(["TODO","たまに","目標","やること","買物"],state.taskSubTab,t=>{state.taskSubTab=t;render();},()=>{
-    if(state.taskSubTab==="TODO") return renderTodo(vd,ds,isToday);
-    if(state.taskSubTab==="たまに") return renderOccasional(vd);
+  if(!["ルーティン","定期ルーティン","目標","TODO","買物"].includes(state.taskSubTab))state.taskSubTab="ルーティン";
+  return renderSubHub(["ルーティン","定期ルーティン","目標","TODO","買物"],state.taskSubTab,t=>{state.taskSubTab=t;render();},()=>{
+    if(state.taskSubTab==="ルーティン") return renderTodo(vd,ds,isToday);
+    if(state.taskSubTab==="定期ルーティン") return renderOccasional(vd);
     if(state.taskSubTab==="目標") return renderGoals(vd,ds);
-    if(state.taskSubTab==="やること") return padBody(renderTaskMatrix());
+    if(state.taskSubTab==="TODO") return padBody(renderTaskMatrix());
     if(state.taskSubTab==="買物") return padBody(renderTaskList("shopping","🛒 買物リスト","買うものメモ"));
   });
 }
@@ -3280,7 +3281,7 @@ function renderDaySchedule(vd,ds,isToday){
   tl.appendChild(tapLayer);
   blockArea(events,"36px","50% - 40px",EV_COLORS[0],ev=>{
     if(ev._tail){ state.viewDate=addDays(vd,-1); render(); return; } // 前日の予定 → 前日へ移動して編集
-    if(ev.customTodo){ state.tab="タスク";state.taskSubTab="TODO";render(); return; }
+    if(ev.customTodo){ state.tab="タスク";state.taskSubTab="定期ルーティン";render(); return; }
     if(ev.isPattern){ openPatternEdit(ev,vd); return; }
     state.modal="addEvent";state.editEventUid=ev.uid;state.editEventIsRepeat=!!ev.isRepeat;
     state.newEvTitle=ev.title;state.newEvH=ev.startH;state.newEvM=ev.startM;
@@ -3483,7 +3484,7 @@ function renderTaskMatrix(){
   const wrap=div({});
   const list=state.tasks.todo||[];
   const card=div({className:"card"});
-  card.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0",marginBottom:"2px"}},"✅ やることリスト"));
+  card.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0",marginBottom:"2px"}},"✅ TODO"));
   card.appendChild(div({style:{fontSize:"10px",color:"#475569",marginBottom:"10px"}},"重要・緊急で優先順位付け／期日設定・「予定に追加」で作業をスケジュール化"));
 
   const inputRow=div({style:{display:"flex",gap:"6px",marginBottom:"10px"}});
@@ -4089,7 +4090,7 @@ function renderTodo(vd, ds, isToday){
   wrap.appendChild(div({className:"card"},[
     div({style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"10px"}},[
       div({},[
-        div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0"}},"📋 デイリーTODO"),
+        div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0"}},"📋 デイリールーティン"),
         div({style:{fontSize:"11px",color:"#64748b",marginTop:"2px"}},
           isToday?"今日のタスク":new Date(parseInt(p2[0]),parseInt(p2[1])-1,parseInt(p2[2])).toLocaleDateString("ja-JP",{month:"short",day:"numeric"}))
       ]),
@@ -4380,7 +4381,7 @@ function renderOccasional(vd){
   const mdc=ds=>{const q=ds.split('-');return `${parseInt(q[1])}/${parseInt(q[2])}`;};
   const card=div({className:"card"});
   card.appendChild(div({style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"8px"}},[
-    div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0"}},"🔁 たまにやること"),
+    div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0"}},"🔁 定期ルーティン"),
     (()=>{const b=btn({style:{fontSize:"11px",padding:"4px 10px",background:"#0ea5e918",border:"1px solid #0ea5e9",borderRadius:"7px",color:"#38bdf8",cursor:"pointer",fontWeight:600}},"＋ 追加");
       b.addEventListener('click',()=>{state.customTodoModal={uid:null,label:"",itype:"week",n:1,startDate:vd,timeH:null,timeM:0,color:"#38bdf8",weekdays:[],shifts:[]};render();});return b;})()
   ]));
@@ -6064,7 +6065,7 @@ function renderCustomTodoModal(){
   const m=div({className:"modal-box",style:{maxHeight:"85vh",overflowY:"auto"}});
   bg.addEventListener('click',()=>{state.customTodoModal=null;render();});
   m.addEventListener('click',e=>e.stopPropagation());
-  m.appendChild(div({style:{fontSize:"15px",fontWeight:700,color:"#e2e8f0",marginBottom:"14px"}},m0.uid?"🔁 たまにやること 編集":"🔁 たまにやること 追加"));
+  m.appendChild(div({style:{fontSize:"15px",fontWeight:700,color:"#e2e8f0",marginBottom:"14px"}},m0.uid?"🔁 定期ルーティン 編集":"🔁 定期ルーティン 追加"));
   // 名前
   m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"4px"}},"名前"));
   const ti=document.createElement('input');ti.type='text';ti.value=m0.label||"";ti.placeholder="例：シーツ交換";
@@ -6179,7 +6180,7 @@ function renderCustomTodoModal(){
   m.appendChild(cwWrap);
   if(m0.uid){
     m.appendChild(btn({style:{width:"100%",padding:"7px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#475569",cursor:"pointer",fontSize:"12px",marginBottom:"8px"},
-      onClick:()=>{ if(confirm("この項目を削除しますか？")){pushUndo("たまにやることを削除しました");state.customTodos=(state.customTodos||[]).filter(x=>x.uid!==m0.uid);saveCustomTodos();state.customTodoModal=null;render();} }},"この項目を削除"));
+      onClick:()=>{ if(confirm("この項目を削除しますか？")){pushUndo("定期ルーティンを削除しました");state.customTodos=(state.customTodos||[]).filter(x=>x.uid!==m0.uid);saveCustomTodos();state.customTodoModal=null;render();} }},"この項目を削除"));
   }
   m.appendChild(div({style:{display:"flex",gap:"8px"}},[
     btn({className:"btn-ghost",style:{flex:1},onClick:()=>{state.customTodoModal=null;render();}},"キャンセル"),
