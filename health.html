@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.23"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.24"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -6064,9 +6064,37 @@ render();
 document.title="体調管理 v"+APP_VERSION;
 checkStorageAndAlert();
 checkBackupReminder();
-// PWA: Service Worker登録
+// PWA: Service Worker登録＋自動更新
 if('serviceWorker' in navigator){
-  navigator.serviceWorker.register('sw.js').catch(()=>{});
+  // 既に別のSWが制御している状態で新SWが有効化されたら1度だけリロード（最新版を確実に表示）
+  const hadController = !!navigator.serviceWorker.controller;
+  let swReloaded = false;
+  navigator.serviceWorker.addEventListener('controllerchange',()=>{
+    if(swReloaded || !hadController) return;
+    swReloaded = true;
+    location.reload();
+  });
+  navigator.serviceWorker.register('sw.js').then(reg=>{
+    // 起動時と1時間ごとに更新チェック
+    reg.update().catch(()=>{});
+    setInterval(()=>reg.update().catch(()=>{}), 60*60*1000);
+    // 待機中の新SWがあれば即時切替を促す
+    reg.addEventListener('updatefound',()=>{
+      const nw=reg.installing;
+      if(!nw)return;
+      nw.addEventListener('statechange',()=>{
+        if(nw.state==='installed' && navigator.serviceWorker.controller){
+          try{ nw.postMessage('skipWaiting'); }catch(_){}
+        }
+      });
+    });
+  }).catch(()=>{});
+  // 画面復帰時にも更新チェック（PWAを開き直したとき等）
+  document.addEventListener('visibilitychange',()=>{
+    if(document.visibilityState==='visible'){
+      navigator.serviceWorker.getRegistration().then(r=>{ if(r)r.update().catch(()=>{}); }).catch(()=>{});
+    }
+  });
 }
 // 保存済み都市があれば自動で天気取得
 if(state.weatherCity) doFetchWeather(state.weatherCity);
