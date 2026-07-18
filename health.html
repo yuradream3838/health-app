@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.26"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.27"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -3096,16 +3096,10 @@ function renderDaySchedule(vd,ds,isToday){
     .filter(Boolean);
   const actuals=[...getActualActivities(vd), ...prevActuals];
 
-  wrap.appendChild(div({style:{display:"flex",gap:"8px",marginBottom:"10px"}},[
-    btn({style:{flex:1,padding:"9px",background:"#0ea5e918",border:"1px solid #0ea5e9",borderRadius:"8px",color:"#38bdf8",fontSize:"12px",fontWeight:600,cursor:"pointer"},
-      onClick:()=>openAddEvent(vd)},"＋ 予定を追加"),
-    btn({style:{flex:1,padding:"9px",background:"linear-gradient(135deg,#0ea5e918,#6366f118)",border:"1px solid #6366f1",borderRadius:"8px",color:"#a5b4fc",fontSize:"12px",fontWeight:600,cursor:"pointer"},
-      onClick:()=>runAISchedule(vd),
-      },state.aiScheduleLoading?"🤖 提案中...":"🤖 AI提案")
-  ]));
+  // 予定・実績の追加はタイムラインの空き時間タップで行う（左=予定 / 右=実績）
   wrap.appendChild(div({style:{marginBottom:"10px"}},[
-    btn({style:{width:"100%",padding:"9px",background:"#22c55e14",border:"1px solid #22c55e88",borderRadius:"8px",color:"#4ade80",fontSize:"12px",fontWeight:600,cursor:"pointer"},
-      onClick:()=>openActualEdit(vd,null)},"＋ 実績を追加（予定外の行動もここに）")
+    btn({style:{width:"100%",padding:"9px",background:"linear-gradient(135deg,#0ea5e918,#6366f118)",border:"1px solid #6366f1",borderRadius:"8px",color:"#a5b4fc",fontSize:"12px",fontWeight:600,cursor:"pointer"},
+      onClick:()=>runAISchedule(vd)},state.aiScheduleLoading?"🤖 提案中...":"🤖 AI提案")
   ]));
 
   // 終日・時間未指定エリア（終日予定＋時間なしのたまにやること）
