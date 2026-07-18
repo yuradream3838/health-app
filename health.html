@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.31"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.32"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -1608,6 +1608,7 @@ function renderGoalTreeNode(node, depth){
       span({style:{fontSize:"9px",color:"#64748b"}},`${prog.done}/${prog.total} (${pct}%)`)
     ]));
   }
+  if(node.note){ label.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginTop:"3px",whiteSpace:"pre-wrap",wordBreak:"break-word",borderLeft:"2px solid #334155",paddingLeft:"6px"}},"📝 "+node.note)); }
   label.addEventListener('click',()=>{state.goalTreeModal={mode:"edit",id:node.id,text:node.text||""};render();});
   row.appendChild(label);
   // ＋下位目標
@@ -1688,6 +1689,14 @@ function renderGoalTreeModal(){
     picker.appendChild(div({style:{fontSize:"10px",color:"#a5b4fc",marginTop:"8px",textAlign:"center",fontWeight:600}},"連動先: "+pkLabel(m0.periodKey)));
     m.appendChild(picker);
   }
+  // 進捗メモ
+  if(m0.note===undefined && m0.mode==="edit"){ const f=gtFind(m0.id); m0.note=(f&&f.node.note)||""; }
+  m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"6px"}},"進捗メモ（任意）"));
+  const noteTa=document.createElement('textarea');
+  noteTa.style.cssText="width:100%;height:56px;padding:9px 12px;background:#0a1120;border:1px solid #1e3a5f;border-radius:8px;color:#94a3b8;font-size:13px;font-family:inherit;box-sizing:border-box;resize:vertical;margin-bottom:12px;line-height:1.5";
+  noteTa.value=m0.note||"";noteTa.placeholder="進捗・気づきをメモ...";
+  noteTa.addEventListener('input',e=>{state.goalTreeModal.note=e.target.value;});
+  m.appendChild(noteTa);
   const btns=[];
   if(m0.mode==="edit"){
     btns.push(btn({style:{padding:"9px 12px",background:"transparent",border:"1px solid #ef444455",borderRadius:"8px",color:"#f87171",cursor:"pointer",fontSize:"12px",fontWeight:600},
@@ -1700,12 +1709,13 @@ function renderGoalTreeModal(){
       if(!text){ alert("目標を入力してください"); return; }
       const pt=state.goalTreeModal.periodType||null;
       const pk=pt?(state.goalTreeModal.periodKey||pkDefault(pt,null,state.viewDate||todayStr())):null;
+      const note=(state.goalTreeModal.note||"").trim();
       if(m0.mode==="add"){
         gtAddChild(m0.parentId==null?null:m0.parentId, text);
-        // 追加直後のノード（末尾）に期間連動を設定
-        if(pt){ const list=m0.parentId==null?state.goalTree:(gtFind(m0.parentId)?.node.children||[]); const created=list[list.length-1]; if(created){created.periodType=pt;created.periodKey=pk;saveGoalTree();} }
+        const list=m0.parentId==null?state.goalTree:(gtFind(m0.parentId)?.node.children||[]); const created=list[list.length-1];
+        if(created){ if(pt){created.periodType=pt;created.periodKey=pk;} if(note)created.note=note; saveGoalTree(); }
       } else {
-        gtUpdate(m0.id,{text, periodType:pt, periodKey:pk});
+        gtUpdate(m0.id,{text, periodType:pt, periodKey:pk, note});
       }
       state.goalTreeModal=null; render();
     }},"保存"));
@@ -1749,90 +1759,58 @@ function renderGoals(vd, ds){
   if((state.goalView||"tree")==="tree"){ wrap.appendChild(renderGoalTree()); return wrap; }
 
 
+  // 期間別は「目標ツリーで期間設定した目標」の表示・チェック・進捗メモのみ。1日目標を一番上に。
   const GOAL_TYPES=[
-    {type:"yearly",    icon:"🏆",label:"年間目標",    hasProgress:true},
-    {type:"quarterly", icon:"📅",label:"四半期目標",  hasProgress:true},
-    {type:"monthly",   icon:"🗓️",label:"月次目標",    hasProgress:true},
-    {type:"weekly",    icon:"📆",label:"週間目標",    hasProgress:true},
-    {type:"daily",     icon:"☀️",label:"一日目標",    hasProgress:false},
+    {type:"daily",     icon:"☀️",label:"一日目標"},
+    {type:"weekly",    icon:"📆",label:"週間目標"},
+    {type:"monthly",   icon:"🗓️",label:"月次目標"},
+    {type:"quarterly", icon:"📅",label:"四半期目標"},
+    {type:"yearly",    icon:"🏆",label:"年間目標"},
   ];
+  wrap.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"10px",lineHeight:1.6}},
+    "🌳 目標ツリーで各目標に期間を設定すると、その期間の欄に表示されます。ここでは達成チェックと進捗メモを編集できます（目標の追加・編集はツリーで）。"));
 
-  GOAL_TYPES.forEach(({type,icon,label,hasProgress})=>{
-    const goal=getGoal(type,vd);
+  GOAL_TYPES.forEach(({type,icon,label})=>{
     const periodLabel=goalPeriodLabel(type,vd);
+    const linked=gtCollectByPeriod(type, getGoalKey(type,vd));
+    const doneCount=linked.filter(n=>{const p=gtProgress(n);return p.total>0&&p.done===p.total;}).length;
     const card=div({className:"card",style:{marginBottom:"10px"}});
-
-    // ヘッダー
-    card.appendChild(div({style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"10px"}},[
+    card.appendChild(div({style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:linked.length?"8px":"0"}},[
       div({},[
-        div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0"}},[txt(`${icon} ${label}`)]),
+        div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0"}},`${icon} ${label}`),
         div({style:{fontSize:"10px",color:"#64748b",marginTop:"2px"}},periodLabel)
       ]),
-      div({style:{display:"flex",alignItems:"center",gap:"8px"}},[
-        btn({style:{fontSize:"10px",padding:"3px 8px",background:"transparent",border:"1px solid #334155",borderRadius:"6px",color:"#64748b",cursor:"pointer"},
-          onClick:()=>{state.goalHistoryType=type;render();}},"📋 履歴"),
-        // チェックボックス
-        (()=>{
-          const cb=btn({style:{
-            width:"28px",height:"28px",borderRadius:"8px",flexShrink:0,
-            border:`2px solid ${goal.done?"#22c55e":"#334155"}`,
-            background:goal.done?"#22c55e":"transparent",
-            cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"16px"
-          }},goal.done?"✓":"");
-          cb.addEventListener('click',()=>{
-          const newDone=!goal.done;
-          setGoal(type,vd,{done:newDone});
-          if(newDone){
-            showToast(`🎉 ${label}達成！おめでとう！`,"#f97316");
-            showConfetti();
-          }
-        });
-          return cb;
-        })()
-      ])
+      linked.length?div({style:{fontSize:"11px",fontWeight:700,color:doneCount===linked.length?"#22c55e":"#64748b"}},`${doneCount}/${linked.length}`):null
     ]));
-
-    // 目標テキスト入力
-    const ta=document.createElement('textarea');
-    ta.placeholder=`${label}を入力...`;
-    ta.value=goal.text||"";
-    ta.style.cssText="width:100%;min-height:60px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:13px;padding:8px;resize:none;box-sizing:border-box;font-family:inherit;line-height:1.5";
-    ta.addEventListener('change',e=>setGoal(type,vd,{text:e.target.value}));
-    ta.addEventListener('blur',e=>setGoal(type,vd,{text:e.target.value}));
-    card.appendChild(ta);
-
-    // 進捗テキスト（一日目標以外）
-    if(hasProgress){
-      const pr=document.createElement('textarea');
-      pr.placeholder="進捗・メモを入力...";
-      pr.value=goal.progress||"";
-      pr.style.cssText="width:100%;min-height:44px;background:#0a1120;border:1px solid #1e3a5f;border-radius:8px;color:#94a3b8;font-size:12px;padding:8px;resize:none;box-sizing:border-box;font-family:inherit;margin-top:6px;line-height:1.5";
-      pr.addEventListener('change',e=>setGoal(type,vd,{progress:e.target.value}));
-      pr.addEventListener('blur',e=>setGoal(type,vd,{progress:e.target.value}));
-      card.appendChild(pr);
-    }
-
-    // 目標ツリーから連動している目標
-    const linked=gtCollectByPeriod(type, getGoalKey(type,vd));
-    if(linked.length){
-      card.appendChild(div({style:{fontSize:"10px",color:"#a5b4fc",marginTop:"10px",marginBottom:"4px",fontWeight:600}},"🌳 目標ツリーから連動"));
+    if(!linked.length){
+      card.appendChild(div({style:{fontSize:"11px",color:"#475569",padding:"2px 0"}},"連動する目標はありません（目標ツリーで期間を設定）"));
+    } else {
       linked.forEach(n=>{
         const prog=gtProgress(n); const hasKids=n.children&&n.children.length; const pct=prog.total?Math.round(prog.done/prog.total*100):0;
-        const rrow=div({style:{display:"flex",alignItems:"center",gap:"8px",padding:"6px 8px",background:"#6366f111",border:"1px solid #6366f133",borderRadius:"7px",marginBottom:"4px"}});
-        const cb=btn({style:{width:"20px",height:"20px",flexShrink:0,borderRadius:"5px",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"12px",color:"#fff",
+        const box=div({style:{padding:"8px",background:"#6366f111",border:"1px solid #6366f133",borderRadius:"8px",marginBottom:"6px"}});
+        const head=div({style:{display:"flex",alignItems:"center",gap:"8px"}});
+        const cb=btn({style:{width:"22px",height:"22px",flexShrink:0,borderRadius:"6px",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"13px",color:"#fff",
           border:`2px solid ${n.done?"#22c55e":"#334155"}`,background:n.done?"#22c55e":"transparent"}},n.done?"✓":"");
         cb.addEventListener('click',()=>{gtUpdate(n.id,{done:!n.done});render();});
-        rrow.appendChild(cb);
+        head.appendChild(cb);
         const tx=div({style:{flex:1,minWidth:0,cursor:"pointer"}},[
-          div({style:{fontSize:"12px",color:n.done?"#475569":"#e2e8f0",textDecoration:n.done?"line-through":"none",wordBreak:"break-word"}},n.text||"(無題)"),
+          div({style:{fontSize:"13px",fontWeight:600,color:n.done?"#475569":"#e2e8f0",textDecoration:n.done?"line-through":"none",wordBreak:"break-word"}},n.text||"(無題)"),
           hasKids?div({style:{fontSize:"9px",color:"#64748b",marginTop:"2px"}},`下位目標 ${prog.done}/${prog.total} (${pct}%)`):null
         ]);
         tx.addEventListener('click',()=>{state.goalView="tree";state.goalTreeModal={mode:"edit",id:n.id,text:n.text||""};render();});
-        rrow.appendChild(tx);
-        card.appendChild(rrow);
+        head.appendChild(tx);
+        box.appendChild(head);
+        // 進捗メモ（ツリーノードの note を編集）
+        const pr=document.createElement('textarea');
+        pr.placeholder="進捗メモ...";
+        pr.value=n.note||"";
+        pr.style.cssText="width:100%;min-height:38px;background:#0a1120;border:1px solid #1e3a5f;border-radius:7px;color:#94a3b8;font-size:12px;padding:7px;resize:vertical;box-sizing:border-box;font-family:inherit;margin-top:6px;line-height:1.5";
+        pr.addEventListener('change',e=>{gtUpdate(n.id,{note:e.target.value});});
+        pr.addEventListener('blur',e=>{gtUpdate(n.id,{note:e.target.value});});
+        box.appendChild(pr);
+        card.appendChild(box);
       });
     }
-
     wrap.appendChild(card);
   });
 
