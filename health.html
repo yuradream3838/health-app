@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.27"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.28"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -274,7 +274,7 @@ function hideUndoBar(){
   // バーが消えたらスナップショットも破棄（メモリ節約）
   setTimeout(()=>{ if(!document.getElementById('undo-bar')?.classList.contains('show'))undoSnapshot=null; },300);
 }
-const TABS = ["予定","日記","タスク","分析","設定"];
+const TABS = ["予定","日記","タスク","分析"]; // 設定はヘッダーのボタンから
 const SYMPTOMS = [
   "頭痛","肩こり","腰痛","関節痛",
   "吐き気","胃もたれ",
@@ -993,6 +993,10 @@ function render(){
     banner.appendChild(exitB);
     content.appendChild(banner);
   }
+
+  // サブタブを固定表示するため、ヘッダー高さをCSS変数に反映
+  const hdrEl=document.getElementById('app-header');
+  if(hdrEl){ document.documentElement.style.setProperty('--hdr-h', hdrEl.offsetHeight+'px'); }
 }
 
 function updateHeaderDynamic(){
@@ -1025,6 +1029,9 @@ function updateHeaderDynamic(){
   document.querySelectorAll('.tab-btn').forEach(b=>{
     b.classList.toggle('active', b.dataset.tab===state.tab);
   });
+  // 設定ボタンのアクティブ表示
+  const setBtn=document.getElementById('hdr-settings-btn');
+  if(setBtn){const a=state.tab==='設定';setBtn.style.border='1px solid '+(a?'#38bdf8':'#334155');setBtn.style.background=a?'#0ea5e922':'transparent';setBtn.style.color=a?'#38bdf8':'#94a3b8';}
 }
 
 // ── ヘッダー ──────────────────────────────────────
@@ -1113,6 +1120,14 @@ function renderHeader(){
   const titleLeft=document.createElement('div');
   titleLeft.style.cssText="display:flex;align-items:center;gap:8px";
   titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v'+APP_VERSION+'</span>';
+  // 設定ボタン（バージョンの隣）
+  const setBtn=document.createElement('button');
+  setBtn.id='hdr-settings-btn';
+  setBtn.textContent='⚙ 設定';
+  const _sa=state.tab==='設定';
+  setBtn.style.cssText=`margin-left:2px;font-size:11px;font-weight:600;padding:3px 10px;border-radius:10px;cursor:pointer;font-family:inherit;border:1px solid ${_sa?'#38bdf8':'#334155'};background:${_sa?'#0ea5e922':'transparent'};color:${_sa?'#38bdf8':'#94a3b8'}`;
+  setBtn.addEventListener('click',()=>{state.tab='設定';render();});
+  titleLeft.appendChild(setBtn);
   const titleRight=document.createElement('div');
   titleRight.style.cssText="display:flex;align-items:center;gap:5px";
   titleRight.appendChild(savedSpan);
@@ -1127,6 +1142,7 @@ function renderHeader(){
   inner.appendChild(tabBar);
 
   const hdr=document.createElement('div');
+  hdr.id='app-header';
   hdr.style.cssText="background:#1e293b;border-bottom:1px solid #1e3a5f;padding:12px 16px 0;position:sticky;top:0;z-index:100";
   hdr.appendChild(inner);
   return hdr;
@@ -2732,7 +2748,7 @@ function renderPatternEditModal(vd){
 function padBody(body){return div({style:{maxWidth:"600px",margin:"0 auto",padding:"10px 16px 60px"}},[body]);}
 function renderSubHub(SUB,active,onSel,renderBody){
   const wrap=div({style:{maxWidth:"600px",margin:"0 auto"}});
-  const subBar=div({style:{display:"flex",borderBottom:"1px solid #1e3a5f",background:"#1e293b",position:"sticky",top:"0",zIndex:50}});
+  const subBar=div({style:{display:"flex",borderBottom:"1px solid #1e3a5f",background:"#1e293b",position:"sticky",top:"var(--hdr-h, 150px)",zIndex:50}});
   SUB.forEach(t=>{
     const b=btn({style:{flex:1,padding:"10px 2px",border:"none",cursor:"pointer",fontSize:"12px",fontWeight:600,
       background:"transparent",color:active===t?"#38bdf8":"#475569",
@@ -3062,7 +3078,7 @@ function renderSettingsHub(){
 function renderScheduleHub(vd,ds,isToday){
   const SUB=["日","週","月"];
   const wrap=div({style:{maxWidth:"600px",margin:"0 auto"}});
-  const subBar=div({style:{display:"flex",borderBottom:"1px solid #1e3a5f",background:"#1e293b",position:"sticky",top:"0",zIndex:50}});
+  const subBar=div({style:{display:"flex",borderBottom:"1px solid #1e3a5f",background:"#1e293b",position:"sticky",top:"var(--hdr-h, 150px)",zIndex:50}});
   SUB.forEach(t=>{
     const b=btn({style:{flex:1,padding:"10px 2px",border:"none",cursor:"pointer",fontSize:"12px",fontWeight:600,
       background:"transparent",color:state.scheduleSubTab===t?"#38bdf8":"#475569",
@@ -4733,7 +4749,7 @@ function renderAnalysisHub(vd, ds, curH, isToday){
   const wrap=div({style:{maxWidth:"600px",margin:"0 auto"}});
 
   // サブタブバー
-  const subBar=div({style:{display:"flex",borderBottom:"1px solid #1e3a5f",background:"#1e293b",position:"sticky",top:"0",zIndex:50}});
+  const subBar=div({style:{display:"flex",borderBottom:"1px solid #1e3a5f",background:"#1e293b",position:"sticky",top:"var(--hdr-h, 150px)",zIndex:50}});
   SUB_TABS.forEach(t=>{
     const b=btn({style:{
       flex:1,padding:"10px 4px",border:"none",cursor:"pointer",fontSize:"12px",fontWeight:600,
