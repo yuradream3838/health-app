@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.37"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.38"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -1401,11 +1401,14 @@ function renderDailyPanel(vd){
             item.appendChild(span({style:{fontSize:"12px",color:"#94a3b8"}},timeLabel));
             if(e.tag) item.appendChild(span({style:{fontSize:"10px",padding:"1px 7px",borderRadius:"10px",background:"#6366f122",color:"#818cf8",border:"1px solid #6366f133"}},e.tag));
             const delBtn=btn({style:{background:"transparent",border:"none",color:"#334155",cursor:"pointer",fontSize:"14px",padding:"0",lineHeight:"1"}},"×");
-            delBtn.addEventListener('click',(()=>{const idx=i;return()=>{
+            delBtn.addEventListener('click',(()=>{const rec=e;return()=>{
               pushUndo("記録を削除しました");
               const nd={...getDaily(vd)};
-              nd.ejaculations=[...(nd.ejaculations||[])];
-              nd.ejaculations.splice(idx,1);
+              const list=[...(nd.ejaculations||[])];
+              // 並び替え後の位置ではなく、uid（無ければ時刻+タグ）で対象を特定して削除
+              const j = rec.uid!=null ? list.findIndex(x=>x.uid===rec.uid) : list.findIndex(x=>x.hour===rec.hour&&x.min===rec.min&&x.tag===rec.tag);
+              if(j>=0) list.splice(j,1);
+              nd.ejaculations=list;
               setDaily(vd,nd);render();
             };})());
             item.appendChild(delBtn);
@@ -4622,9 +4625,9 @@ function renderAlcohol(vd,isToday){
       const item=div({style:{background:"#0f172a",borderRadius:"10px",overflow:"hidden",marginBottom:"8px"}},[
         div({style:{display:"flex",alignItems:"center",gap:"10px",padding:"8px 10px"}},[
           span({style:{fontSize:"22px"}},d.drinkType.emoji),
-          div({style:{flex:1}},[
+          div({style:{flex:1,cursor:"pointer"},onClick:(()=>{const dr=d;return()=>{ state.modal="addDrink"; state.newDrink={typeId:dr.id||dr.drinkType.id,ml:dr.ml,hour:dr.hour,min:dr.min||0,pct:dr.drinkType.pct,startNextDay:!!dr.startNextDay,editUid:dr.uid}; render(); };})()},[
             div({style:{fontSize:"13px",fontWeight:600,color:"#e2e8f0"}},`${d.drinkType.label} ${d.ml}ml`),
-            div({style:{fontSize:"10px",color:"#64748b"}},[txt(`🕐 ${sL}`),hasEnd?span({style:{color:"#a78bfa"}},` → 🍵 ${eL}`):null,txt(` ${g.toFixed(1)}g`)])
+            div({style:{fontSize:"10px",color:"#64748b"}},[txt(`🕐 ${sL}`),hasEnd?span({style:{color:"#a78bfa"}},` → 🍵 ${eL}`):null,txt(` ${g.toFixed(1)}g ・ タップで編集`)])
           ]),
           btn({style:{background:"transparent",border:"none",color:"#475569",cursor:"pointer",fontSize:"18px",padding:"0 4px"},onClick:(()=>{const uid=d.uid;return()=>{removeDrink(vd,uid);};})()} ,"×")
         ]),
@@ -4683,7 +4686,7 @@ function renderAddDrinkModal(vd){
   const m=div({className:"modal"});
   bg.addEventListener('click',()=>{state.modal=null;render();});m.addEventListener('click',e=>e.stopPropagation());
   m.appendChild(div({style:{width:"36px",height:"4px",background:"#334155",borderRadius:"4px",margin:"0 auto 14px"}}));
-  m.appendChild(h('h3',{style:{margin:"0 0 12px",color:"#e2e8f0",fontSize:"15px"}},"飲み物を追加"));
+  m.appendChild(h('h3',{style:{margin:"0 0 12px",color:"#e2e8f0",fontSize:"15px"}},nd.editUid?"飲み物を編集":"飲み物を追加"));
   m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"6px"}},"種類"));
   m.appendChild(div({style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"5px",marginBottom:"14px"}},
     DRINK_TYPES.map(t=>{const on=nd.typeId===t.id;return btn({style:{display:"flex",alignItems:"center",gap:"8px",padding:"7px 10px",border:`1px solid ${on?"#0ea5e9":"#334155"}`,borderRadius:"8px",background:on?"#0ea5e918":"transparent",cursor:"pointer",textAlign:"left"},
@@ -4747,13 +4750,21 @@ function renderAddDrinkModal(vd){
   m.appendChild(div({style:{display:"flex",gap:"8px"}},[
     btn({className:"btn-ghost",style:{flex:1},onClick:()=>{state.modal=null;render();}},"キャンセル"),
     btn({style:{flex:2,padding:"10px",background:"linear-gradient(135deg,#f97316,#ef4444)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:600,cursor:"pointer"},onClick:()=>{
-      const dt={...DRINK_TYPES.find(t=>t.id===state.newDrink.typeId)||DRINK_TYPES[0],pct:curPct};
+      // 保存時は state.newDrink の最新値を使う（度数入力は再描画しないため curPct は使わない）
+      const selT=DRINK_TYPES.find(t=>t.id===state.newDrink.typeId)||DRINK_TYPES[0];
+      const finalPct=state.newDrink.pct!=null?state.newDrink.pct:selT.pct;
+      const dt={...selT,pct:finalPct};
       const d=getDaily(vd);
-      const drink={uid:Date.now(),id:state.newDrink.typeId,drinkType:dt,ml:state.newDrink.ml,hour:state.newDrink.hour,min:state.newDrink.min};
-      if(state.newDrink.startNextDay) drink.startNextDay=true;
-      setDaily(vd,{drinks:[...(d.drinks||[]),drink]});
+      if(state.newDrink.editUid){
+        // 既存の1杯を編集（飲み終わり時刻などは維持）
+        setDaily(vd,{drinks:(d.drinks||[]).map(x=>x.uid===state.newDrink.editUid?{...x,id:state.newDrink.typeId,drinkType:dt,ml:state.newDrink.ml,hour:state.newDrink.hour,min:state.newDrink.min,startNextDay:!!state.newDrink.startNextDay}:x)});
+      } else {
+        const drink={uid:Date.now(),id:state.newDrink.typeId,drinkType:dt,ml:state.newDrink.ml,hour:state.newDrink.hour,min:state.newDrink.min};
+        if(state.newDrink.startNextDay) drink.startNextDay=true;
+        setDaily(vd,{drinks:[...(d.drinks||[]),drink]});
+      }
       state.modal=null;render();
-    }},"追加する")
+    }},nd.editUid?"保存する":"追加する")
   ]));
   bg.appendChild(m);return bg;
 }
