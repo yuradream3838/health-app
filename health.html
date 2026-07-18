@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.30"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.31"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -3867,6 +3867,20 @@ async function runAISchedule(vd){
       return `「${g.title}」= ${labels.join("・")}`;
     }).join("\n")||"なし";
     const soloItems=TODO_ITEMS.filter(it=>!routineIdSet.has(it.id)).map(it=>it.label).join(", ")||"なし";
+    // 体調コンテキスト（休息／負荷の高い作業の配置判断に使う）
+    const scoredAll=state.logs.filter(l=>l.score!=null);
+    const avgOf=a=>a.length?(a.reduce((x,y)=>x+y,0)/a.length):null;
+    const todayLogs=scoredAll.filter(l=>l.dateStr===vd);
+    const todayAvg=avgOf(todayLogs.map(l=>l.score));
+    const recent7=[]; for(let i=0;i<7;i++){const ls=scoredAll.filter(l=>l.dateStr===addDays(vd,-i)).map(l=>l.score); const a=avgOf(ls); if(a!=null)recent7.push(a);}
+    const recentAvg=avgOf(recent7);
+    const _sh=getNightSleepHours(vd); const sleepH=_sh!=null?Math.round(_sh*10)/10:null;
+    const recentSymptoms=[...new Set(scoredAll.filter(l=>l.dateStr>=addDays(vd,-3)).flatMap(l=>l.symptoms||[]))].slice(0,6);
+    const tod={m:[],a:[],e:[],n:[]};
+    scoredAll.forEach(l=>{const h=l.hour; if(h>=5&&h<11)tod.m.push(l.score);else if(h>=11&&h<17)tod.a.push(l.score);else if(h>=17&&h<22)tod.e.push(l.score);else tod.n.push(l.score);});
+    const av=a=>{const v=avgOf(a);return v!=null?v.toFixed(1):"—";};
+    const todStr=`朝(5-11時)${av(tod.m)} / 昼(11-17時)${av(tod.a)} / 夕(17-22時)${av(tod.e)} / 夜(22-5時)${av(tod.n)}`;
+    const conditionCtx=`今日の体調: ${todayAvg!=null?todayAvg.toFixed(1)+"/10":"未記録"} / 直近7日平均: ${recentAvg!=null?recentAvg.toFixed(1)+"/10":"—"} / 前夜の睡眠: ${sleepH!=null?sleepH+"h":"—"} / 最近の症状: ${recentSymptoms.join("・")||"なし"} / 時間帯別の平均体調(10点満点): ${todStr}`;
     const now=new Date();
     const isTodayFlag=vd===todayStr();
     const timeCtx=isTodayFlag?`現在時刻は${now.getHours()}:${String(now.getMinutes()).padStart(2,'0')}です。今の時刻以降のスケジュールだけ提案してください。`:"1日全体のスケジュールを提案してください。";
@@ -3875,11 +3889,15 @@ async function runAISchedule(vd){
       method:"POST",
       headers:{"Content-Type":"application/json","X-Secret-Key":"songof3838"},
       body:JSON.stringify({
-        system:`あなたは生活プランナーです。ユーザーの1日のスケジュールを提案し、以下のJSON形式のみで返答してください:
-{"comment":"提案の説明1〜2文","events":[{"title":"予定名","startH":9,"startM":0,"endH":10,"endM":30}]}
-ルール: 既存の予定と重複しない時間に配置。勤務時間中には予定を入れない。[最優先][重要][緊急]のタスクを優先的に配置。食事時間を確保。無理のない量にする。
-重要: 「ルーティン」に挙げたグループは、中の個々の項目を別々に配置せず、必ずグループ名（例: 🌅モーニングルーティン）のまま【1つのまとまった予定】として1件だけ配置すること。各ルーティンの所要は含まれる項目数に応じて15〜45分程度を目安にする。その他の項目は必要に応じて個別に配置してよい。`,
-        prompt:`日付: ${vd}\n勤務: ${shift}\n${timeCtx}\n\n【既存の予定】\n${existing}\n\n【やることリスト(未完了・優先度付き)】\n${todoTasks}\n\n【ルーティン（各グループはまとめて1件の予定として配置。titleはグループ名のまま）】\n${routineDesc}\n\n【その他の毎日の項目（個別に配置してよい）】\n${soloItems}\n\nスケジュールを提案してください。`
+        system:`あなたは体調に配慮する生活プランナーです。ユーザーの1日のスケジュールを提案し、以下のJSON形式のみで返答してください:
+{"comment":"提案の説明1〜2文（体調への配慮点にも触れる）","events":[{"title":"予定名","startH":9,"startM":0,"endH":10,"endM":30}]}
+ルール:
+- 既存の予定と重複しない時間に配置。勤務時間中には予定を入れない。食事時間を確保。無理のない量にする。
+- 「ルーティン」のグループは、中の個々の項目を分割せず、必ずグループ名（例: 🌅モーニングルーティン）のまま【1つのまとまった予定】として1件だけ配置。所要は項目数に応じ15〜45分目安。その他の項目は個別配置可。
+- 【体調を最重要で考慮する】体調が低い(目安6未満)・睡眠不足(6h未満)・症状がある場合は、予定を詰め込まず「休息」「仮眠」「軽いストレッチ」など回復を優先し、[最優先][重要]タスクも短時間・控えめにする。
+- 体調が良い(目安7以上)ときや、時間帯別の平均体調が高い時間帯には、読書・副業・トレーニング・勉強など集中や負荷を要する活動を配置する。逆に体調が落ちやすい時間帯には負荷の軽い予定を置く。
+- [最優先][重要][緊急]のタスクは、上記の体調配慮の範囲で優先的に配置する。`,
+        prompt:`日付: ${vd}\n勤務: ${shift}\n${timeCtx}\n\n【体調】\n${conditionCtx}\n\n【既存の予定】\n${existing}\n\n【やることリスト(未完了・優先度付き)】\n${todoTasks}\n\n【ルーティン（各グループはまとめて1件の予定として配置。titleはグループ名のまま）】\n${routineDesc}\n\n【その他の毎日の項目（個別に配置してよい）】\n${soloItems}\n\n体調を踏まえてスケジュールを提案してください。`
       })
     });
     const data=await res.json();
