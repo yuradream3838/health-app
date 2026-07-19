@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.43"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.44"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -1214,9 +1214,11 @@ function renderDailyPanel(vd){
           if(!isNaN(h)&&!isNaN(mm)){setDaily(vd,{[key]:h+mm/60});render();}
         });
         row.appendChild(inp);
-        const nowBtn=btn({style:{fontSize:"12px",padding:"8px 12px",background:"#0ea5e918",border:"1px solid #0ea5e9",borderRadius:"8px",color:"#38bdf8",cursor:"pointer",fontWeight:700,flexShrink:0}},"今");
-        nowBtn.addEventListener('click',()=>{const now=new Date();setDaily(vd,{[key]:now.getHours()+now.getMinutes()/60});render();});
-        row.appendChild(nowBtn);
+        if(val==null){
+          const nowBtn=btn({style:{fontSize:"12px",padding:"8px 12px",background:"#0ea5e918",border:"1px solid #0ea5e9",borderRadius:"8px",color:"#38bdf8",cursor:"pointer",fontWeight:700,flexShrink:0}},"今");
+          nowBtn.addEventListener('click',()=>{const now=new Date();setDaily(vd,{[key]:now.getHours()+now.getMinutes()/60});render();});
+          row.appendChild(nowBtn);
+        }
         if(val!=null){const cl=btn({style:{fontSize:"16px",padding:"0 4px",background:"transparent",border:"none",color:"#475569",cursor:"pointer",flexShrink:0}},"×");cl.addEventListener('click',()=>{setDaily(vd,{[key]:null});render();});row.appendChild(cl);}
         return row;
       };
