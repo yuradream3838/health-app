@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.47"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.48"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -963,6 +963,12 @@ function render(){
 
   const ds=todayStr(), vd=state.viewDate, curH=new Date().getHours();
   const isToday=vd===ds;
+  if(state.widget){
+    content.appendChild(renderWidgetView(vd,ds));
+    const hdrEl0=document.getElementById('app-header');
+    if(hdrEl0){ document.documentElement.style.setProperty('--hdr-h', hdrEl0.offsetHeight+'px'); }
+    return;
+  }
   if(state.tab==="予定")   content.appendChild(renderScheduleHub(vd,ds,isToday));
   if(state.tab==="日記")   content.appendChild(renderDiaryHub(vd,ds,curH,isToday));
   if(state.tab==="タスク") content.appendChild(renderTaskHub(vd,ds,isToday));
@@ -1106,7 +1112,7 @@ function renderHeader(){
     b.dataset.tab=t;
     b.textContent=t;
     b.addEventListener('click',()=>{
-      state.tab=t;
+      state.tab=t; state.widget=false;
       // 日記タブに切り替えたとき、今日かつ天気未取得なら自動取得
       if(t==="日記" && !state.viewingBackup && state.viewDate===todayStr() && state.weatherCity && state.weather.length===0 && !state.weatherLoading){
         doFetchWeather(state.weatherCity);
@@ -1132,8 +1138,15 @@ function renderHeader(){
   setBtn.textContent='⚙ 設定';
   const _sa=state.tab==='設定';
   setBtn.style.cssText=`margin-left:2px;font-size:11px;font-weight:600;padding:3px 10px;border-radius:10px;cursor:pointer;font-family:inherit;border:1px solid ${_sa?'#38bdf8':'#334155'};background:${_sa?'#0ea5e922':'transparent'};color:${_sa?'#38bdf8':'#94a3b8'}`;
-  setBtn.addEventListener('click',()=>{state.tab='設定';render();});
+  setBtn.addEventListener('click',()=>{state.tab='設定';state.widget=false;render();});
   titleLeft.appendChild(setBtn);
+  // ウィジェット（今日の予定＋ルーティン）ボタン
+  const wgBtn=document.createElement('button');
+  wgBtn.textContent='📌 今日';
+  const _wa=!!state.widget;
+  wgBtn.style.cssText=`margin-left:2px;font-size:11px;font-weight:600;padding:3px 10px;border-radius:10px;cursor:pointer;font-family:inherit;border:1px solid ${_wa?'#a78bfa':'#334155'};background:${_wa?'#a78bfa22':'transparent'};color:${_wa?'#a78bfa':'#94a3b8'}`;
+  wgBtn.addEventListener('click',()=>{ state.viewDate=todayStr(); state.widget=true; render(); });
+  titleLeft.appendChild(wgBtn);
   const titleRight=document.createElement('div');
   titleRight.style.cssText="display:flex;align-items:center;gap:5px";
   titleRight.appendChild(savedSpan);
@@ -1168,6 +1181,141 @@ function nextDate(){
   state.viewDate=`${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}-${String(n.getDate()).padStart(2,'0')}`;
   render();
 }
+
+// ── ウィジェット（今日の予定＋ルーティンをまとめて素早く確認・チェック）──
+// URLハッシュ #widget で直接起動でき、ホーム画面ショートカットから開ける。
+function renderWidgetView(vd,ds){
+  const wrap=div({style:{maxWidth:"600px",margin:"0 auto",padding:"10px 14px 60px"}});
+  const dObj=parseDS(vd);
+  const shiftK=getPlanShiftKey(vd), sh=shiftK?SHIFT_TYPES[shiftK]:null;
+
+  // ヘッダー
+  const head=div({className:"card",style:{padding:"12px 14px",marginBottom:"10px"}});
+  head.appendChild(div({style:{display:"flex",justifyContent:"space-between",alignItems:"center"}},[
+    div({},[
+      div({style:{fontSize:"16px",fontWeight:800,color:"#e2e8f0"}},`📌 今日`),
+      div({style:{fontSize:"12px",color:"#64748b",marginTop:"2px"}},dObj.toLocaleDateString("ja-JP",{month:"long",day:"numeric",weekday:"short"}))
+    ]),
+    sh?div({style:{fontSize:"12px",fontWeight:700,color:sh.color,background:sh.color+"22",border:`1px solid ${sh.color}55`,borderRadius:"10px",padding:"4px 12px"}},`💼 ${sh.label}`):null
+  ]));
+  wrap.appendChild(head);
+
+  // ── 今日の予定 ──
+  const schedCard=div({className:"card",style:{padding:"12px 14px",marginBottom:"10px"}});
+  schedCard.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#38bdf8",marginBottom:"8px"}},"📅 今日の予定"));
+  const items=[];
+  getEventsForDate(vd).forEach(e=>{
+    if(e.allDay){ items.push({allDay:true,title:e.title,color:e.color||EV_COLORS[0]}); }
+    else { items.push({s:e.startH*60+(e.startM||0),sh:e.startH,sm:e.startM||0,eh:e.endH,em:e.endM||0,title:e.title,color:e.color||EV_COLORS[0]}); }
+  });
+  getPlannedExtras(vd).forEach(x=>{
+    items.push({s:x.startH*60+(x.startM||0),sh:x.startH,sm:x.startM||0,eh:x.endH,em:x.endM||0,title:x.title,color:x.color||"#38bdf8"});
+  });
+  items.sort((a,b)=>(a.allDay?-1:0)-(b.allDay?-1:0) || (a.s||0)-(b.s||0));
+  const hhmm=(h,m)=>`${String(h).padStart(2,'0')}:${String(m||0).padStart(2,'0')}`;
+  if(items.length===0){
+    schedCard.appendChild(div({style:{fontSize:"12px",color:"#475569",textAlign:"center",padding:"8px 0"}},"予定はありません"));
+  } else {
+    items.forEach(it=>{
+      const row=div({style:{display:"flex",alignItems:"center",gap:"9px",padding:"6px 0",borderBottom:"1px solid #1e3a5f55"}});
+      row.appendChild(div({style:{width:"4px",alignSelf:"stretch",background:it.color,borderRadius:"2px",flexShrink:0}}));
+      row.appendChild(div({style:{fontSize:"11px",color:"#94a3b8",width:"92px",flexShrink:0,fontVariantNumeric:"tabular-nums"}},
+        it.allDay?"終日":`${hhmm(it.sh,it.sm)}〜${hhmm(it.eh,it.em)}`));
+      row.appendChild(div({style:{flex:1,fontSize:"13px",color:"#e2e8f0",minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},it.title));
+      schedCard.appendChild(row);
+    });
+  }
+  const openSched=btn({style:{width:"100%",marginTop:"8px",padding:"7px",background:"transparent",border:"1px solid #334155",borderRadius:"7px",color:"#64748b",cursor:"pointer",fontSize:"11px"}},"予定タブを開く →");
+  openSched.addEventListener('click',()=>{ exitWidget(); state.tab="予定"; state.scheduleSubTab="日"; render(); });
+  schedCard.appendChild(openSched);
+  wrap.appendChild(schedCard);
+
+  // チェック行の共通生成
+  const checkRow=(done,label,sub,onToggle)=>{
+    const row=div({style:{display:"flex",alignItems:"center",gap:"10px",padding:"7px 0",borderBottom:"1px solid #1e3a5f55"}});
+    const cb=btn({style:{width:"24px",height:"24px",borderRadius:"6px",flexShrink:0,border:`2px solid ${done?"#22c55e":"#334155"}`,background:done?"#22c55e":"transparent",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"14px",color:"#fff"}},done?"✓":"");
+    cb.addEventListener('click',onToggle);
+    row.appendChild(cb);
+    row.appendChild(div({style:{flex:1,minWidth:0}},[
+      div({style:{fontSize:"13px",color:done?"#475569":"#e2e8f0",textDecoration:done?"line-through":"none",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},label),
+      sub?div({style:{fontSize:"10px",color:"#64748b"}},sub):null
+    ]));
+    return row;
+  };
+
+  // ── 定期ルーティン（今日該当）──
+  const dueCustom=dueCustomTodos(vd).filter(ct=>!(state.todos[vd]||{})[ct.uid]?.excluded);
+  if(dueCustom.length){
+    const c=div({className:"card",style:{padding:"12px 14px",marginBottom:"10px"}});
+    const doneN=dueCustom.filter(ct=>(state.todos[vd]||{})[ct.uid]?.checked).length;
+    c.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#a78bfa",marginBottom:"6px"}},`🔁 定期ルーティン ${doneN}/${dueCustom.length}`));
+    dueCustom.forEach(ct=>{
+      const rec=(state.todos[vd]||{})[ct.uid]||{}; const done=!!rec.checked;
+      const tt=customTodoTimeFor(ct,vd);
+      const sub=tt?`${hhmm(tt.h,tt.m)}${tt.eh!=null?`〜${hhmm(tt.eh,tt.em)}`:""}`:"";
+      c.appendChild(checkRow(done,ct.label,sub,()=>{ setTodo(vd,ct.uid,{...rec,checked:!done,time:!done?new Date().toISOString():null}); if(!done)showToast(`✅ ${ct.label}`); }));
+    });
+    wrap.appendChild(c);
+  }
+
+  // ── ルーティン（デイリー・チェック項目）──
+  {
+    const todo=getTodo(vd);
+    const rItems=getOrderedTodoItems().filter(it=>!(todo[it.id]||{}).excluded);
+    const doneN=rItems.filter(it=>isTodoDone(vd,it)).length;
+    const c=div({className:"card",style:{padding:"12px 14px",marginBottom:"10px"}});
+    c.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#22c55e",marginBottom:"6px"}},`📋 ルーティン ${doneN}/${rItems.length}`));
+    rItems.forEach(item=>{
+      const t=todo[item.id]||{}; const done=isTodoDone(vd,item);
+      if(item.type==="check"){
+        c.appendChild(checkRow(done,item.label,null,()=>{ setTodo(vd,item.id,{checked:!t.checked,time:new Date().toISOString()}); if(!t.checked)showToast(`✅ ${item.label}`); }));
+      } else {
+        // タイマー項目：▶ 開始 / ⏹ 終了（マルチは開始で1セッション）
+        const row=div({style:{display:"flex",alignItems:"center",gap:"10px",padding:"7px 0",borderBottom:"1px solid #1e3a5f55"}});
+        const running = item.multi ? (t.sessions||[]).some(s=>s.startTime&&!s.endTime) : (t.startTime&&!t.endTime);
+        let b;
+        if(item.multi){
+          if(running){ b=btn({style:{padding:"3px 10px",background:"#f9731633",border:"1px solid #f97316",borderRadius:"6px",color:"#f97316",fontSize:"12px",cursor:"pointer",fontWeight:600,flexShrink:0}},"⏹");
+            b.addEventListener('click',()=>{ const ss=[...(t.sessions||[])]; const i=ss.findIndex(s=>s.startTime&&!s.endTime); if(i>=0){ss[i]={...ss[i],endTime:new Date().toISOString()};} setTodo(vd,item.id,{...t,sessions:ss}); showToast(`✅ ${item.label}`); });
+          } else { b=btn({style:{padding:"3px 10px",background:"#0ea5e933",border:"1px solid #0ea5e9",borderRadius:"6px",color:"#38bdf8",fontSize:"12px",cursor:"pointer",fontWeight:600,flexShrink:0}},"▶");
+            b.addEventListener('click',()=>{ const ss=[...(t.sessions||[])]; ss.push({uid:Date.now(),startTime:new Date().toISOString()}); setTodo(vd,item.id,{...t,sessions:ss}); }); }
+        } else {
+          if(!t.startTime){ b=btn({style:{padding:"3px 10px",background:"#0ea5e933",border:"1px solid #0ea5e9",borderRadius:"6px",color:"#38bdf8",fontSize:"12px",cursor:"pointer",fontWeight:600,flexShrink:0}},"▶");
+            b.addEventListener('click',()=>{ setTodo(vd,item.id,{startTime:new Date().toISOString()}); }); }
+          else if(!t.endTime){ b=btn({style:{padding:"3px 10px",background:"#f9731633",border:"1px solid #f97316",borderRadius:"6px",color:"#f97316",fontSize:"12px",cursor:"pointer",fontWeight:600,flexShrink:0}},"⏹");
+            b.addEventListener('click',()=>{ setTodo(vd,item.id,{...t,endTime:new Date().toISOString()}); showToast(`✅ ${item.label}`); }); }
+          else { b=div({style:{width:"24px",height:"24px",borderRadius:"6px",flexShrink:0,border:"2px solid #22c55e",background:"#22c55e",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"14px",color:"#fff"}},"✓"); }
+        }
+        row.appendChild(b);
+        row.appendChild(div({style:{flex:1,fontSize:"13px",color:done?"#475569":"#e2e8f0",textDecoration:done?"line-through":"none",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",minWidth:0}},item.label));
+        c.appendChild(row);
+      }
+    });
+    wrap.appendChild(c);
+  }
+
+  // ── TODO（未完了のみ）──
+  {
+    const open=(state.tasks&&state.tasks.todo||[]).filter(t=>!t.done);
+    if(open.length){
+      const prio=t=>(t.imp&&t.urg)?0:t.urg?1:t.imp?2:3;
+      const dueVal=t=>t.due?parseDS(t.due).getTime():Infinity;
+      open.sort((a,b)=>prio(a)-prio(b)||dueVal(a)-dueVal(b));
+      const c=div({className:"card",style:{padding:"12px 14px",marginBottom:"10px"}});
+      c.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#38bdf8",marginBottom:"6px"}},`✅ TODO ${open.length}件`));
+      open.slice(0,12).forEach(t=>{
+        const sub=t.due?(()=>{const days=Math.round((parseDS(t.due)-parseDS(todayStr()))/86400000);return days<0?`期日超過${-days}日`:days===0?"今日が期日":`あと${days}日`;})():null;
+        c.appendChild(checkRow(false,t.text,sub,()=>{ state.tasks.todo=state.tasks.todo.map(x=>x.uid===t.uid?{...x,done:true}:x); saveTasks(); showToast(`✅ ${t.text}`); render(); }));
+      });
+      wrap.appendChild(c);
+    }
+  }
+
+  wrap.appendChild(btn({style:{width:"100%",padding:"11px",marginTop:"4px",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:700,cursor:"pointer"},
+    onClick:()=>{ exitWidget(); render(); }},"アプリを開く"));
+  return wrap;
+}
+function exitWidget(){ state.widget=false; try{ if(location.hash) history.replaceState(null,"",location.pathname+location.search); }catch(_){}}
 
 // ── 今日タブ ──────────────────────────────────────
 function renderToday(vd,ds,curH,isToday){
@@ -6519,6 +6667,9 @@ function renderEditTimerModal(vd){
 loadStorage();
 state.forecast=genForecast();
 state.viewDate = todayStr();
+// ホーム画面ショートカット等から #widget で直接ウィジェット表示
+if(location.hash==='#widget'||location.hash==='#today'){ state.widget=true; }
+window.addEventListener('hashchange',()=>{ const w=(location.hash==='#widget'||location.hash==='#today'); if(w!==!!state.widget){ state.widget=w; if(w)state.viewDate=todayStr(); render(); } });
 migrateGoalsToTree(); // 旧・期間別の記入内容を目標ツリーへ一度だけ移行
 render();
 document.title="体調管理 v"+APP_VERSION;

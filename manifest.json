@@ -15,5 +15,13 @@
       "type": "image/svg+xml",
       "purpose": "any maskable"
     }
+  ],
+  "shortcuts": [
+    {
+      "name": "今日ウィジェット",
+      "short_name": "今日",
+      "description": "今日の予定とルーティンをすぐ確認・チェック",
+      "url": "./health.html#widget"
+    }
   ]
 }
