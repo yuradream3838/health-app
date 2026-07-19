@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.39"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.40"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -2499,8 +2499,8 @@ function getActualActivities(vd){
     if(we>1440)we=1440;
     if(we>ws) acts.push({title:"💼 仕事",startMin:ws,endMin:we,color:"#2dd4bf"});
   }
-  // たまにやること（カスタムTODO）チェック済みも実際列へ（既存チェックと同じ）
-  dueCustomTodos(vd).forEach(ct=>{
+  // 定期ルーティン：その日にチェックされたもの（当日該当・繰り越し実施の両方）を実際列へ
+  (state.customTodos||[]).forEach(ct=>{
     const rec=(state.todos[vd]||{})[ct.uid];
     if(rec&&rec.checked){
       if(rec.time){ const t2=new Date(rec.time); const mins=t2.getHours()*60+t2.getMinutes(); acts.push({title:"✓"+ct.label,startMin:mins,endMin:mins+12,isPoint:true,color:ct.color||"#22c55e"}); }
@@ -3983,9 +3983,11 @@ function dueCustomTodos(ds){ return (state.customTodos||[]).filter(ct=>customTod
 // 表示日 vd で対応すべき「回」を返す。当日該当なら当日、そうでなければ直近の未実施回を繰り越す。
 // 完了/除外済みの過去回は繰り越さない（最新回のみ対象）。
 function customTodoOccurrence(ct, vd){
+  const recVd=(state.todos[vd]||{})[ct.uid]||{};
+  // 当日にチェック済み（当日該当 or 繰り越しをその日に実施）→ 当日の完了として表示
+  if(recVd.checked) return {dueDate:vd, overdue:false, excluded:false, checked:true};
   if(customTodoDue(ct,vd)){
-    const rec=(state.todos[vd]||{})[ct.uid]||{};
-    return {dueDate:vd, overdue:false, excluded:!!rec.excluded, checked:!!rec.checked};
+    return {dueDate:vd, overdue:false, excluded:!!recVd.excluded, checked:false};
   }
   let ds=vd;
   for(let i=0;i<60;i++){
@@ -3999,6 +4001,20 @@ function customTodoOccurrence(ct, vd){
     }
   }
   return null;
+}
+// 繰り越し実施時：直近の完了回までさかのぼって、未実施・未除外の該当日をすべて除外（予定から削除）
+function dismissPastUnchecked(ct, vd){
+  let ds=vd, changed=false;
+  for(let i=0;i<400;i++){
+    ds=addDays(ds,-1);
+    if(ct.startDate && ds<ct.startDate) break;
+    if(customTodoDue(ct,ds)){
+      const rec=(state.todos[ds]||{})[ct.uid]||{};
+      if(rec.checked) break; // 直近の完了回に到達 → それ以前は対象外
+      if(!rec.excluded){ if(!state.todos[ds])state.todos[ds]={}; state.todos[ds][ct.uid]={...rec,excluded:true}; changed=true; }
+    }
+  }
+  if(changed){ try{localStorage.setItem(STORAGE_KEY+"_todo",JSON.stringify(state.todos));}catch{} }
 }
 // たまにやることの指定日dsでの時刻 {h,m}。時刻なしは null。
 // 曜日別の時間（さらに直で分けられる）があれば優先、なければ基本の timeH/timeM。
@@ -4431,7 +4447,16 @@ function renderOccasional(vd){
     const row=div({style:{display:"flex",alignItems:"center",gap:"10px",padding:"8px 2px",borderBottom:"1px solid #1e3a5f33",opacity:active?1:0.55}});
     if(active){
       const cb=btn({style:{width:"22px",height:"22px",borderRadius:"6px",flexShrink:0,border:`2px solid ${done?"#22c55e":overdue?"#f97316":"#334155"}`,background:done?"#22c55e":"transparent",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"13px",color:"#fff"}},done?"✓":"");
-      cb.addEventListener('click',(()=>{const dd=occ.dueDate,id=ct.uid,label=ct.label,wasDone=done;return()=>{merge(dd,id,{checked:!wasDone,time:!wasDone?new Date().toISOString():null});if(!wasDone){showToast(`✅ ${label}`);}};})());
+      cb.addEventListener('click',(()=>{const o=occ,id=ct.uid,c2={...ct},label=ct.label,wasDone=done;return()=>{
+        if(wasDone){ merge(vd,id,{checked:false,time:null}); }
+        else {
+          // 繰り越し実施なら、過去の未実施回を除外（予定から削除・複数回はすべて）
+          if(o.overdue) dismissPastUnchecked(c2,vd);
+          // チェックはチェックした当日(vd)に記録
+          merge(vd,id,{checked:true,time:new Date().toISOString()});
+          showToast(`✅ ${label}`);
+        }
+      };})());
       row.appendChild(cb);
     } else {
       row.appendChild(div({style:{width:"22px",textAlign:"center",fontSize:"12px",color:"#475569",flexShrink:0}},excludedToday?"⊘":"🔁"));
