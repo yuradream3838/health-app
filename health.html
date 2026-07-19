@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.44"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.45"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -975,6 +975,7 @@ function render(){
   if(state.modal==="addEvent") content.appendChild(renderAddEventModal(vd));
   if(state.modal==="addActual") content.appendChild(renderActualModal());
   if(state.modal==="patternEdit") content.appendChild(renderPatternEditModal(vd));
+  if(state.modal==="planCustomTodo") content.appendChild(renderPlanCustomTodoModal());
   if(state.modal==="editNap")  content.appendChild(renderAddNapModal(vd,true));
   if(state.goalHistoryType)    content.appendChild(renderGoalHistory(vd));
   if(state.goalEditKey)        content.appendChild(renderGoalEditModal());
@@ -2643,7 +2644,7 @@ function getPlannedExtras(vd){
     if((state.todos[vd]||{})[ct.uid]?.excluded)return; // 除外した回は予定にも出さない
     const tt=customTodoTimeFor(ct,vd); if(!tt)return;
     const {s,e}=customTodoSpan(tt);
-    out.push({title:`☑️ ${ct.label}`,color:ct.color||"#38bdf8",startH:Math.floor(s/60),startM:s%60,endH:Math.floor(e/60),endM:e%60,customTodo:true});
+    out.push({title:`☑️ ${ct.label}`,color:ct.color||"#38bdf8",startH:Math.floor(s/60),startM:s%60,endH:Math.floor(e/60),endM:e%60,customTodo:true,ctUid:ct.uid,ctLabel:ct.label});
   });
   return out;
 }
@@ -2750,6 +2751,27 @@ function renderPatternEditModal(vd){
     m.appendChild(btn({style:{width:"100%",padding:"9px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#94a3b8",cursor:"pointer",fontSize:"12px"},
       onClick:()=>{state.modal=null;state.tab="設定";render();}},"⚙ すべての日を変える（パターン設定）"));
   }
+  m.appendChild(btn({className:"btn-ghost",style:{width:"100%",marginTop:"4px"},onClick:()=>{state.modal=null;render();}},"閉じる"));
+  bg.appendChild(m);return bg;
+}
+
+// 予定に出ている定期ルーティンをタップ → この日のみ削除など
+function renderPlanCustomTodoModal(){
+  const pc=state.planCustomTodo||{};
+  const vd=pc.vd;
+  const bg=div({className:"modal-center"});
+  const m=div({className:"modal-box"});
+  bg.addEventListener('click',()=>{state.modal=null;render();});
+  m.addEventListener('click',e=>e.stopPropagation());
+  const dl=(()=>{const p=(vd||"").split('-');return p.length>=3?`${parseInt(p[1])}/${parseInt(p[2])}`:"";})();
+  m.appendChild(div({style:{fontSize:"15px",fontWeight:700,color:"#e2e8f0",marginBottom:"4px"}},`☑️ ${pc.label||"定期ルーティン"}`));
+  m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"14px"}},`${dl} の予定`));
+  // この日のみ削除（＝この回を除外。定期ルーティン自体は残る）
+  m.appendChild(btn({style:{width:"100%",padding:"11px",marginBottom:"8px",background:"#7f1d1d33",border:"1px solid #ef4444",borderRadius:"8px",color:"#fca5a5",fontSize:"13px",fontWeight:700,cursor:"pointer"},
+    onClick:()=>{ pushUndo("この日の定期ルーティンを削除しました"); toggleExclude(vd,pc.uid); state.modal=null; showToast("この日のみ削除しました"); render(); }},"🗑 この日のみ削除"));
+  // 定期ルーティンを編集（設定へ）
+  m.appendChild(btn({style:{width:"100%",padding:"10px",marginBottom:"8px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#94a3b8",cursor:"pointer",fontSize:"12px"},
+    onClick:()=>{ state.modal=null; state.tab="タスク"; state.taskSubTab="定期ルーティン"; render(); }},"⚙ 定期ルーティンを編集"));
   m.appendChild(btn({className:"btn-ghost",style:{width:"100%",marginTop:"4px"},onClick:()=>{state.modal=null;render();}},"閉じる"));
   bg.appendChild(m);return bg;
 }
@@ -3286,7 +3308,7 @@ function renderDaySchedule(vd,ds,isToday){
   tl.appendChild(tapLayer);
   blockArea(events,"36px","50% - 40px",EV_COLORS[0],ev=>{
     if(ev._tail){ state.viewDate=addDays(vd,-1); render(); return; } // 前日の予定 → 前日へ移動して編集
-    if(ev.customTodo){ state.tab="タスク";state.taskSubTab="定期ルーティン";render(); return; }
+    if(ev.customTodo){ state.planCustomTodo={uid:ev.ctUid,label:ev.ctLabel||ev.title,vd}; state.modal="planCustomTodo"; render(); return; }
     if(ev.isPattern){ openPatternEdit(ev,vd); return; }
     state.modal="addEvent";state.editEventUid=ev.uid;state.editEventIsRepeat=!!ev.isRepeat;
     state.newEvTitle=ev.title;state.newEvH=ev.startH;state.newEvM=ev.startM;
