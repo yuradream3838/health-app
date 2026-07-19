@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.40"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.41"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -4450,8 +4450,8 @@ function renderOccasional(vd){
       cb.addEventListener('click',(()=>{const o=occ,id=ct.uid,c2={...ct},label=ct.label,wasDone=done;return()=>{
         if(wasDone){ merge(vd,id,{checked:false,time:null}); }
         else {
-          // 繰り越し実施なら、過去の未実施回を除外（予定から削除・複数回はすべて）
-          if(o.overdue) dismissPastUnchecked(c2,vd);
+          // チェックしたら、以前の未実施の回（予定）はすべて削除（除外）する
+          dismissPastUnchecked(c2,vd);
           // チェックはチェックした当日(vd)に記録
           merge(vd,id,{checked:true,time:new Date().toISOString()});
           showToast(`✅ ${label}`);
