@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.46"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.47"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -343,8 +343,13 @@ function saveRoutines(){ safeSet(STORAGE_KEY+"_routines",JSON.stringify(state.ro
 const SHIFT_TYPES = {
   s1:  {label:"1直", start:7.5,  end:16, color:"#38bdf8"},
   s2:  {label:"2直", start:14.5, end:23, color:"#a78bfa"},
-  off: {label:"休み", start:null, end:null, color:"#22c55e"},
+  off: {label:"休み1", start:null, end:null, color:"#22c55e"},
+  off2:{label:"休み2", start:null, end:null, color:"#14b8a6"},
 };
+// シフト選択肢（1直/2直/休み1/休み2）。休みは直の代わりに睡眠時間をずらす用途で2種類。
+const SHIFT_OPTS = [["s1","1直"],["s2","2直"],["off","休み1"],["off2","休み2"]];
+// 休み系キー（勤務なし）
+const OFF_KEYS = ["off","off2"];
 // 直近の月曜日(YYYY-MM-DD)
 function mondayStr(ds){
   const d=parseDS(ds); d.setDate(d.getDate()-((d.getDay()+6)%7));
@@ -391,7 +396,7 @@ function getPlanShiftBlock(ds){
     return {startH:ps.startH,startM:ps.startM||0,endH:ps.endH,endM:ps.endM||0,label:"勤務",color:ps.startH<12?SHIFT_TYPES.s1.color:SHIFT_TYPES.s2.color,custom:true};
   }
   const key=(ps!=null)?ps:getPatternShift(ds);
-  if(!key||key==="off")return null;
+  if(!key||key==="off"||key==="off2")return null;
   const sh=SHIFT_TYPES[key]; if(!sh||sh.start==null)return null;
   let end=sh.end; if(end>24)end=24;
   return {startH:Math.floor(sh.start),startM:Math.round((sh.start%1)*60),endH:Math.floor(end),endM:Math.round((end%1)*60),label:sh.label,color:sh.color};
@@ -2713,7 +2718,7 @@ function renderPatternEditModal(vd){
     m.appendChild(div({style:{fontSize:"15px",fontWeight:700,color:"#e2e8f0",marginBottom:"4px"}},"💼 シフトを変更"));
     m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"12px"}},`${dl} のシフト（この日のみ変更）`));
     const row=div({style:{display:"flex",gap:"6px",marginBottom:"10px"}});
-    [["s1","1直"],["s2","2直"],["off","休み"]].forEach(([k,l])=>{
+    SHIFT_OPTS.forEach(([k,l])=>{
       const on=getPlanShiftKey(vd)===k&&!(typeof getDaily(vd).planShift==='object');
       const b=btn({style:{flex:1,padding:"9px",borderRadius:"8px",cursor:"pointer",fontSize:"13px",fontWeight:600,
         border:`1px solid ${on?SHIFT_TYPES[k].color:"#334155"}`,background:on?SHIFT_TYPES[k].color+"22":"transparent",color:on?SHIFT_TYPES[k].color:"#64748b"}},l);
@@ -2884,7 +2889,7 @@ function renderShiftPanel(){
       const cell=div({style:{textAlign:"center"}});
       cell.appendChild(div({style:{fontSize:"9px",color:"#64748b",marginBottom:"2px"}},DAY_LBL[d]));
       const sel=document.createElement('select');sel.className='sel';sel.style.cssText="width:100%;padding:3px 1px;font-size:11px";
-      [["off","休"],["s1","1直"],["s2","2直"]].forEach(([v,l])=>{const o=document.createElement('option');o.value=v;o.textContent=l;if((row[d]||"off")===v)o.selected=true;sel.appendChild(o);});
+      [["off","休1"],["off2","休2"],["s1","1直"],["s2","2直"]].forEach(([v,l])=>{const o=document.createElement('option');o.value=v;o.textContent=l;if((row[d]||"off")===v)o.selected=true;sel.appendChild(o);});
       sel.addEventListener('change',(()=>{const w=wi,dd=d;return e=>{
         const grid=state.shiftPattern.grid.map(r=>[...r]); grid[w][dd]=e.target.value;
         state.shiftPattern={...state.shiftPattern,grid};saveShiftPattern();render();
@@ -2945,7 +2950,7 @@ function renderPlanPatternPanel(){
     };
     if(p.byShift){
       const stAll=p.shiftTimes||{};
-      [["s1","1直"],["s2","2直"],["off","休み"]].forEach(([k,lbl])=>{
+      SHIFT_OPTS.forEach(([k,lbl])=>{
         const st=stAll[k]||{on:true,startH:0,startM:0,endH:8,endM:0};
         const wrapR=div({style:{marginBottom:"4px"}});
         const head=div({style:{display:"flex",alignItems:"center",gap:"6px",marginBottom:"2px"}});
@@ -3032,7 +3037,7 @@ function renderPlanPatternPanel(){
       sub.appendChild(head);
       if(o.byShift){
         const stAll=o.shiftTimes||{};
-        [["s1","1直"],["s2","2直"],["off","休み"]].forEach(([k,slbl])=>{
+        SHIFT_OPTS.forEach(([k,slbl])=>{
           const st=stAll[k]||{on:true,startH:o.startH??18,startM:o.startM||0,endH:o.endH??19,endM:o.endM||0};
           const setSt=ch=>{const cur=o.shiftTimes||{};setWt({shiftTimes:{...cur,[k]:{...st,...ch}}});};
           const sh=div({style:{display:"flex",alignItems:"center",gap:"6px",marginBottom:"2px"}});
@@ -3156,7 +3161,7 @@ function renderDaySchedule(vd,ds,isToday){
     const sc=div({className:"card",style:{padding:"8px 10px",marginBottom:"8px"}});
     sc.appendChild(div({style:{fontSize:"10px",fontWeight:700,color:"#94a3b8",marginBottom:"6px"}},"💼 この日のシフト（この日のみ変更）"));
     const row=div({style:{display:"flex",gap:"6px"}});
-    [["s1","1直"],["s2","2直"],["off","休み"]].forEach(([k,l])=>{
+    SHIFT_OPTS.forEach(([k,l])=>{
       const on=curKey===k;
       const c=SHIFT_TYPES[k].color;
       const b=btn({style:{flex:1,padding:"8px",borderRadius:"8px",cursor:"pointer",fontSize:"13px",fontWeight:600,border:`1px solid ${on?c:"#334155"}`,background:on?c+"22":"transparent",color:on?c:"#64748b"}},l);
@@ -3418,7 +3423,7 @@ function renderWeekCalendar(vd,ds){
   const shiftOn=state.shiftPattern&&state.shiftPattern.enabled;
   wrap.appendChild(div({style:{display:"flex",gap:"6px",alignItems:"center",marginBottom:"8px"}},[
     div({style:{flex:1,fontSize:"10px",color:"#64748b"}},
-      state.swapMode?(state.swapFirst?"入れ替える2日目をタップ":"入れ替える1日目をタップ"):"シフトバッジをタップで 1直→2直→休み→自動 を切替"),
+      state.swapMode?(state.swapFirst?"入れ替える2日目をタップ":"入れ替える1日目をタップ"):"シフトバッジをタップで 1直→2直→休み1→休み2→自動 を切替"),
     btn({style:{fontSize:"11px",padding:"5px 12px",borderRadius:"7px",cursor:"pointer",fontWeight:600,
       border:`1px solid ${state.swapMode?"#f59e0b":"#334155"}`,background:state.swapMode?"#f59e0b22":"transparent",color:state.swapMode?"#f59e0b":"#94a3b8"},
       onClick:()=>{state.swapMode=!state.swapMode;state.swapFirst=null;render();}},state.swapMode?"入れ替え中…やめる":"🔄 2日を入れ替え")
@@ -3429,6 +3434,7 @@ function renderWeekCalendar(vd,ds){
     if(ov==null){ setDayShift(dsK,"s1"); }
     else if(ov==="s1"){ setDayShift(dsK,"s2"); }
     else if(ov==="s2"){ setDayShift(dsK,"off"); }
+    else if(ov==="off"){ setDayShift(dsK,"off2"); }
     else { setDayShift(dsK,null); }
     render();
   };
@@ -4110,9 +4116,9 @@ function customTodoIntervalLabel(ct){
   const WD=["日","月","火","水","木","金","土"];
   let base="";
   if(ct.shiftSchedule){
-    const SL={s1:"1直",s2:"2直",off:"休"};
+    const SL={s1:"1直",s2:"2直",off:"休1",off2:"休2"};
     const parts=[];
-    ["s1","s2","off"].forEach(k=>{const ss=ct.shiftSchedule[k];if(ss&&ss.on){const wds=(ss.weekdays&&ss.weekdays.length)?ss.weekdays.slice().sort((a,b)=>a-b).map(i=>WD[i]).join("・"):"全曜日";parts.push(`${SL[k]}:${wds}`);}});
+    ["s1","s2","off","off2"].forEach(k=>{const ss=ct.shiftSchedule[k];if(ss&&ss.on){const wds=(ss.weekdays&&ss.weekdays.length)?ss.weekdays.slice().sort((a,b)=>a-b).map(i=>WD[i]).join("・"):"全曜日";parts.push(`${SL[k]}:${wds}`);}});
     return (n===1?"":`${n}週ごと `)+`直別[${parts.join(" / ")||"未設定"}]`;
   }
   if(ct.itype==="day")   base=n===1?"毎日":`${n}日ごと`;
@@ -6241,12 +6247,12 @@ function renderCustomTodoModal(){
   // 直ごとに曜日・時刻を設定するモード
   const bsToggle=btn({style:{width:"100%",padding:"9px",borderRadius:"8px",cursor:"pointer",fontWeight:600,fontSize:"12px",marginBottom:"12px",
     border:`1px solid ${m0.byShiftSchedule?"#a78bfa":"#334155"}`,background:m0.byShiftSchedule?"#a78bfa22":"transparent",color:m0.byShiftSchedule?"#a78bfa":"#64748b"}},m0.byShiftSchedule?"🔗 直ごとに曜日・時刻を設定: ON":"🔗 直ごとに曜日・時刻を設定: OFF");
-  bsToggle.addEventListener('click',()=>{ if(m0.byShiftSchedule){ m0.byShiftSchedule=false; } else { m0.byShiftSchedule=true; if(!m0.shiftSchedule)m0.shiftSchedule={s1:{on:false,weekdays:[]},s2:{on:false,weekdays:[]},off:{on:false,weekdays:[]}}; } render(); });
+  bsToggle.addEventListener('click',()=>{ if(m0.byShiftSchedule){ m0.byShiftSchedule=false; } else { m0.byShiftSchedule=true; if(!m0.shiftSchedule)m0.shiftSchedule={s1:{on:false,weekdays:[]},s2:{on:false,weekdays:[]},off:{on:false,weekdays:[]},off2:{on:false,weekdays:[]}}; } render(); });
   m.appendChild(bsToggle);
   if(m0.byShiftSchedule){
     const tinp2=(h,mm,set)=>{const i=document.createElement('input');i.type='time';i.value=`${String(h??0).padStart(2,'0')}:${String(mm||0).padStart(2,'0')}`;i.style.cssText="flex:1;min-width:0;padding:7px 6px;background:#1e293b;border:1px solid #334155;border-radius:6px;color:#e2e8f0;font-size:14px;font-family:inherit;color-scheme:dark";i.addEventListener('change',e=>{const q=(e.target.value||'').split(':');const H=Number(q[0]),M=Number(q[1]);if(!isNaN(H)&&!isNaN(M))set(H,M);});return i;};
     m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"6px"}},"直ごとの曜日・時刻（ONにした直の日だけ・その直の曜日/時刻で）"));
-    [["s1","1直"],["s2","2直"],["off","休み"]].forEach(([k,lbl])=>{
+    SHIFT_OPTS.forEach(([k,lbl])=>{
       const ss=m0.shiftSchedule[k]||{on:false,weekdays:[]};
       const c=SHIFT_TYPES[k].color;
       const block=div({style:{marginBottom:"10px",padding:"8px 10px",background:"#0f172a",borderRadius:"8px",border:`1px solid ${ss.on?c+"66":"#1e293b"}`}});
@@ -6322,7 +6328,7 @@ function renderCustomTodoModal(){
   if(!m0.byShiftSchedule){
     m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"6px"}},"シフト連動（選んだ直の日だけ・設定のシフトと連動）"));
     const shRow=div({style:{display:"flex",gap:"6px",marginBottom:"12px"}});
-    [["s1","1直"],["s2","2直"],["off","休み"]].forEach(([k,l])=>{
+    SHIFT_OPTS.forEach(([k,l])=>{
       const on=(m0.shifts||[]).includes(k);
       const c=SHIFT_TYPES[k].color;
       const sb=btn({style:{flex:1,padding:"7px 0",borderRadius:"7px",cursor:"pointer",fontSize:"12px",fontWeight:600,border:`1px solid ${on?c:"#334155"}`,background:on?c+"22":"transparent",color:on?c:"#475569"}},l);
@@ -6386,7 +6392,7 @@ function renderCustomTodoModal(){
     sub.appendChild(head);
     if(o.byShift){
       const stAll=o.shiftTimes||{};
-      [["s1","1直"],["s2","2直"],["off","休み"]].forEach(([k,slbl])=>{
+      SHIFT_OPTS.forEach(([k,slbl])=>{
         const st=stAll[k]||{on:true,timeH:o.timeH??0,timeM:o.timeM||0};
         const r=div({style:{display:"flex",alignItems:"center",gap:"6px",marginBottom:"3px"}});
         const onB=btn({style:{fontSize:"10px",padding:"3px 8px",borderRadius:"6px",cursor:"pointer",fontWeight:700,flexShrink:0,width:"64px",
