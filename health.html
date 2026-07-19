@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.45"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.46"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -1335,9 +1335,7 @@ function renderDailyPanel(vd){
         if(!planK) return null;
         const psh=SHIFT_TYPES[planK];
         return div({style:{display:"flex",alignItems:"center",gap:"8px",marginBottom:"6px"}},[
-          div({style:{fontSize:"10px",color:"#94a3b8",flex:1}},`📅 予定シフト：${psh.label}（左の予定に表示中）`),
-          psh.start!=null?btn({style:{fontSize:"10px",padding:"2px 8px",background:"#0ea5e918",border:"1px solid #0ea5e9",borderRadius:"6px",color:"#38bdf8",cursor:"pointer",whiteSpace:"nowrap"},
-            onClick:()=>{setDaily(vd,{workStart:psh.start,workEnd:psh.end,overtime:0});render();}},"実績に入れる"):null
+          div({style:{fontSize:"10px",color:"#94a3b8",flex:1}},`📅 予定シフト：${psh.label}（左の予定に表示中）`)
         ]);
       })(),
       div({style:{display:"flex",alignItems:"center",gap:"8px",marginBottom:"6px"}},[
@@ -3150,6 +3148,27 @@ function renderDaySchedule(vd,ds,isToday){
     btn({style:{width:"100%",padding:"9px",background:"linear-gradient(135deg,#0ea5e918,#6366f118)",border:"1px solid #6366f1",borderRadius:"8px",color:"#a5b4fc",fontSize:"12px",fontWeight:600,cursor:"pointer"},
       onClick:()=>runAISchedule(vd)},state.aiScheduleLoading?"🤖 提案中...":"🤖 AI提案")
   ]));
+
+  // その日のシフトを変更（この日のみ・予定シフトの上書き。実績には触れない）
+  {
+    const curKey=getPlanShiftKey(vd);
+    const isOverride=getDaily(vd).planShift!=null;
+    const sc=div({className:"card",style:{padding:"8px 10px",marginBottom:"8px"}});
+    sc.appendChild(div({style:{fontSize:"10px",fontWeight:700,color:"#94a3b8",marginBottom:"6px"}},"💼 この日のシフト（この日のみ変更）"));
+    const row=div({style:{display:"flex",gap:"6px"}});
+    [["s1","1直"],["s2","2直"],["off","休み"]].forEach(([k,l])=>{
+      const on=curKey===k;
+      const c=SHIFT_TYPES[k].color;
+      const b=btn({style:{flex:1,padding:"8px",borderRadius:"8px",cursor:"pointer",fontSize:"13px",fontWeight:600,border:`1px solid ${on?c:"#334155"}`,background:on?c+"22":"transparent",color:on?c:"#64748b"}},l);
+      b.addEventListener('click',()=>{setDayShift(vd,k);showToast(`${l}に変更しました`);render();});
+      row.appendChild(b);
+    });
+    sc.appendChild(row);
+    if(isOverride)
+      sc.appendChild(btn({style:{width:"100%",marginTop:"6px",padding:"6px",background:"transparent",border:"1px solid #334155",borderRadius:"7px",color:"#64748b",cursor:"pointer",fontSize:"11px"},
+        onClick:()=>{setDayShift(vd,null);showToast("パターンに戻しました");render();}},"↩ パターンに戻す"));
+    wrap.appendChild(sc);
+  }
 
   // 終日・時間未指定エリア（終日予定＋時間なしのたまにやること）
   {
