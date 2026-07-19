@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.42"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.43"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -4029,11 +4029,16 @@ function dismissPastUnchecked(ct, vd){
 // たまにやることの指定日dsでの時刻 {h,m}。時刻なしは null。
 // 曜日別の時間（さらに直で分けられる）があれば優先、なければ基本の timeH/timeM。
 function customTodoTimeFor(ct, ds){
-  // 直ごとモード：当日のシフトの時刻
+  // 直ごとモード：当日のシフトの時刻（その直の中で曜日別の上書きがあれば優先）
   if(ct.shiftSchedule){
     const k=getPlanShiftKey(ds)||"off";
     const ss=ct.shiftSchedule[k];
-    if(ss&&ss.on&&ss.timeH!=null) return {h:ss.timeH,m:ss.timeM||0,eh:ss.endH,em:ss.endM};
+    if(ss&&ss.on){
+      const dow=parseDS(ds).getDay();
+      const wt=(ss.weekdayTimes||{})[dow];
+      if(wt&&wt.timeH!=null) return {h:wt.timeH,m:wt.timeM||0,eh:wt.endH,em:wt.endM};
+      if(ss.timeH!=null) return {h:ss.timeH,m:ss.timeM||0,eh:ss.endH,em:ss.endM};
+    }
     return null;
   }
   const dow=parseDS(ds).getDay();
@@ -6226,6 +6231,34 @@ function renderCustomTodoModal(){
           tRow2.appendChild(tinp2(ss.endH!=null?ss.endH:(ss.timeH+1)%24,ss.endH!=null?ss.endM:ss.timeM,(H,M)=>{m0.shiftSchedule={...m0.shiftSchedule,[k]:{...ss,endH:H,endM:M}};}));
         }
         block.appendChild(tRow2);
+        // その直の中で、特定の曜日だけ時刻を上書き
+        if((ss.weekdays||[]).length){
+          const swt=ss.weekdayTimes||{};
+          const wnm=["日","月","火","水","木","金","土"];
+          block.appendChild(div({style:{fontSize:"10px",color:"#64748b",margin:"10px 0 4px"}},"曜日別に時刻を変える（タップで上書き）"));
+          const owRow=div({style:{display:"flex",flexWrap:"wrap",gap:"4px",marginBottom:"6px"}});
+          (ss.weekdays||[]).slice().sort((a,b)=>a-b).forEach(idx=>{
+            const ov=!!swt[idx];
+            const wb=btn({style:{padding:"5px 10px",borderRadius:"6px",cursor:"pointer",fontSize:"11px",fontWeight:600,border:`1px solid ${ov?"#f59e0b":"#334155"}`,background:ov?"#f59e0b22":"transparent",color:ov?"#fbbf24":"#475569"}},wnm[idx]);
+            wb.addEventListener('click',()=>{
+              const cur={...(ss.weekdayTimes||{})};
+              if(cur[idx]) delete cur[idx];
+              else { const bh=ss.timeH!=null?ss.timeH:(new Date()).getHours(); const bm=ss.timeH!=null?(ss.timeM||0):0; cur[idx]={timeH:bh,timeM:bm,endH:ss.endH!=null?ss.endH:(bh+1)%24,endM:ss.endH!=null?ss.endM:bm}; }
+              m0.shiftSchedule={...m0.shiftSchedule,[k]:{...ss,weekdayTimes:cur}};render();
+            });
+            owRow.appendChild(wb);
+          });
+          block.appendChild(owRow);
+          (ss.weekdays||[]).slice().sort((a,b)=>a-b).forEach(idx=>{
+            const wtv=swt[idx]; if(!wtv)return;
+            const r=div({style:{display:"flex",gap:"6px",alignItems:"center",marginBottom:"4px"}});
+            r.appendChild(span({style:{fontSize:"11px",color:"#fbbf24",width:"16px",flexShrink:0,fontWeight:700,textAlign:"center"}},wnm[idx]));
+            r.appendChild(tinp2(wtv.timeH,wtv.timeM,(H,M)=>{const cur={...(ss.weekdayTimes||{})};cur[idx]={...cur[idx],timeH:H,timeM:M};m0.shiftSchedule={...m0.shiftSchedule,[k]:{...ss,weekdayTimes:cur}};}));
+            r.appendChild(span({style:{fontSize:"11px",color:"#64748b"}},"〜"));
+            r.appendChild(tinp2(wtv.endH!=null?wtv.endH:(wtv.timeH+1)%24,wtv.endH!=null?wtv.endM:wtv.timeM,(H,M)=>{const cur={...(ss.weekdayTimes||{})};cur[idx]={...cur[idx],endH:H,endM:M};m0.shiftSchedule={...m0.shiftSchedule,[k]:{...ss,weekdayTimes:cur}};}));
+            block.appendChild(r);
+          });
+        }
       }
       m.appendChild(block);
     });
