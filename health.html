@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.38"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.39"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -2638,6 +2638,7 @@ function getPlannedExtras(vd){
   });
   // たまにやること（カスタムTODO）で時刻設定があるものは、その日の予定(左)に表示
   dueCustomTodos(vd).forEach(ct=>{
+    if((state.todos[vd]||{})[ct.uid]?.excluded)return; // 除外した回は予定にも出さない
     const tt=customTodoTimeFor(ct,vd); if(!tt)return;
     const {s,e}=customTodoSpan(tt);
     out.push({title:`☑️ ${ct.label}`,color:ct.color||"#38bdf8",startH:Math.floor(s/60),startM:s%60,endH:Math.floor(e/60),endM:e%60,customTodo:true});
@@ -3128,7 +3129,7 @@ function renderDaySchedule(vd,ds,isToday){
 
   // 終日・時間未指定エリア（終日予定＋時間なしのたまにやること）
   {
-    const untimedCustom=dueCustomTodos(vd).filter(ct=>!customTodoTimeFor(ct,vd));
+    const untimedCustom=dueCustomTodos(vd).filter(ct=>!customTodoTimeFor(ct,vd) && !(state.todos[vd]||{})[ct.uid]?.excluded);
     if(allDayEvents.length||untimedCustom.length){
       const ad=div({className:"card",style:{padding:"8px 10px",marginBottom:"8px"}});
       ad.appendChild(div({style:{fontSize:"10px",fontWeight:700,color:"#94a3b8",marginBottom:"6px"}},"📌 終日・時間未指定"));
@@ -3979,6 +3980,26 @@ function customTodoDue(ct, ds){
   return true;
 }
 function dueCustomTodos(ds){ return (state.customTodos||[]).filter(ct=>customTodoDue(ct,ds)); }
+// 表示日 vd で対応すべき「回」を返す。当日該当なら当日、そうでなければ直近の未実施回を繰り越す。
+// 完了/除外済みの過去回は繰り越さない（最新回のみ対象）。
+function customTodoOccurrence(ct, vd){
+  if(customTodoDue(ct,vd)){
+    const rec=(state.todos[vd]||{})[ct.uid]||{};
+    return {dueDate:vd, overdue:false, excluded:!!rec.excluded, checked:!!rec.checked};
+  }
+  let ds=vd;
+  for(let i=0;i<60;i++){
+    ds=addDays(ds,-1);
+    if(ct.startDate && ds<ct.startDate) break;
+    if(customTodoDue(ct,ds)){
+      const rec=(state.todos[ds]||{})[ct.uid]||{};
+      if(rec.checked||rec.excluded) return null; // 直近回は完了/除外 → 繰り越さない
+      const days=Math.round((parseDS(vd)-parseDS(ds))/86400000);
+      return {dueDate:ds, overdue:true, excluded:false, checked:false, daysAgo:days};
+    }
+  }
+  return null;
+}
 // たまにやることの指定日dsでの時刻 {h,m}。時刻なしは null。
 // 曜日別の時間（さらに直で分けられる）があれば優先、なければ基本の timeH/timeM。
 function customTodoTimeFor(ct, ds){
@@ -4398,24 +4419,44 @@ function renderOccasional(vd){
   if(list.length===0){
     card.appendChild(div({style:{fontSize:"11px",color:"#475569",textAlign:"center",padding:"10px 0"}},"「＋追加」でN日/N週/Nヶ月ごとの項目を登録（曜日・シフト連動も可）"));
   }
-  [...list].sort((a,b)=>{const da=customTodoDue(a,vd),db=customTodoDue(b,vd);if(da!==db)return da?-1:1;return nextCustomTodoDate(a)<nextCustomTodoDate(b)?-1:1;}).forEach(ct=>{
-    const due=customTodoDue(ct,vd);
-    const rec=(state.todos[vd]||{})[ct.uid]||{};
-    const done=due&&!!rec.checked;
-    const row=div({style:{display:"flex",alignItems:"center",gap:"10px",padding:"8px 2px",borderBottom:"1px solid #1e3a5f33",opacity:due?1:0.6}});
-    if(due){
-      const cb=btn({style:{width:"22px",height:"22px",borderRadius:"6px",flexShrink:0,border:`2px solid ${done?"#22c55e":"#334155"}`,background:done?"#22c55e":"transparent",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"13px",color:"#fff"}},done?"✓":"");
-      cb.addEventListener('click',(()=>{const id=ct.uid,label=ct.label,wasDone=done;return()=>{setTodo(vd,id,{checked:!wasDone,time:!wasDone?new Date().toISOString():null});if(!wasDone){showToast(`✅ ${label}`);}};})());
+  const merge=(date,id,patch)=>{ const cur=(state.todos[date]||{})[id]||{}; setTodo(date,id,{...cur,...patch}); };
+  // 並び：当日該当→繰り越し（未実施）→その他
+  const rank=ct=>{const o=customTodoOccurrence(ct,vd);if(o&&!o.excluded&&!o.overdue)return 0;if(o&&o.overdue)return 1;if(o&&o.excluded)return 2;return 3;};
+  [...list].sort((a,b)=>{const ra=rank(a),rb=rank(b);if(ra!==rb)return ra-rb;return nextCustomTodoDate(a)<nextCustomTodoDate(b)?-1:1;}).forEach(ct=>{
+    const occ=customTodoOccurrence(ct,vd);
+    const active = occ && !occ.excluded;         // チェック可能（当日 or 繰り越し）
+    const done = occ && occ.checked;
+    const overdue = occ && occ.overdue;
+    const excludedToday = occ && occ.excluded;   // 当日該当だが除外中
+    const row=div({style:{display:"flex",alignItems:"center",gap:"10px",padding:"8px 2px",borderBottom:"1px solid #1e3a5f33",opacity:active?1:0.55}});
+    if(active){
+      const cb=btn({style:{width:"22px",height:"22px",borderRadius:"6px",flexShrink:0,border:`2px solid ${done?"#22c55e":overdue?"#f97316":"#334155"}`,background:done?"#22c55e":"transparent",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"13px",color:"#fff"}},done?"✓":"");
+      cb.addEventListener('click',(()=>{const dd=occ.dueDate,id=ct.uid,label=ct.label,wasDone=done;return()=>{merge(dd,id,{checked:!wasDone,time:!wasDone?new Date().toISOString():null});if(!wasDone){showToast(`✅ ${label}`);}};})());
       row.appendChild(cb);
     } else {
-      row.appendChild(div({style:{width:"22px",textAlign:"center",fontSize:"12px",color:"#475569",flexShrink:0}},"🔁"));
+      row.appendChild(div({style:{width:"22px",textAlign:"center",fontSize:"12px",color:"#475569",flexShrink:0}},excludedToday?"⊘":"🔁"));
     }
     const lab=div({style:{flex:1,minWidth:0}});
     lab.appendChild(div({style:{fontSize:"13px",color:done?"#475569":"#e2e8f0",textDecoration:done?"line-through":"none"}},ct.label||"(無題)"));
     const _tt=customTodoTimeFor(ct,vd), _hasWd=ct.weekdayTimes&&Object.keys(ct.weekdayTimes).length;
     const _timeStr=_tt?` ・ ${_tt.h}:${String(_tt.m||0).padStart(2,'0')}${_hasWd?"(曜日別)":""}`:(_hasWd?" ・ 曜日別":"");
-    lab.appendChild(div({style:{fontSize:"9px",color:"#64748b"}},`${customTodoIntervalLabel(ct)}${_timeStr}　${due?"今日":"次:"+mdc(nextCustomTodoDate(ct))}`));
+    let statusStr;
+    if(overdue) statusStr=`🔴 ${occ.daysAgo}日前(${mdc(occ.dueDate)})から未実施`;
+    else if(excludedToday) statusStr="除外中";
+    else if(occ) statusStr="今日";
+    else statusStr="次:"+mdc(nextCustomTodoDate(ct));
+    lab.appendChild(div({style:{fontSize:"9px",color:overdue?"#f97316":"#64748b"}},`${customTodoIntervalLabel(ct)}${_timeStr}　${statusStr}`));
     row.appendChild(lab);
+    // 除外／戻す
+    if(active){
+      const ex=btn({style:{background:"transparent",border:"1px solid #334155",borderRadius:"6px",color:"#64748b",cursor:"pointer",fontSize:"10px",padding:"3px 7px",flexShrink:0},title:"この回を除外"},"除外");
+      ex.addEventListener('click',(()=>{const dd=occ.dueDate,id=ct.uid;return()=>{pushUndo("定期ルーティンを除外しました");merge(dd,id,{excluded:true,checked:false});};})());
+      row.appendChild(ex);
+    } else if(excludedToday){
+      const un=btn({style:{background:"transparent",border:"1px solid #334155",borderRadius:"6px",color:"#64748b",cursor:"pointer",fontSize:"10px",padding:"3px 7px",flexShrink:0}},"戻す");
+      un.addEventListener('click',(()=>{const id=ct.uid;return()=>{merge(vd,id,{excluded:false});};})());
+      row.appendChild(un);
+    }
     const ed=btn({style:{background:"transparent",border:"1px solid #334155",borderRadius:"6px",color:"#64748b",cursor:"pointer",fontSize:"11px",padding:"3px 8px",flexShrink:0}},"✏️");
     ed.addEventListener('click',(()=>{const c={...ct};return()=>{state.customTodoModal=c;render();};})());
     row.appendChild(ed);
