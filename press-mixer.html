@@ -1,0 +1,660 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0f172a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>プレス＆ミキサー</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;user-select:none}
+html,body{height:100%}
+body{background:#0f172a;color:#f1f5f9;font-family:'Segoe UI',system-ui,sans-serif;overflow:hidden;touch-action:none}
+#app{max-width:600px;margin:0 auto;height:100%;display:flex;flex-direction:column;position:relative}
+
+.top{display:flex;align-items:center;gap:8px;padding:12px 14px;background:#1e293b;border-bottom:1px solid #1e3a5f;z-index:5}
+.top h1{font-size:16px;font-weight:800;letter-spacing:.5px;background:linear-gradient(135deg,#38bdf8,#818cf8);-webkit-background-clip:text;background-clip:text;color:transparent}
+.top .spacer{flex:1}
+.stat{font-size:11px;color:#64748b;font-weight:600}
+.stat b{color:#38bdf8}
+
+/* ---- 選択画面 ---- */
+.screen{flex:1;overflow-y:auto;padding:14px;display:none;flex-direction:column;gap:14px}
+.screen.on{display:flex}
+.sec-title{font-size:12px;font-weight:700;color:#94a3b8;margin:2px 2px 0}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(66px,1fr));gap:8px}
+.obj{aspect-ratio:1;background:#1e293b;border:2px solid #1e3a5f;border-radius:14px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;cursor:pointer;transition:.12s;padding:4px}
+.obj:active{transform:scale(.92)}
+.obj.sel{border-color:#38bdf8;background:#1e3a5f;box-shadow:0 0 0 3px #38bdf822}
+.obj .e{font-size:30px;line-height:1}
+.obj .n{font-size:9px;color:#94a3b8;font-weight:600;text-align:center}
+.obj.sel .n{color:#e2e8f0}
+
+.machines{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:2px}
+.mbtn{border:none;border-radius:16px;padding:16px 10px;cursor:pointer;color:#fff;font-weight:800;font-size:15px;display:flex;flex-direction:column;align-items:center;gap:6px;transition:.12s}
+.mbtn:active{transform:scale(.95)}
+.mbtn .mi{font-size:34px}
+.mbtn .ms{font-size:10px;font-weight:600;opacity:.85}
+.mbtn.press{background:linear-gradient(135deg,#f43f5e,#b91c1c)}
+.mbtn.mix{background:linear-gradient(135deg,#8b5cf6,#4338ca)}
+.mbtn:disabled{opacity:.4;filter:grayscale(.6);cursor:not-allowed}
+
+.hint{font-size:11px;color:#64748b;text-align:center;padding:2px 8px}
+.randbtn{align-self:center;background:#1e293b;border:1px solid #334155;color:#cbd5e1;border-radius:20px;padding:8px 16px;font-size:12px;font-weight:700;cursor:pointer}
+.randbtn:active{transform:scale(.94)}
+
+/* ---- ゲーム画面 ---- */
+#play{position:absolute;inset:0;display:none;flex-direction:column;background:#0f172a;z-index:10}
+#play.on{display:flex}
+.pbar{display:flex;align-items:center;gap:10px;padding:10px 14px;z-index:6;background:#1e293b;border-bottom:1px solid #1e3a5f}
+.iconbtn{background:#1e293b;border:1px solid #334155;color:#cbd5e1;border-radius:10px;width:38px;height:38px;font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center}
+.iconbtn:active{transform:scale(.9)}
+.ptitle{font-size:14px;font-weight:800}
+.ptitle small{display:block;font-size:10px;color:#64748b;font-weight:600}
+#stage{flex:1;position:relative;overflow:hidden}
+#cv{position:absolute;inset:0;width:100%;height:100%;touch-action:none}
+.meterwrap{position:absolute;left:14px;bottom:118px;top:14px;width:16px;background:#1e293b99;border:1px solid #334155;border-radius:10px;overflow:hidden;display:none}
+.meterwrap.on{display:block}
+.meterfill{position:absolute;left:0;right:0;bottom:0;height:0%;border-radius:10px;transition:height .05s linear}
+.meterfill.press{background:linear-gradient(#fca5a5,#ef4444,#b91c1c)}
+.meterfill.mix{background:linear-gradient(#c4b5fd,#8b5cf6,#4338ca)}
+
+.control{padding:12px 16px 22px;display:flex;flex-direction:column;gap:10px;align-items:center;z-index:6}
+.bigbtn{width:100%;max-width:420px;border:none;border-radius:18px;padding:20px;font-size:18px;font-weight:800;color:#fff;cursor:pointer;letter-spacing:1px;position:relative;overflow:hidden;transition:.08s}
+.bigbtn:active{transform:scale(.97)}
+.bigbtn.press{background:linear-gradient(135deg,#f43f5e,#b91c1c);box-shadow:0 8px 20px #f43f5e44}
+.bigbtn.mix{background:linear-gradient(135deg,#8b5cf6,#4338ca);box-shadow:0 8px 20px #8b5cf644}
+.bigbtn.holding{filter:brightness(1.15)}
+.subhint{font-size:11px;color:#64748b}
+
+/* ---- リザルト ---- */
+.result{position:absolute;inset:0;background:#0f172acc;backdrop-filter:blur(3px);display:none;align-items:center;justify-content:center;z-index:20;padding:20px}
+.result.on{display:flex}
+.rcard{background:#1e293b;border:1px solid #334155;border-radius:20px;padding:26px 22px;text-align:center;max-width:340px;width:100%;animation:pop .3s cubic-bezier(.3,1.5,.5,1)}
+@keyframes pop{from{transform:scale(.6);opacity:0}to{transform:scale(1);opacity:1}}
+.rcard .rem{font-size:56px;line-height:1}
+.rcard h2{font-size:20px;font-weight:800;margin:8px 0 4px}
+.rcard p{font-size:12px;color:#94a3b8;margin-bottom:16px}
+.rrow{display:flex;gap:10px}
+.rbtn{flex:1;border:none;border-radius:12px;padding:13px;font-weight:800;font-size:13px;cursor:pointer}
+.rbtn.again{background:linear-gradient(135deg,#0ea5e9,#6366f1);color:#fff}
+.rbtn.back{background:#0f172a;border:1px solid #334155;color:#94a3b8}
+.rbadge{display:inline-block;font-size:11px;color:#fbbf24;font-weight:700;margin-bottom:10px}
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="top">
+    <h1>💥 プレス＆ミキサー</h1>
+    <div class="spacer"></div>
+    <div class="stat">合計 <b id="statTotal">0</b> 個</div>
+  </div>
+
+  <!-- 選択画面 -->
+  <div class="screen on" id="selectScreen">
+    <div class="sec-title">① 何を入れる？</div>
+    <div class="grid" id="objGrid"></div>
+    <button class="randbtn" id="randBtn">🎲 ランダムで選ぶ</button>
+    <div class="sec-title">② どの機械にかける？</div>
+    <div class="machines">
+      <button class="mbtn press" id="goPress" disabled>
+        <span class="mi">🔻</span>プレス機
+        <span class="ms">ぺしゃんこに潰す</span>
+      </button>
+      <button class="mbtn mix" id="goMix" disabled>
+        <span class="mi">🌀</span>ミキサー
+        <span class="ms">バラバラに粉砕</span>
+      </button>
+    </div>
+    <div class="hint">まず上のリストから 1 つ選んでね</div>
+  </div>
+
+  <!-- ゲーム画面 -->
+  <div id="play">
+    <div class="pbar">
+      <button class="iconbtn" id="backBtn">←</button>
+      <div class="ptitle" id="playTitle">プレス機<small id="playSub"></small></div>
+    </div>
+    <div id="stage">
+      <canvas id="cv"></canvas>
+      <div class="meterwrap" id="meterWrap"><div class="meterfill" id="meterFill"></div></div>
+    </div>
+    <div class="control">
+      <div class="subhint" id="subHint">ボタンを長押し</div>
+      <button class="bigbtn" id="actBtn">スタート</button>
+    </div>
+
+    <div class="result" id="result">
+      <div class="rcard">
+        <div class="rbadge" id="rBadge"></div>
+        <div class="rem" id="rEmoji">💥</div>
+        <h2 id="rTitle">完了！</h2>
+        <p id="rDesc"></p>
+        <div class="rrow">
+          <button class="rbtn again" id="againBtn">もう一回</button>
+          <button class="rbtn back" id="chooseBtn">別のを選ぶ</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+/* ============================================================
+   プレス＆ミキサー  —  単一ファイル・キャンバスゲーム
+   ============================================================ */
+
+// ---- オブジェクト定義 ----
+const OBJECTS = [
+  {e:"🍉",n:"スイカ",juice:"🧃",hard:1.0},
+  {e:"🍅",n:"トマト",hard:0.7},
+  {e:"🥚",n:"たまご",hard:0.6},
+  {e:"🍓",n:"いちご",hard:0.6},
+  {e:"🍌",n:"バナナ",hard:0.7},
+  {e:"🥑",n:"アボカド",hard:0.9},
+  {e:"🍑",n:"もも",hard:0.8},
+  {e:"🍩",n:"ドーナツ",hard:0.7},
+  {e:"🍫",n:"チョコ",hard:1.1},
+  {e:"🧀",n:"チーズ",hard:1.0},
+  {e:"🍞",n:"パン",hard:0.6},
+  {e:"🎂",n:"ケーキ",hard:0.7},
+  {e:"🍦",n:"アイス",hard:0.5},
+  {e:"🧊",n:"氷",hard:1.4},
+  {e:"🥫",n:"缶",hard:1.6},
+  {e:"📱",n:"スマホ",hard:1.7},
+  {e:"⌚",n:"時計",hard:1.5},
+  {e:"💡",n:"電球",hard:1.2},
+  {e:"🔋",n:"電池",hard:1.5},
+  {e:"🎈",n:"風船",hard:0.4},
+  {e:"🦆",n:"アヒル",hard:0.8},
+  {e:"🧸",n:"くま",hard:0.9},
+  {e:"🪀",n:"ヨーヨー",hard:1.1},
+  {e:"🎃",n:"かぼちゃ",hard:1.2},
+  {e:"🥥",n:"ヤシの実",hard:1.8},
+  {e:"🍍",n:"パイン",hard:1.3},
+  {e:"🧄",n:"にんにく",hard:0.9},
+  {e:"🫐",n:"ブルーベリー",hard:0.6},
+];
+
+// ---- 状態 ----
+let selected = null;
+let mode = null;          // 'press' | 'mix'
+let stats = load();
+function load(){ try{ return JSON.parse(localStorage.getItem('pmg_stats'))||{total:0}; }catch(e){ return {total:0}; } }
+function save(){ localStorage.setItem('pmg_stats', JSON.stringify(stats)); }
+
+// ---- DOM ----
+const $ = id => document.getElementById(id);
+const objGrid = $('objGrid');
+const selectScreen = $('selectScreen');
+const play = $('play');
+const cv = $('cv');
+const ctx = cv.getContext('2d');
+const meterWrap = $('meterWrap'), meterFill = $('meterFill');
+const actBtn = $('actBtn'), subHint = $('subHint');
+const resultEl = $('result');
+
+$('statTotal').textContent = stats.total;
+
+// ---- オブジェクトグリッド生成 ----
+OBJECTS.forEach((o,i)=>{
+  const d = document.createElement('div');
+  d.className='obj'; d.dataset.i=i;
+  d.innerHTML = `<span class="e">${o.e}</span><span class="n">${o.n}</span>`;
+  d.onclick = ()=>selectObject(i);
+  objGrid.appendChild(d);
+});
+function selectObject(i){
+  selected = i;
+  [...objGrid.children].forEach((c,k)=>c.classList.toggle('sel', k===i));
+  $('goPress').disabled = false;
+  $('goMix').disabled = false;
+  beep(520,0.05,'sine',0.05);
+}
+$('randBtn').onclick = ()=>{
+  const i = Math.floor(Math.random()*OBJECTS.length);
+  objGrid.children[i].scrollIntoView({block:'nearest'});
+  selectObject(i);
+};
+$('goPress').onclick = ()=>startGame('press');
+$('goMix').onclick   = ()=>startGame('mix');
+$('backBtn').onclick = backToSelect;
+$('chooseBtn').onclick = ()=>{ resultEl.classList.remove('on'); backToSelect(); };
+$('againBtn').onclick = ()=>{ resultEl.classList.remove('on'); startGame(mode); };
+
+function backToSelect(){
+  stopLoop();
+  play.classList.remove('on');
+  selectScreen.classList.add('on');
+  resultEl.classList.remove('on');
+}
+
+/* ============================================================
+   オーディオ（合成）
+   ============================================================ */
+let AC = null;
+function ac(){ if(!AC){ try{ AC = new (window.AudioContext||window.webkitAudioContext)(); }catch(e){} } if(AC&&AC.state==='suspended') AC.resume(); return AC; }
+function beep(freq,dur,type='sine',vol=0.1){
+  const a=ac(); if(!a) return;
+  const o=a.createOscillator(), g=a.createGain();
+  o.type=type; o.frequency.value=freq;
+  g.gain.value=vol; o.connect(g); g.connect(a.destination);
+  g.gain.setValueAtTime(vol,a.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.0001,a.currentTime+dur);
+  o.start(); o.stop(a.currentTime+dur);
+}
+function noiseBurst(dur=0.18,vol=0.25,filterFreq=1200){
+  const a=ac(); if(!a) return;
+  const n=Math.floor(a.sampleRate*dur);
+  const buf=a.createBuffer(1,n,a.sampleRate);
+  const d=buf.getChannelData(0);
+  for(let i=0;i<n;i++) d[i]=(Math.random()*2-1)*(1-i/n);
+  const src=a.createBufferSource(); src.buffer=buf;
+  const f=a.createBiquadFilter(); f.type='lowpass'; f.frequency.value=filterFreq;
+  const g=a.createGain(); g.gain.value=vol;
+  src.connect(f); f.connect(g); g.connect(a.destination);
+  src.start();
+}
+// 継続音（モーター/プレス）
+let drone=null;
+function startDrone(type){
+  const a=ac(); if(!a) return;
+  stopDrone();
+  const o=a.createOscillator(), g=a.createGain(), f=a.createBiquadFilter();
+  o.type = type==='mix'?'sawtooth':'square';
+  f.type='lowpass'; f.frequency.value=600;
+  o.frequency.value = type==='mix'?60:40;
+  g.gain.value=0.0001;
+  o.connect(f); f.connect(g); g.connect(a.destination);
+  o.start();
+  drone={o,g,f};
+}
+function setDrone(power){ // power 0..1
+  if(!drone) return; const a=ac();
+  const base = mode==='mix'?90:35;
+  drone.o.frequency.setTargetAtTime(base + power*(mode==='mix'?260:120), a.currentTime,0.05);
+  drone.f.frequency.setTargetAtTime(400 + power*2500, a.currentTime,0.05);
+  drone.g.gain.setTargetAtTime(0.02 + power*0.10, a.currentTime,0.05);
+}
+function stopDrone(){ if(drone){ try{drone.g.gain.setTargetAtTime(0.0001,ac().currentTime,0.05); const d=drone; setTimeout(()=>{try{d.o.stop()}catch(e){}},200);}catch(e){} drone=null; } }
+function vibrate(ms){ if(navigator.vibrate) navigator.vibrate(ms); }
+
+/* ============================================================
+   スプライト → 粒子サンプリング
+   ============================================================ */
+function buildSprite(emoji, size){
+  const c=document.createElement('canvas'); c.width=c.height=size;
+  const g=c.getContext('2d');
+  g.textAlign='center'; g.textBaseline='middle';
+  g.font=(size*0.82)+'px "Segoe UI Emoji","Apple Color Emoji",serif';
+  g.fillText(emoji,size/2,size/2);
+  const data=g.getImageData(0,0,size,size).data;
+  const parts=[]; let rs=0,gs=0,bs=0,n=0;
+  const step=Math.max(3,Math.floor(size/44));
+  for(let y=0;y<size;y+=step) for(let x=0;x<size;x+=step){
+    const i=(y*size+x)*4, a=data[i+3];
+    if(a>70){
+      const r=data[i],gg=data[i+1],b=data[i+2];
+      parts.push({ox:x-size/2, oy:y-size/2, r,g:gg,b, size:step});
+      rs+=r; gs+=gg; bs+=b; n++;
+    }
+  }
+  n=Math.max(1,n);
+  return {img:c, size, step, parts, avg:[Math.round(rs/n),Math.round(gs/n),Math.round(bs/n)]};
+}
+
+/* ============================================================
+   ゲーム本体
+   ============================================================ */
+let W=0,H=0,DPR=1;
+function resize(){
+  DPR=Math.min(window.devicePixelRatio||1,2);
+  const r=$('stage').getBoundingClientRect();
+  W=r.width; H=r.height;
+  cv.width=W*DPR; cv.height=H*DPR;
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+}
+window.addEventListener('resize',()=>{ if(play.classList.contains('on')) resize(); });
+
+let raf=null, G=null; // G = game object
+function stopLoop(){ if(raf){ cancelAnimationFrame(raf); raf=null; } stopDrone(); pressing=false; }
+
+let pressing=false;
+
+function startGame(m){
+  mode=m; selected=selected;
+  const o=OBJECTS[selected];
+  selectScreen.classList.remove('on');
+  play.classList.add('on');
+  resultEl.classList.remove('on');
+  $('playTitle').firstChild.textContent = m==='press'?'プレス機':'ミキサー';
+  $('playSub').textContent = o.e+' '+o.n;
+  actBtn.className='bigbtn '+(m==='press'?'press':'mix');
+  meterFill.className='meterfill '+(m==='press'?'press':'mix');
+  actBtn.textContent = m==='press'?'⬇ 押しつぶす':'🌀 まわす';
+  subHint.textContent = m==='press'?'ボタンを長押しでプレス機を下ろす':'ボタンを長押しでミキサー始動';
+  meterWrap.classList.add('on');
+  resize();
+  const sprite=buildSprite(o.e, 240);
+  if(m==='press') G=new PressGame(o,sprite); else G=new MixGame(o,sprite);
+  bindHold();
+  lastT=performance.now();
+  loop();
+}
+
+// 長押しハンドリング
+function bindHold(){
+  const down=e=>{ e.preventDefault(); pressing=true; actBtn.classList.add('holding'); ac(); startDroneIfNeeded(); };
+  const up=e=>{ pressing=false; actBtn.classList.remove('holding'); };
+  actBtn.onpointerdown=down; actBtn.onpointerup=up; actBtn.onpointercancel=up; actBtn.onpointerleave=up;
+  // ステージ上でも操作可
+  cv.onpointerdown=down; cv.onpointerup=up; cv.onpointercancel=up;
+}
+function startDroneIfNeeded(){ if(!drone && G && !G.done) startDrone(mode); }
+
+let lastT=0;
+function loop(){
+  const now=performance.now();
+  let dt=(now-lastT)/1000; lastT=now; if(dt>0.05) dt=0.05;
+  ctx.clearRect(0,0,W,H);
+  if(G){ G.update(dt); G.draw(ctx); }
+  raf=requestAnimationFrame(loop);
+}
+
+// 画面シェイク
+let shake=0;
+function applyShake(ctx){
+  if(shake>0.2){
+    ctx.translate((Math.random()-0.5)*shake,(Math.random()-0.5)*shake);
+    shake*=0.86;
+  } else shake=0;
+}
+
+/* ---------------- プレス機 ---------------- */
+class PressGame{
+  constructor(o,sprite){
+    this.o=o; this.sp=sprite; this.done=false;
+    this.squash=0;          // 0..1
+    this.plate=0;           // プレートの下がり具合 0..1
+    this.splat=null;        // 破裂後の粒子
+    this.crackT=0;
+    this.settleT=0;
+    this.creaked=false;
+    this.lastCrack=0;
+  }
+  update(dt){
+    if(this.splat){ this.updateSplat(dt); return; }
+    const speed = pressing ? 0.55/Math.max(0.5,this.o.hard) : -0.6;
+    this.plate += speed*dt;
+    this.plate=Math.max(0,Math.min(1,this.plate));
+    // squash はプレートが下限に近づくと発生
+    const contact=Math.max(0,(this.plate-0.35)/0.65);
+    this.squash += (contact - this.squash)*Math.min(1,dt*8);
+    meterFill.style.height=(this.plate*100)+'%';
+    setDrone(this.plate);
+    if(pressing && this.plate>0.4 && Math.random()<dt*8){ shake=this.squash*7; }
+    // きしみ音
+    if(pressing && this.plate>0.36 && !this.creaked){ this.creaked=true; }
+    // ひび
+    if(this.squash>0.5 && performance.now()-this.lastCrack>140 && pressing){
+      this.lastCrack=performance.now();
+      noiseBurst(0.09,0.12,900+Math.random()*600);
+    }
+    // 破裂
+    if(this.squash>0.9 && !this.splat){ this.burst(); }
+  }
+  burst(){
+    const cx=W/2, floorY=this.floorY();
+    const p=[];
+    const s=this.sp;
+    for(const q of s.parts){
+      const sx=cx + q.ox*this.curW()/s.size;
+      const sy=floorY - 6 + q.oy*this.curH()/s.size;
+      const ang=Math.atan2((sy-floorY), (sx-cx))*0.3 + (Math.random()-0.5)*0.6;
+      const outward = (sx-cx);
+      p.push({
+        x:sx,y:sy,
+        vx: outward*0.06 + (Math.random()-0.5)*120,
+        vy: -Math.random()*120-40,
+        r:q.r,g:q.g,b:q.b,size:q.size*1.1,
+        stuck:false
+      });
+    }
+    this.splat={parts:p};
+    shake=16; vibrate([25,20,40]);
+    noiseBurst(0.28,0.4,700);
+    beep(90,0.25,'square',0.18);
+    stopDrone();
+  }
+  updateSplat(dt){
+    const floorY=this.floorY();
+    let allStuck=true;
+    for(const p of this.splat.parts){
+      if(p.stuck) continue;
+      p.vy += 900*dt;
+      p.x+=p.vx*dt; p.y+=p.vy*dt;
+      p.vx*=0.99;
+      if(p.y>=floorY){
+        p.y=floorY; p.vy=0; p.vx*=0.45;
+        if(Math.abs(p.vx)<8){ p.stuck=true; }
+      }
+      if(!p.stuck) allStuck=false;
+    }
+    this.settleT+=dt;
+    if((allStuck||this.settleT>2.2) && !this.done){ this.finish(); }
+  }
+  finish(){
+    this.done=true;
+    setTimeout(()=>showResult('press',this.o),450);
+  }
+  floorY(){ return H*0.72; }
+  curH(){ return this.baseH()*(1-0.86*this.squash); }
+  curW(){ return this.baseW()*(1+0.85*this.squash); }
+  baseH(){ return Math.min(W,H)*0.46; }
+  baseW(){ return Math.min(W,H)*0.46; }
+  draw(g){
+    g.save(); applyShake(g);
+    const cx=W/2, floorY=this.floorY();
+    // 台座（アンビル）
+    g.fillStyle='#334155';
+    g.fillRect(cx-W*0.34,floorY,W*0.68,14);
+    g.fillStyle='#475569';
+    g.fillRect(cx-W*0.30,floorY+14,W*0.60,H-floorY);
+    g.fillStyle='#1e293b';
+    g.fillRect(cx-W*0.10,floorY+28,W*0.20,H-floorY);
+
+    if(!this.splat){
+      // オブジェクト（変形）
+      const w=this.curW(), h=this.curH();
+      const jit = this.squash>0.4 && pressing ? (Math.random()-0.5)*this.squash*3 : 0;
+      g.save();
+      g.translate(cx+jit, floorY - h/2 - 2);
+      g.scale(w/this.sp.size, h/this.sp.size);
+      g.drawImage(this.sp.img,-this.sp.size/2,-this.sp.size/2);
+      g.restore();
+      // ひび
+      if(this.squash>0.5){
+        g.save(); g.translate(cx,floorY-h/2);
+        g.strokeStyle='rgba(20,20,20,'+((this.squash-0.5)*1.6)+')'; g.lineWidth=2;
+        const seed=7;
+        for(let i=0;i<5;i++){
+          g.beginPath();
+          const a=(i/5)*Math.PI*2+seed;
+          g.moveTo(0,0);
+          let x=0,y=0;
+          for(let s=0;s<3;s++){ x+=Math.cos(a+ (s*0.7))*w*0.16; y+=Math.sin(a)*h*0.3; g.lineTo(x,y); }
+          g.stroke();
+        }
+        g.restore();
+      }
+    } else {
+      // 破裂した粒子
+      for(const p of this.splat.parts){
+        g.fillStyle='rgb('+p.r+','+p.g+','+p.b+')';
+        g.fillRect(p.x-p.size/2,p.y-p.size/2,p.size,p.size);
+      }
+    }
+    // プレスのプレート（上から下りてくる）
+    const plateBottom = -H*0.28 + (floorY - this.curH() - (-H*0.28)) * this.plate;
+    g.fillStyle='#64748b';
+    g.fillRect(cx-W*0.40, plateBottom-40, W*0.80, 40);
+    g.fillStyle='#475569';
+    g.fillRect(cx-W*0.10, plateBottom-140, W*0.20, 100);
+    // 危険しま模様
+    g.fillStyle='#facc15';
+    for(let x=-W*0.40;x<W*0.40;x+=28){
+      g.beginPath(); g.moveTo(cx+x,plateBottom-40); g.lineTo(cx+x+14,plateBottom-40);
+      g.lineTo(cx+x+28,plateBottom); g.lineTo(cx+x+14,plateBottom); g.closePath(); g.fill();
+    }
+    g.restore();
+  }
+}
+
+/* ---------------- ミキサー ---------------- */
+class MixGame{
+  constructor(o,sprite){
+    this.o=o; this.sp=sprite; this.done=false;
+    this.power=0; this.blend=0; this.blade=0;
+    // 粒子を生成（最初はスプライト形状）
+    this.parts=[];
+    const cx=W/2, cy=this.jarCY();
+    const scale=Math.min(W,H)*0.0016;
+    for(const q of sprite.parts){
+      this.parts.push({
+        x:cx+q.ox*scale, y:cy+q.oy*scale,
+        r:q.r,g:q.g,b:q.b, size:q.size*scale*1.3,
+        ang:Math.random()*Math.PI*2
+      });
+    }
+    this.avg=sprite.avg;
+    this.finished=false;
+  }
+  jarCX(){ return W/2; }
+  jarCY(){ return H*0.42; }
+  jarR(){ return Math.min(W*0.34, H*0.30); }
+  update(dt){
+    const target = pressing?1:0;
+    this.power += (target-this.power)*Math.min(1,dt*(pressing?3:4));
+    this.blade += this.power*22*dt;
+    setDrone(this.power);
+    meterFill.style.height=(this.blend*100)+'%';
+    if(this.power>0.15) this.blend=Math.min(1,this.blend + this.power*0.11*dt/Math.max(0.6,this.o.hard*0.5+0.5));
+    if(this.power>0.5 && Math.random()<dt*6) shake=this.power*3;
+
+    const cx=this.jarCX(), cy=this.jarCY(), R=this.jarR();
+    const bladeY=cy+R*0.55;
+    const liquidTop = cy+R - (cy+R-(cy-R*0.4))*this.blend; // 上がっていく液面（下から）
+    for(const p of this.parts){
+      // 渦：中心まわりに回転
+      const dx=p.x-cx, dy=p.y-(bladeY), dist=Math.hypot(dx,dy)+0.001;
+      const swirl=this.power*7;
+      // 接線方向
+      const tx=-dy/dist, ty=dx/dist;
+      p.x += tx*swirl*(0.6+ (30/dist)) ;
+      p.y += ty*swirl*(0.6+ (30/dist));
+      // 中心へ引き込み + 乱流
+      p.x += (-dx/dist)*this.power*1.5 + (Math.random()-0.5)*this.power*4;
+      p.y += (-dy/dist)*this.power*1.0 + (Math.random()-0.5)*this.power*4;
+      // 刃の近くで弾かれる
+      if(Math.abs(p.y-bladeY)<10 && Math.abs(dx)<R*0.6){
+        p.y += (Math.random()-0.5)*20; p.x += (Math.random()-0.5)*20;
+      }
+      // ブレンドが進むと縮小＆色が均一化
+      p.size += (Math.max(1.2,this.sp.step*0.4) - p.size)*this.blend*0.05;
+      p.r += (this.avg[0]-p.r)*this.blend*0.04;
+      p.g += (this.avg[1]-p.g)*this.blend*0.04;
+      p.b += (this.avg[2]-p.b)*this.blend*0.04;
+      // 壁で反射
+      const ddx=p.x-cx; if(Math.abs(ddx)>R*0.86){ p.x=cx+Math.sign(ddx)*R*0.86; }
+      if(p.y>cy+R*0.92){ p.y=cy+R*0.92; }
+      if(p.y<cy-R*0.9){ p.y=cy-R*0.9; }
+    }
+    if(this.blend>=1 && !this.finished){
+      this.finished=true; this.done=true;
+      vibrate(60); beep(300,0.15,'sine',0.12);
+      setTimeout(()=>showResult('mix',this.o),400);
+    }
+  }
+  draw(g){
+    g.save(); applyShake(g);
+    const cx=this.jarCX(), cy=this.jarCY(), R=this.jarR();
+    // 台座
+    g.fillStyle='#334155';
+    const baseY=cy+R+18;
+    g.fillRect(cx-R*0.9, baseY, R*1.8, H-baseY);
+    g.fillStyle='#1e293b';
+    g.fillRect(cx-R*0.5, baseY+10, R*1.0, 10);
+    // 液面（スムージー）
+    const liqTop = (cy+R*0.92) - (R*1.3)*this.blend;
+    g.save();
+    // ジャー内部クリップ（角丸っぽく）
+    g.beginPath();
+    roundRect(g, cx-R, cy-R, R*2, R*2, 22);
+    g.clip();
+    if(this.blend>0.05){
+      g.fillStyle='rgb('+this.avg[0]+','+this.avg[1]+','+this.avg[2]+')';
+      g.fillRect(cx-R, liqTop, R*2, (cy+R)-liqTop+10);
+      // 泡
+      g.fillStyle='rgba(255,255,255,0.15)';
+      for(let i=0;i<6;i++){ g.beginPath(); g.arc(cx-R+((i*97+ (this.blade*10))%(R*2)), liqTop+6+Math.sin(this.blade+i)*3, 3+i%3,0,7); g.fill(); }
+    }
+    // 粒子
+    for(const p of this.parts){
+      g.fillStyle='rgb('+(p.r|0)+','+(p.g|0)+','+(p.b|0)+')';
+      g.beginPath(); g.arc(p.x,p.y,p.size/2,0,7); g.fill();
+    }
+    g.restore();
+    // 刃
+    const bladeY=cy+R*0.55;
+    g.save(); g.translate(cx,bladeY); g.rotate(this.blade);
+    g.fillStyle='#94a3b8';
+    for(let i=0;i<3;i++){
+      g.rotate(Math.PI*2/3);
+      g.beginPath(); g.moveTo(0,0); g.lineTo(R*0.5,-5); g.lineTo(R*0.5,5); g.closePath(); g.fill();
+    }
+    g.fillStyle='#cbd5e1'; g.beginPath(); g.arc(0,0,6,0,7); g.fill();
+    g.restore();
+    // ジャーのガラス枠
+    g.strokeStyle='rgba(148,163,184,0.6)'; g.lineWidth=4;
+    g.beginPath(); roundRect(g, cx-R, cy-R, R*2, R*2, 22); g.stroke();
+    g.strokeStyle='rgba(255,255,255,0.12)'; g.lineWidth=2;
+    g.beginPath(); g.moveTo(cx-R*0.6,cy-R+8); g.lineTo(cx-R*0.6,cy+R-8); g.stroke();
+    // フタ
+    g.fillStyle='#475569';
+    g.fillRect(cx-R-6, cy-R-16, R*2+12, 18);
+    g.restore();
+  }
+}
+function roundRect(g,x,y,w,h,r){
+  g.moveTo(x+r,y); g.arcTo(x+w,y,x+w,y+h,r); g.arcTo(x+w,y+h,x,y+h,r);
+  g.arcTo(x,y+h,x,y,r); g.arcTo(x,y,x+w,y,r);
+}
+
+/* ---------------- リザルト ---------------- */
+function showResult(m,o){
+  pressing=false; actBtn.classList.remove('holding'); stopDrone();
+  meterWrap.classList.remove('on');
+  stats.total++; save(); $('statTotal').textContent=stats.total;
+  const R=resultEl;
+  if(m==='press'){
+    $('rBadge').textContent='🔻 PRESS COMPLETE';
+    $('rEmoji').textContent='🫓';
+    $('rTitle').textContent=o.n+' を ぺしゃんこに！';
+    $('rDesc').textContent='見事にプレスされました。合計 '+stats.total+' 個をやっつけた！';
+  } else {
+    $('rBadge').textContent='🌀 BLEND COMPLETE';
+    $('rEmoji').textContent='🥤';
+    $('rTitle').textContent=o.n+' スムージーの完成！';
+    $('rDesc').textContent='完全にバラバラに粉砕。合計 '+stats.total+' 個をやっつけた！';
+  }
+  R.classList.add('on');
+  vibrate(30);
+}
+
+// 初期リサイズ（play表示時に再計算するが念のため）
+window.addEventListener('load',()=>{});
+</script>
+</body>
+</html>
