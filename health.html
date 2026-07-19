@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.49"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.50"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -3291,8 +3291,130 @@ function renderSettingsHub(){
   return wrap;
 }
 
+// ── 予定・タスクの横断検索 ──
+// 名前で検索し、「どこで設定したか」（予定直接／定期ルーティン／ルーティン／
+// パターン／目標／TODO）を示して、その設定画面へ直接ジャンプできる。
+function collectSearchItems(){
+  const items=[];
+  const md=dsk=>{const q=dsk.split('-');return `${parseInt(q[1])}/${parseInt(q[2])}`;};
+  const hm=(h,m)=>`${String(h).padStart(2,'0')}:${String(m||0).padStart(2,'0')}`;
+  const WD=["日","月","火","水","木","金","土"];
+  // 1. 予定（直接・単発）
+  Object.keys(state.schedule||{}).forEach(dsk=>{
+    (state.schedule[dsk]||[]).forEach(e=>{
+      items.push({name:e.title||"(無題)",src:e.fromTask?"todo":"direct",
+        srcLabel:e.fromTask?"予定（TODO由来）":"予定（直接）",icon:"📅",
+        detail:`${md(dsk)}${e.allDay?" 終日":" "+hm(e.startH,e.startM)}`,
+        onTap:()=>{ state.widget=false; state.viewDate=dsk; state.tab="予定"; state.scheduleSubTab="日";
+          state.modal="addEvent";state.editEventUid=e.uid;state.editEventIsRepeat=false;
+          state.newEvTitle=e.title;state.newEvH=e.startH;state.newEvM=e.startM;state.newEvEndH=e.endH;state.newEvEndM=e.endM;
+          state.newEvRepeat="none";state.newEvColor=e.color||EV_COLORS[0];state.newEvWeekdays=[parseDS(dsk).getDay()];
+          state.newEvFromTask=e.fromTask||null;state.newEvAllDay=!!e.allDay;state.editScope="this";render(); }});
+    });
+  });
+  // 2. 予定（繰り返し）
+  (state.repeatEvents||[]).forEach(e=>{
+    const rl=e.repeatType==="daily"?"毎日":e.repeatType==="weekly"?`毎週 ${(e.weekdays||[]).map(i=>WD[i]).join("・")}`:e.repeatType==="monthly"?"毎月":"繰り返し";
+    items.push({name:e.title||"(無題)",src:e.fromTask?"todo":"direct",
+      srcLabel:e.fromTask?"予定（TODO由来・繰り返し）":"予定（繰り返し）",icon:"🔁",
+      detail:`${rl}${e.allDay?" 終日":" "+hm(e.startH,e.startM)}`,
+      onTap:()=>{ state.widget=false; state.tab="予定"; state.scheduleSubTab="日"; state.viewDate=todayStr();
+        state.modal="addEvent";state.editEventUid=e.uid;state.editEventIsRepeat=true;
+        state.newEvTitle=e.title;state.newEvH=e.startH;state.newEvM=e.startM;state.newEvEndH=e.endH;state.newEvEndM=e.endM;
+        state.newEvRepeat=e.repeatType||"weekly";state.newEvColor=e.color||EV_COLORS[0];
+        state.newEvWeekdays=(e.weekdays&&e.weekdays.length)?[...e.weekdays]:[parseDS(e.startDate||todayStr()).getDay()];
+        state.newEvFromTask=e.fromTask||null;state.newEvAllDay=!!e.allDay;state.editScope="this";render(); }});
+  });
+  // 3. 定期ルーティン
+  (state.customTodos||[]).forEach(ct=>{
+    items.push({name:ct.label||"(無題)",src:"routine",srcLabel:"定期ルーティン",icon:"🔁",
+      detail:customTodoIntervalLabel(ct),
+      onTap:()=>{ state.widget=false; state.tab="タスク"; state.taskSubTab="定期ルーティン"; state.customTodoModal={...ct}; render(); }});
+  });
+  // 4. ルーティン（毎日・固定項目）
+  TODO_ITEMS.forEach(it=>{
+    items.push({name:it.label,src:"daily",srcLabel:"ルーティン（毎日）",icon:"📋",
+      detail:it.type==="timer"?"タイマー":"チェック",
+      onTap:()=>{ state.widget=false; state.tab="タスク"; state.taskSubTab="ルーティン"; render(); }});
+  });
+  // 5. パターン予定（睡眠など）
+  (state.planPatterns||[]).forEach(p=>{
+    items.push({name:p.title||"(無題)",src:"pattern",srcLabel:"パターン予定",icon:"🗓",
+      detail:p.enabled===false?"無効":"パターン",
+      onTap:()=>{ state.widget=false; state.tab="設定"; render(); showToast("設定 → パターン予定 で編集できます"); }});
+  });
+  // 6. 目標（ツリー・下位まで）
+  const GP={daily:"日次",weekly:"週間",monthly:"月次",quarterly:"四半期",yearly:"年間"};
+  const walkGoals=nodes=>{(nodes||[]).forEach(n=>{
+    items.push({name:n.text||"(無題)",src:"goal",
+      srcLabel:"目標"+(n.periodType&&GP[n.periodType]?`（${GP[n.periodType]}）`:""),icon:"🎯",
+      detail:n.done?"達成":"未達成",
+      onTap:()=>{ state.widget=false; state.tab="タスク"; state.taskSubTab="目標"; state.goalView="tree"; state.goalTreeModal={mode:"edit",id:n.id,text:n.text||""}; render(); }});
+    if(n.children&&n.children.length)walkGoals(n.children);
+  });};
+  walkGoals(state.goalTree);
+  // 7. TODO
+  ((state.tasks&&state.tasks.todo)||[]).forEach(t=>{
+    items.push({name:t.text||"(無題)",src:"todo",srcLabel:"TODO",icon:"✅",
+      detail:t.done?"完了":"未完了",
+      onTap:()=>{ state.widget=false; state.tab="タスク"; state.taskSubTab="TODO"; render(); }});
+  });
+  return items;
+}
+function renderScheduleSearch(){
+  const wrap=div({});
+  if(state.searchQ==null)state.searchQ="";
+  if(!state.searchSrc)state.searchSrc="all";
+  wrap.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"8px",lineHeight:1.6}},
+    "名前で検索し、どこで設定したか（予定・定期ルーティン・ルーティン・パターン・目標・TODO）を確認して、その設定画面へ移動できます。"));
+  const inp=document.createElement('input');
+  inp.type='search'; inp.placeholder="🔍 名前で検索...";
+  inp.value=state.searchQ;
+  inp.style.cssText="width:100%;box-sizing:border-box;padding:11px 13px;background:#0f172a;border:1px solid #334155;border-radius:10px;color:#e2e8f0;font-size:15px;font-family:inherit;margin-bottom:10px";
+  wrap.appendChild(inp);
+  const SRC=[["all","すべて"],["direct","予定（直接）"],["routine","定期ルーティン"],["daily","ルーティン"],["pattern","パターン"],["goal","目標"],["todo","TODO"]];
+  const chipRow=div({style:{display:"flex",flexWrap:"wrap",gap:"5px",marginBottom:"12px"}});
+  SRC.forEach(([k,l])=>{
+    const on=state.searchSrc===k;
+    const b=btn({style:{fontSize:"11px",padding:"5px 11px",borderRadius:"14px",cursor:"pointer",fontWeight:600,border:`1px solid ${on?"#38bdf8":"#334155"}`,background:on?"#0ea5e922":"transparent",color:on?"#38bdf8":"#64748b"}},l);
+    b.addEventListener('click',()=>{state.searchSrc=k;render();});
+    chipRow.appendChild(b);
+  });
+  wrap.appendChild(chipRow);
+  const resBox=div({});
+  wrap.appendChild(resBox);
+  const all=collectSearchItems();
+  const draw=()=>{
+    resBox.innerHTML='';
+    const q=(state.searchQ||"").trim().toLowerCase();
+    let list=all;
+    if(state.searchSrc!=="all") list=list.filter(it=>it.src===state.searchSrc);
+    if(q) list=list.filter(it=>it.name.toLowerCase().includes(q));
+    if(!q && state.searchSrc==="all"){
+      resBox.appendChild(div({style:{fontSize:"12px",color:"#475569",textAlign:"center",padding:"24px 0"}},"名前を入力、または上のカテゴリで絞り込み"));
+      return;
+    }
+    if(list.length===0){ resBox.appendChild(div({style:{fontSize:"12px",color:"#475569",textAlign:"center",padding:"24px 0"}},"該当なし")); return; }
+    resBox.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"6px"}},`${list.length}件`));
+    list.slice(0,200).forEach(it=>{
+      const row=div({className:"card",style:{padding:"10px 12px",marginBottom:"6px",display:"flex",alignItems:"center",gap:"10px",cursor:"pointer"}});
+      row.appendChild(div({style:{fontSize:"18px",flexShrink:0}},it.icon));
+      row.appendChild(div({style:{flex:1,minWidth:0}},[
+        div({style:{fontSize:"13px",fontWeight:600,color:"#e2e8f0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},it.name),
+        div({style:{fontSize:"10px",color:"#64748b",marginTop:"2px"}},`${it.srcLabel}${it.detail?" ・ "+it.detail:""}`)
+      ]));
+      row.appendChild(div({style:{fontSize:"14px",color:"#475569",flexShrink:0}},"›"));
+      row.addEventListener('click',it.onTap);
+      resBox.appendChild(row);
+    });
+  };
+  inp.addEventListener('input',e=>{ state.searchQ=e.target.value; draw(); });
+  draw();
+  return wrap;
+}
+
 function renderScheduleHub(vd,ds,isToday){
-  const SUB=["日","週","月"];
+  const SUB=["日","週","月","🔍検索"];
   const wrap=div({style:{maxWidth:"600px",margin:"0 auto"}});
   const subBar=div({style:{display:"flex",borderBottom:"1px solid #1e3a5f",background:"#1e293b",position:"sticky",top:"var(--hdr-h, 150px)",zIndex:50}});
   SUB.forEach(t=>{
@@ -3304,10 +3426,11 @@ function renderScheduleHub(vd,ds,isToday){
   });
   wrap.appendChild(subBar);
   const inner=div({style:{padding:"12px 16px 60px"}});
-  if(!["日","週","月"].includes(state.scheduleSubTab))state.scheduleSubTab="日";
+  if(!["日","週","月","🔍検索"].includes(state.scheduleSubTab))state.scheduleSubTab="日";
   if(state.scheduleSubTab==="日")       inner.appendChild(renderDaySchedule(vd,ds,isToday));
   if(state.scheduleSubTab==="週")       inner.appendChild(renderWeekCalendar(vd,ds));
   if(state.scheduleSubTab==="月")       inner.appendChild(renderMonthCalendar(vd,ds));
+  if(state.scheduleSubTab==="🔍検索")   inner.appendChild(renderScheduleSearch());
   wrap.appendChild(inner);
   return wrap;
 }
