@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.50"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.51"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -1229,18 +1229,20 @@ function renderWidgetView(vd,ds){
   schedCard.appendChild(openSched);
   wrap.appendChild(schedCard);
 
-  // ── クイック記録（食べたもの・射精）──
+  // ── クイック記録（体調・アルコール・食べたもの・射精）──
   {
     const d=getDaily(vd);
-    const foodN=(d.foods||[]).length, ejN=(d.ejaculations||[]).length;
+    const curH=new Date().getHours();
+    const nowScore=(getLog(vd,curH)||{}).score;
+    const foodN=(d.foods||[]).length, ejN=(d.ejaculations||[]).length, drN=(d.drinks||[]).length;
     const c=div({className:"card",style:{padding:"12px 14px",marginBottom:"10px"}});
-    const rowb=div({style:{display:"flex",gap:"8px"}});
-    const foodBtn=btn({style:{flex:1,padding:"11px",borderRadius:"8px",cursor:"pointer",fontSize:"13px",fontWeight:600,border:"1px solid #0ea5e9",background:"#0ea5e918",color:"#38bdf8"}},`🍽️ 食べたもの${foodN?`（${foodN}）`:""}`);
-    foodBtn.addEventListener('click',()=>{ state.modal="food"; state.foodSelected=[...(d.foods||[])]; state.foodOpenCat=null; render(); });
-    const ejBtn=btn({style:{flex:1,padding:"11px",borderRadius:"8px",cursor:"pointer",fontSize:"13px",fontWeight:600,border:"1px solid #6366f1",background:"#6366f118",color:"#a5b4fc"}},`💧 射精${ejN?`（${ejN}）`:""}`);
-    ejBtn.addEventListener('click',()=>{ state.modal="addEjac"; state.newEjacH=new Date().getHours(); state.newEjacM=new Date().getMinutes(); state.newEjacTag=null; render(); });
-    rowb.appendChild(foodBtn); rowb.appendChild(ejBtn);
-    c.appendChild(rowb);
+    const grid=div({style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"8px"}});
+    const qbtn=(label,border,bg,color,onClick)=>{const b=btn({style:{padding:"11px",borderRadius:"8px",cursor:"pointer",fontSize:"13px",fontWeight:600,border:`1px solid ${border}`,background:bg,color}},label);b.addEventListener('click',onClick);return b;};
+    grid.appendChild(qbtn(`💗 体調（今）${nowScore!=null?`：${nowScore}`:""}`,"#f43f5e","#f43f5e18","#fb7185",()=>{ openScoreModal(vd,curH); }));
+    grid.appendChild(qbtn(`🍺 アルコール${drN?`（${drN}）`:""}`,"#f59e0b","#f59e0b18","#fbbf24",()=>{ const now=new Date(); state.modal="addDrink"; state.newDrink={typeId:"beer",ml:350,hour:now.getHours(),min:now.getMinutes(),pct:5,startNextDay:false}; render(); }));
+    grid.appendChild(qbtn(`🍽️ 食べたもの${foodN?`（${foodN}）`:""}`,"#0ea5e9","#0ea5e918","#38bdf8",()=>{ state.modal="food"; state.foodSelected=[...(d.foods||[])]; state.foodOpenCat=null; render(); }));
+    grid.appendChild(qbtn(`💧 射精${ejN?`（${ejN}）`:""}`,"#6366f1","#6366f118","#a5b4fc",()=>{ state.modal="addEjac"; state.newEjacH=new Date().getHours(); state.newEjacM=new Date().getMinutes(); state.newEjacTag=null; render(); }));
+    c.appendChild(grid);
     wrap.appendChild(c);
   }
 
