@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.53"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.54"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -1502,7 +1502,7 @@ function renderDailyPanel(vd){
         span({style:{fontSize:"12px",color:"#94a3b8"}},"💼 仕事"),
         span({style:{fontSize:"12px",fontWeight:700,color:"#94a3b8"}},[
           wh!=null?txt(`${wh}h`):null,
-          ot>0?span({style:{color:"#f97316"}},` +${ot}h残業`):null
+          ot>0?span({style:{color:"#f97316"}},` +${Math.round(ot*100)/100}h残業`):null
         ])
       ]),
       div({style:{display:"flex",gap:"5px",marginBottom:"4px"}},[
