@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.52"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.53"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -2644,13 +2644,18 @@ function getActualActivities(vd){
       acts.push({title:g.title, startMin:s, endMin:Math.max(e, s+16), color:g.color});
     }
   });
-  // アルコール記録も実際の行動として反映（琥珀色で区別）
+  // アルコール記録も実際の行動として反映（琥珀色で区別）。
+  // 「翌日」(startNextDay)の飲酒は入力日ではなく実際に飲んだ翌日側へ表示。
   const daily=getDaily(vd);
-  (daily.drinks||[]).forEach(dr=>{
-    const dt=resolveDT(dr);
-    const sMin=(dr.hour||0)*60+(dr.min||0);
-    acts.push({title:`${dt.emoji}${dt.label}`,startMin:sMin,endMin:sMin+12,isPoint:true,color:"#f59e0b"});
-  });
+  for(let off=-1; off<=0; off++){
+    const D=addDays(vd,off);
+    (getDaily(D).drinks||[]).forEach(dr=>{
+      if(off + (dr.startNextDay?1:0) !== 0) return; // この飲酒の実消費日がvdでなければ除外
+      const dt=resolveDT(dr);
+      const sMin=(dr.hour||0)*60+(dr.min||0);
+      acts.push({title:`${dt.emoji}${dt.label}`,startMin:sMin,endMin:sMin+12,isPoint:true,color:"#f59e0b"});
+    });
+  }
   // 睡眠：就寝日(D)を1つの夜として bed(D)→wake(D+1) を span&clip で反映
   // （その日の就寝と、翌朝の起床。就寝が早朝<12なら翌日就寝として扱う）
   {
