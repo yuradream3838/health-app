@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.51"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.52"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -2680,12 +2680,17 @@ function getActualActivities(vd){
     const tagAbbr = ej.tag==="自慰"?"ON":ej.tag==="セックス"?"SE":(ej.tag||"");
     acts.push({title:`💧${tagAbbr?" "+tagAbbr:""}`,startMin:s,endMin:s+12,isPoint:true,color:"#ec4899"});
   });
-  // 日記で記録した実際の勤務は実際(右)列に反映（予定シフトとは独立）
-  if(daily.workStart!=null&&daily.workEnd!=null){
-    const ws=Math.round(daily.workStart*60);
-    let we=Math.round((daily.workEnd+(daily.overtime||0))*60);
-    if(we>1440)we=1440;
-    if(we>ws) acts.push({title:"💼 仕事",startMin:ws,endMin:we,color:"#2dd4bf"});
+  // 日記で記録した実際の勤務は実際(右)列に反映（予定シフトとは独立）。
+  // 残業込みで0時を跨ぐ場合は、その勤務を所有する日(D)を基準に絶対分で計算し、
+  // 表示日(vd)へ切り出す（span&clip）＝翌日にも続きが表示される。
+  for(let off=-1; off<=0; off++){
+    const D=addDays(vd,off);
+    const dd=getDaily(D);
+    if(dd.workStart==null||dd.workEnd==null)continue;
+    const wsAbs=off*1440+Math.round(dd.workStart*60);
+    const weAbs=off*1440+Math.round((dd.workEnd+(dd.overtime||0))*60);
+    const s=Math.max(0,wsAbs), e=Math.min(1440,weAbs);
+    if(e>s) acts.push({title:"💼 仕事",startMin:s,endMin:e,color:"#2dd4bf"});
   }
   // 定期ルーティン：その日にチェックされたもの（当日該当・繰り越し実施の両方）を実際列へ
   (state.customTodos||[]).forEach(ct=>{
