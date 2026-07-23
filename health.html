@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.58"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.59"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -6726,9 +6726,9 @@ function renderCustomTodoModal(){
         tg2.addEventListener('click',()=>{ const now=new Date(); const upd=hasT?{...ss,timeH:null,endH:null}:{...ss,timeH:now.getHours(),timeM:0,endH:(now.getHours()+1)%24,endM:0}; m0.shiftSchedule={...m0.shiftSchedule,[k]:upd}; render(); });
         tRow2.appendChild(tg2);
         if(hasT){
-          tRow2.appendChild(tinp2(ss.timeH,ss.timeM,(H,M)=>{m0.shiftSchedule={...m0.shiftSchedule,[k]:{...ss,timeH:H,timeM:M}};}));
+          tRow2.appendChild(tinp2(ss.timeH,ss.timeM,(H,M)=>{const c=m0.shiftSchedule[k]||ss;m0.shiftSchedule={...m0.shiftSchedule,[k]:{...c,timeH:H,timeM:M}};}));
           tRow2.appendChild(span({style:{fontSize:"11px",color:"#64748b"}},"〜"));
-          tRow2.appendChild(tinp2(ss.endH!=null?ss.endH:(ss.timeH+1)%24,ss.endH!=null?ss.endM:ss.timeM,(H,M)=>{m0.shiftSchedule={...m0.shiftSchedule,[k]:{...ss,endH:H,endM:M}};}));
+          tRow2.appendChild(tinp2(ss.endH!=null?ss.endH:(ss.timeH+1)%24,ss.endH!=null?ss.endM:ss.timeM,(H,M)=>{const c=m0.shiftSchedule[k]||ss;m0.shiftSchedule={...m0.shiftSchedule,[k]:{...c,endH:H,endM:M}};}));
         }
         block.appendChild(tRow2);
         // その直の中で、特定の曜日だけ時刻を上書き
@@ -6753,9 +6753,9 @@ function renderCustomTodoModal(){
             const wtv=swt[idx]; if(!wtv)return;
             const r=div({style:{display:"flex",gap:"6px",alignItems:"center",marginBottom:"4px"}});
             r.appendChild(span({style:{fontSize:"11px",color:"#fbbf24",width:"16px",flexShrink:0,fontWeight:700,textAlign:"center"}},wnm[idx]));
-            r.appendChild(tinp2(wtv.timeH,wtv.timeM,(H,M)=>{const cur={...(ss.weekdayTimes||{})};cur[idx]={...cur[idx],timeH:H,timeM:M};m0.shiftSchedule={...m0.shiftSchedule,[k]:{...ss,weekdayTimes:cur}};}));
+            r.appendChild(tinp2(wtv.timeH,wtv.timeM,(H,M)=>{const c=m0.shiftSchedule[k]||ss;const cur={...(c.weekdayTimes||{})};cur[idx]={...cur[idx],timeH:H,timeM:M};m0.shiftSchedule={...m0.shiftSchedule,[k]:{...c,weekdayTimes:cur}};}));
             r.appendChild(span({style:{fontSize:"11px",color:"#64748b"}},"〜"));
-            r.appendChild(tinp2(wtv.endH!=null?wtv.endH:(wtv.timeH+1)%24,wtv.endH!=null?wtv.endM:wtv.timeM,(H,M)=>{const cur={...(ss.weekdayTimes||{})};cur[idx]={...cur[idx],endH:H,endM:M};m0.shiftSchedule={...m0.shiftSchedule,[k]:{...ss,weekdayTimes:cur}};}));
+            r.appendChild(tinp2(wtv.endH!=null?wtv.endH:(wtv.timeH+1)%24,wtv.endH!=null?wtv.endM:wtv.timeM,(H,M)=>{const c=m0.shiftSchedule[k]||ss;const cur={...(c.weekdayTimes||{})};cur[idx]={...cur[idx],endH:H,endM:M};m0.shiftSchedule={...m0.shiftSchedule,[k]:{...c,weekdayTimes:cur}};}));
             block.appendChild(r);
           });
         }
@@ -6851,9 +6851,9 @@ function renderCustomTodoModal(){
         onB.addEventListener('click',()=>{o.shiftTimes={...(o.shiftTimes||{}),[k]:{...st,on:st.on===false}};render();});
         r.appendChild(onB);
         if(st.on!==false){
-          r.appendChild(timeInp(st.timeH,st.timeM,(H,M)=>{o.shiftTimes={...(o.shiftTimes||{}),[k]:{...st,timeH:H,timeM:M}};}));
+          r.appendChild(timeInp(st.timeH,st.timeM,(H,M)=>{const c=(o.shiftTimes&&o.shiftTimes[k])||st;o.shiftTimes={...(o.shiftTimes||{}),[k]:{...c,timeH:H,timeM:M}};}));
           r.appendChild(span({style:{fontSize:"11px",color:"#64748b"}},"〜"));
-          r.appendChild(timeInp(st.endH!=null?st.endH:(st.timeH+1)%24,st.endH!=null?st.endM:st.timeM,(H,M)=>{o.shiftTimes={...(o.shiftTimes||{}),[k]:{...st,endH:H,endM:M}};}));
+          r.appendChild(timeInp(st.endH!=null?st.endH:(st.timeH+1)%24,st.endH!=null?st.endM:st.timeM,(H,M)=>{const c=(o.shiftTimes&&o.shiftTimes[k])||st;o.shiftTimes={...(o.shiftTimes||{}),[k]:{...c,endH:H,endM:M}};}));
         }
         sub.appendChild(r);
       });
