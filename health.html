@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.54"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.55"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -3547,6 +3547,8 @@ function renderDaySchedule(vd,ds,isToday){
           showToast("📅 スケジュールを登録しました");
         }},"この予定を登録")
     ]));
+    // 対話（提案を会話で調整できる）
+    pc.appendChild(renderAIChat(state.aiScheduleChat, state.aiScheduleChatLoading, "aiScheduleInput", ()=>aiScheduleChatSend(vd), "例: 午後は空けて／もっと軽めに"));
     wrap.appendChild(pc);
   }
 
@@ -4215,71 +4217,98 @@ function renderAddEventModal(vd){
 }
 
 // ── AIスケジュール提案 ──
-async function runAISchedule(vd){
-  if(state.aiScheduleLoading)return;
-  state.aiScheduleLoading=true;state.aiScheduleProposal=null;render();
-  try{
-    const d=getDaily(vd);
-    const skAI=getPlanShiftKey(vd);
-    const shift=(!skAI||skAI==="off")?"休み":skAI==="s1"?"1直(7:30-16:00勤務)":"2直(14:30-23:00勤務)";
-    const existing=getEventsForDate(vd).map(e=>`${String(e.startH).padStart(2,'0')}:${String(e.startM).padStart(2,'0')}〜${String(e.endH).padStart(2,'0')}:${String(e.endM).padStart(2,'0')} ${e.title}`).join("\n")||"なし";
-    const prioT=t=>(t.imp&&t.urg)?"[最優先]":t.imp?"[重要]":t.urg?"[緊急]":"";
-    const todoTasks=(state.tasks.todo||[]).filter(t=>!t.done).map(t=>`${prioT(t)}${t.text}`).join(", ")||"なし";
-    // ルーティン設定でまとめられているグループは「ひとかたまりの予定」として渡す
-    const routineGroups=(state.routines||[]).filter(g=>g.ids&&g.ids.length);
-    const routineIdSet=new Set(routineGroups.flatMap(g=>g.ids));
-    const routineDesc=routineGroups.map(g=>{
-      const labels=g.ids.map(id=>{const it=TODO_ITEMS.find(x=>x.id===id);return it?it.label:null;}).filter(Boolean);
-      return `「${g.title}」= ${labels.join("・")}`;
-    }).join("\n")||"なし";
-    const soloItems=TODO_ITEMS.filter(it=>!routineIdSet.has(it.id)).map(it=>it.label).join(", ")||"なし";
-    // 体調コンテキスト（休息／負荷の高い作業の配置判断に使う）
-    const scoredAll=state.logs.filter(l=>l.score!=null);
-    const avgOf=a=>a.length?(a.reduce((x,y)=>x+y,0)/a.length):null;
-    const todayLogs=scoredAll.filter(l=>l.dateStr===vd);
-    const todayAvg=avgOf(todayLogs.map(l=>l.score));
-    const recent7=[]; for(let i=0;i<7;i++){const ls=scoredAll.filter(l=>l.dateStr===addDays(vd,-i)).map(l=>l.score); const a=avgOf(ls); if(a!=null)recent7.push(a);}
-    const recentAvg=avgOf(recent7);
-    const _sh=getNightSleepHours(vd); const sleepH=_sh!=null?Math.round(_sh*10)/10:null;
-    const recentSymptoms=[...new Set(scoredAll.filter(l=>l.dateStr>=addDays(vd,-3)).flatMap(l=>l.symptoms||[]))].slice(0,6);
-    const tod={m:[],a:[],e:[],n:[]};
-    scoredAll.forEach(l=>{const h=l.hour; if(h>=5&&h<11)tod.m.push(l.score);else if(h>=11&&h<17)tod.a.push(l.score);else if(h>=17&&h<22)tod.e.push(l.score);else tod.n.push(l.score);});
-    const av=a=>{const v=avgOf(a);return v!=null?v.toFixed(1):"—";};
-    const todStr=`朝(5-11時)${av(tod.m)} / 昼(11-17時)${av(tod.a)} / 夕(17-22時)${av(tod.e)} / 夜(22-5時)${av(tod.n)}`;
-    const conditionCtx=`今日の体調: ${todayAvg!=null?todayAvg.toFixed(1)+"/10":"未記録"} / 直近7日平均: ${recentAvg!=null?recentAvg.toFixed(1)+"/10":"—"} / 前夜の睡眠: ${sleepH!=null?sleepH+"h":"—"} / 最近の症状: ${recentSymptoms.join("・")||"なし"} / 時間帯別の平均体調(10点満点): ${todStr}`;
-    const now=new Date();
-    const isTodayFlag=vd===todayStr();
-    const timeCtx=isTodayFlag?`現在時刻は${now.getHours()}:${String(now.getMinutes()).padStart(2,'0')}です。今の時刻以降のスケジュールだけ提案してください。`:"1日全体のスケジュールを提案してください。";
+// ── AI呼び出し共通（api.php・テキスト応答）──
+async function callAIText(system,prompt){
+  const res=await fetch("https://nuts024.com/health/api.php",{
+    method:"POST",headers:{"Content-Type":"application/json","X-Secret-Key":"songof3838"},
+    body:JSON.stringify({system,prompt})
+  });
+  const data=await res.json();
+  if(data.error){
+    if(data.error==="__DAILY_LIMIT__")throw new Error(data.message||"本日の利用上限に達しました");
+    if(data.error==="__GEMINI_RATE__")throw new Error(data.message||"混雑中です。少し待ってください");
+    throw new Error(data.error);
+  }
+  if(data.remaining!=null)state.aiAnalysisRemaining=data.remaining;
+  return (data.text||"").trim();
+}
+// 会話履歴を1つのテキストにまとめる
+function chatHistoryText(chat){
+  return (chat||[]).map(m=>`${m.role==="user"?"ユーザー":"アシスタント"}: ${m.text}`).join("\n");
+}
 
-    const res=await fetch("https://nuts024.com/health/api.php",{
-      method:"POST",
-      headers:{"Content-Type":"application/json","X-Secret-Key":"songof3838"},
-      body:JSON.stringify({
-        system:`あなたは体調に配慮する生活プランナーです。ユーザーの1日のスケジュールを提案し、以下のJSON形式のみで返答してください:
-{"comment":"提案の説明1〜2文（体調への配慮点にも触れる）","events":[{"title":"予定名","startH":9,"startM":0,"endH":10,"endM":30}]}
+// スケジュール提案のシステムプロンプト（初回提案・対話の両方で共有）
+const SCHED_SYS=`あなたは体調に配慮する生活プランナーです。ユーザーの1日のスケジュールを提案し、以下のJSON形式のみで返答してください:
+{"comment":"提案や調整の説明1〜2文（体調への配慮点や、要望をどう反映したかにも触れる）","events":[{"title":"予定名","startH":9,"startM":0,"endH":10,"endM":30}]}
 ルール:
 - 既存の予定と重複しない時間に配置。勤務時間中には予定を入れない。食事時間を確保。無理のない量にする。
 - 「ルーティン」のグループは、中の個々の項目を分割せず、必ずグループ名（例: 🌅モーニングルーティン）のまま【1つのまとまった予定】として1件だけ配置。所要は項目数に応じ15〜45分目安。その他の項目は個別配置可。
 - 【体調を最重要で考慮する】体調が低い(目安6未満)・睡眠不足(6h未満)・症状がある場合は、予定を詰め込まず「休息」「仮眠」「軽いストレッチ」など回復を優先し、[最優先][重要]タスクも短時間・控えめにする。
 - 体調が良い(目安7以上)ときや、時間帯別の平均体調が高い時間帯には、読書・副業・トレーニング・勉強など集中や負荷を要する活動を配置する。逆に体調が落ちやすい時間帯には負荷の軽い予定を置く。
-- [最優先][重要][緊急]のタスクは、上記の体調配慮の範囲で優先的に配置する。`,
-        prompt:`日付: ${vd}\n勤務: ${shift}\n${timeCtx}\n\n【体調】\n${conditionCtx}\n\n【既存の予定】\n${existing}\n\n【やることリスト(未完了・優先度付き)】\n${todoTasks}\n\n【ルーティン（各グループはまとめて1件の予定として配置。titleはグループ名のまま）】\n${routineDesc}\n\n【その他の毎日の項目（個別に配置してよい）】\n${soloItems}\n\n体調を踏まえてスケジュールを提案してください。`
-      })
-    });
-    const data=await res.json();
-    if(data.error){
-      if(data.error==="__DAILY_LIMIT__")throw new Error(data.message||"本日の利用上限に達しました");
-      if(data.error==="__GEMINI_RATE__")throw new Error(data.message||"混雑中です。少し待ってください");
-      throw new Error(data.error);
-    }
-    const text=(data.text||"").replace(/```json|```/g,"").trim();
-    const proposal=JSON.parse(text);
+- [最優先][重要][緊急]のタスクは、上記の体調配慮の範囲で優先的に配置する。
+- 対話の場合はユーザーの最新の要望を必ず反映し、eventsには調整後の【1日分の完全なスケジュール】を毎回返す。`;
+
+// スケジュール提案の入力コンテキスト（データ部分）を組み立てる
+function buildScheduleContext(vd){
+  const skAI=getPlanShiftKey(vd);
+  const shift=(!skAI||skAI==="off"||skAI==="off2")?"休み":skAI==="s1"?"1直(7:30-16:00勤務)":"2直(14:30-23:00勤務)";
+  const existing=getEventsForDate(vd).map(e=>`${String(e.startH).padStart(2,'0')}:${String(e.startM).padStart(2,'0')}〜${String(e.endH).padStart(2,'0')}:${String(e.endM).padStart(2,'0')} ${e.title}`).join("\n")||"なし";
+  const prioT=t=>(t.imp&&t.urg)?"[最優先]":t.imp?"[重要]":t.urg?"[緊急]":"";
+  const todoTasks=(state.tasks.todo||[]).filter(t=>!t.done).map(t=>`${prioT(t)}${t.text}`).join(", ")||"なし";
+  const routineGroups=(state.routines||[]).filter(g=>g.ids&&g.ids.length);
+  const routineIdSet=new Set(routineGroups.flatMap(g=>g.ids));
+  const routineDesc=routineGroups.map(g=>{
+    const labels=g.ids.map(id=>{const it=TODO_ITEMS.find(x=>x.id===id);return it?it.label:null;}).filter(Boolean);
+    return `「${g.title}」= ${labels.join("・")}`;
+  }).join("\n")||"なし";
+  const soloItems=TODO_ITEMS.filter(it=>!routineIdSet.has(it.id)).map(it=>it.label).join(", ")||"なし";
+  const scoredAll=state.logs.filter(l=>l.score!=null);
+  const avgOf=a=>a.length?(a.reduce((x,y)=>x+y,0)/a.length):null;
+  const todayAvg=avgOf(scoredAll.filter(l=>l.dateStr===vd).map(l=>l.score));
+  const recent7=[]; for(let i=0;i<7;i++){const ls=scoredAll.filter(l=>l.dateStr===addDays(vd,-i)).map(l=>l.score); const a=avgOf(ls); if(a!=null)recent7.push(a);}
+  const recentAvg=avgOf(recent7);
+  const _sh=getNightSleepHours(vd); const sleepH=_sh!=null?Math.round(_sh*10)/10:null;
+  const recentSymptoms=[...new Set(scoredAll.filter(l=>l.dateStr>=addDays(vd,-3)).flatMap(l=>l.symptoms||[]))].slice(0,6);
+  const tod={m:[],a:[],e:[],n:[]};
+  scoredAll.forEach(l=>{const h=l.hour; if(h>=5&&h<11)tod.m.push(l.score);else if(h>=11&&h<17)tod.a.push(l.score);else if(h>=17&&h<22)tod.e.push(l.score);else tod.n.push(l.score);});
+  const av=a=>{const v=avgOf(a);return v!=null?v.toFixed(1):"—";};
+  const todStr=`朝(5-11時)${av(tod.m)} / 昼(11-17時)${av(tod.a)} / 夕(17-22時)${av(tod.e)} / 夜(22-5時)${av(tod.n)}`;
+  const conditionCtx=`今日の体調: ${todayAvg!=null?todayAvg.toFixed(1)+"/10":"未記録"} / 直近7日平均: ${recentAvg!=null?recentAvg.toFixed(1)+"/10":"—"} / 前夜の睡眠: ${sleepH!=null?sleepH+"h":"—"} / 最近の症状: ${recentSymptoms.join("・")||"なし"} / 時間帯別の平均体調(10点満点): ${todStr}`;
+  const now=new Date();
+  const timeCtx=(vd===todayStr())?`現在時刻は${now.getHours()}:${String(now.getMinutes()).padStart(2,'0')}です。今の時刻以降のスケジュールだけ提案してください。`:"1日全体のスケジュールを提案してください。";
+  return `日付: ${vd}\n勤務: ${shift}\n${timeCtx}\n\n【体調】\n${conditionCtx}\n\n【既存の予定】\n${existing}\n\n【やることリスト(未完了・優先度付き)】\n${todoTasks}\n\n【ルーティン（各グループはまとめて1件の予定として配置。titleはグループ名のまま）】\n${routineDesc}\n\n【その他の毎日の項目（個別に配置してよい）】\n${soloItems}`;
+}
+
+async function runAISchedule(vd){
+  if(state.aiScheduleLoading)return;
+  state.aiScheduleLoading=true;state.aiScheduleProposal=null;state.aiScheduleChat=[];render();
+  try{
+    const text=await callAIText(SCHED_SYS, `${buildScheduleContext(vd)}\n\n体調を踏まえてスケジュールを提案してください。`);
+    const proposal=JSON.parse(text.replace(/```json|```/g,"").trim());
     if(!proposal.events||!proposal.events.length)throw new Error("提案が生成できませんでした");
     state.aiScheduleProposal=proposal;
+    state.aiScheduleChat=[{role:"ai",text:proposal.comment||"スケジュールを提案しました。調整したいことがあれば教えてください。"}];
   }catch(e){
     showToast(`提案失敗: ${e.message}`,"#ef4444");
   }
   state.aiScheduleLoading=false;render();
+}
+// スケジュール提案の対話（要望を反映して提案を更新）
+async function aiScheduleChatSend(vd){
+  const msg=(state.aiScheduleInput||"").trim();
+  if(!msg||state.aiScheduleChatLoading)return;
+  state.aiScheduleChat=[...(state.aiScheduleChat||[]),{role:"user",text:msg}];
+  state.aiScheduleInput=""; state.aiScheduleChatLoading=true; render();
+  try{
+    const prompt=`${buildScheduleContext(vd)}\n\n【これまでの提案・会話】\n${chatHistoryText(state.aiScheduleChat)}\n\nユーザーの最新の要望を反映し、調整後の1日分の完全なスケジュールをJSONで返してください。`;
+    const text=await callAIText(SCHED_SYS, prompt);
+    const proposal=JSON.parse(text.replace(/```json|```/g,"").trim());
+    if(proposal.events&&proposal.events.length)state.aiScheduleProposal=proposal;
+    state.aiScheduleChat=[...state.aiScheduleChat,{role:"ai",text:proposal.comment||"提案を更新しました。"}];
+  }catch(e){
+    state.aiScheduleChat=[...state.aiScheduleChat,{role:"ai",text:`（エラー: ${e.message}）`}];
+  }
+  state.aiScheduleChatLoading=false; render();
 }
 
 // ── TODOデータ管理 ────────────────────────────────
@@ -6169,6 +6198,8 @@ function renderAIAnalysisCard(scored){
     ]));
     if(state.aiAnalysisRemaining!=null) content.appendChild(div({style:{fontSize:"10px",color:"#334155",marginTop:"8px",textAlign:"right"}},`本日の残り回数: ${state.aiAnalysisRemaining}回`));
     content.appendChild(btn({style:reBtnStyle,onClick:()=>runAI(scored,state.dailies)},"🔄 再分析"));
+    // 対話（分析結果について質問・相談できる）
+    content.appendChild(renderAIChat(state.aiAnalysisChat, state.aiAnalysisChatLoading, "aiAnalysisInput", aiAnalysisChatSend, "例: 睡眠を改善するには？"));
   } else {
     content.appendChild(h('p',{style:{fontSize:"12px",color:"#64748b",marginBottom:"12px"}},"蓄積データをAIが総合的に分析します（無料・1日20回まで）"));
     content.appendChild(primaryBtn("AIで分析する"));
@@ -6177,38 +6208,41 @@ function renderAIAnalysisCard(scored){
   return card;
 }
 
+// 総合分析の入力コンテキスト（データ部分）を組み立てる（初回分析・対話で共有）
+function buildAnalysisContext(){
+  const dailies=state.dailies||[];
+  const scored=(state.logs||[]).filter(l=>l.score!=null);
+  const ds2=dailies.slice(-14).map(d=>{
+    const drinks=(d.drinks||[]).map(dr=>({...dr,drinkType:resolveDT(dr)}));
+    const g=drinks.reduce((a,b)=>a+pureAlcohol(b.ml,b.drinkType.pct),0);
+    const _sh=getNightSleepHours(d.dateStr);const sh=_sh!=null?Math.round(_sh*10)/10:null;
+    const shift=d.workStart==null?'休み':(d.workStart<12?'1直':'2直');
+    const acts=getActualActivities(d.dateStr).map(a=>a.title.replace(/^[✓]/,'')).slice(0,10).join(',');
+    return `${d.dateStr}(${shift}): 睡眠${sh??'?'}h 水分${d.water??'?'}L 純アルコール${g.toFixed(0)}g 食べたもの[${(d.foods||[]).join(',')}] 実際の行動[${acts||'記録なし'}]`;
+  }).join('\n');
+  const hs=scored.slice(-100).map(l=>`${l.dateStr} ${l.hour}時: 体調${l.score}/10 体調状態[${(l.symptoms||[]).join(',')}]${l.note?` メモ:${l.note}`:''}`).join('\n');
+  const upcoming=(()=>{
+    const lines=[];
+    for(let i=0;i<7;i++){
+      const dd=addDays(todayStr(),i);
+      const pl=getPlannedExtras(dd).map(e=>e.title).slice(0,8);
+      if(pl.length) lines.push(`${dd}: ${pl.join(',')}`);
+    }
+    return lines.join('\n')||'なし';
+  })();
+  return `【日次記録（シフト・実際の行動つき）】\n${ds2}\n\n【時間別体調】\n${hs}\n\n【今後1週間の予定】\n${upcoming}`;
+}
 async function runAI(scored,dailies){
   if(state.aiAnalysisLoading)return;
-  state.aiAnalysisLoading=true;state.aiAnalysisError=null;render();
+  state.aiAnalysisLoading=true;state.aiAnalysisError=null;state.aiAnalysisChat=[];render();
   try{
-    const ds2=dailies.slice(-14).map(d=>{
-      const drinks=(d.drinks||[]).map(dr=>({...dr,drinkType:resolveDT(dr)}));
-      const g=drinks.reduce((a,b)=>a+pureAlcohol(b.ml,b.drinkType.pct),0);
-      const _sh=getNightSleepHours(d.dateStr);const sh=_sh!=null?Math.round(_sh*10)/10:null;
-      const shift=d.workStart==null?'休み':(d.workStart<12?'1直':'2直');
-      // その日の実際の行動（スケジュール／実績）を反映
-      const acts=getActualActivities(d.dateStr).map(a=>a.title.replace(/^[✓]/,'')).slice(0,10).join(',');
-      return `${d.dateStr}(${shift}): 睡眠${sh??'?'}h 水分${d.water??'?'}L 純アルコール${g.toFixed(0)}g 食べたもの[${(d.foods||[]).join(',')}] 実際の行動[${acts||'記録なし'}]`;
-    }).join('\n');
-    const hs=scored.slice(-100).map(l=>`${l.dateStr} ${l.hour}時: 体調${l.score}/10 体調状態[${l.symptoms.join(',')}]${l.note?` メモ:${l.note}`:''}`).join('\n');
-    // 今後の予定（直近1週間）も渡して、負荷の偏りなどを見てもらう
-    const upcoming=(()=>{
-      const lines=[];
-      for(let i=0;i<7;i++){
-        const dd=addDays(todayStr(),i);
-        const pl=getPlannedExtras(dd).map(e=>e.title).slice(0,8);
-        if(pl.length) lines.push(`${dd}: ${pl.join(',')}`);
-      }
-      return lines.join('\n')||'なし';
-    })();
-
     const res=await fetch("https://nuts024.com/health/api.php",{
       method:"POST",
       headers:{"Content-Type":"application/json","X-Secret-Key":"songof3838"},
       body:JSON.stringify({
         system:`あなたは健康データアナリストです。ユーザーはシフト勤務者（1直/2直/休み）です。体調・睡眠・飲酒・飲水・食事に加え、仕事シフトやその日の実際の行動（スケジュール）、今後の予定も踏まえて総合的に分析してください。以下のJSON形式のみで返答してください。前後に説明文やMarkdownの装飾は不要です:
 {"summary":"全体傾向の要約2〜3文","topFactors":[{"factor":"要因名","impact":"positive または negative","detail":"具体的な説明","score":1から5の整数}],"worstCondition":"体調が悪くなる条件","bestCondition":"体調が良くなる条件","advice":["具体的で実行可能なアドバイスを、睡眠・栄養・運動・生活リズム・シフト勤務・メンタルなど毎回できるだけ異なる観点から3〜4個"],"newPerspective":"表面的な相関ではなく、データから読み取れる本人が気づきにくい別の観点・仮説を1〜2文で"}`,
-        prompt:`【日次記録（シフト・実際の行動つき）】\n${ds2}\n\n【時間別体調】\n${hs}\n\n【今後1週間の予定】\n${upcoming}\n\n分析してください。`
+        prompt:`${buildAnalysisContext()}\n\n分析してください。`
       })
     });
     const data=await res.json();
@@ -6225,11 +6259,52 @@ async function runAI(scored,dailies){
     const r=JSON.parse(text.replace(/```json|```/g,"").trim());
     state.aiAnalysisResult=r;
     state.aiAnalysisRemaining=(data.remaining!=null?data.remaining:null);
+    state.aiAnalysisChat=[{role:"ai",text:r.summary||"分析しました。気になる点を質問してください。"}];
   }catch(e){
     state.aiAnalysisError=e.message;
     state.aiAnalysisResult=null;
   }
   state.aiAnalysisLoading=false;render();
+}
+// 総合分析の対話（データを踏まえた自由な質問応答）
+async function aiAnalysisChatSend(){
+  const msg=(state.aiAnalysisInput||"").trim();
+  if(!msg||state.aiAnalysisChatLoading)return;
+  state.aiAnalysisChat=[...(state.aiAnalysisChat||[]),{role:"user",text:msg}];
+  state.aiAnalysisInput=""; state.aiAnalysisChatLoading=true; render();
+  try{
+    const prompt=`【あなたが参照できるユーザーのデータ】\n${buildAnalysisContext()}\n\n【これまでの会話】\n${chatHistoryText(state.aiAnalysisChat)}\n\nアシスタントとして、最新の質問に日本語の自然な文章で簡潔（3〜6文）に、具体的で実行しやすいように答えてください。`;
+    const text=await callAIText("あなたはユーザー専属の健康データアナリスト兼アドバイザーです。上記データに基づき、親身かつ具体的に、会話形式で答えます。JSONやMarkdown装飾は使わないでください。", prompt);
+    state.aiAnalysisChat=[...state.aiAnalysisChat,{role:"ai",text}];
+  }catch(e){
+    state.aiAnalysisChat=[...state.aiAnalysisChat,{role:"ai",text:`（エラー: ${e.message}）`}];
+  }
+  state.aiAnalysisChatLoading=false; render();
+}
+// AIチャットUI（分析・スケジュール共用）
+function renderAIChat(chat, loading, inputKey, onSend, placeholder){
+  const wrap=div({style:{marginTop:"12px",borderTop:"1px solid #1e3a5f",paddingTop:"10px"}});
+  wrap.appendChild(div({style:{fontSize:"11px",fontWeight:700,color:"#a5b4fc",marginBottom:"8px"}},"💬 AIと相談する"));
+  (chat||[]).forEach(m=>{
+    const isUser=m.role==="user";
+    wrap.appendChild(div({style:{display:"flex",justifyContent:isUser?"flex-end":"flex-start",marginBottom:"6px"}},[
+      div({style:{maxWidth:"85%",fontSize:"12px",lineHeight:1.6,padding:"8px 11px",borderRadius:"12px",whiteSpace:"pre-wrap",wordBreak:"break-word",
+        background:isUser?"#0ea5e922":"#6366f118",border:`1px solid ${isUser?"#0ea5e955":"#6366f133"}`,color:isUser?"#e2e8f0":"#cbd5e1"}},m.text)
+    ]));
+  });
+  if(loading)wrap.appendChild(div({style:{fontSize:"11px",color:"#64748b",padding:"4px 2px"}},"🤖 考え中..."));
+  const inRow=div({style:{display:"flex",gap:"6px",marginTop:"6px"}});
+  const inp=document.createElement('input');
+  inp.type='text'; inp.placeholder=placeholder||"質問や要望を入力...";
+  inp.value=state[inputKey]||"";
+  inp.style.cssText="flex:1;min-width:0;padding:9px 11px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit";
+  inp.addEventListener('input',e=>{state[inputKey]=e.target.value;});
+  inp.addEventListener('keydown',e=>{if(e.key==="Enter"){e.preventDefault();onSend();}});
+  const sendB=btn({style:{padding:"9px 16px",background:loading?"#334155":"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:600,cursor:loading?"default":"pointer",flexShrink:0}},"送信");
+  sendB.addEventListener('click',()=>{if(!loading)onSend();});
+  inRow.appendChild(inp); inRow.appendChild(sendB);
+  wrap.appendChild(inRow);
+  return wrap;
 }
 
 // ═══════════════════════════════════════════════════
