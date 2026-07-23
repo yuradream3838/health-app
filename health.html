@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.61"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.62"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -2702,7 +2702,7 @@ function getActualActivities(vd){
     const rec=(state.todos[vd]||{})[ct.uid];
     if(rec&&rec.checked){
       if(rec.time){ const t2=new Date(rec.time); const mins=t2.getHours()*60+t2.getMinutes(); acts.push({title:"✓"+ct.label,startMin:mins,endMin:mins+12,isPoint:true,color:ct.color||"#22c55e"}); }
-      else { const tt=customTodoTimeFor(ct,vd); if(tt){ const sp=customTodoSpan(tt); acts.push({title:"✓"+ct.label,startMin:sp.s,endMin:Math.min(1440,sp.e),isPoint:(sp.e-sp.s)<=12,color:ct.color||"#22c55e"}); } }
+      else { const tt=customTodoTimeFor(ct,vd); if(tt){ const sp=customTodoSpan(tt); if(sp.s<1440) acts.push({title:"✓"+ct.label,startMin:sp.s,endMin:Math.min(1440,sp.e),isPoint:(sp.e-sp.s)<=12,color:ct.color||"#22c55e"}); } }
     }
   });
   // 手動登録した実績（予定外・突発的な行動を含む）。日跨ぎは当日側を末尾までクリップ
@@ -2837,7 +2837,7 @@ function getPlannedExtras(vd){
   });
   // たまにやること（カスタムTODO）で時刻設定があるものは、その日の予定(左)に表示。
   // 「終了は翌日」で0時をまたぐ場合は、所有日を基準に絶対分で計算し表示日(vd)へ切り出す。
-  for(let off=-1; off<=0; off++){
+  for(let off=-2; off<=0; off++){
     const D=addD(vd,off);
     dueCustomTodos(D).forEach(ct=>{
       if((state.todos[D]||{})[ct.uid]?.excluded)return; // 除外した回は予定にも出さない
@@ -4497,8 +4497,8 @@ function customTodoTimeFor(ct, ds){
     if(ss&&ss.on){
       const dow=parseDS(ds).getDay();
       const wt=(ss.weekdayTimes||{})[dow];
-      if(wt&&wt.timeH!=null) return {h:wt.timeH,m:wt.timeM||0,eh:wt.endH,em:wt.endM,en:!!wt.endNextDay};
-      if(ss.timeH!=null) return {h:ss.timeH,m:ss.timeM||0,eh:ss.endH,em:ss.endM,en:!!ss.endNextDay};
+      if(wt&&wt.timeH!=null) return {h:wt.timeH,m:wt.timeM||0,eh:wt.endH,em:wt.endM,en:!!wt.endNextDay,sn:!!wt.startNextDay};
+      if(ss.timeH!=null) return {h:ss.timeH,m:ss.timeM||0,eh:ss.endH,em:ss.endM,en:!!ss.endNextDay,sn:!!ss.startNextDay};
     }
     return null;
   }
@@ -4508,22 +4508,23 @@ function customTodoTimeFor(ct, ds){
     if(wt.byShift){
       const k=getPlanShiftKey(ds)||"off";
       const st=(wt.shiftTimes||{})[k];
-      if(st&&st.on!==false&&st.timeH!=null) return {h:st.timeH,m:st.timeM||0,eh:st.endH,em:st.endM,en:!!st.endNextDay};
+      if(st&&st.on!==false&&st.timeH!=null) return {h:st.timeH,m:st.timeM||0,eh:st.endH,em:st.endM,en:!!st.endNextDay,sn:!!st.startNextDay};
       return null;
     }
-    if(wt.timeH!=null) return {h:wt.timeH,m:wt.timeM||0,eh:wt.endH,em:wt.endM,en:!!wt.endNextDay};
+    if(wt.timeH!=null) return {h:wt.timeH,m:wt.timeM||0,eh:wt.endH,em:wt.endM,en:!!wt.endNextDay,sn:!!wt.startNextDay};
   }
-  if(ct.timeH!=null) return {h:ct.timeH,m:ct.timeM||0,eh:ct.endH,em:ct.endM,en:!!ct.endNextDay};
+  if(ct.timeH!=null) return {h:ct.timeH,m:ct.timeM||0,eh:ct.endH,em:ct.endM,en:!!ct.endNextDay,sn:!!ct.startNextDay};
   return null;
 }
 // tt(customTodoTimeForの戻り値)から [startMin, endMin] を得る。終了未設定は既定12分。
 function customTodoSpan(tt){
-  const s=tt.h*60+(tt.m||0);
+  const soff=tt.sn?1440:0;             // 開始が翌日
+  const s=tt.h*60+(tt.m||0)+soff;
   if(tt.eh==null) return {s, e:s+12};
-  let e=tt.eh*60+(tt.em||0);
-  if(tt.en) e+=1440;        // 終了は翌日
+  let e=tt.eh*60+(tt.em||0)+soff;
+  if(tt.en) e+=1440;        // 終了はさらに翌日
   else if(e<=s) e=s+12;     // 翌日指定なしで終了≦開始は点扱い（従来通り）
-  return {s, e};            // e は1440を超えることがある（呼び出し側でクリップ）
+  return {s, e};            // s/e は1440を超えることがある（呼び出し側でクリップ）
 }
 function customTodoIntervalLabel(ct){
   const n=ct.n||1;
@@ -6681,8 +6682,8 @@ function renderEditSessionModal(vd){
 
 function renderCustomTodoModal(){
   const m0=state.customTodoModal; if(!m0)return div({});
-  // 「終了は翌日」トグル（開始より前の終了時刻＝0時またぎを許可）
-  const ndToggle=(isOn,onToggle)=>{const b=btn({style:{fontSize:"10px",padding:"7px 8px",borderRadius:"6px",cursor:"pointer",fontWeight:700,flexShrink:0,whiteSpace:"nowrap",border:`1px solid ${isOn?"#38bdf8":"#334155"}`,background:isOn?"#0ea5e922":"transparent",color:isOn?"#38bdf8":"#475569"},title:"終了時刻を翌日にする"},isOn?"🌙翌日":"当日");b.addEventListener('click',onToggle);return b;};
+  // 「翌日」トグル（0時またぎを許可）。labelは「開始」「終了」
+  const ndToggle=(label,isOn,onToggle)=>{const b=btn({style:{fontSize:"10px",padding:"7px 8px",borderRadius:"6px",cursor:"pointer",fontWeight:700,flexShrink:0,whiteSpace:"nowrap",border:`1px solid ${isOn?"#38bdf8":"#334155"}`,background:isOn?"#0ea5e922":"transparent",color:isOn?"#38bdf8":"#475569"},title:`${label}時刻を翌日にする`},`${label} ${isOn?"🌙翌日":"当日"}`);b.addEventListener('click',onToggle);return b;};
   const bg=div({className:"modal-center"});
   const m=div({className:"modal-box",style:{maxHeight:"85vh",overflowY:"auto"}});
   bg.addEventListener('click',()=>{state.customTodoModal=null;render();});
@@ -6742,7 +6743,10 @@ function renderCustomTodoModal(){
           tRow2.appendChild(tinp2(ss.endH!=null?ss.endH:(ss.timeH+1)%24,ss.endH!=null?ss.endM:ss.timeM,(H,M)=>{const c=m0.shiftSchedule[k]||ss;m0.shiftSchedule={...m0.shiftSchedule,[k]:{...c,endH:H,endM:M}};}));
         }
         block.appendChild(tRow2);
-        if(hasT) block.appendChild(div({style:{display:"flex",justifyContent:"flex-end",marginTop:"4px"}},[ndToggle(!!ss.endNextDay,()=>{const c=m0.shiftSchedule[k]||ss;m0.shiftSchedule={...m0.shiftSchedule,[k]:{...c,endNextDay:!c.endNextDay}};render();})]));
+        if(hasT) block.appendChild(div({style:{display:"flex",justifyContent:"flex-end",gap:"6px",flexWrap:"wrap",marginTop:"4px"}},[
+          ndToggle("開始",!!ss.startNextDay,()=>{const c=m0.shiftSchedule[k]||ss;m0.shiftSchedule={...m0.shiftSchedule,[k]:{...c,startNextDay:!c.startNextDay}};render();}),
+          ndToggle("終了",!!ss.endNextDay,()=>{const c=m0.shiftSchedule[k]||ss;m0.shiftSchedule={...m0.shiftSchedule,[k]:{...c,endNextDay:!c.endNextDay}};render();})
+        ]));
         // その直の中で、特定の曜日だけ時刻を上書き
         if((ss.weekdays||[]).length){
           const swt=ss.weekdayTimes||{};
@@ -6768,7 +6772,8 @@ function renderCustomTodoModal(){
             r.appendChild(tinp2(wtv.timeH,wtv.timeM,(H,M)=>{const c=m0.shiftSchedule[k]||ss;const cur={...(c.weekdayTimes||{})};cur[idx]={...cur[idx],timeH:H,timeM:M};m0.shiftSchedule={...m0.shiftSchedule,[k]:{...c,weekdayTimes:cur}};}));
             r.appendChild(span({style:{fontSize:"11px",color:"#64748b"}},"〜"));
             r.appendChild(tinp2(wtv.endH!=null?wtv.endH:(wtv.timeH+1)%24,wtv.endH!=null?wtv.endM:wtv.timeM,(H,M)=>{const c=m0.shiftSchedule[k]||ss;const cur={...(c.weekdayTimes||{})};cur[idx]={...cur[idx],endH:H,endM:M};m0.shiftSchedule={...m0.shiftSchedule,[k]:{...c,weekdayTimes:cur}};}));
-            r.appendChild(ndToggle(!!wtv.endNextDay,()=>{const c=m0.shiftSchedule[k]||ss;const cur={...(c.weekdayTimes||{})};cur[idx]={...cur[idx],endNextDay:!(cur[idx]&&cur[idx].endNextDay)};m0.shiftSchedule={...m0.shiftSchedule,[k]:{...c,weekdayTimes:cur}};render();}));
+            r.appendChild(ndToggle("開始",!!wtv.startNextDay,()=>{const c=m0.shiftSchedule[k]||ss;const cur={...(c.weekdayTimes||{})};cur[idx]={...cur[idx],startNextDay:!(cur[idx]&&cur[idx].startNextDay)};m0.shiftSchedule={...m0.shiftSchedule,[k]:{...c,weekdayTimes:cur}};render();}));
+            r.appendChild(ndToggle("終了",!!wtv.endNextDay,()=>{const c=m0.shiftSchedule[k]||ss;const cur={...(c.weekdayTimes||{})};cur[idx]={...cur[idx],endNextDay:!(cur[idx]&&cur[idx].endNextDay)};m0.shiftSchedule={...m0.shiftSchedule,[k]:{...c,weekdayTimes:cur}};render();}));
             block.appendChild(r);
           });
         }
@@ -6821,7 +6826,10 @@ function renderCustomTodoModal(){
     tRow.appendChild(mkTimeField(()=>{const eh=m0.endH!=null?m0.endH:(m0.timeH+1)%24,em=m0.endH!=null?(m0.endM||0):(m0.timeM||0);return `${String(eh).padStart(2,'0')}:${String(em).padStart(2,'0')}`;},(h,mm)=>{m0.endH=h;m0.endM=mm;}));
   }
   m.appendChild(tRow);
-  if(hasTime) m.appendChild(div({style:{display:"flex",justifyContent:"flex-end",marginTop:"-6px",marginBottom:"12px"}},[ndToggle(!!m0.endNextDay,()=>{m0.endNextDay=!m0.endNextDay;render();})]));
+  if(hasTime) m.appendChild(div({style:{display:"flex",justifyContent:"flex-end",gap:"6px",flexWrap:"wrap",marginTop:"-6px",marginBottom:"12px"}},[
+    ndToggle("開始",!!m0.startNextDay,()=>{m0.startNextDay=!m0.startNextDay;render();}),
+    ndToggle("終了",!!m0.endNextDay,()=>{m0.endNextDay=!m0.endNextDay;render();})
+  ]));
   // 曜日別の時間（特定曜日だけ別の時刻に。さらに直で分けることも可）
   const timeInp=(h,mm,set)=>{const i=document.createElement('input');i.type='time';i.value=`${String(h??0).padStart(2,'0')}:${String(mm||0).padStart(2,'0')}`;i.style.cssText="flex:1 1 66px;min-width:66px;padding:6px 8px;background:#1e293b;border:1px solid #334155;border-radius:6px;color:#e2e8f0;font-size:14px;font-family:inherit;color-scheme:dark";i.addEventListener('change',e=>{const q=(e.target.value||'').split(':');const H=Number(q[0]),M=Number(q[1]);if(!isNaN(H)&&!isNaN(M))set(H,M);});return i;};
   const cwt=m0.weekdayTimes||{};
@@ -6868,7 +6876,8 @@ function renderCustomTodoModal(){
           r.appendChild(timeInp(st.timeH,st.timeM,(H,M)=>{const c=(o.shiftTimes&&o.shiftTimes[k])||st;o.shiftTimes={...(o.shiftTimes||{}),[k]:{...c,timeH:H,timeM:M}};}));
           r.appendChild(span({style:{fontSize:"11px",color:"#64748b"}},"〜"));
           r.appendChild(timeInp(st.endH!=null?st.endH:(st.timeH+1)%24,st.endH!=null?st.endM:st.timeM,(H,M)=>{const c=(o.shiftTimes&&o.shiftTimes[k])||st;o.shiftTimes={...(o.shiftTimes||{}),[k]:{...c,endH:H,endM:M}};}));
-          r.appendChild(ndToggle(!!st.endNextDay,()=>{const c=(o.shiftTimes&&o.shiftTimes[k])||st;o.shiftTimes={...(o.shiftTimes||{}),[k]:{...c,endNextDay:!c.endNextDay}};render();}));
+          r.appendChild(ndToggle("開始",!!st.startNextDay,()=>{const c=(o.shiftTimes&&o.shiftTimes[k])||st;o.shiftTimes={...(o.shiftTimes||{}),[k]:{...c,startNextDay:!c.startNextDay}};render();}));
+          r.appendChild(ndToggle("終了",!!st.endNextDay,()=>{const c=(o.shiftTimes&&o.shiftTimes[k])||st;o.shiftTimes={...(o.shiftTimes||{}),[k]:{...c,endNextDay:!c.endNextDay}};render();}));
         }
         sub.appendChild(r);
       });
@@ -6877,7 +6886,8 @@ function renderCustomTodoModal(){
       frow.appendChild(timeInp(o.timeH,o.timeM,(H,M)=>{o.timeH=H;o.timeM=M;}));
       frow.appendChild(span({style:{fontSize:"11px",color:"#64748b"}},"〜"));
       frow.appendChild(timeInp(o.endH!=null?o.endH:(o.timeH+1)%24,o.endH!=null?o.endM:o.timeM,(H,M)=>{o.endH=H;o.endM=M;}));
-      frow.appendChild(ndToggle(!!o.endNextDay,()=>{o.endNextDay=!o.endNextDay;render();}));
+      frow.appendChild(ndToggle("開始",!!o.startNextDay,()=>{o.startNextDay=!o.startNextDay;render();}));
+      frow.appendChild(ndToggle("終了",!!o.endNextDay,()=>{o.endNextDay=!o.endNextDay;render();}));
       sub.appendChild(frow);
     }
     cwWrap.appendChild(sub);
@@ -6893,7 +6903,7 @@ function renderCustomTodoModal(){
     btn({style:{flex:2,padding:"10px",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:600,cursor:"pointer"},
       onClick:()=>{
         if(!(m0.label||"").trim()){alert("名前を入力してください");return;}
-        const data={uid:m0.uid||Date.now(),label:m0.label.trim(),itype:m0.itype||"week",n:Math.max(1,m0.n||1),startDate:m0.startDate||todayStr(),timeH:m0.timeH!=null?m0.timeH:null,timeM:m0.timeH!=null?(m0.timeM||0):0,endH:m0.timeH!=null&&m0.endH!=null?m0.endH:null,endM:m0.timeH!=null&&m0.endH!=null?(m0.endM||0):null,endNextDay:!!(m0.timeH!=null&&m0.endH!=null&&m0.endNextDay),color:m0.color||"#38bdf8",weekdays:(m0.itype==="week"&&m0.weekdays)?[...m0.weekdays]:[],shifts:m0.shifts?[...m0.shifts]:[],weekdayTimes:(m0.weekdayTimes&&Object.keys(m0.weekdayTimes).length)?JSON.parse(JSON.stringify(m0.weekdayTimes)):undefined,byShiftSchedule:!!m0.byShiftSchedule,shiftSchedule:(m0.byShiftSchedule&&m0.shiftSchedule)?JSON.parse(JSON.stringify(m0.shiftSchedule)):undefined};
+        const data={uid:m0.uid||Date.now(),label:m0.label.trim(),itype:m0.itype||"week",n:Math.max(1,m0.n||1),startDate:m0.startDate||todayStr(),timeH:m0.timeH!=null?m0.timeH:null,timeM:m0.timeH!=null?(m0.timeM||0):0,endH:m0.timeH!=null&&m0.endH!=null?m0.endH:null,endM:m0.timeH!=null&&m0.endH!=null?(m0.endM||0):null,endNextDay:!!(m0.timeH!=null&&m0.endH!=null&&m0.endNextDay),startNextDay:!!(m0.timeH!=null&&m0.startNextDay),color:m0.color||"#38bdf8",weekdays:(m0.itype==="week"&&m0.weekdays)?[...m0.weekdays]:[],shifts:m0.shifts?[...m0.shifts]:[],weekdayTimes:(m0.weekdayTimes&&Object.keys(m0.weekdayTimes).length)?JSON.parse(JSON.stringify(m0.weekdayTimes)):undefined,byShiftSchedule:!!m0.byShiftSchedule,shiftSchedule:(m0.byShiftSchedule&&m0.shiftSchedule)?JSON.parse(JSON.stringify(m0.shiftSchedule)):undefined};
         if(m0.uid) state.customTodos=(state.customTodos||[]).map(x=>x.uid===m0.uid?data:x);
         else state.customTodos=[...(state.customTodos||[]),data];
         saveCustomTodos();state.customTodoModal=null;render();
