@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.57"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.58"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -3919,7 +3919,20 @@ function renderTaskMatrix(){
     cb.addEventListener('click',(()=>{const uid=item.uid;return()=>updateTask(uid,{done:!item.done});})());
     row1.appendChild(cb);
     const label=div({style:{flex:1,minWidth:0}});
-    label.appendChild(div({style:{fontSize:"13px",color:item.done?"#64748b":"#e2e8f0",textDecoration:item.done?"line-through":"none"}},item.text));
+    if(state.editingTaskUid===item.uid){
+      const ei=document.createElement('input');
+      ei.type='text'; ei.value=item.text;
+      ei.style.cssText="width:100%;padding:5px 8px;background:#1e293b;border:1px solid #38bdf8;border-radius:6px;color:#e2e8f0;font-size:13px;font-family:inherit;box-sizing:border-box";
+      const commit=()=>{const v=ei.value.trim(); state.editingTaskUid=null; if(v&&v!==item.text)updateTask(item.uid,{text:v}); else render();};
+      ei.addEventListener('keydown',e=>{if(e.key==="Enter"){e.preventDefault();ei.blur();}});
+      ei.addEventListener('blur',commit);
+      label.appendChild(ei);
+      setTimeout(()=>{try{ei.focus();ei.select();}catch(_){}} ,0);
+    } else {
+      const tx=div({style:{fontSize:"13px",color:item.done?"#64748b":"#e2e8f0",textDecoration:item.done?"line-through":"none",cursor:"text",wordBreak:"break-word"}},item.text);
+      tx.addEventListener('click',(()=>{const uid=item.uid;return()=>{state.editingTaskUid=uid;render();};})());
+      label.appendChild(tx);
+    }
     if(prioLabel(item)&&!item.done)label.appendChild(div({style:{fontSize:"9px",color:pc,fontWeight:700}},prioLabel(item)));
     if(item.due&&!item.done)label.appendChild(dueBadge(item));
     scheduledBadges(item).forEach(b=>label.appendChild(div({style:{fontSize:"9px",color:b.repeat?"#a78bfa":"#38bdf8",fontWeight:600,marginTop:"2px"}},b.text)));
@@ -3963,6 +3976,21 @@ function renderTaskMatrix(){
     };})());
     row2.appendChild(planB);
     box.appendChild(row2);
+    // メモ（開閉トグル。メモがあれば常時表示）
+    const hasNote=!!(item.note&&item.note.trim());
+    const memoOpen=!!(state.taskMemoOpen&&state.taskMemoOpen[item.uid]);
+    const memoB=btn({style:{fontSize:"10px",padding:"3px 8px",borderRadius:"6px",cursor:"pointer",whiteSpace:"nowrap",marginTop:"6px",
+      border:`1px solid ${hasNote?"#a78bfa":"#334155"}`,background:hasNote?"#a78bfa18":"transparent",color:hasNote?"#a78bfa":"#475569"}},hasNote?"📝 メモを編集":(memoOpen?"📝 メモを閉じる":"📝 メモを追加"));
+    memoB.addEventListener('click',(()=>{const uid=item.uid;return()=>{ if(!state.taskMemoOpen)state.taskMemoOpen={}; state.taskMemoOpen[uid]=!state.taskMemoOpen[uid]; render(); };})());
+    box.appendChild(memoB);
+    if(hasNote||memoOpen){
+      const ta=document.createElement('textarea');
+      ta.value=item.note||""; ta.placeholder="メモ...";
+      ta.style.cssText="width:100%;margin-top:6px;min-height:44px;background:#1e293b;border:1px solid #334155;border-radius:6px;color:#cbd5e1;font-size:12px;padding:7px;resize:vertical;box-sizing:border-box;font-family:inherit;line-height:1.5";
+      ta.addEventListener('change',(()=>{const uid=item.uid;return e=>updateTask(uid,{note:e.target.value});})());
+      ta.addEventListener('blur',(()=>{const uid=item.uid;return e=>updateTask(uid,{note:e.target.value});})());
+      box.appendChild(ta);
+    }
     card.appendChild(box);
   });
 
