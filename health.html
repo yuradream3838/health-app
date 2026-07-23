@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.55"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.56"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -4155,6 +4155,23 @@ function renderAddEventModal(vd){
   }
 
   if(isEdit){
+    // この予定を「実際に行った」として実績へ反映（時刻は実績モーダルで調整可能）
+    m.appendChild(btn({style:{width:"100%",padding:"10px",background:"linear-gradient(135deg,#22c55e,#0ea5e9)",border:"none",borderRadius:"8px",color:"#fff",cursor:"pointer",fontSize:"13px",fontWeight:700,marginBottom:"10px"},
+      onClick:()=>{
+        const nowH=new Date().getHours();
+        state.actEditUid=null;
+        state.actTitle=state.newEvTitle||"";
+        state.actSH=state.newEvAllDay?nowH:state.newEvH;
+        state.actSM=state.newEvAllDay?0:state.newEvM;
+        state.actEH=state.newEvAllDay?((nowH+1)%24):state.newEvEndH;
+        state.actEM=state.newEvAllDay?0:state.newEvEndM;
+        state.actEndNextDay=!!state.newEvEndNextDay;
+        state.actColor=state.newEvColor||"#f472b6";
+        state.actUnplanned=false; // 予定通り行ったので突発ではない
+        state.actDate=vd;
+        state.modal="addActual";
+        render();
+      }},"✓ 実際に行った（実績に追加）"));
     m.appendChild(btn({style:{width:"100%",padding:"7px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#475569",cursor:"pointer",fontSize:"12px",marginBottom:"8px"},
       onClick:()=>{
         if(isRepEdit){
