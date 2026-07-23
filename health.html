@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.60"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.61"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -6712,7 +6712,7 @@ function renderCustomTodoModal(){
   bsToggle.addEventListener('click',()=>{ if(m0.byShiftSchedule){ m0.byShiftSchedule=false; } else { m0.byShiftSchedule=true; if(!m0.shiftSchedule)m0.shiftSchedule={s1:{on:false,weekdays:[]},s2:{on:false,weekdays:[]},off:{on:false,weekdays:[]},off2:{on:false,weekdays:[]}}; } render(); });
   m.appendChild(bsToggle);
   if(m0.byShiftSchedule){
-    const tinp2=(h,mm,set)=>{const i=document.createElement('input');i.type='time';i.value=`${String(h??0).padStart(2,'0')}:${String(mm||0).padStart(2,'0')}`;i.style.cssText="flex:1;min-width:0;padding:7px 6px;background:#1e293b;border:1px solid #334155;border-radius:6px;color:#e2e8f0;font-size:14px;font-family:inherit;color-scheme:dark";i.addEventListener('change',e=>{const q=(e.target.value||'').split(':');const H=Number(q[0]),M=Number(q[1]);if(!isNaN(H)&&!isNaN(M))set(H,M);});return i;};
+    const tinp2=(h,mm,set)=>{const i=document.createElement('input');i.type='time';i.value=`${String(h??0).padStart(2,'0')}:${String(mm||0).padStart(2,'0')}`;i.style.cssText="flex:1 1 68px;min-width:68px;padding:7px 6px;background:#1e293b;border:1px solid #334155;border-radius:6px;color:#e2e8f0;font-size:14px;font-family:inherit;color-scheme:dark";i.addEventListener('change',e=>{const q=(e.target.value||'').split(':');const H=Number(q[0]),M=Number(q[1]);if(!isNaN(H)&&!isNaN(M))set(H,M);});return i;};
     m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"6px"}},"直ごとの曜日・時刻（ONにした直の日だけ・その直の曜日/時刻で）"));
     SHIFT_OPTS.forEach(([k,lbl])=>{
       const ss=m0.shiftSchedule[k]||{on:false,weekdays:[]};
@@ -6732,7 +6732,7 @@ function renderCustomTodoModal(){
         });
         block.appendChild(wdRow);
         const hasT=ss.timeH!=null;
-        const tRow2=div({style:{display:"flex",gap:"6px",alignItems:"center"}});
+        const tRow2=div({style:{display:"flex",gap:"6px",alignItems:"center",flexWrap:"wrap"}});
         const tg2=btn({style:{fontSize:"11px",padding:"5px 10px",borderRadius:"7px",cursor:"pointer",fontWeight:600,flexShrink:0,border:`1px solid ${hasT?"#38bdf8":"#334155"}`,background:hasT?"#0ea5e922":"transparent",color:hasT?"#38bdf8":"#64748b"}},hasT?"時刻あり":"時刻なし");
         tg2.addEventListener('click',()=>{ const now=new Date(); const upd=hasT?{...ss,timeH:null,endH:null}:{...ss,timeH:now.getHours(),timeM:0,endH:(now.getHours()+1)%24,endM:0}; m0.shiftSchedule={...m0.shiftSchedule,[k]:upd}; render(); });
         tRow2.appendChild(tg2);
@@ -6740,9 +6740,9 @@ function renderCustomTodoModal(){
           tRow2.appendChild(tinp2(ss.timeH,ss.timeM,(H,M)=>{const c=m0.shiftSchedule[k]||ss;m0.shiftSchedule={...m0.shiftSchedule,[k]:{...c,timeH:H,timeM:M}};}));
           tRow2.appendChild(span({style:{fontSize:"11px",color:"#64748b"}},"〜"));
           tRow2.appendChild(tinp2(ss.endH!=null?ss.endH:(ss.timeH+1)%24,ss.endH!=null?ss.endM:ss.timeM,(H,M)=>{const c=m0.shiftSchedule[k]||ss;m0.shiftSchedule={...m0.shiftSchedule,[k]:{...c,endH:H,endM:M}};}));
-          tRow2.appendChild(ndToggle(!!ss.endNextDay,()=>{const c=m0.shiftSchedule[k]||ss;m0.shiftSchedule={...m0.shiftSchedule,[k]:{...c,endNextDay:!c.endNextDay}};render();}));
         }
         block.appendChild(tRow2);
+        if(hasT) block.appendChild(div({style:{display:"flex",justifyContent:"flex-end",marginTop:"4px"}},[ndToggle(!!ss.endNextDay,()=>{const c=m0.shiftSchedule[k]||ss;m0.shiftSchedule={...m0.shiftSchedule,[k]:{...c,endNextDay:!c.endNextDay}};render();})]));
         // その直の中で、特定の曜日だけ時刻を上書き
         if((ss.weekdays||[]).length){
           const swt=ss.weekdayTimes||{};
@@ -6763,7 +6763,7 @@ function renderCustomTodoModal(){
           block.appendChild(owRow);
           (ss.weekdays||[]).slice().sort((a,b)=>a-b).forEach(idx=>{
             const wtv=swt[idx]; if(!wtv)return;
-            const r=div({style:{display:"flex",gap:"6px",alignItems:"center",marginBottom:"4px"}});
+            const r=div({style:{display:"flex",gap:"6px",alignItems:"center",marginBottom:"4px",flexWrap:"wrap"}});
             r.appendChild(span({style:{fontSize:"11px",color:"#fbbf24",width:"16px",flexShrink:0,fontWeight:700,textAlign:"center"}},wnm[idx]));
             r.appendChild(tinp2(wtv.timeH,wtv.timeM,(H,M)=>{const c=m0.shiftSchedule[k]||ss;const cur={...(c.weekdayTimes||{})};cur[idx]={...cur[idx],timeH:H,timeM:M};m0.shiftSchedule={...m0.shiftSchedule,[k]:{...c,weekdayTimes:cur}};}));
             r.appendChild(span({style:{fontSize:"11px",color:"#64748b"}},"〜"));
@@ -6810,20 +6810,20 @@ function renderCustomTodoModal(){
   if(!m0.byShiftSchedule){
   // 時刻（任意）
   const hasTime=m0.timeH!=null;
-  const tRow=div({style:{display:"flex",alignItems:"center",gap:"8px",marginBottom:"14px"}});
+  const tRow=div({style:{display:"flex",alignItems:"center",gap:"8px",marginBottom:"14px",flexWrap:"wrap"}});
   const tg=btn({style:{fontSize:"11px",padding:"6px 10px",borderRadius:"7px",cursor:"pointer",fontWeight:600,border:`1px solid ${hasTime?"#38bdf8":"#334155"}`,background:hasTime?"#0ea5e922":"transparent",color:hasTime?"#38bdf8":"#64748b"}},hasTime?"時刻あり":"時刻なし");
   tg.addEventListener('click',()=>{ if(m0.timeH!=null){m0.timeH=null;m0.endH=null;m0.endM=null;} else {const now=new Date();m0.timeH=now.getHours();m0.timeM=0;m0.endH=(now.getHours()+1)%24;m0.endM=0;} render(); });
   tRow.appendChild(tg);
-  const mkTimeField=(getV,set)=>{const i=document.createElement('input');i.type='time';i.value=getV();i.style.cssText="flex:1;min-width:0;padding:8px 6px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:15px;font-family:inherit;color-scheme:dark";i.addEventListener('change',e=>{const p=(e.target.value||"").split(':');const h=Number(p[0]),mm=Number(p[1]);if(!isNaN(h)&&!isNaN(mm))set(h,mm);});return i;};
+  const mkTimeField=(getV,set)=>{const i=document.createElement('input');i.type='time';i.value=getV();i.style.cssText="flex:1 1 72px;min-width:72px;padding:8px 6px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:15px;font-family:inherit;color-scheme:dark";i.addEventListener('change',e=>{const p=(e.target.value||"").split(':');const h=Number(p[0]),mm=Number(p[1]);if(!isNaN(h)&&!isNaN(mm))set(h,mm);});return i;};
   if(hasTime){
     tRow.appendChild(mkTimeField(()=>`${String(m0.timeH).padStart(2,'0')}:${String(m0.timeM||0).padStart(2,'0')}`,(h,mm)=>{m0.timeH=h;m0.timeM=mm;}));
     tRow.appendChild(span({style:{fontSize:"12px",color:"#64748b"}},"〜"));
     tRow.appendChild(mkTimeField(()=>{const eh=m0.endH!=null?m0.endH:(m0.timeH+1)%24,em=m0.endH!=null?(m0.endM||0):(m0.timeM||0);return `${String(eh).padStart(2,'0')}:${String(em).padStart(2,'0')}`;},(h,mm)=>{m0.endH=h;m0.endM=mm;}));
-    tRow.appendChild(ndToggle(!!m0.endNextDay,()=>{m0.endNextDay=!m0.endNextDay;render();}));
   }
   m.appendChild(tRow);
+  if(hasTime) m.appendChild(div({style:{display:"flex",justifyContent:"flex-end",marginTop:"-6px",marginBottom:"12px"}},[ndToggle(!!m0.endNextDay,()=>{m0.endNextDay=!m0.endNextDay;render();})]));
   // 曜日別の時間（特定曜日だけ別の時刻に。さらに直で分けることも可）
-  const timeInp=(h,mm,set)=>{const i=document.createElement('input');i.type='time';i.value=`${String(h??0).padStart(2,'0')}:${String(mm||0).padStart(2,'0')}`;i.style.cssText="flex:1;min-width:0;padding:6px 8px;background:#1e293b;border:1px solid #334155;border-radius:6px;color:#e2e8f0;font-size:14px;font-family:inherit;color-scheme:dark";i.addEventListener('change',e=>{const q=(e.target.value||'').split(':');const H=Number(q[0]),M=Number(q[1]);if(!isNaN(H)&&!isNaN(M))set(H,M);});return i;};
+  const timeInp=(h,mm,set)=>{const i=document.createElement('input');i.type='time';i.value=`${String(h??0).padStart(2,'0')}:${String(mm||0).padStart(2,'0')}`;i.style.cssText="flex:1 1 66px;min-width:66px;padding:6px 8px;background:#1e293b;border:1px solid #334155;border-radius:6px;color:#e2e8f0;font-size:14px;font-family:inherit;color-scheme:dark";i.addEventListener('change',e=>{const q=(e.target.value||'').split(':');const H=Number(q[0]),M=Number(q[1]);if(!isNaN(H)&&!isNaN(M))set(H,M);});return i;};
   const cwt=m0.weekdayTimes||{};
   const cwWrap=div({style:{marginBottom:"14px",padding:"8px 10px",background:"#0f172a",borderRadius:"8px"}});
   cwWrap.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"6px"}},"曜日別の時間（タップした曜日だけ別の時刻に。直で分けることも可）"));
@@ -6859,7 +6859,7 @@ function renderCustomTodoModal(){
       const stAll=o.shiftTimes||{};
       SHIFT_OPTS.forEach(([k,slbl])=>{
         const st=stAll[k]||{on:true,timeH:o.timeH??0,timeM:o.timeM||0};
-        const r=div({style:{display:"flex",alignItems:"center",gap:"6px",marginBottom:"3px"}});
+        const r=div({style:{display:"flex",alignItems:"center",gap:"6px",marginBottom:"3px",flexWrap:"wrap"}});
         const onB=btn({style:{fontSize:"10px",padding:"3px 8px",borderRadius:"6px",cursor:"pointer",fontWeight:700,flexShrink:0,width:"64px",
           border:`1px solid ${st.on!==false?SHIFT_TYPES[k].color:"#334155"}`,background:st.on!==false?SHIFT_TYPES[k].color+"22":"transparent",color:st.on!==false?SHIFT_TYPES[k].color:"#475569"}},`${slbl}${st.on!==false?"":"✕"}`);
         onB.addEventListener('click',()=>{o.shiftTimes={...(o.shiftTimes||{}),[k]:{...st,on:st.on===false}};render();});
@@ -6873,7 +6873,7 @@ function renderCustomTodoModal(){
         sub.appendChild(r);
       });
     } else {
-      const frow=div({style:{display:"flex",alignItems:"center",gap:"5px"}});
+      const frow=div({style:{display:"flex",alignItems:"center",gap:"5px",flexWrap:"wrap"}});
       frow.appendChild(timeInp(o.timeH,o.timeM,(H,M)=>{o.timeH=H;o.timeM=M;}));
       frow.appendChild(span({style:{fontSize:"11px",color:"#64748b"}},"〜"));
       frow.appendChild(timeInp(o.endH!=null?o.endH:(o.timeH+1)%24,o.endH!=null?o.endM:o.timeM,(H,M)=>{o.endH=H;o.endM=M;}));
