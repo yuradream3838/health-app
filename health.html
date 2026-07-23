@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.63"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.64"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -597,6 +597,7 @@ const state = {
   newDrink:{typeId:"beer",ml:350,hour:new Date().getHours(),min:new Date().getMinutes(),pct:5},
   editEndUid:null, editEndH:0, editEndM:0,
   editTimerItemId:null, editTimerStart:{h:0,m:0}, editTimerEnd:{h:0,m:0},
+  editTimerStartNextDay:false, editTimerEndNextDay:false, editCheckNextDay:false,
   editCheckItemId:null, editCheckTime:{h:0,m:0},
   editTimerHasStart:false, editTimerHasEnd:false,
   editSessionItemId:null, editSessionUid:null, editSessionSessions:[],
@@ -4792,6 +4793,8 @@ function renderTodo(vd, ds, isToday){
             const parseT2=str=>{if(!str)return{h:new Date().getHours(),m:0};const d2=new Date(str);return{h:d2.getHours(),m:d2.getMinutes()};};
             state.editTimerStart=parseT2(session.startTime);
             state.editTimerEnd=parseT2(session.endTime);
+            state.editTimerStartNextDay=!!(session.startTime&&fmtDS(new Date(session.startTime))!==vd);
+            state.editTimerEndNextDay=!!(session.endTime&&fmtDS(new Date(session.endTime))!==vd);
             render();
           };})()); 
           sRow.appendChild(div({style:{flex:1}},[
@@ -4856,6 +4859,8 @@ function renderTodo(vd, ds, isToday){
               const parseT=s=>{if(!s)return null;const d2=new Date(s);return{h:d2.getHours(),m:d2.getMinutes()};};
               state.editTimerStart=parseT(td2.startTime)||{h:new Date().getHours(),m:0};
               state.editTimerEnd=parseT(td2.endTime)||{h:new Date().getHours(),m:0};
+              state.editTimerStartNextDay=!!(td2.startTime&&fmtDS(new Date(td2.startTime))!==vd);
+              state.editTimerEndNextDay=!!(td2.endTime&&fmtDS(new Date(td2.endTime))!==vd);
               state.modal="editTimer";render();
             };})()); 
           }
@@ -4906,7 +4911,7 @@ function renderTodo(vd, ds, isToday){
         const d2=new Date(t.time);
         const tb=btn({style:{fontSize:"10px",color:"#64748b",whiteSpace:"nowrap",background:"transparent",border:"1px solid #1e3a5f",borderRadius:"6px",padding:"2px 6px",cursor:"pointer"}},
           `${d2.getHours()}:${String(d2.getMinutes()).padStart(2,'0')} ✏️`);
-        tb.addEventListener('click',(()=>{const id=item.id;const cur={h:d2.getHours(),m:d2.getMinutes()};return e=>{e.stopPropagation();state.editCheckItemId=id;state.editCheckTime=cur;state.modal="editCheckTime";render();};})());
+        tb.addEventListener('click',(()=>{const id=item.id;const cur={h:d2.getHours(),m:d2.getMinutes()};const nd=fmtDS(d2)!==vd;return e=>{e.stopPropagation();state.editCheckItemId=id;state.editCheckTime=cur;state.editCheckNextDay=nd;state.modal="editCheckTime";render();};})());
         innerRow.appendChild(tb);
       }
       row.appendChild(innerRow);
@@ -6661,6 +6666,14 @@ function renderEditSessionModal(vd){
   m.appendChild(mkTimeSel2("▶ 開始時刻", state.editTimerStart, v=>{state.editTimerStart=v;}));
   m.appendChild(mkTimeSel2("⏹ 終了時刻", state.editTimerEnd, v=>{state.editTimerEnd=v;}));
 
+  // 当日／翌日（日付をまたいだ場合に翌日側の実績へ）
+  const ndRow=div({style:{display:"flex",gap:"8px",marginBottom:"12px"}});
+  const ndBtn=(label,isOn,onToggle)=>{const b=btn({style:{flex:1,padding:"8px",borderRadius:"8px",cursor:"pointer",fontWeight:600,fontSize:"11px",
+    border:`1px solid ${isOn?"#38bdf8":"#334155"}`,background:isOn?"#0ea5e922":"transparent",color:isOn?"#38bdf8":"#64748b"}},`${label} ${isOn?"🌙翌日":"☀️当日"}`);b.addEventListener('click',onToggle);return b;};
+  ndRow.appendChild(ndBtn("開始",!!state.editTimerStartNextDay,()=>{state.editTimerStartNextDay=!state.editTimerStartNextDay;render();}));
+  ndRow.appendChild(ndBtn("終了",!!state.editTimerEndNextDay,()=>{state.editTimerEndNextDay=!state.editTimerEndNextDay;render();}));
+  m.appendChild(ndRow);
+
   const clearBtn=btn({style:{width:"100%",padding:"7px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#475569",cursor:"pointer",fontSize:"12px",marginBottom:"8px"}},
     "このセッションを削除");
   clearBtn.addEventListener('click',()=>{
@@ -6677,7 +6690,7 @@ function renderEditSessionModal(vd){
       onClick:()=>{
         const toISO=(dateStr,hm)=>{const p=dateStr.split('-');const d=new Date(parseInt(p[0]),parseInt(p[1])-1,parseInt(p[2]),hm.h,hm.m,0);return d.toISOString();};
         const ns=state.editSessionSessions.map(s=>s.uid===state.editSessionUid
-          ?{...s,startTime:toISO(vd,state.editTimerStart),endTime:toISO(vd,state.editTimerEnd)}:s);
+          ?{...s,startTime:toISO(state.editTimerStartNextDay?addDays(vd,1):vd,state.editTimerStart),endTime:toISO(state.editTimerEndNextDay?addDays(vd,1):vd,state.editTimerEnd)}:s);
         setTodo(vd,state.editSessionItemId,{sessions:ns});
         state.modal=null;render();
       }},"保存")
@@ -6930,11 +6943,18 @@ function renderEditCheckTimeModal(vd){
   inp.style.cssText="width:100%;padding:10px 12px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:16px;font-family:inherit;box-sizing:border-box;margin-bottom:14px;color-scheme:dark";
   inp.addEventListener('change',e=>{const parts=(e.target.value||"").split(':');const h=Number(parts[0]),mm=Number(parts[1]);if(!isNaN(h)&&!isNaN(mm)){cs.h=h;cs.m=mm;}});
   m.appendChild(inp);
+  // 当日／翌日（この日のルーティンを日付をまたいで完了した場合に翌日側の実績へ）
+  const ndBtn=btn({style:{width:"100%",padding:"9px",borderRadius:"8px",cursor:"pointer",fontWeight:600,fontSize:"12px",marginBottom:"14px",
+    border:`1px solid ${state.editCheckNextDay?"#38bdf8":"#334155"}`,background:state.editCheckNextDay?"#0ea5e922":"transparent",color:state.editCheckNextDay?"#38bdf8":"#64748b"}},
+    state.editCheckNextDay?"🌙 翌日に完了（翌日の実績へ）":"☀️ 当日に完了");
+  ndBtn.addEventListener('click',()=>{state.editCheckNextDay=!state.editCheckNextDay;render();});
+  m.appendChild(ndBtn);
   m.appendChild(div({style:{display:"flex",gap:"8px"}},[
     btn({className:"btn-ghost",style:{flex:1},onClick:()=>{state.modal=null;render();}},"キャンセル"),
     btn({style:{flex:2,padding:"10px",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:600,cursor:"pointer"},
       onClick:()=>{
-        const p=vd.split('-');const iso=new Date(parseInt(p[0]),parseInt(p[1])-1,parseInt(p[2]),cs.h,cs.m,0).toISOString();
+        const base=state.editCheckNextDay?addDays(vd,1):vd;
+        const p=base.split('-');const iso=new Date(parseInt(p[0]),parseInt(p[1])-1,parseInt(p[2]),cs.h,cs.m,0).toISOString();
         const cur=(state.todos[vd]||{})[state.editCheckItemId]||{};
         setTodo(vd,state.editCheckItemId,{...cur,checked:true,time:iso});
         state.modal=null;showToast("完了時刻を修整しました");render();
@@ -6973,6 +6993,14 @@ function renderEditTimerModal(vd){
   m.appendChild(mkTimeSel("▶ 開始時刻", state.editTimerStart, v=>{state.editTimerStart=v;}));
   m.appendChild(mkTimeSel("⏹ 終了時刻", state.editTimerEnd, v=>{state.editTimerEnd=v;}));
 
+  // 当日／翌日（日付をまたいだ場合に翌日側の実績へ）
+  const ndRow=div({style:{display:"flex",gap:"8px",marginBottom:"12px"}});
+  const ndBtn=(label,isOn,onToggle)=>{const b=btn({style:{flex:1,padding:"8px",borderRadius:"8px",cursor:"pointer",fontWeight:600,fontSize:"11px",
+    border:`1px solid ${isOn?"#38bdf8":"#334155"}`,background:isOn?"#0ea5e922":"transparent",color:isOn?"#38bdf8":"#64748b"}},`${label} ${isOn?"🌙翌日":"☀️当日"}`);b.addEventListener('click',onToggle);return b;};
+  ndRow.appendChild(ndBtn("開始",!!state.editTimerStartNextDay,()=>{state.editTimerStartNextDay=!state.editTimerStartNextDay;render();}));
+  ndRow.appendChild(ndBtn("終了",!!state.editTimerEndNextDay,()=>{state.editTimerEndNextDay=!state.editTimerEndNextDay;render();}));
+  m.appendChild(ndRow);
+
   const clearBtn=btn({style:{width:"100%",padding:"7px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#475569",cursor:"pointer",fontSize:"12px",marginBottom:"8px"}},
     "クリア（未記録に戻す）");
   clearBtn.addEventListener('click',()=>{
@@ -6986,8 +7014,8 @@ function renderEditTimerModal(vd){
       onClick:()=>{
         const toISO=(dateStr,hm)=>{const p=dateStr.split('-');const d=new Date(parseInt(p[0]),parseInt(p[1])-1,parseInt(p[2]),hm.h,hm.m,0);return d.toISOString();};
         setTodo(vd,state.editTimerItemId,{
-          startTime:toISO(vd,state.editTimerStart),
-          endTime:toISO(vd,state.editTimerEnd)
+          startTime:toISO(state.editTimerStartNextDay?addDays(vd,1):vd,state.editTimerStart),
+          endTime:toISO(state.editTimerEndNextDay?addDays(vd,1):vd,state.editTimerEnd)
         });
         state.modal=null;render();
       }},"保存")
