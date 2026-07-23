@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.62"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.63"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -2601,43 +2601,48 @@ function crossOwnerSeg(it){ const {s,e}=itemAbsSpan(it); if(s>=1440) return null
 function crossTailSeg(it){ const {s,e}=itemAbsSpan(it); if(e<=1440) return null; return {...it, startMin:0, endMin:Math.min(1440,e-1440), _tail:true}; }
 
 function getActualActivities(vd){
-  const t=state.todos[vd]||{};
   const acts=[];
   const routines=state.routines||[];
   const routineIds=new Set(routines.flatMap(g=>g.ids));
-  TODO_ITEMS.forEach(item=>{
-    if(routineIds.has(item.id))return; // ルーティンは後でまとめて1ブロックに
-    const d=t[item.id];
-    if(!d||d.excluded)return;
-    if(item.multi&&d.sessions){
-      d.sessions.forEach(s=>{
-        if(s.startTime&&s.endTime){
-          const st=new Date(s.startTime),et=new Date(s.endTime);
-          acts.push({title:item.label,startMin:st.getHours()*60+st.getMinutes(),endMin:et.getHours()*60+et.getMinutes()});
-        }
-      });
-    } else if(item.type==="timer"&&d.startTime&&d.endTime){
-      const st=new Date(d.startTime),et=new Date(d.endTime);
-      acts.push({title:item.label,startMin:st.getHours()*60+st.getMinutes(),endMin:et.getHours()*60+et.getMinutes()});
-    } else if(item.type==="check"&&d.checked&&d.time){
-      const ct=new Date(d.time);
-      acts.push({title:"✓"+item.label,startMin:ct.getHours()*60+ct.getMinutes(),endMin:ct.getHours()*60+ct.getMinutes()+12,isPoint:true});
-    }
-  });
-  // ルーティンは1ブロックにまとめて表示（完了項目の最早〜最遅時刻）
-  // 日付をまたぐのを防ぐため、そのページ(vd)と同じ日付に記録されたものだけ集約
   const mm=dt=>{const x=new Date(dt);return x.getHours()*60+x.getMinutes();};
-  const sameDay=iso=>{try{return fmtDS(new Date(iso))===vd;}catch{return false;}};
+  // 完了時刻の「日付」が vd のものを vd に表示する（当日分でも、日付をまたいで
+  // 翌日に完了したものはその翌日側に反映される）。前日・当日のtodosを走査。
+  const onVd=iso=>{try{return fmtDS(new Date(iso))===vd;}catch{return false;}};
+  const scanDays=[addDays(vd,-1), vd];
+  scanDays.forEach(DD=>{
+    const t=state.todos[DD]||{};
+    TODO_ITEMS.forEach(item=>{
+      if(routineIds.has(item.id))return; // ルーティンは後でまとめて1ブロックに
+      const d=t[item.id];
+      if(!d||d.excluded)return;
+      if(item.multi&&d.sessions){
+        d.sessions.forEach(s=>{
+          if(s.startTime&&s.endTime&&onVd(s.startTime)){
+            acts.push({title:item.label,startMin:mm(s.startTime),endMin:mm(s.endTime)});
+          }
+        });
+      } else if(item.type==="timer"&&d.startTime&&d.endTime){
+        if(onVd(d.startTime)) acts.push({title:item.label,startMin:mm(d.startTime),endMin:mm(d.endTime)});
+      } else if(item.type==="check"&&d.checked&&d.time){
+        if(onVd(d.time)) acts.push({title:"✓"+item.label,startMin:mm(d.time),endMin:mm(d.time)+12,isPoint:true});
+      }
+    });
+  });
+  // ルーティンは1ブロックにまとめて表示（完了時刻の最早〜最遅）。
+  // 完了時刻の日付が vd のものだけ集約（前日・当日のtodos両方から）。
   routines.forEach(g=>{
     const mins=[];
-    const addMin=iso=>{ if(iso&&sameDay(iso)) mins.push(mm(iso)); };
-    (g.ids||[]).forEach(id=>{
-      const d=t[id];
-      if(!d||d.excluded)return;
-      if(d.checked&&d.time) addMin(d.time);
-      addMin(d.startTime);
-      addMin(d.endTime);
-      (d.sessions||[]).forEach(s=>{ addMin(s.startTime); addMin(s.endTime); });
+    const addMin=iso=>{ if(iso&&onVd(iso)) mins.push(mm(iso)); };
+    scanDays.forEach(DD=>{
+      const t=state.todos[DD]||{};
+      (g.ids||[]).forEach(id=>{
+        const d=t[id];
+        if(!d||d.excluded)return;
+        if(d.checked&&d.time) addMin(d.time);
+        addMin(d.startTime);
+        addMin(d.endTime);
+        (d.sessions||[]).forEach(s=>{ addMin(s.startTime); addMin(s.endTime); });
+      });
     });
     if(mins.length){
       const s=Math.min(...mins), e=Math.max(...mins);
