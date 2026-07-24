@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.66"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.67"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -2753,7 +2753,7 @@ function openAddEvent(vd, startH, startM){
   state.newEvEndH=(sh+1)%24;state.newEvEndM=sm;state.newEvEndNextDay=(sh+1)>=24;
   state.newEvRepeat="none";state.newEvColor=EV_COLORS[0];
   state.newEvWeekdays=[parseDS(vd).getDay()];
-  state.newEvFromTask=null;state.newEvAllDay=false;
+  state.newEvFromTask=null;state.newEvAllDay=false;state.newEvPlace="";state.newEvNote="";
   render();
 }
 // 実績（予定外の突発的な行動を含む）の追加・編集
@@ -3357,7 +3357,7 @@ function collectSearchItems(){
           state.modal="addEvent";state.editEventUid=e.uid;state.editEventIsRepeat=false;
           state.newEvTitle=e.title;state.newEvH=e.startH;state.newEvM=e.startM;state.newEvEndH=e.endH;state.newEvEndM=e.endM;
           state.newEvRepeat="none";state.newEvColor=e.color||EV_COLORS[0];state.newEvWeekdays=[parseDS(dsk).getDay()];state.newEvDate=dsk;
-          state.newEvFromTask=e.fromTask||null;state.newEvAllDay=!!e.allDay;state.editScope="this";render(); }});
+          state.newEvFromTask=e.fromTask||null;state.newEvAllDay=!!e.allDay;state.newEvPlace=e.place||"";state.newEvNote=e.note||"";state.editScope="this";render(); }});
     });
   });
   // 2. 予定（繰り返し）
@@ -3371,7 +3371,7 @@ function collectSearchItems(){
         state.newEvTitle=e.title;state.newEvH=e.startH;state.newEvM=e.startM;state.newEvEndH=e.endH;state.newEvEndM=e.endM;
         state.newEvRepeat=e.repeatType||"weekly";state.newEvColor=e.color||EV_COLORS[0];
         state.newEvWeekdays=(e.weekdays&&e.weekdays.length)?[...e.weekdays]:[parseDS(e.startDate||todayStr()).getDay()];state.newEvDate=todayStr();
-        state.newEvFromTask=e.fromTask||null;state.newEvAllDay=!!e.allDay;state.editScope="this";render(); }});
+        state.newEvFromTask=e.fromTask||null;state.newEvAllDay=!!e.allDay;state.newEvPlace=e.place||"";state.newEvNote=e.note||"";state.editScope="this";render(); }});
   });
   // 3. 定期ルーティン
   (state.customTodos||[]).forEach(ct=>{
@@ -3535,14 +3535,14 @@ function renderDaySchedule(vd,ds,isToday){
       allDayEvents.forEach(ev=>{
         const c=ev.color||EV_COLORS[0];
         const chip=div({style:{display:"flex",alignItems:"center",gap:"6px",padding:"6px 10px",background:c,border:`1px solid ${c}`,borderRadius:"6px",marginBottom:"4px",cursor:"pointer"}},[
-          div({style:{flex:1,fontSize:"13px",fontWeight:600,color:textOn(c)}},(ev.isRepeat?"🔁 ":"")+ev.title)
+          div({style:{flex:1,fontSize:"13px",fontWeight:600,color:textOn(c)}},(ev.isRepeat?"🔁 ":"")+ev.title+(ev.place?` 📍${ev.place}`:"")+(ev.note?" 📝":""))
         ]);
         chip.addEventListener('click',(()=>{const e2=ev;return()=>{
           state.modal="addEvent";state.editEventUid=e2.uid;state.editEventIsRepeat=!!e2.isRepeat;
           state.newEvTitle=e2.title;state.newEvH=e2.startH||9;state.newEvM=e2.startM||0;state.newEvEndH=e2.endH||10;state.newEvEndM=e2.endM||0;
           state.newEvRepeat=e2.isRepeat?e2.repeatType:"none";state.newEvColor=e2.color||EV_COLORS[0];
           state.newEvWeekdays=(e2.weekdays&&e2.weekdays.length)?[...e2.weekdays]:[parseDS(e2.startDate||vd).getDay()];state.newEvDate=vd;
-          state.newEvFromTask=e2.fromTask||null;state.newEvAllDay=true;state.editScope="this";render();
+          state.newEvFromTask=e2.fromTask||null;state.newEvAllDay=true;state.newEvPlace=e2.place||"";state.newEvNote=e2.note||"";state.editScope="this";render();
         };})());
         ad.appendChild(chip);
       });
@@ -3668,7 +3668,7 @@ function renderDaySchedule(vd,ds,isToday){
         overflow:"hidden",cursor:onTap?"pointer":"default",zIndex:3,boxSizing:"border-box"
       }});
       block.appendChild(div({style:{fontSize:"12px",fontWeight:700,color:tcol,lineHeight:1.2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},
-        (ev.isRepeat?"🔁":"")+ev.title));
+        (ev.isRepeat?"🔁":"")+ev.title+(ev.place?` 📍${ev.place}`:"")+(ev.note?" 📝":"")));
       if(height>34&&!ev.isPoint&&lanes===1)block.appendChild(div({style:{fontSize:"10px",color:tcol==="#ffffff"?"#ffffffcc":"#0a1120aa",lineHeight:1.2}},`${Math.floor(sMin/60)}:${String(sMin%60).padStart(2,'0')}〜${Math.floor(eMin/60)}:${String(eMin%60).padStart(2,'0')}`));
       if(onTap)block.addEventListener('click',()=>onTap(ev));
       tl.appendChild(block);
@@ -3696,6 +3696,7 @@ function renderDaySchedule(vd,ds,isToday){
     state.newEvWeekdays=(ev.weekdays&&ev.weekdays.length)?[...ev.weekdays]:[parseDS(ev.startDate||vd).getDay()];
     state.newEvFromTask=ev.fromTask||null;
     state.newEvAllDay=!!ev.allDay;
+    state.newEvPlace=ev.place||"";state.newEvNote=ev.note||"";
     state.editScope="this";
     render();
   });
@@ -4006,6 +4007,7 @@ function renderTaskMatrix(){
       state.newEvRepeat="none";state.newEvColor=EV_COLORS[0];
       state.newEvWeekdays=[parseDS(target).getDay()];
       state.newEvFromTask=it.uid;
+      state.newEvPlace="";state.newEvNote=(it.note||"");
       state.scheduleSubTab="日";
       render();
     };})());
@@ -4125,6 +4127,22 @@ function renderAddEventModal(vd){
     dInp.addEventListener('change',e=>{ if(e.target.value){ state.newEvDate=e.target.value; render(); } });
     m.appendChild(dInp);
   }
+
+  // 場所
+  m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"5px"}},"📍 場所"));
+  const placeInp=document.createElement('input');
+  placeInp.type='text'; placeInp.placeholder="例：会議室A／渋谷駅など"; placeInp.value=state.newEvPlace||"";
+  placeInp.style.cssText="width:100%;padding:9px 12px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:14px;font-family:inherit;box-sizing:border-box;margin-bottom:12px";
+  placeInp.addEventListener('input',e=>{state.newEvPlace=e.target.value;});
+  m.appendChild(placeInp);
+
+  // 詳細（メモ）
+  m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"5px"}},"📝 詳細"));
+  const noteInp=document.createElement('textarea');
+  noteInp.placeholder="メモ・持ち物・URLなど"; noteInp.value=state.newEvNote||"";
+  noteInp.style.cssText="width:100%;min-height:56px;padding:9px 12px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:14px;font-family:inherit;box-sizing:border-box;margin-bottom:12px;resize:vertical;line-height:1.5";
+  noteInp.addEventListener('input',e=>{state.newEvNote=e.target.value;});
+  m.appendChild(noteInp);
 
   const mkT=(label,getH,getM,setH,setM)=>{
     const w2=div({style:{marginBottom:"12px"}});
@@ -4277,7 +4295,8 @@ function renderAddEventModal(vd){
       onClick:()=>{
         if(!state.newEvTitle.trim()){alert("タイトルを入力してください");return;}
         const ft=state.newEvFromTask||null;
-        const evData={title:state.newEvTitle.trim(),startH:state.newEvH,startM:state.newEvM,endH:state.newEvEndH,endM:state.newEvEndM,endNextDay:!!state.newEvEndNextDay,color:state.newEvColor,allDay:!!state.newEvAllDay,...(ft?{fromTask:ft}:{})};
+        const evPlace=(state.newEvPlace||"").trim(), evNote=(state.newEvNote||"").trim();
+        const evData={title:state.newEvTitle.trim(),startH:state.newEvH,startM:state.newEvM,endH:state.newEvEndH,endM:state.newEvEndM,endNextDay:!!state.newEvEndNextDay,color:state.newEvColor,allDay:!!state.newEvAllDay,...(evPlace?{place:evPlace}:{}),...(evNote?{note:evNote}:{}),...(ft?{fromTask:ft}:{})};
         const targetDate=isRepEdit?vd:(state.newEvDate||vd);
         const isNone=state.newEvRepeat==="none";
         const newWds=isW(state.newEvRepeat)?((state.newEvWeekdays&&state.newEvWeekdays.length)?[...state.newEvWeekdays].sort((a,b)=>a-b):[parseDS(targetDate).getDay()]):null;
