@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.69"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.70"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -1027,11 +1027,9 @@ function updateHeaderDynamic(){
     const dateText=document.getElementById('hdr-date-text');
     if(dateText){
       const p=vd.split('-');
-      dateText.textContent=new Date(parseInt(p[0]),parseInt(p[1])-1,parseInt(p[2])).toLocaleDateString("ja-JP",{month:"short",day:"numeric",weekday:"short"})+(isToday?" 今日":"");
+      dateText.textContent=new Date(parseInt(p[0]),parseInt(p[1])-1,parseInt(p[2])).toLocaleDateString("ja-JP",{month:"short",day:"numeric",weekday:"short"});
     }
     if(dateBtn){dateBtn.style.color=isToday?"#38bdf8":"#e2e8f0";}
-    const backBtn=document.getElementById('hdr-back-btn');
-    if(backBtn){backBtn.style.display=isToday?'none':'inline-flex';}
     const nextBtn=document.getElementById('hdr-next-btn');
     if(nextBtn){nextBtn.style.color="#94a3b8";}
   }
@@ -1064,7 +1062,7 @@ function renderHeader(){
   dateBtn.style.cssText=`display:inline-flex;align-items:center;gap:6px;font-size:15px;font-weight:700;color:${isToday?"#38bdf8":"#e2e8f0"};background:transparent;border:none;cursor:pointer;font-family:inherit;padding:5px 8px;border-radius:8px`;
   const dateText=document.createElement('span');
   dateText.id='hdr-date-text';
-  dateText.textContent=dObj.toLocaleDateString("ja-JP",{month:"short",day:"numeric",weekday:"short"})+(isToday?" 今日":"");
+  dateText.textContent=dObj.toLocaleDateString("ja-JP",{month:"short",day:"numeric",weekday:"short"});
   dateBtn.innerHTML='<span style="font-size:13px">📅</span>';
   dateBtn.appendChild(dateText);
 
@@ -1080,15 +1078,7 @@ function renderHeader(){
   const prevBtn=mkArrow("‹",null,prevDate);
   const nextBtn=mkArrow("›","hdr-next-btn",nextDate);
 
-  // 今日へ戻るピル（今日でないときだけ・タブから離して右側に配置）
-  const backBtn2=document.createElement('button');
-  backBtn2.id='hdr-back-btn';
-  backBtn2.textContent="↩ 今日へ";
-  backBtn2.style.cssText="display:"+(isToday?'none':'inline-flex')+";align-items:center;font-size:12px;font-weight:600;color:#0ea5e9;background:#0ea5e918;border:1px solid #0ea5e955;border-radius:14px;cursor:pointer;font-family:inherit;padding:5px 12px;white-space:nowrap";
-  backBtn2.addEventListener('click',()=>{state.viewDate=todayStr();render();});
-
-  // ナビ行：中央=‹ 日付 › を常に中央固定。「今日へ」は絶対配置で右に置き、
-  // 表示/非表示で中央の日付移動ボタンの位置がずれないようにする。
+  // ナビ行：中央=‹ 日付 › を中央固定（今日は日付の色で判別できるため「今日へ」ボタンは廃止）
   const nav=document.createElement('div');
   nav.id='hdr-nav';
   nav.style.cssText="display:"+(showNav?"flex":"none")+";position:relative;align-items:center;justify-content:center;padding:8px 0 12px";
@@ -1097,8 +1087,6 @@ function renderHeader(){
   centerGroup.style.cssText="display:flex;align-items:center;justify-content:center;gap:8px";
   centerGroup.appendChild(prevBtn); centerGroup.appendChild(dateBtn); centerGroup.appendChild(nextBtn);
   nav.appendChild(centerGroup);
-  backBtn2.style.position="absolute"; backBtn2.style.right="0"; backBtn2.style.top="50%"; backBtn2.style.transform="translateY(-50%)";
-  nav.appendChild(backBtn2);
 
   // タブバー（日付ナビとの境界を明確にする）
   const tabBar=document.createElement('div');
@@ -7081,7 +7069,7 @@ loadStorage();
 state.forecast=genForecast();
 state.viewDate = todayStr();
 // 夜更かし対応：日付をまたいでも、前日の就寝(睡眠開始)が未記録のうちは前日を既定表示にする。
-// （起動時の初期表示のみ。正午以降は新しい日として扱う。「今日へ」でいつでも切替可）
+// （起動時の初期表示のみ。正午以降は新しい日として扱う。日付ナビでいつでも切替可）
 (function(){
   const now=new Date();
   if(now.getHours()<12){
