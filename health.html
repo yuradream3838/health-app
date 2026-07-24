@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.65"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.66"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -586,7 +586,7 @@ const state = {
   newEventTitle:"", newEventSH:9, newEventSM:0, newEventEH:10, newEventEM:0,
   goalHistoryType:null, goalEditKey:null,
   goalEditType:null, goalEditText:"", goalEditProgress:"", goalEditDone:false, goalEditPeriodStr:"",
-  goalView:"tree", goalTree:[], goalTreeModal:null,
+  goalView:"period", goalTree:[], goalTreeModal:null,
   actEditUid:null, actTitle:"", actSH:9, actSM:0, actEH:10, actEM:0, actEndNextDay:false, actColor:"#f472b6", actUnplanned:true, actDate:null,
   analysisSubTab:"日次ログ", diarySubTab:"生活記録", taskSubTab:"ルーティン",
   storageAlert:false, storageExportYear:null,
@@ -1715,6 +1715,23 @@ function gtCollectByPeriod(type, key, list=state.goalTree, out=[]){
   });
   return out;
 }
+// 達成済みか（葉なら done、親なら全下位が達成）
+function gtAchieved(n){ const p=gtProgress(n); return p.total>0 && p.done===p.total; }
+// 期間別表示用：当該期間の目標に加え、過去の期間で未達成のものも繰り越して返す。
+// same-type の periodKey は同一プレフィックスなので文字列比較で前後判定できる。
+function gtCollectByPeriodCarry(type, vd){
+  const curKey=getGoalKey(type,vd);
+  const cur=[], carry=[];
+  const walk=list=>{ (list||[]).forEach(n=>{
+    if(n.periodType===type && n.periodKey){
+      if(n.periodKey===curKey) cur.push(n);
+      else if(n.periodKey<curKey && !gtAchieved(n)) carry.push(n); // 過去かつ未達成
+    }
+    if(n.children&&n.children.length) walk(n.children);
+  }); };
+  walk(state.goalTree);
+  return {cur, carry};
+}
 // periodKey（例 quarterly_2026-Q1）の解析・表示・生成
 function pkParse(key){
   if(!key) return null;
@@ -1959,16 +1976,16 @@ function renderGoalTree(){
 function renderGoals(vd, ds){
   const wrap=div({style:{maxWidth:"600px",margin:"0 auto",padding:"10px 16px 60px"}});
 
-  // モード切替：目標ツリー / 期間別
+  // モード切替：期間別 / 目標ツリー（期間別を左＝既定）
   const modeRow=div({style:{display:"flex",gap:"6px",marginBottom:"10px"}});
-  [["tree","🌳 目標ツリー"],["period","📅 期間別"]].forEach(([k,lbl])=>{
-    const on=(state.goalView||"tree")===k;
+  [["period","📅 期間別"],["tree","🌳 目標ツリー"]].forEach(([k,lbl])=>{
+    const on=(state.goalView||"period")===k;
     modeRow.appendChild(btn({style:{flex:1,padding:"9px",borderRadius:"8px",cursor:"pointer",fontSize:"12px",fontWeight:600,
       border:`1px solid ${on?"#38bdf8":"#334155"}`,background:on?"#0ea5e922":"transparent",color:on?"#38bdf8":"#64748b"},
       onClick:()=>{state.goalView=k;render();}},lbl));
   });
   wrap.appendChild(modeRow);
-  if((state.goalView||"tree")==="tree"){ wrap.appendChild(renderGoalTree()); return wrap; }
+  if((state.goalView||"period")==="tree"){ wrap.appendChild(renderGoalTree()); return wrap; }
 
 
   // 期間別は「目標ツリーで期間設定した目標」の表示・チェック・進捗メモのみ。1日目標を一番上に。
@@ -1982,46 +1999,51 @@ function renderGoals(vd, ds){
   wrap.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"10px",lineHeight:1.6}},
     "🌳 目標ツリーで各目標に期間を設定すると、その期間の欄に表示されます。ここでは達成チェックと進捗メモを編集できます（目標の追加・編集はツリーで）。"));
 
+  // 1件分の目標ボックス（carriedLabel を渡すと繰り越し表示）
+  const renderGoalBox=(n, carriedLabel)=>{
+    const prog=gtProgress(n); const hasKids=n.children&&n.children.length; const pct=prog.total?Math.round(prog.done/prog.total*100):0;
+    const box=div({style:{padding:"8px",background:carriedLabel?"#f9731611":"#6366f111",border:`1px solid ${carriedLabel?"#f9731644":"#6366f133"}`,borderRadius:"8px",marginBottom:"6px"}});
+    const head=div({style:{display:"flex",alignItems:"center",gap:"8px"}});
+    const cb=btn({style:{width:"22px",height:"22px",flexShrink:0,borderRadius:"6px",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"13px",color:"#fff",
+      border:`2px solid ${n.done?"#22c55e":"#334155"}`,background:n.done?"#22c55e":"transparent"}},n.done?"✓":"");
+    cb.addEventListener('click',()=>{gtUpdate(n.id,{done:!n.done});render();});
+    head.appendChild(cb);
+    const tx=div({style:{flex:1,minWidth:0,cursor:"pointer"}},[
+      carriedLabel?div({style:{fontSize:"9px",color:"#fb923c",fontWeight:700,marginBottom:"2px"}},`🔴 繰り越し（${carriedLabel}・未達成）`):null,
+      div({style:{fontSize:"13px",fontWeight:600,color:n.done?"#475569":"#e2e8f0",textDecoration:n.done?"line-through":"none",wordBreak:"break-word"}},n.text||"(無題)"),
+      hasKids?div({style:{fontSize:"9px",color:"#64748b",marginTop:"2px"}},`下位目標 ${prog.done}/${prog.total} (${pct}%)`):null
+    ]);
+    tx.addEventListener('click',()=>{state.goalView="tree";state.goalTreeModal={mode:"edit",id:n.id,text:n.text||""};render();});
+    head.appendChild(tx);
+    box.appendChild(head);
+    const pr=document.createElement('textarea');
+    pr.placeholder="進捗メモ..."; pr.value=n.note||"";
+    pr.style.cssText="width:100%;min-height:38px;background:#0a1120;border:1px solid #1e3a5f;border-radius:7px;color:#94a3b8;font-size:12px;padding:7px;resize:vertical;box-sizing:border-box;font-family:inherit;margin-top:6px;line-height:1.5";
+    pr.addEventListener('change',e=>{gtUpdate(n.id,{note:e.target.value});});
+    pr.addEventListener('blur',e=>{gtUpdate(n.id,{note:e.target.value});});
+    box.appendChild(pr);
+    return box;
+  };
+
   GOAL_TYPES.forEach(({type,icon,label})=>{
     const periodLabel=goalPeriodLabel(type,vd);
-    const linked=gtCollectByPeriod(type, getGoalKey(type,vd));
-    const doneCount=linked.filter(n=>{const p=gtProgress(n);return p.total>0&&p.done===p.total;}).length;
+    const {cur, carry}=gtCollectByPeriodCarry(type, vd); // 当該期間＋過去の未達成（繰り越し）
+    const doneCount=cur.filter(gtAchieved).length;
+    const total=cur.length+carry.length;
     const card=div({className:"card",style:{marginBottom:"10px"}});
-    card.appendChild(div({style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:linked.length?"8px":"0"}},[
+    card.appendChild(div({style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:total?"8px":"0"}},[
       div({},[
         div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0"}},`${icon} ${label}`),
         div({style:{fontSize:"10px",color:"#64748b",marginTop:"2px"}},periodLabel)
       ]),
-      linked.length?div({style:{fontSize:"11px",fontWeight:700,color:doneCount===linked.length?"#22c55e":"#64748b"}},`${doneCount}/${linked.length}`):null
+      total?div({style:{fontSize:"11px",fontWeight:700,color:(doneCount===cur.length&&!carry.length)?"#22c55e":"#64748b"}},`${doneCount}/${cur.length}${carry.length?` +繰越${carry.length}`:""}`):null
     ]));
-    if(!linked.length){
+    if(!total){
       card.appendChild(div({style:{fontSize:"11px",color:"#475569",padding:"2px 0"}},"連動する目標はありません（目標ツリーで期間を設定）"));
     } else {
-      linked.forEach(n=>{
-        const prog=gtProgress(n); const hasKids=n.children&&n.children.length; const pct=prog.total?Math.round(prog.done/prog.total*100):0;
-        const box=div({style:{padding:"8px",background:"#6366f111",border:"1px solid #6366f133",borderRadius:"8px",marginBottom:"6px"}});
-        const head=div({style:{display:"flex",alignItems:"center",gap:"8px"}});
-        const cb=btn({style:{width:"22px",height:"22px",flexShrink:0,borderRadius:"6px",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"13px",color:"#fff",
-          border:`2px solid ${n.done?"#22c55e":"#334155"}`,background:n.done?"#22c55e":"transparent"}},n.done?"✓":"");
-        cb.addEventListener('click',()=>{gtUpdate(n.id,{done:!n.done});render();});
-        head.appendChild(cb);
-        const tx=div({style:{flex:1,minWidth:0,cursor:"pointer"}},[
-          div({style:{fontSize:"13px",fontWeight:600,color:n.done?"#475569":"#e2e8f0",textDecoration:n.done?"line-through":"none",wordBreak:"break-word"}},n.text||"(無題)"),
-          hasKids?div({style:{fontSize:"9px",color:"#64748b",marginTop:"2px"}},`下位目標 ${prog.done}/${prog.total} (${pct}%)`):null
-        ]);
-        tx.addEventListener('click',()=>{state.goalView="tree";state.goalTreeModal={mode:"edit",id:n.id,text:n.text||""};render();});
-        head.appendChild(tx);
-        box.appendChild(head);
-        // 進捗メモ（ツリーノードの note を編集）
-        const pr=document.createElement('textarea');
-        pr.placeholder="進捗メモ...";
-        pr.value=n.note||"";
-        pr.style.cssText="width:100%;min-height:38px;background:#0a1120;border:1px solid #1e3a5f;border-radius:7px;color:#94a3b8;font-size:12px;padding:7px;resize:vertical;box-sizing:border-box;font-family:inherit;margin-top:6px;line-height:1.5";
-        pr.addEventListener('change',e=>{gtUpdate(n.id,{note:e.target.value});});
-        pr.addEventListener('blur',e=>{gtUpdate(n.id,{note:e.target.value});});
-        box.appendChild(pr);
-        card.appendChild(box);
-      });
+      // 過去の未達成（繰り越し）を上に、当該期間を下に
+      carry.forEach(n=>card.appendChild(renderGoalBox(n, pkShort(n.periodKey))));
+      cur.forEach(n=>card.appendChild(renderGoalBox(n, null)));
     }
     wrap.appendChild(card);
   });
