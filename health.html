@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.64"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.65"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -7029,6 +7029,15 @@ function renderEditTimerModal(vd){
 loadStorage();
 state.forecast=genForecast();
 state.viewDate = todayStr();
+// 夜更かし対応：日付をまたいでも、前日の就寝(睡眠開始)が未記録のうちは前日を既定表示にする。
+// （起動時の初期表示のみ。正午以降は新しい日として扱う。「今日へ」でいつでも切替可）
+(function(){
+  const now=new Date();
+  if(now.getHours()<12){
+    const y=addDays(todayStr(),-1);
+    if(getDaily(y).bedTime==null) state.viewDate=y;
+  }
+})();
 // ホーム画面ショートカット等から #widget で直接ウィジェット表示
 if(location.hash==='#widget'||location.hash==='#today'){ state.widget=true; }
 window.addEventListener('hashchange',()=>{ const w=(location.hash==='#widget'||location.hash==='#today'); if(w!==!!state.widget){ state.widget=w; if(w)state.viewDate=todayStr(); render(); } });
