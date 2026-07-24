@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.67"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.68"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -3614,6 +3614,17 @@ function renderDaySchedule(vd,ds,isToday){
     tl.appendChild(div({style:{position:"absolute",top:`${(h2-START_H)*HOUR_H}px`,left:0,right:0,borderTop:"1px solid #1e3a5f55",display:"flex"}},[
       div({style:{width:"34px",fontSize:"11px",color:"#64748b",marginTop:"-7px"}},`${h2}:00`)
     ]));
+  }
+  // 過去の時間帯をグレーアウト（当日は現在時刻まで／過去日は終日）。z4=ブロック(z3)の上・現在線(z5)の下、タップは透過。
+  {
+    const fullH=(END_H-START_H)*HOUR_H;
+    let grayBottom=0;
+    if(vd<todayStr()) grayBottom=fullH;
+    else if(isToday){ const now=new Date(); grayBottom=Math.max(0,Math.min(fullH,((now.getHours()+now.getMinutes()/60)-START_H)*HOUR_H)); }
+    if(grayBottom>0){
+      tl.appendChild(div({id:"past-gray","data-hourh":HOUR_H,"data-starth":START_H,"data-today":(isToday?"1":"0"),
+        style:{position:"absolute",top:"0",left:"30px",right:0,height:`${grayBottom}px`,background:"rgba(15,23,42,0.58)",zIndex:4,pointerEvents:"none"}}));
+    }
   }
   if(isToday){
     const now=new Date();const nowY=((now.getHours()+now.getMinutes()/60)-START_H)*HOUR_H;
@@ -7145,6 +7156,9 @@ function updateNowLine(){
   const endH=parseFloat(el.getAttribute('data-endh'))||24;
   const now=new Date();
   const y=((now.getHours()+now.getMinutes()/60)-startH)*hourH;
+  // 過去グレーの高さも当日は現在時刻まで追従
+  const g=document.getElementById('past-gray');
+  if(g&&g.getAttribute('data-today')==="1"){ g.style.height=Math.max(0,y)+'px'; }
   if(y<=0||y>=(endH-startH)*hourH){el.style.display='none';return;}
   el.style.display='block';
   el.style.top=y+'px';
