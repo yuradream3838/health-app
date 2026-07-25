@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.86"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.87"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -997,6 +997,7 @@ function render(){
   if(state.modal==="editNap")  content.appendChild(renderAddNapModal(vd,true));
   if(state.goalHistoryType)    content.appendChild(renderGoalHistory(vd));
   if(state.goalEditKey)        content.appendChild(renderGoalEditModal());
+  if(state.goalPeriodModal)    content.appendChild(renderGoalPeriodModal());
   if(state.goalTreeModal)      content.appendChild(renderGoalTreeModal());
   if(state.storageAlert)       content.appendChild(renderStorageAlertModal());
   if(state.editHour!==null)    content.appendChild(renderScoreModal());
@@ -2109,13 +2110,15 @@ function renderGoals(vd, ds){
     const doneCount=cur.filter(gtAchieved).length;
     const total=cur.length+carry.length;
     const card=div({className:"card",style:{marginBottom:"10px"}});
-    card.appendChild(div({style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:total?"8px":"0"}},[
+    const headRow=div({style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:total?"8px":"0",cursor:"pointer"}},[
       div({},[
-        div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0"}},`${icon} ${label}`),
+        div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0"}},`${icon} ${label} ›`),
         div({style:{fontSize:"10px",color:"#64748b",marginTop:"2px"}},periodLabel)
       ]),
       total?div({style:{fontSize:"11px",fontWeight:700,color:(doneCount===cur.length&&!carry.length)?"#22c55e":"#64748b"}},`${doneCount}/${cur.length}${carry.length?` +繰越${carry.length}`:""}`):null
-    ]));
+    ]);
+    headRow.addEventListener('click',(()=>{const t=type;return()=>{state.goalPeriodModal={type:t,vd};render();};})());
+    card.appendChild(headRow);
     if(!total){
       card.appendChild(div({style:{fontSize:"11px",color:"#475569",padding:"2px 0"}},"連動する目標はありません（目標ツリーで期間を設定）"));
     } else {
@@ -2127,6 +2130,57 @@ function renderGoals(vd, ds){
   });
 
   return wrap;
+}
+
+// 期間別カードのヘッダーをタップ → その期間の目標一覧（編集・追加）
+function renderGoalPeriodModal(){
+  const pm=state.goalPeriodModal; if(!pm)return div({});
+  const {type,vd}=pm;
+  const META={daily:{icon:"☀️",label:"一日目標"},weekly:{icon:"📆",label:"週間目標"},monthly:{icon:"🗓️",label:"月次目標"},quarterly:{icon:"📅",label:"四半期目標"},yearly:{icon:"🏆",label:"年間目標"}}[type]||{icon:"🎯",label:"目標"};
+  const key=getGoalKey(type,vd);
+  const goals=gtCollectByPeriod(type,key);
+  const bg=div({className:"modal-center"});
+  const m=div({className:"modal-box",style:{maxHeight:"85vh",overflowY:"auto"}});
+  bg.addEventListener('click',()=>{state.goalPeriodModal=null;render();});
+  m.addEventListener('click',e=>e.stopPropagation());
+  m.appendChild(div({style:{fontSize:"15px",fontWeight:700,color:"#e2e8f0",marginBottom:"2px"}},`${META.icon} ${META.label}`));
+  m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"12px"}},goalPeriodLabel(type,vd)+"　の目標一覧"));
+  if(!goals.length){
+    m.appendChild(div({style:{fontSize:"12px",color:"#475569",padding:"6px 0 12px"}},"この期間の目標はまだありません。下の欄から追加できます。"));
+  }
+  goals.forEach(n=>{
+    const prog=gtProgress(n); const hasKids=n.children&&n.children.length; const pct=prog.total?Math.round(prog.done/prog.total*100):0;
+    const row=div({style:{display:"flex",alignItems:"center",gap:"8px",padding:"8px",background:"#0f172a",borderRadius:"8px",marginBottom:"6px"}});
+    const cb=btn({style:{width:"22px",height:"22px",flexShrink:0,borderRadius:"6px",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"13px",color:"#fff",
+      border:`2px solid ${n.done?"#22c55e":"#334155"}`,background:n.done?"#22c55e":"transparent"}},n.done?"✓":"");
+    cb.addEventListener('click',(()=>{const id=n.id,d=n.done;return()=>{gtUpdate(id,{done:!d});render();};})());
+    row.appendChild(cb);
+    const tx=div({style:{flex:1,minWidth:0,cursor:"pointer"}},[
+      div({style:{fontSize:"13px",fontWeight:600,color:n.done?"#475569":"#e2e8f0",textDecoration:n.done?"line-through":"none",wordBreak:"break-word"}},n.text||"(無題)"),
+      hasKids?div({style:{fontSize:"9px",color:"#64748b",marginTop:"2px"}},`下位目標 ${prog.done}/${prog.total} (${pct}%)`):null
+    ]);
+    tx.addEventListener('click',(()=>{const id=n.id,t=n.text||"";return()=>{state.goalTreeModal={mode:"edit",id,text:t};render();};})());
+    row.appendChild(tx);
+    const del=btn({style:{flexShrink:0,fontSize:"11px",padding:"4px 9px",borderRadius:"6px",cursor:"pointer",fontWeight:600,border:"1px solid #7f1d1d",background:"transparent",color:"#fca5a5"}},"🗑");
+    del.addEventListener('click',(()=>{const id=n.id,t=n.text||"";return()=>{ if(confirm(`「${t}」を削除しますか？`)){ gtDelete(id); render(); } };})());
+    row.appendChild(del);
+    m.appendChild(row);
+  });
+  // 追加欄
+  if(pm._add===undefined)pm._add="";
+  const addWrap=div({style:{marginTop:"10px",padding:"10px",background:"#0f172a",borderRadius:"8px",border:"1px dashed #334155"}});
+  addWrap.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"6px"}},"この期間に目標を追加"));
+  const inp=document.createElement('input');inp.type='text';inp.value=pm._add;inp.placeholder="目標を入力...";
+  inp.style.cssText="width:100%;padding:9px 12px;background:#1e293b;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:14px;font-family:inherit;box-sizing:border-box;margin-bottom:8px";
+  inp.addEventListener('input',e=>{pm._add=e.target.value;});
+  addWrap.appendChild(inp);
+  const doAdd=()=>{ const t=(pm._add||"").trim(); if(!t){inp.focus();return;} state.goalTree=[...(state.goalTree||[]),{id:gtNewId(),text:t,done:false,collapsed:false,children:[],periodType:type,periodKey:key}]; saveGoalTree(); pm._add=""; showToast("🎯 目標を追加しました"); render(); };
+  inp.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();doAdd();}});
+  addWrap.appendChild(btn({style:{width:"100%",padding:"9px",borderRadius:"8px",cursor:"pointer",fontWeight:700,fontSize:"12px",border:"none",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",color:"#fff"},onClick:doAdd},"＋ 追加"));
+  m.appendChild(addWrap);
+  m.appendChild(div({style:{fontSize:"10px",color:"#475569",margin:"10px 0 0",lineHeight:1.5}},"※ 目標名をタップすると詳細（下位目標・習慣連結・期間変更）を編集できます。"));
+  m.appendChild(btn({className:"btn-ghost",style:{width:"100%",marginTop:"12px"},onClick:()=>{state.goalPeriodModal=null;render();}},"閉じる"));
+  bg.appendChild(m);return bg;
 }
 
 // ── 目標履歴モーダル ──────────────────────────────
