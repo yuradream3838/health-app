@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.90"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.91"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -2841,7 +2841,7 @@ function getActualActivities(vd){
       if(item.multi&&d.sessions){
         d.sessions.forEach(s=>{
           if(s.startTime&&s.endTime&&onVd(s.startTime)){
-            acts.push({title:item.label,startMin:mm(s.startTime),endMin:mm(s.endTime)});
+            acts.push({title:item.label+(s.note?`：${s.note}`:""),startMin:mm(s.startTime),endMin:mm(s.endTime)});
           }
         });
       } else if(item.type==="timer"&&d.startTime&&d.endTime){
@@ -5204,7 +5204,8 @@ function renderTodo(vd, ds, isToday){
           const dur=s.endTime?(min2>0?(Math.floor(min2/60)>0?`${Math.floor(min2/60)}h${min2%60}m`:`${min2}m`):"0m"):null;
           const sLabel=sTime?`${sTime.getHours()}:${String(sTime.getMinutes()).padStart(2,'0')}`:"—";
           const eLabel=eTime?`${eTime.getHours()}:${String(eTime.getMinutes()).padStart(2,'0')}`:"—";
-          const sRow=div({style:{display:"flex",alignItems:"center",gap:"6px",padding:"4px 8px",background:"#0f172a",borderRadius:"6px",cursor:"pointer"}});
+          const sWrap=div({style:{background:"#0f172a",borderRadius:"6px",padding:"4px 8px"}});
+          const sRow=div({style:{display:"flex",alignItems:"center",gap:"6px",cursor:"pointer"}});
           sRow.appendChild(span({style:{fontSize:"10px",color:"#64748b"}},`${i+1}.`));
           // タップで時刻編集モーダルを開く
           sRow.addEventListener('click',(()=>{const session=s;const itemId=item.id;const allSessions=sessions;return()=>{
@@ -5218,7 +5219,7 @@ function renderTodo(vd, ds, isToday){
             state.editTimerStartNextDay=!!(session.startTime&&fmtDS(new Date(session.startTime))!==vd);
             state.editTimerEndNextDay=!!(session.endTime&&fmtDS(new Date(session.endTime))!==vd);
             render();
-          };})()); 
+          };})());
           sRow.appendChild(div({style:{flex:1}},[
             span({style:{fontSize:"11px",color:"#94a3b8"}},`${sLabel} 〜 ${eLabel}`),
             dur?span({style:{fontSize:"11px",fontWeight:600,color:"#22c55e",marginLeft:"6px"}},dur):null
@@ -5229,7 +5230,15 @@ function renderTodo(vd, ds, isToday){
             pushUndo("セッションを削除しました");setTodo(vd,item.id,{sessions:sessions.filter(x=>x.uid!==uid2)});
           }));
           sRow.appendChild(delBtn);
-          sessionList.appendChild(sRow);
+          sWrap.appendChild(sRow);
+          // 「何をしますか？」内容の記入欄（読書・副業・トレーニング）。実績にも一緒に表示される
+          const noteInp=document.createElement('input');noteInp.type='text';
+          noteInp.placeholder="何をしますか？（内容）";noteInp.value=s.note||"";
+          noteInp.style.cssText="width:100%;margin-top:4px;padding:5px 8px;background:#1e293b;border:1px solid #334155;border-radius:6px;color:#e2e8f0;font-size:12px;font-family:inherit;box-sizing:border-box";
+          noteInp.addEventListener('click',e=>e.stopPropagation());
+          noteInp.addEventListener('change',(()=>{const sid=s.uid;const allSessions=sessions;return e=>{ const v=e.target.value.trim(); const ns=allSessions.map(x=>x.uid===sid?{...x,note:v}:x); setTodo(vd,item.id,{sessions:ns}); };})());
+          sWrap.appendChild(noteInp);
+          sessionList.appendChild(sWrap);
         });
         row.appendChild(sessionList);
       }
