@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.99"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.00"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -3216,6 +3216,24 @@ function renderPlanCustomTodoModal(){
   const dl=(()=>{const p=(vd||"").split('-');return p.length>=3?`${parseInt(p[1])}/${parseInt(p[2])}`:"";})();
   m.appendChild(div({style:{fontSize:"15px",fontWeight:700,color:"#e2e8f0",marginBottom:"4px"}},`☑️ ${pc.label||"定期ルーティン"}`));
   m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"14px"}},`${dl} の予定`));
+  // ✅ 完了時刻を編集（チェック済みのときのみ）。実際列の表示位置に反映される
+  {
+    const rec=(state.todos[vd]||{})[pc.uid]||{};
+    if(rec.checked){
+      const cur = rec.time?new Date(rec.time):new Date();
+      if(pc.doneH===undefined){ pc.doneH=cur.getHours(); pc.doneM=cur.getMinutes(); }
+      m.appendChild(div({style:{fontSize:"11px",color:"#4ade80",margin:"0 0 5px",fontWeight:600}},"✅ 完了時刻を編集"));
+      const df=(getH,getM,set)=>{const i=document.createElement('input');i.type='time';i.value=`${String(getH()).padStart(2,'0')}:${String(getM()).padStart(2,'0')}`;i.style.cssText="flex:1;min-width:0;padding:8px;background:#0f172a;border:1px solid #22c55e55;border-radius:8px;color:#e2e8f0;font-size:15px;color-scheme:dark;font-family:inherit";i.addEventListener('change',e=>{const q=(e.target.value||'').split(':');const H=Number(q[0]),M=Number(q[1]);if(!isNaN(H)&&!isNaN(M))set(H,M);});return i;};
+      const drow=div({style:{display:"flex",gap:"8px",alignItems:"center",marginBottom:"8px"}});
+      drow.appendChild(df(()=>pc.doneH,()=>pc.doneM,(H,M)=>{pc.doneH=H;pc.doneM=M;}));
+      m.appendChild(drow);
+      m.appendChild(btn({style:{width:"100%",padding:"10px",marginBottom:"8px",background:"#22c55e18",border:"1px solid #22c55e",borderRadius:"8px",color:"#4ade80",fontSize:"13px",fontWeight:600,cursor:"pointer"},
+        onClick:()=>{ const p=(vd||"").split('-'); const dt=new Date(+p[0],+p[1]-1,+p[2],pc.doneH,pc.doneM,0,0); const cur2={...((state.todos[vd]||{})[pc.uid]||{})}; setTodo(vd,pc.uid,{...cur2,checked:true,time:dt.toISOString()}); state.modal=null; showToast("完了時刻を変更しました"); render(); }},"✅ 完了時刻を保存"));
+      m.appendChild(btn({style:{width:"100%",padding:"8px",marginBottom:"10px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#94a3b8",cursor:"pointer",fontSize:"12px"},
+        onClick:()=>{ const cur2={...((state.todos[vd]||{})[pc.uid]||{})}; delete cur2.time; setTodo(vd,pc.uid,{...cur2,checked:false}); state.modal=null; showToast("未完了に戻しました"); render(); }},"↩ 未完了に戻す"));
+      m.appendChild(div({style:{borderTop:"1px solid #1e293b",margin:"0 0 10px"}}));
+    }
+  }
   // この日のみ削除（＝この回を除外。定期ルーティン自体は残る）
   m.appendChild(btn({style:{width:"100%",padding:"11px",marginBottom:"8px",background:"#7f1d1d33",border:"1px solid #ef4444",borderRadius:"8px",color:"#fca5a5",fontSize:"13px",fontWeight:700,cursor:"pointer"},
     onClick:()=>{ pushUndo("この日の定期ルーティンを削除しました"); toggleExclude(vd,pc.uid); state.modal=null; showToast("この日のみ削除しました"); render(); }},"🗑 この日のみ削除"));
