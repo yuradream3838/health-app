@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.85"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.86"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -3591,7 +3591,11 @@ function renderScheduleHub(vd,ds,isToday){
     const b=btn({style:{flex:1,padding:"10px 2px",border:"none",cursor:"pointer",fontSize:"12px",fontWeight:600,
       background:"transparent",color:state.scheduleSubTab===t?"#38bdf8":"#475569",
       borderBottom:`2px solid ${state.scheduleSubTab===t?"#38bdf8":"transparent"}`}},t);
-    b.addEventListener('click',()=>{state.scheduleSubTab=t;render();});
+    b.addEventListener('click',()=>{
+      // 日タブ選択中にもう一度日タブを押したら今日へ移動
+      if(t==="日" && state.scheduleSubTab==="日") state.viewDate=todayStr();
+      state.scheduleSubTab=t;render();
+    });
     subBar.appendChild(b);
   });
   wrap.appendChild(subBar);
