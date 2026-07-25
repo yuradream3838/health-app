@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.74"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.75"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -587,6 +587,7 @@ const state = {
   goalHistoryType:null, goalEditKey:null,
   goalEditType:null, goalEditText:"", goalEditProgress:"", goalEditDone:false, goalEditPeriodStr:"",
   goalView:"period", goalTree:[], goalTreeModal:null,
+  aiCoach:null, aiCoachLoading:null, rewards:[], newRewardDays:7, newRewardText:"",
   actEditUid:null, actTitle:"", actSH:9, actSM:0, actEH:10, actEM:0, actEndNextDay:false, actColor:"#f472b6", actUnplanned:true, actDate:null,
   analysisSubTab:"日次ログ", diarySubTab:"生活記録", taskSubTab:"ルーティン",
   storageAlert:false, storageExportYear:null,
@@ -647,6 +648,10 @@ function loadStorage(){
     if(cto){const a=JSON.parse(cto); if(Array.isArray(a))state.customTodos=a;}
     const sms=localStorage.getItem(STORAGE_KEY+"_streakms");
     if(sms!=null){const v=parseInt(sms); if(!isNaN(v))state.lastStreakMilestone=v;}
+    const aic=localStorage.getItem(STORAGE_KEY+"_aicoach");
+    if(aic){try{const o=JSON.parse(aic); if(o&&typeof o==="object")state.aiCoach=o;}catch{}}
+    const rwd=localStorage.getItem(STORAGE_KEY+"_rewards");
+    if(rwd){try{const a=JSON.parse(rwd); if(Array.isArray(a))state.rewards=a;}catch{}}
     // 旧形式（v8.3 events/taskList/wishList/shopList）からの一度きり移行
     if(!sc && !tk){ migrateOldSchedule(); }
   }catch{}
@@ -4445,6 +4450,40 @@ async function callAIText(system,prompt){
 function chatHistoryText(chat){
   return (chat||[]).map(m=>`${m.role==="user"?"ユーザー":"アシスタント"}: ${m.text}`).join("\n");
 }
+// AIコーチ：朝の一手 / 夜の振り返り（タップ時のみ生成・その日分をキャッシュ）
+async function runAICoach(kind){
+  if(state.aiCoachLoading)return;
+  state.aiCoachLoading=kind; render();
+  try{
+    const today=todayStr();
+    const skAI=getPlanShiftKey(today);
+    const shift=(!skAI||skAI==="off"||skAI==="off2")?"休み":skAI==="s1"?"1直":"2直";
+    const scored=state.logs.filter(l=>l.score!=null&&l.dateStr===today);
+    const avg=scored.length?(scored.reduce((a,b)=>a+b.score,0)/scored.length).toFixed(1):"未記録";
+    const _sh=getNightSleepHours(today); const sleep=_sh!=null?Math.round(_sh*10)/10+"h":"—";
+    const todo=state.todos[today]||{};
+    const remain=TODO_ITEMS.filter(it=>!(todo[it.id]||{}).excluded && !isTodoDone(today,it)).map(it=>it.label);
+    const doneN=TODO_ITEMS.filter(it=>!(todo[it.id]||{}).excluded && isTodoDone(today,it)).length;
+    const dueC=dueCustomTodos(today).filter(ct=>!(todo[ct.uid]||{}).checked&&!(todo[ct.uid]||{}).excluded).map(ct=>ct.label);
+    const goals=[]; ['daily','weekly','monthly'].forEach(tp=>{gtCollectByPeriod(tp,getGoalKey(tp,today)).forEach(n=>{if(!n.done&&n.text)goals.push(n.text);});});
+    const streak=currentOverallStreak().streak;
+    const ctx=`日付:${today}（${shift}） 連続達成:${streak}日 今日の体調:${avg}/10 前夜の睡眠:${sleep}\n未完了ルーティン:${remain.join('、')||'なし'}（完了${doneN}件）\n未実施の定期ルーティン:${dueC.join('、')||'なし'}\n未達成の目標:${goals.slice(0,6).join('、')||'なし'}`;
+    let sys, prompt;
+    if(kind==="morning"){
+      sys="あなたはユーザー専属の習慣コーチです。体調とシフトに配慮し、今日『最優先で取り組む1つ』だけを理由とともに前向きに提案します。日本語で3〜4文、JSONやMarkdownの装飾は使わないでください。";
+      prompt=`${ctx}\n\n今日の『最優先の一手』を1つだけ提案してください。体調が低い日や睡眠不足の日は無理をさせず、回復や軽い一歩を優先してください。`;
+    } else {
+      sys="あなたはユーザー専属の習慣コーチです。今日の達成を具体的に褒め、できなかったことは責めずに体調や状況と結びつけて原因を一言添え、明日への小さな一歩を1つ提案します。日本語で4〜6文、JSONやMarkdownの装飾は使わないでください。";
+      prompt=`${ctx}\n\n今日を優しく振り返ってください（できたことを具体的に褒める＋できなかった原因を一言＋明日の小さな一歩）。`;
+    }
+    const text=await callAIText(sys, prompt);
+    if(!state.aiCoach)state.aiCoach={};
+    state.aiCoach[kind]={date:today, text};
+    try{localStorage.setItem(STORAGE_KEY+"_aicoach",JSON.stringify(state.aiCoach));}catch{}
+  }catch(e){ showToast("生成失敗: "+e.message,"#ef4444"); }
+  state.aiCoachLoading=null; render();
+}
+function saveRewards(){ try{localStorage.setItem(STORAGE_KEY+"_rewards",JSON.stringify(state.rewards));}catch{} }
 
 // スケジュール提案のシステムプロンプト（初回提案・対話の両方で共有）
 const SCHED_SYS=`あなたは体調に配慮する生活プランナーです。ユーザーの1日のスケジュールを提案し、以下のJSON形式のみで返答してください:
@@ -5621,6 +5660,58 @@ function renderAchievement(vd){
     span({style:{fontSize:"9px",color:"#64748b"}},"多")
   ]));
   wrap.appendChild(card);
+
+  // ── 🤖 AIコーチ（タップ時のみ生成・その日分をキャッシュ）──
+  {
+    const cc=div({className:"card",style:{marginTop:"10px"}});
+    cc.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#a5b4fc",marginBottom:"8px"}},"🤖 AIコーチ"));
+    const coach=state.aiCoach||{};
+    const block=(kind,label,color)=>{
+      const rec=coach[kind]; const fresh=rec&&rec.date===today; const loading=state.aiCoachLoading===kind;
+      const box=div({style:{marginBottom:"10px"}});
+      if(fresh){
+        box.appendChild(div({style:{fontSize:"12px",color:"#cbd5e1",lineHeight:1.7,background:color+"11",border:`1px solid ${color}44`,borderRadius:"8px",padding:"10px 12px",whiteSpace:"pre-wrap"}},rec.text));
+        const re=btn({style:{fontSize:"10px",color:"#475569",background:"transparent",border:"none",cursor:"pointer",marginTop:"3px"}},loading?"生成中...":"🔄 再生成");
+        re.addEventListener('click',()=>{if(!loading)runAICoach(kind);}); box.appendChild(re);
+      } else {
+        const b=btn({style:{width:"100%",padding:"11px",background:color+"18",border:`1px solid ${color}`,borderRadius:"8px",color,fontSize:"13px",fontWeight:600,cursor:"pointer"}},loading?"🤖 生成中...":label);
+        b.addEventListener('click',()=>{if(!loading)runAICoach(kind);}); box.appendChild(b);
+      }
+      return box;
+    };
+    cc.appendChild(block("morning","☀️ 今日の一手を提案","#f59e0b"));
+    cc.appendChild(block("evening","🌙 今日を振り返る","#818cf8"));
+    cc.appendChild(div({style:{fontSize:"9px",color:"#475569"}},"※ボタンを押したときだけAIを呼びます（無料・1日の利用上限内）"));
+    wrap.appendChild(cc);
+  }
+  // ── 🎁 ご褒美（連続達成でアンロック）──
+  {
+    const streak=currentOverallStreak().streak;
+    const rc=div({className:"card",style:{marginTop:"10px"}});
+    rc.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#f472b6",marginBottom:"3px"}},"🎁 ご褒美"));
+    rc.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"8px"}},"連続達成◯日で自分にご褒美を。達成でアンロックされます"));
+    (state.rewards||[]).slice().sort((a,b)=>a.days-b.days).forEach(r=>{
+      const unlocked=streak>=r.days;
+      const row=div({style:{display:"flex",alignItems:"center",gap:"8px",padding:"7px 0",borderBottom:"1px solid #1e3a5f33"}});
+      row.appendChild(div({style:{fontSize:"11px",fontWeight:700,color:unlocked?"#22c55e":"#64748b",width:"46px",flexShrink:0,textAlign:"center"}},`${r.days}日`));
+      row.appendChild(div({style:{flex:1,minWidth:0,fontSize:"13px",color:unlocked?"#e2e8f0":"#64748b"}},[txt(r.text),unlocked?span({style:{fontSize:"10px",color:"#22c55e",marginLeft:"6px",fontWeight:700}},"🎉 達成！"):null]));
+      const del=btn({style:{background:"transparent",border:"none",color:"#334155",cursor:"pointer",fontSize:"14px",flexShrink:0}},"×");
+      del.addEventListener('click',(()=>{const id=r.id;return()=>{state.rewards=state.rewards.filter(x=>x.id!==id);saveRewards();render();};})());
+      row.appendChild(del); rc.appendChild(row);
+    });
+    const form=div({style:{display:"flex",gap:"6px",marginTop:"8px",alignItems:"center"}});
+    const dsel=document.createElement('select'); dsel.className='sel'; dsel.style.cssText="width:74px;flex-shrink:0";
+    STREAK_MILESTONES.forEach(mm=>{const o=document.createElement('option');o.value=mm;o.textContent=`${mm}日`;if(mm===state.newRewardDays)o.selected=true;dsel.appendChild(o);});
+    dsel.addEventListener('change',e=>{state.newRewardDays=parseInt(e.target.value);});
+    const rin=document.createElement('input'); rin.type='text'; rin.placeholder="ご褒美（例：好きな物を食べる）"; rin.value=state.newRewardText||"";
+    rin.style.cssText="flex:1;min-width:0;padding:8px 10px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit";
+    rin.addEventListener('input',e=>{state.newRewardText=e.target.value;});
+    const add=btn({style:{padding:"8px 14px",background:"#f472b618",border:"1px solid #f472b6",borderRadius:"8px",color:"#f472b6",fontSize:"14px",fontWeight:700,cursor:"pointer",flexShrink:0}},"＋");
+    add.addEventListener('click',()=>{const t=(state.newRewardText||"").trim();if(!t)return;state.rewards=[...(state.rewards||[]),{id:Date.now(),days:state.newRewardDays||7,text:t}];state.newRewardText="";saveRewards();render();});
+    form.appendChild(dsel);form.appendChild(rin);form.appendChild(add);
+    rc.appendChild(form);
+    wrap.appendChild(rc);
+  }
   return wrap;
 }
 
