@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.80"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.81"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -1206,16 +1206,22 @@ function renderWidgetView(vd,ds){
     if(x.customTodo && (state.todos[vd]||{})[x.ctUid]?.checked) return; // チェック済みルーティンは非表示
     items.push({s:x.startH*60+(x.startM||0),sh:x.startH,sm:x.startM||0,eh:x.endH,em:x.endM||0,title:x.title,color:x.color||"#38bdf8"});
   });
-  items.sort((a,b)=>(a.allDay?-1:0)-(b.allDay?-1:0) || (a.s||0)-(b.s||0));
   const hhmm=(h,m)=>`${String(h).padStart(2,'0')}:${String(m||0).padStart(2,'0')}`;
-  if(items.length===0){
-    schedCard.appendChild(div({style:{fontSize:"12px",color:"#475569",textAlign:"center",padding:"8px 0"}},"予定はありません"));
+  // 今の時間の予定（進行中）＋次の予定2件だけに絞る（終日は常に表示）
+  const nowMin=new Date().getHours()*60+new Date().getMinutes();
+  const allDayItems=items.filter(it=>it.allDay);
+  const timed=items.filter(it=>!it.allDay).sort((a,b)=>a.s-b.s);
+  const ongoing=timed.filter(it=>{const e=it.eh*60+(it.em||0); return it.s<=nowMin && e>nowMin;}).map(it=>({...it,now:true}));
+  const upcoming=timed.filter(it=>it.s>nowMin).slice(0,2);
+  const shown=[...allDayItems, ...ongoing, ...upcoming];
+  if(shown.length===0){
+    schedCard.appendChild(div({style:{fontSize:"12px",color:"#475569",textAlign:"center",padding:"8px 0"}},"これからの予定はありません"));
   } else {
-    items.forEach(it=>{
+    shown.forEach(it=>{
       const row=div({style:{display:"flex",alignItems:"center",gap:"9px",padding:"6px 0",borderBottom:"1px solid #1e3a5f55"}});
       row.appendChild(div({style:{width:"4px",alignSelf:"stretch",background:it.color,borderRadius:"2px",flexShrink:0}}));
-      row.appendChild(div({style:{fontSize:"11px",color:"#94a3b8",width:"92px",flexShrink:0,fontVariantNumeric:"tabular-nums"}},
-        it.allDay?"終日":`${hhmm(it.sh,it.sm)}〜${hhmm(it.eh,it.em)}`));
+      row.appendChild(div({style:{fontSize:"11px",color:it.now?"#38bdf8":"#94a3b8",width:"92px",flexShrink:0,fontVariantNumeric:"tabular-nums",fontWeight:it.now?700:400}},
+        it.allDay?"終日":`${it.now?"● ":""}${hhmm(it.sh,it.sm)}〜${hhmm(it.eh,it.em)}`));
       row.appendChild(div({style:{flex:1,fontSize:"13px",color:"#e2e8f0",minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},it.title));
       schedCard.appendChild(row);
     });
