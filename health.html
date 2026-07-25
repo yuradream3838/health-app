@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.93"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.94"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -1308,9 +1308,9 @@ function renderWidgetView(vd,ds){
       const tt=customTodoTimeFor(ct,vd);
       const sub=`${tt?`${hhmm(tt.h,tt.m)}${tt.eh!=null?`〜${hhmm(tt.eh,tt.em)}`:""}`:""}${rec.noteOverride?`　📝${rec.noteOverride}`:""}`;
       const rrow=checkRow(false,lbl,sub,()=>{ setTodo(vd,ct.uid,{...rec,checked:true,time:new Date().toISOString()}); showToast(`✅ ${lbl}`); });
-      // ✏️ 定期ルーティンを編集（ヴィジェットからも編集モーダルを開ける）
+      // ✏️ この日だけの変更（この日のみ削除／時刻変更／内容変更）をヴィジェットからも開ける
       const edit=btn({style:{flexShrink:0,fontSize:"12px",padding:"3px 9px",borderRadius:"6px",cursor:"pointer",fontWeight:600,border:"1px solid #334155",background:"transparent",color:"#94a3b8"}},"✏️");
-      edit.addEventListener('click',(()=>{const c2=ct;return()=>{ state.customTodoModal={...c2}; render(); };})());
+      edit.addEventListener('click',(()=>{const uid=ct.uid,l=lbl;return()=>{ state.planCustomTodo={uid,label:l,vd}; state.modal="planCustomTodo"; render(); };})());
       rrow.appendChild(edit);
       c.appendChild(rrow);
     });
