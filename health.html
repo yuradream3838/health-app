@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.97"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.98"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -3977,7 +3977,8 @@ function renderDaySchedule(vd,ds,isToday){
       //  定期ルーティン=チェック済み／パターン=連動ルーティン完了／通常の予定=実績に反映済み
       let blockDone=false;
       if(ev.customTodo) blockDone=!!(((state.todos[vd]||{})[ev.ctUid])||{}).checked;
-      else if(ev.isPattern && !ev.shiftBlock){ const pp=(state.planPatterns||[]).find(x=>x.uid===ev.patternUid); blockDone=pp?patternLinkDone(pp,vd):false; }
+      else if(ev.shiftBlock){ const d=getDaily(vd); blockDone=(d.workStart!=null && d.workEnd!=null); } // 仕事の予定＝勤務時間を入力したら
+      else if(ev.isPattern){ const pp=(state.planPatterns||[]).find(x=>x.uid===ev.patternUid); blockDone=pp?patternLinkDone(pp,vd):false; }
       else if(ev.uid!=null && !ev.isPattern && !ev._tail && !ev.customTodo) blockDone=eventReflected(ev,vd);
       const blockOpacity = blockDone?0.4:1;
       const block=div({style:{
