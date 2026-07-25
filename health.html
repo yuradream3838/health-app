@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.94"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.95"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -3552,6 +3552,19 @@ function renderPlanPatternPanel(){
     const l4=div({style:{display:"flex",gap:"6px"}});
     [...EV_COLORS,"#60a5fa"].forEach(c=>{const on=p.color===c;const cb=btn({style:{width:"24px",height:"24px",borderRadius:"6px",cursor:"pointer",background:c+(on?"":"55"),border:`2px solid ${on?c:"transparent"}`}},"");cb.addEventListener('click',()=>upd(p.uid,{color:c}));l4.appendChild(cb);});
     box.appendChild(l4);
+    // 連動ルーティン（セット/単体）：完了すると予定タブでこのパターンがグレーアウトする
+    const lkRow=div({style:{marginTop:"8px",display:"flex",alignItems:"center",gap:"6px",flexWrap:"wrap"}});
+    lkRow.appendChild(span({style:{fontSize:"10px",color:"#64748b",flexShrink:0}},"🔗 連動ルーティン"));
+    const lkSel=document.createElement('select');lkSel.className='sel';lkSel.style.cssText="flex:1;min-width:120px;font-size:12px;padding:4px 2px";
+    const curLk=p.linkRoutine?(p.linkRoutine.t==="set"?"set:"+p.linkRoutine.key:"item:"+p.linkRoutine.id):"";
+    const addOpt=(val,label)=>{const o=document.createElement('option');o.value=val;o.textContent=label;if(val===curLk)o.selected=true;lkSel.appendChild(o);};
+    addOpt("","なし");
+    (state.routines||[]).forEach(g=>addOpt("set:"+g.key,"セット: "+(g.title||g.key)));
+    TODO_ITEMS.forEach(it=>addOpt("item:"+it.id,"単体: "+it.label));
+    lkSel.addEventListener('change',e=>{ const v=e.target.value; let lk=null; if(v.indexOf("set:")===0)lk={t:"set",key:v.slice(4)}; else if(v.indexOf("item:")===0)lk={t:"item",id:v.slice(5)}; upd(p.uid,{linkRoutine:lk}); });
+    lkRow.appendChild(lkSel);
+    box.appendChild(lkRow);
+    box.appendChild(div({style:{fontSize:"9px",color:"#475569",marginTop:"3px"}},"連動先が完了すると、予定タブでこの予定がグレーアウトします"));
     card.appendChild(box);
   });
   const templates=[{t:"😴 睡眠",c:"#60a5fa",s:[23,0],e:[7,0]},{t:"🏋️ 運動",c:"#22c55e",s:[19,0],e:[20,0]},{t:"🍽️ 食事",c:"#fb923c",s:[12,0],e:[13,0]}];
@@ -3747,6 +3760,18 @@ function renderScheduleHub(vd,ds,isToday){
   return wrap;
 }
 
+// パターン予定に連動したルーティン（セット/単体）が完了しているか（グレーアウト判定用）
+function routineSetAllDone(setObj, vd){
+  const ids=(setObj&&setObj.ids)||[];
+  if(!ids.length)return false;
+  return ids.every(id=>{ const item=TODO_ITEMS.find(x=>x.id===id); return item?isTodoDone(vd,item):true; });
+}
+function patternLinkDone(p, vd){
+  const lk=p&&p.linkRoutine; if(!lk)return false;
+  if(lk.t==="set"){ const s=(state.routines||[]).find(g=>g.key===lk.key); return s?routineSetAllDone(s,vd):false; }
+  if(lk.t==="item"){ const item=TODO_ITEMS.find(x=>x.id===lk.id); return item?isTodoDone(vd,item):false; }
+  return false;
+}
 // ── 日スケジュール（予定 vs 実際・0〜24時） ──
 function renderDaySchedule(vd,ds,isToday){
   const wrap=div({});
@@ -3945,11 +3970,19 @@ function renderDaySchedule(vd,ds,isToday){
       const left=`calc((${leftBase}) + (${widthArea}) * ${(lane/lanes).toFixed(4)})`;
       const width=`calc((${widthArea}) * ${(1/lanes).toFixed(4)} - 2px)`;
       const tcol=textOn(color);
+      // 完了ベースのグレーアウト：定期ルーティン=チェック済み、パターン=連動ルーティン完了。
+      // これらは時間経過のグレー（past-gray, z4）より上（z5）に出して「時間だけ」では暗くしない。
+      const linkable = ev.customTodo || (ev.isPattern && !ev.shiftBlock);
+      let blockDone=false;
+      if(ev.customTodo) blockDone=!!(((state.todos[vd]||{})[ev.ctUid])||{}).checked;
+      else if(ev.isPattern && !ev.shiftBlock){ const pp=(state.planPatterns||[]).find(x=>x.uid===ev.patternUid); blockDone=pp?patternLinkDone(pp,vd):false; }
+      const blockZ = linkable?5:3;
+      const blockOpacity = (linkable&&blockDone)?0.4:1;
       const block=div({style:{
         position:"absolute",top:`${Math.max(0,top)}px`,left,width,
         height:`${height}px`,background:color,border:`1px solid ${color}`,
-        borderRadius:"5px",padding:"1px 5px",
-        overflow:"hidden",cursor:onTap?"pointer":"default",zIndex:3,boxSizing:"border-box"
+        borderRadius:"5px",padding:"1px 5px",opacity:blockOpacity,
+        overflow:"hidden",cursor:onTap?"pointer":"default",zIndex:blockZ,boxSizing:"border-box"
       }});
       // タイトルは折り返し＋高さに応じて行数をクランプ、狭い/低いブロックはフォント縮小
       const timeShown = height>34 && !ev.isPoint && lanes===1;
