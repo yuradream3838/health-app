@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.71"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.72"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -5433,8 +5433,66 @@ function renderEditEndModal(vd){
 
 // ── ログタブ ──────────────────────────────────────
 // ── 分析ハブ（サブタブ：日次ログ・週次分析・総合分析） ──
+// その日のルーティン達成状況（除外を除いた実達成率）
+function dayRoutineStats(ds){
+  const todo=state.todos[ds]||{};
+  const targets=TODO_ITEMS.filter(item=>!(todo[item.id]||{}).excluded);
+  const hasData=Object.keys(todo).length>0;
+  if(!targets.length) return {ratio:0,done:0,total:0,hasData};
+  const doneN=targets.filter(item=>{const t=todo[item.id]||{};
+    if(item.type==="check")return !!t.checked;
+    if(item.type==="timer"){ if(item.multi)return (t.sessions||[]).some(s=>s.startTime&&s.endTime); return !!(t.startTime&&t.endTime); }
+    return false;}).length;
+  return {ratio: doneN/targets.length, done:doneN, total:targets.length, hasData};
+}
+function heatColor(r, hasData){
+  if(!hasData) return "#0f172a";
+  if(r<=0)   return "#1e293b";
+  if(r<0.34) return "#14532d";
+  if(r<0.67) return "#16a34a";
+  if(r<1)    return "#22c55e";
+  return "#4ade80";
+}
+// 達成タブ（ヒートマップ／ストリーク等）
+function renderAchievement(vd){
+  const wrap=div({style:{maxWidth:"600px",margin:"0 auto",padding:"12px 16px 60px"}});
+  const today=todayStr();
+  // ── ルーティン達成ヒートマップ（直近12週）──
+  const card=div({className:"card"});
+  card.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0",marginBottom:"3px"}},"🟩 ルーティン達成ヒートマップ"));
+  card.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"10px"}},"直近12週の達成率（濃いほど達成）。マスをタップでその日へ"));
+  const WEEKS=12, CELL=16;
+  const monOf=ds2=>{const d=parseDS(ds2);d.setDate(d.getDate()-((d.getDay()+6)%7));return d;};
+  const startMon=monOf(today); startMon.setDate(startMon.getDate()-(WEEKS-1)*7);
+  const WD=["月","火","水","木","金","土","日"];
+  const grid=div({style:{display:"grid",gridTemplateColumns:`30px repeat(7, ${CELL}px)`,gap:"3px",justifyContent:"center",alignItems:"center"}});
+  grid.appendChild(div({},""));
+  WD.forEach(w=>grid.appendChild(div({style:{fontSize:"9px",color:"#64748b",textAlign:"center"}},w)));
+  for(let wk=0; wk<WEEKS; wk++){
+    const weekStart=new Date(startMon); weekStart.setDate(weekStart.getDate()+wk*7);
+    grid.appendChild(div({style:{fontSize:"8px",color:"#475569",textAlign:"right",paddingRight:"2px"}},`${weekStart.getMonth()+1}/${weekStart.getDate()}`));
+    for(let d=0; d<7; d++){
+      const day=new Date(weekStart); day.setDate(day.getDate()+d);
+      const dsK=fmtDS(day);
+      const future=dsK>today;
+      const st=future?{ratio:0,hasData:false,total:0}:dayRoutineStats(dsK);
+      const cell=div({style:{width:`${CELL}px`,height:`${CELL}px`,borderRadius:"3px",background:future?"#0b1220":heatColor(st.ratio,st.hasData),cursor:future?"default":"pointer",boxSizing:"border-box",border:dsK===today?"1px solid #38bdf8":"1px solid transparent"}});
+      if(!future){ cell.addEventListener('click',(()=>{const k=dsK;return()=>{state.viewDate=k;state.tab="タスク";state.taskSubTab="ルーティン";render();};})()); }
+      grid.appendChild(cell);
+    }
+  }
+  card.appendChild(grid);
+  card.appendChild(div({style:{display:"flex",alignItems:"center",gap:"4px",marginTop:"10px",justifyContent:"flex-end"}},[
+    span({style:{fontSize:"9px",color:"#64748b"}},"少"),
+    ...["#1e293b","#14532d","#16a34a","#22c55e","#4ade80"].map(c=>div({style:{width:"11px",height:"11px",borderRadius:"2px",background:c}})),
+    span({style:{fontSize:"9px",color:"#64748b"}},"多")
+  ]));
+  wrap.appendChild(card);
+  return wrap;
+}
+
 function renderAnalysisHub(vd, ds, curH, isToday){
-  const SUB_TABS=["日次ログ","週次分析","総合分析"];
+  const SUB_TABS=["日次ログ","週次分析","総合分析","達成"];
   const wrap=div({style:{maxWidth:"600px",margin:"0 auto"}});
 
   // サブタブバー
@@ -5452,9 +5510,11 @@ function renderAnalysisHub(vd, ds, curH, isToday){
   wrap.appendChild(subBar);
 
   const inner=div({style:{padding:"0"}});
+  if(!SUB_TABS.includes(state.analysisSubTab))state.analysisSubTab="日次ログ";
   if(state.analysisSubTab==="日次ログ")  inner.appendChild(renderLog());
   if(state.analysisSubTab==="週次分析")  inner.appendChild(renderWeekly());
   if(state.analysisSubTab==="総合分析")  inner.appendChild(renderAnalysis());
+  if(state.analysisSubTab==="達成")      inner.appendChild(renderAchievement(vd));
   wrap.appendChild(inner);
   return wrap;
 }
