@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.92"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.93"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -1321,12 +1321,15 @@ function renderWidgetView(vd,ds){
   {
     const todo=getTodo(vd);
     const rItems=getOrderedTodoItems().filter(it=>!(todo[it.id]||{}).excluded);
-    const remain=rItems.filter(it=>!isTodoDone(vd,it));
+    // 未完了、または実行中セッションがあるマルチ項目（内容を記入・停止できるよう表示を継続）
+    const remain=rItems.filter(it=>!isTodoDone(vd,it) || (it.multi&&((todo[it.id]||{}).sessions||[]).some(s=>s.startTime&&!s.endTime)));
     if(remain.length){
     const c=div({className:"card",style:{padding:"12px 14px",marginBottom:"10px"}});
     c.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#22c55e",marginBottom:"6px"}},`📋 ルーティン 残り${remain.length}件`));
     remain.forEach(item=>{
       const t=todo[item.id]||{}; const done=isTodoDone(vd,item);
+      const activeSess=item.multi?(t.sessions||[]).find(s=>s.startTime&&!s.endTime):null;
+      const displayDone=done&&!activeSess;
       if(item.type==="check"){
         c.appendChild(checkRow(done,item.label,null,()=>{ setTodo(vd,item.id,{checked:!t.checked,time:new Date().toISOString()}); if(!t.checked){showToast(`✅ ${item.label}`);setTimeout(maybeCelebrateStreak,100);} }));
       } else {
@@ -1347,8 +1350,16 @@ function renderWidgetView(vd,ds){
           else { b=div({style:{width:"24px",height:"24px",borderRadius:"6px",flexShrink:0,border:"2px solid #22c55e",background:"#22c55e",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"14px",color:"#fff"}},"✓"); }
         }
         row.appendChild(b);
-        row.appendChild(div({style:{flex:1,fontSize:"13px",color:done?"#475569":"#e2e8f0",textDecoration:done?"line-through":"none",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",minWidth:0}},item.label));
+        row.appendChild(div({style:{flex:1,fontSize:"13px",color:displayDone?"#475569":"#e2e8f0",textDecoration:displayDone?"line-through":"none",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",minWidth:0}},item.label));
         c.appendChild(row);
+        // 実行中セッションの「何をしますか？」記入欄（ヴィジェットでも表示・編集）
+        if(activeSess){
+          const noteInp=document.createElement('input');noteInp.type='text';
+          noteInp.placeholder="何をしますか？（内容）";noteInp.value=activeSess.note||"";
+          noteInp.style.cssText="width:100%;margin:0 0 6px 34px;padding:6px 9px;background:#1e293b;border:1px solid #334155;border-radius:7px;color:#e2e8f0;font-size:12px;font-family:inherit;box-sizing:border-box;max-width:calc(100% - 34px)";
+          noteInp.addEventListener('change',(()=>{const sid=activeSess.uid,it=item,rec=t;return e=>{ const v=e.target.value.trim(); const ss=(rec.sessions||[]).map(x=>x.uid===sid?{...x,note:v}:x); setTodo(vd,it.id,{...rec,sessions:ss}); };})());
+          c.appendChild(noteInp);
+        }
       }
     });
     wrap.appendChild(c);
