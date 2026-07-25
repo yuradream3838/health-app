@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.91"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.92"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -293,8 +293,8 @@ const TODO_ITEMS = [
   {id:"stretch_am",    label:"朝ストレッチ",          type:"check"},
   {id:"dressing",      label:"着替え",                type:"check"},
   {id:"goal_setting",  label:"目標設定",              type:"check"},
-  {id:"reading",       label:"読書",                  type:"timer", multi:true},
-  {id:"side_job",      label:"副業",                  type:"timer", multi:true},
+  {id:"reading",       label:"インプット",            type:"timer", multi:true},
+  {id:"side_job",      label:"アウトプット",          type:"timer", multi:true},
   {id:"breakfast_prep",label:"朝食準備",              type:"check"},
   {id:"breakfast",     label:"朝食・片付け",          type:"timer"},
   {id:"lunch_prep",    label:"昼食準備",              type:"check"},
@@ -1307,7 +1307,12 @@ function renderWidgetView(vd,ds){
       const lbl=rec.labelOverride||ct.label;
       const tt=customTodoTimeFor(ct,vd);
       const sub=`${tt?`${hhmm(tt.h,tt.m)}${tt.eh!=null?`〜${hhmm(tt.eh,tt.em)}`:""}`:""}${rec.noteOverride?`　📝${rec.noteOverride}`:""}`;
-      c.appendChild(checkRow(false,lbl,sub,()=>{ setTodo(vd,ct.uid,{...rec,checked:true,time:new Date().toISOString()}); showToast(`✅ ${lbl}`); }));
+      const rrow=checkRow(false,lbl,sub,()=>{ setTodo(vd,ct.uid,{...rec,checked:true,time:new Date().toISOString()}); showToast(`✅ ${lbl}`); });
+      // ✏️ 定期ルーティンを編集（ヴィジェットからも編集モーダルを開ける）
+      const edit=btn({style:{flexShrink:0,fontSize:"12px",padding:"3px 9px",borderRadius:"6px",cursor:"pointer",fontWeight:600,border:"1px solid #334155",background:"transparent",color:"#94a3b8"}},"✏️");
+      edit.addEventListener('click',(()=>{const c2=ct;return()=>{ state.customTodoModal={...c2}; render(); };})());
+      rrow.appendChild(edit);
+      c.appendChild(rrow);
     });
     wrap.appendChild(c);
   }
@@ -4732,7 +4737,7 @@ const SCHED_SYS=`あなたは体調に配慮する生活プランナーです。
 - 既存の予定と重複しない時間に配置。勤務時間中には予定を入れない。食事時間を確保。無理のない量にする。
 - 「ルーティン」のグループは、中の個々の項目を分割せず、必ずグループ名（例: 🌅モーニングルーティン）のまま【1つのまとまった予定】として1件だけ配置。所要は項目数に応じ15〜45分目安。その他の項目は個別配置可。
 - 【体調を最重要で考慮する】体調が低い(目安6未満)・睡眠不足(6h未満)・症状がある場合は、予定を詰め込まず「休息」「仮眠」「軽いストレッチ」など回復を優先し、[最優先][重要]タスクも短時間・控えめにする。
-- 体調が良い(目安7以上)ときや、時間帯別の平均体調が高い時間帯には、読書・副業・トレーニング・勉強など集中や負荷を要する活動を配置する。逆に体調が落ちやすい時間帯には負荷の軽い予定を置く。
+- 体調が良い(目安7以上)ときや、時間帯別の平均体調が高い時間帯には、インプット・アウトプット・トレーニング・勉強など集中や負荷を要する活動を配置する。逆に体調が落ちやすい時間帯には負荷の軽い予定を置く。
 - [最優先][重要][緊急]のタスクは、上記の体調配慮の範囲で優先的に配置する。
 - 対話の場合はユーザーの最新の要望を必ず反映し、eventsには調整後の【1日分の完全なスケジュール】を毎回返す。`;
 
@@ -5138,7 +5143,7 @@ function renderTodo(vd, ds, isToday){
     }});
 
     if(item.multi){
-      // ── マルチセッション（読書・副業） ──
+      // ── マルチセッション（インプット・アウトプット・トレーニング） ──
       const sessions = [...(t.sessions||[])].sort((a,b)=>{
         const ta=a.startTime?new Date(a.startTime).getTime():0;
         const tb=b.startTime?new Date(b.startTime).getTime():0;
@@ -5231,7 +5236,7 @@ function renderTodo(vd, ds, isToday){
           }));
           sRow.appendChild(delBtn);
           sWrap.appendChild(sRow);
-          // 「何をしますか？」内容の記入欄（読書・副業・トレーニング）。実績にも一緒に表示される
+          // 「何をしますか？」内容の記入欄（インプット・アウトプット・トレーニング）。実績にも一緒に表示される
           const noteInp=document.createElement('input');noteInp.type='text';
           noteInp.placeholder="何をしますか？（内容）";noteInp.value=s.note||"";
           noteInp.style.cssText="width:100%;margin-top:4px;padding:5px 8px;background:#1e293b;border:1px solid #334155;border-radius:6px;color:#e2e8f0;font-size:12px;font-family:inherit;box-sizing:border-box";
