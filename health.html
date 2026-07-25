@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.81"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.82"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -1285,9 +1285,10 @@ function renderWidgetView(vd,ds){
     c.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#a78bfa",marginBottom:"6px"}},`🔁 定期ルーティン 残り${dueRemain.length}件`));
     dueRemain.forEach(ct=>{
       const rec=(state.todos[vd]||{})[ct.uid]||{};
+      const lbl=rec.labelOverride||ct.label;
       const tt=customTodoTimeFor(ct,vd);
-      const sub=tt?`${hhmm(tt.h,tt.m)}${tt.eh!=null?`〜${hhmm(tt.eh,tt.em)}`:""}`:"";
-      c.appendChild(checkRow(false,ct.label,sub,()=>{ setTodo(vd,ct.uid,{...rec,checked:true,time:new Date().toISOString()}); showToast(`✅ ${ct.label}`); }));
+      const sub=`${tt?`${hhmm(tt.h,tt.m)}${tt.eh!=null?`〜${hhmm(tt.eh,tt.em)}`:""}`:""}${rec.noteOverride?`　📝${rec.noteOverride}`:""}`;
+      c.appendChild(checkRow(false,lbl,sub,()=>{ setTodo(vd,ct.uid,{...rec,checked:true,time:new Date().toISOString()}); showToast(`✅ ${lbl}`); }));
     });
     wrap.appendChild(c);
   }
@@ -2951,7 +2952,9 @@ function getPlannedExtras(vd){
       const startAbs=off*1440+s, endAbs=off*1440+e;
       const cs=Math.max(0,startAbs), ce=Math.min(1440,endAbs);
       if(ce<=cs)return; // vd に掛からない
-      out.push({title:`☑️ ${ct.label}`,color:ct.color||"#38bdf8",startH:Math.floor(cs/60),startM:cs%60,endH:Math.floor(ce/60),endM:ce%60,customTodo:true,ctUid:ct.uid,ctLabel:ct.label});
+      const rec=(state.todos[D]||{})[ct.uid]||{};
+      const lbl=rec.labelOverride||ct.label;
+      out.push({title:`☑️ ${lbl}${rec.noteOverride?" 📝":""}`,color:ct.color||"#38bdf8",startH:Math.floor(cs/60),startM:cs%60,endH:Math.floor(ce/60),endM:ce%60,customTodo:true,ctUid:ct.uid,ctLabel:lbl});
     });
   }
   return out;
@@ -3099,6 +3102,24 @@ function renderPlanCustomTodoModal(){
         onClick:()=>{ const cur=(state.todos[vd]||{})[pc.uid]||{}; setTodo(vd,pc.uid,{...cur,timeOverride:{timeH:pc.ov.timeH,timeM:pc.ov.timeM||0,endH:pc.ov.endH,endM:pc.ov.endM}}); state.modal=null; showToast("この日の時刻を変更しました"); render(); }},"✅ この日だけこの時刻にする"));
       if(hasOv) m.appendChild(btn({style:{width:"100%",padding:"8px",marginBottom:"8px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#94a3b8",cursor:"pointer",fontSize:"12px"},
         onClick:()=>{ const cur={...((state.todos[vd]||{})[pc.uid]||{})}; delete cur.timeOverride; setTodo(vd,pc.uid,cur); state.modal=null; showToast("時刻を元に戻しました"); render(); }},"↩ 時刻を元に戻す"));
+      // この日だけ内容（名前・メモ）を変更
+      const curRec2=(state.todos[vd]||{})[pc.uid]||{};
+      const hasContentOv=!!(curRec2.labelOverride||curRec2.noteOverride);
+      if(pc.lblOv===undefined)pc.lblOv=curRec2.labelOverride||"";
+      if(pc.noteOv===undefined)pc.noteOv=curRec2.noteOverride||"";
+      m.appendChild(div({style:{fontSize:"11px",color:"#64748b",margin:"8px 0 5px"}},"📝 この日だけ内容を変更"));
+      const lin=document.createElement('input'); lin.type='text'; lin.placeholder=`名前（既定: ${ct.label||""}）`; lin.value=pc.lblOv;
+      lin.style.cssText="width:100%;padding:8px 10px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:14px;font-family:inherit;box-sizing:border-box;margin-bottom:6px";
+      lin.addEventListener('input',e=>{pc.lblOv=e.target.value;});
+      m.appendChild(lin);
+      const nta=document.createElement('textarea'); nta.placeholder="メモ（この日だけ・任意）"; nta.value=pc.noteOv;
+      nta.style.cssText="width:100%;min-height:44px;padding:8px 10px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit;box-sizing:border-box;margin-bottom:8px;resize:vertical;line-height:1.5";
+      nta.addEventListener('input',e=>{pc.noteOv=e.target.value;});
+      m.appendChild(nta);
+      m.appendChild(btn({style:{width:"100%",padding:"10px",marginBottom:"8px",background:"#22c55e18",border:"1px solid #22c55e",borderRadius:"8px",color:"#4ade80",fontSize:"13px",fontWeight:600,cursor:"pointer"},
+        onClick:()=>{ const cur={...((state.todos[vd]||{})[pc.uid]||{})}; const lv=(pc.lblOv||"").trim(), nv=(pc.noteOv||"").trim(); if(lv)cur.labelOverride=lv; else delete cur.labelOverride; if(nv)cur.noteOverride=nv; else delete cur.noteOverride; setTodo(vd,pc.uid,cur); state.modal=null; showToast("この日の内容を変更しました"); render(); }},"✅ この日だけの内容を保存"));
+      if(hasContentOv) m.appendChild(btn({style:{width:"100%",padding:"8px",marginBottom:"8px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#94a3b8",cursor:"pointer",fontSize:"12px"},
+        onClick:()=>{ const cur={...((state.todos[vd]||{})[pc.uid]||{})}; delete cur.labelOverride; delete cur.noteOverride; setTodo(vd,pc.uid,cur); state.modal=null; showToast("内容を元に戻しました"); render(); }},"↩ 内容を元に戻す"));
     }
   }
   // 定期ルーティンを編集（設定へ）
