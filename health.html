@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.73"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.74"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -1706,6 +1706,37 @@ function gtCollectByPeriod(type, key, list=state.goalTree, out=[]){
 }
 // 達成済みか（葉なら done、親なら全下位が達成）
 function gtAchieved(n){ const p=gtProgress(n); return p.total>0 && p.done===p.total; }
+// periodKey → 日付範囲 {start,end}
+function goalPeriodRange(periodType, periodKey){
+  if(!periodType||!periodKey) return null;
+  const p=pkParse(periodKey); if(!p) return null;
+  if(periodType==="daily") return {start:p.date, end:p.date};
+  if(periodType==="weekly"){ const d=parseDS(p.monday); d.setDate(d.getDate()+6); return {start:p.monday, end:fmtDS(d)}; }
+  if(periodType==="monthly"){ const s=`${p.y}-${String(p.m).padStart(2,'0')}-01`; return {start:s, end:fmtDS(new Date(p.y,p.m,0))}; }
+  if(periodType==="quarterly"){ const qm=(p.q-1)*3+1; return {start:`${p.y}-${String(qm).padStart(2,'0')}-01`, end:fmtDS(new Date(p.y,qm+2,0))}; }
+  if(periodType==="yearly") return {start:`${p.y}-01-01`, end:`${p.y}-12-31`};
+  return null;
+}
+// 連結した習慣（ルーティン/定期ルーティン）の期間内の実施回数
+function countLinkedRoutineDone(linked, startDs, endDs){
+  if(!linked||!linked.length) return 0;
+  const end = endDs>todayStr()?todayStr():endDs;
+  if(startDs>end) return 0;
+  let cnt=0, d=startDs;
+  for(let i=0;i<400 && d<=end;i++){
+    const td=state.todos[d]||{};
+    linked.forEach(l=>{
+      if(l.t==="d"){ const item=TODO_ITEMS.find(x=>x.id===l.id); if(item){ const t=td[item.id]||{}; let done=false; if(item.type==="check")done=!!t.checked; else if(item.multi)done=(t.sessions||[]).some(s=>s.startTime&&s.endTime); else done=!!(t.startTime&&t.endTime); if(done)cnt++; } }
+      else { const rec=td[l.id]; if(rec&&rec.checked)cnt++; }
+    });
+    d=addDays(d,1);
+  }
+  return cnt;
+}
+// 連結習慣の名前一覧
+function linkedRoutineNames(linked){
+  return (linked||[]).map(l=> l.t==="d" ? (TODO_ITEMS.find(x=>x.id===l.id)||{}).label : ((state.customTodos||[]).find(c=>c.uid===l.id)||{}).label ).filter(Boolean);
+}
 // 期間別表示用：当該期間の目標に加え、過去の期間で未達成のものも繰り越して返す。
 // same-type の periodKey は同一プレフィックスなので文字列比較で前後判定できる。
 function gtCollectByPeriodCarry(type, vd){
@@ -1826,6 +1857,11 @@ function renderGoalTreeNode(node, depth){
       span({style:{fontSize:"9px",color:"#64748b"}},`${prog.done}/${prog.total} (${pct}%)`)
     ]));
   }
+  if(node.linkedRoutines&&node.linkedRoutines.length){
+    const range=goalPeriodRange(node.periodType,node.periodKey)||{start:todayStr().slice(0,7)+"-01",end:todayStr()};
+    const cnt=countLinkedRoutineDone(node.linkedRoutines,range.start,range.end);
+    label.appendChild(div({style:{fontSize:"9px",color:"#4ade80",marginTop:"3px"}},`🔁 ${linkedRoutineNames(node.linkedRoutines).join("・")} 実施${cnt}回`));
+  }
   if(node.note){ label.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginTop:"3px",whiteSpace:"pre-wrap",wordBreak:"break-word",borderLeft:"2px solid #334155",paddingLeft:"6px"}},"📝 "+node.note)); }
   label.addEventListener('click',()=>{state.goalTreeModal={mode:"edit",id:node.id,text:node.text||""};render();});
   row.appendChild(label);
@@ -1907,6 +1943,24 @@ function renderGoalTreeModal(){
     picker.appendChild(div({style:{fontSize:"10px",color:"#a5b4fc",marginTop:"8px",textAlign:"center",fontWeight:600}},"連動先: "+pkLabel(m0.periodKey)));
     m.appendChild(picker);
   }
+  // 🔁 習慣を連結（実施回数を進捗として表示）
+  if(m0.linkedRoutines===undefined && m0.mode==="edit"){ const f=gtFind(m0.id); m0.linkedRoutines=(f&&f.node.linkedRoutines)?[...f.node.linkedRoutines]:[]; }
+  if(!m0.linkedRoutines)m0.linkedRoutines=[];
+  const isLinked=(t,id)=>m0.linkedRoutines.some(l=>l.t===t&&l.id===id);
+  const toggleLink=(t,id)=>{ m0.linkedRoutines=isLinked(t,id)?m0.linkedRoutines.filter(l=>!(l.t===t&&l.id===id)):[...m0.linkedRoutines,{t,id}]; render(); };
+  m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"6px"}},"🔁 習慣を連結（この目標に効く習慣・実施回数を表示／任意）"));
+  const linkWrap=div({style:{background:"#0f172a",borderRadius:"8px",padding:"8px 10px",marginBottom:"12px",maxHeight:"150px",overflowY:"auto"}});
+  linkWrap.appendChild(div({style:{fontSize:"9px",color:"#475569",marginBottom:"4px"}},"デイリールーティン"));
+  const dRow=div({style:{display:"flex",flexWrap:"wrap",gap:"4px",marginBottom:"6px"}});
+  TODO_ITEMS.forEach(it=>{ const on=isLinked("d",it.id); const b=btn({style:{fontSize:"10px",padding:"3px 8px",borderRadius:"12px",cursor:"pointer",fontWeight:600,border:`1px solid ${on?"#22c55e":"#334155"}`,background:on?"#22c55e22":"transparent",color:on?"#4ade80":"#64748b"}},it.label); b.addEventListener('click',()=>toggleLink("d",it.id)); dRow.appendChild(b); });
+  linkWrap.appendChild(dRow);
+  if((state.customTodos||[]).length){
+    linkWrap.appendChild(div({style:{fontSize:"9px",color:"#475569",margin:"4px 0"}},"定期ルーティン"));
+    const cRow=div({style:{display:"flex",flexWrap:"wrap",gap:"4px"}});
+    (state.customTodos||[]).forEach(ct=>{ const on=isLinked("c",ct.uid); const b=btn({style:{fontSize:"10px",padding:"3px 8px",borderRadius:"12px",cursor:"pointer",fontWeight:600,border:`1px solid ${on?"#a78bfa":"#334155"}`,background:on?"#a78bfa22":"transparent",color:on?"#a78bfa":"#64748b"}},ct.label||"(無題)"); b.addEventListener('click',()=>toggleLink("c",ct.uid)); cRow.appendChild(b); });
+    linkWrap.appendChild(cRow);
+  }
+  m.appendChild(linkWrap);
   // 進捗メモ
   if(m0.note===undefined && m0.mode==="edit"){ const f=gtFind(m0.id); m0.note=(f&&f.node.note)||""; }
   m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"6px"}},"進捗メモ（任意）"));
@@ -1928,12 +1982,13 @@ function renderGoalTreeModal(){
       const pt=state.goalTreeModal.periodType||null;
       const pk=pt?(state.goalTreeModal.periodKey||pkDefault(pt,null,state.viewDate||todayStr())):null;
       const note=(state.goalTreeModal.note||"").trim();
+      const linked=(state.goalTreeModal.linkedRoutines||[]).slice();
       if(m0.mode==="add"){
         gtAddChild(m0.parentId==null?null:m0.parentId, text);
         const list=m0.parentId==null?state.goalTree:(gtFind(m0.parentId)?.node.children||[]); const created=list[list.length-1];
-        if(created){ if(pt){created.periodType=pt;created.periodKey=pk;} if(note)created.note=note; saveGoalTree(); }
+        if(created){ if(pt){created.periodType=pt;created.periodKey=pk;} if(note)created.note=note; if(linked.length)created.linkedRoutines=linked; saveGoalTree(); }
       } else {
-        gtUpdate(m0.id,{text, periodType:pt, periodKey:pk, note});
+        gtUpdate(m0.id,{text, periodType:pt, periodKey:pk, note, linkedRoutines:linked});
       }
       state.goalTreeModal=null; render();
     }},"保存"));
@@ -2005,6 +2060,12 @@ function renderGoals(vd, ds){
     tx.addEventListener('click',()=>{state.goalView="tree";state.goalTreeModal={mode:"edit",id:n.id,text:n.text||""};render();});
     head.appendChild(tx);
     box.appendChild(head);
+    // 連結した習慣の期間内の実施回数
+    if(n.linkedRoutines&&n.linkedRoutines.length){
+      const range=goalPeriodRange(n.periodType,n.periodKey);
+      const cnt=range?countLinkedRoutineDone(n.linkedRoutines,range.start,range.end):0;
+      box.appendChild(div({style:{fontSize:"10px",color:"#4ade80",marginTop:"6px",lineHeight:1.4}},`🔁 連結習慣の実施 ${cnt}回（${linkedRoutineNames(n.linkedRoutines).join("・")}）`));
+    }
     const pr=document.createElement('textarea');
     pr.placeholder="進捗メモ..."; pr.value=n.note||"";
     pr.style.cssText="width:100%;min-height:38px;background:#0a1120;border:1px solid #1e3a5f;border-radius:7px;color:#94a3b8;font-size:12px;padding:7px;resize:vertical;box-sizing:border-box;font-family:inherit;margin-top:6px;line-height:1.5";
