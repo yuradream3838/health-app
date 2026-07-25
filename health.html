@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.76"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.77"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -1742,6 +1742,21 @@ function countLinkedRoutineDone(linked, startDs, endDs){
 // 連結習慣の名前一覧
 function linkedRoutineNames(linked){
   return (linked||[]).map(l=> l.t==="d" ? (TODO_ITEMS.find(x=>x.id===l.id)||{}).label : ((state.customTodos||[]).find(c=>c.uid===l.id)||{}).label ).filter(Boolean);
+}
+// AIコーチ用：目標ツリーを階層・期間・進捗・連結習慣つきで文字列化
+function buildGoalCoachContext(){
+  const today=todayStr(); const lines=[];
+  const walk=(nodes,depth)=>{ (nodes||[]).forEach(n=>{
+    const prog=gtProgress(n);
+    const period=n.periodType?`[${GT_PERIOD_LABELS[n.periodType]||n.periodType}${n.periodKey?" "+pkShort(n.periodKey):""}]`:"[期間なし]";
+    const status=n.done?"達成":(prog.total>1?`下位達成${prog.done}/${prog.total}`:"未達成");
+    let linkInfo="";
+    if(n.linkedRoutines&&n.linkedRoutines.length){ const range=goalPeriodRange(n.periodType,n.periodKey)||{start:today.slice(0,7)+"-01",end:today}; const cnt=countLinkedRoutineDone(n.linkedRoutines,range.start,range.end); linkInfo=` 連結習慣[${linkedRoutineNames(n.linkedRoutines).join("・")}]を期間内${cnt}回実施`; }
+    lines.push(`${"  ".repeat(depth)}・${n.text||"(無題)"} ${period} ${status}${linkInfo}${n.note?` メモ:${n.note}`:""}`);
+    if(n.children&&n.children.length) walk(n.children,depth+1);
+  }); };
+  walk(state.goalTree,0);
+  return lines.join("\n")||"（目標がまだ登録されていません）";
 }
 // 期間別表示用：当該期間の目標に加え、過去の期間で未達成のものも繰り越して返す。
 // same-type の periodKey は同一プレフィックスなので文字列比較で前後判定できる。
@@ -4466,16 +4481,18 @@ async function runAICoach(kind){
     const remain=TODO_ITEMS.filter(it=>!(todo[it.id]||{}).excluded && !isTodoDone(today,it)).map(it=>it.label);
     const doneN=TODO_ITEMS.filter(it=>!(todo[it.id]||{}).excluded && isTodoDone(today,it)).length;
     const dueC=dueCustomTodos(today).filter(ct=>!(todo[ct.uid]||{}).checked&&!(todo[ct.uid]||{}).excluded).map(ct=>ct.label);
-    const goals=[]; ['daily','weekly','monthly'].forEach(tp=>{gtCollectByPeriod(tp,getGoalKey(tp,today)).forEach(n=>{if(!n.done&&n.text)goals.push(n.text);});});
     const streak=currentOverallStreak().streak;
-    const ctx=`日付:${today}（${shift}） 連続達成:${streak}日 今日の体調:${avg}/10 前夜の睡眠:${sleep}\n未完了ルーティン:${remain.join('、')||'なし'}（完了${doneN}件）\n未実施の定期ルーティン:${dueC.join('、')||'なし'}\n未達成の目標:${goals.slice(0,6).join('、')||'なし'}`;
+    const ctx=`日付:${today}（${shift}）連続達成:${streak}日 今日の体調:${avg}/10 前夜の睡眠:${sleep}\n未完了ルーティン:${remain.join('、')||'なし'}（完了${doneN}件）\n未実施の定期ルーティン:${dueC.join('、')||'なし'}\n\n【目標ツリー（階層・期間・進捗・連結習慣）】\n${buildGoalCoachContext()}`;
     let sys, prompt;
-    if(kind==="morning"){
-      sys="あなたはユーザー専属の習慣コーチです。体調とシフトに配慮し、今日『最優先で取り組む1つ』だけを理由とともに前向きに提案します。日本語で3〜4文、JSONやMarkdownの装飾は使わないでください。";
-      prompt=`${ctx}\n\n今日の『最優先の一手』を1つだけ提案してください。体調が低い日や睡眠不足の日は無理をさせず、回復や軽い一歩を優先してください。`;
+    if(kind==="goal"){
+      sys="あなたはユーザー専属の目標達成コーチです。ユーザーの目標ツリー・進捗・連結習慣・体調を踏まえ、精神論ではなく『目標を前に進める具体的な次の行動』を示します。今日〜今週に実行できる1〜2手を、実行意図（いつ・どこで・何をするか）の形で具体的に提案してください。目標が曖昧または大きすぎる場合は、達成につながる小さな下位目標や、毎日の習慣（ルーティン）への落とし込みを提案します。目標が未登録なら、記録内容から始めやすい目標を1つ提案します。日本語で4〜6文、JSONやMarkdownの装飾は使わないでください。";
+      prompt=`${ctx}\n\n最も効果が高い目標を1つに絞り、その達成のための『具体的な次の行動』（今日〜今週に実行できる1〜2手を「いつ・どこで・何をする」の形で）を提案してください。目標が曖昧/大きすぎるなら小さな下位目標や習慣への分解を、目標が無ければ始めやすい目標を1つ提案してください。`;
+    } else if(kind==="morning"){
+      sys="あなたはユーザー専属の目標達成＆習慣コーチです。体調とシフトに配慮しつつ、今日『最優先で取り組む1つ』を、できれば目標達成につながる具体的な行動として提案します。日本語で3〜4文、JSONやMarkdownの装飾は使わないでください。";
+      prompt=`${ctx}\n\n今日の『最優先の一手』を1つだけ、できれば目標を前進させる具体的な行動として提案してください。体調が低い日や睡眠不足の日は無理をさせず、回復や軽い一歩を優先してください。`;
     } else {
-      sys="あなたはユーザー専属の習慣コーチです。今日の達成を具体的に褒め、できなかったことは責めずに体調や状況と結びつけて原因を一言添え、明日への小さな一歩を1つ提案します。日本語で4〜6文、JSONやMarkdownの装飾は使わないでください。";
-      prompt=`${ctx}\n\n今日を優しく振り返ってください（できたことを具体的に褒める＋できなかった原因を一言＋明日の小さな一歩）。`;
+      sys="あなたはユーザー専属の目標達成＆習慣コーチです。今日の達成を具体的に褒め、できなかったことは責めずに体調や状況と結びつけて原因を一言添え、目標に近づくための明日の小さな一歩を1つ提案します。日本語で4〜6文、JSONやMarkdownの装飾は使わないでください。";
+      prompt=`${ctx}\n\n今日を優しく振り返ってください（できたことを具体的に褒める＋できなかった原因を一言＋目標に近づく明日の小さな一歩）。`;
     }
     const text=await callAIText(sys, prompt);
     if(!state.aiCoach)state.aiCoach={};
@@ -5680,9 +5697,10 @@ function renderAchievement(vd){
       }
       return box;
     };
+    cc.appendChild(block("goal","🎯 目標への次の一手を提案","#22c55e"));
     cc.appendChild(block("morning","☀️ 今日の一手を提案","#f59e0b"));
     cc.appendChild(block("evening","🌙 今日を振り返る","#818cf8"));
-    cc.appendChild(div({style:{fontSize:"9px",color:"#475569"}},"※ボタンを押したときだけAIを呼びます（無料・1日の利用上限内）"));
+    cc.appendChild(div({style:{fontSize:"9px",color:"#475569"}},"※ボタンを押したときだけAIを呼びます（無料・1日の利用上限内）。目標ツリー・進捗・連結習慣を踏まえて提案します"));
     wrap.appendChild(cc);
   }
   // ── 🎁 ご褒美（連続達成でアンロック）──
