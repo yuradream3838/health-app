@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.78"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.79"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -3071,6 +3071,30 @@ function renderPlanCustomTodoModal(){
   // この日のみ削除（＝この回を除外。定期ルーティン自体は残る）
   m.appendChild(btn({style:{width:"100%",padding:"11px",marginBottom:"8px",background:"#7f1d1d33",border:"1px solid #ef4444",borderRadius:"8px",color:"#fca5a5",fontSize:"13px",fontWeight:700,cursor:"pointer"},
     onClick:()=>{ pushUndo("この日の定期ルーティンを削除しました"); toggleExclude(vd,pc.uid); state.modal=null; showToast("この日のみ削除しました"); render(); }},"🗑 この日のみ削除"));
+  // この日だけ時刻を変更（その日限定の時刻上書き）
+  {
+    const ct=(state.customTodos||[]).find(c=>c.uid===pc.uid);
+    if(ct){
+      const curRec=(state.todos[vd]||{})[pc.uid]||{};
+      const hasOv=!!(curRec.timeOverride&&curRec.timeOverride.timeH!=null);
+      if(!pc.ov){
+        const eff=customTodoTimeFor(ct,vd);
+        const now=new Date();
+        pc.ov = eff ? {timeH:eff.h,timeM:eff.m,endH:eff.eh,endM:eff.em} : {timeH:now.getHours(),timeM:0,endH:(now.getHours()+1)%24,endM:0};
+      }
+      m.appendChild(div({style:{fontSize:"11px",color:"#64748b",margin:"4px 0 5px"}},"⏰ この日だけ時刻を変更"));
+      const tf=(getH,getM,set)=>{const i=document.createElement('input');i.type='time';i.value=`${String(getH()??0).padStart(2,'0')}:${String(getM()||0).padStart(2,'0')}`;i.style.cssText="flex:1;min-width:0;padding:8px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:15px;color-scheme:dark;font-family:inherit";i.addEventListener('change',e=>{const q=(e.target.value||'').split(':');const H=Number(q[0]),M=Number(q[1]);if(!isNaN(H)&&!isNaN(M))set(H,M);});return i;};
+      const trow=div({style:{display:"flex",gap:"8px",alignItems:"center",marginBottom:"8px"}});
+      trow.appendChild(tf(()=>pc.ov.timeH,()=>pc.ov.timeM,(H,M)=>{pc.ov.timeH=H;pc.ov.timeM=M;}));
+      trow.appendChild(span({style:{color:"#64748b"}},"〜"));
+      trow.appendChild(tf(()=>pc.ov.endH!=null?pc.ov.endH:(pc.ov.timeH+1)%24,()=>pc.ov.endH!=null?pc.ov.endM:pc.ov.timeM,(H,M)=>{pc.ov.endH=H;pc.ov.endM=M;}));
+      m.appendChild(trow);
+      m.appendChild(btn({style:{width:"100%",padding:"10px",marginBottom:"8px",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:600,cursor:"pointer"},
+        onClick:()=>{ const cur=(state.todos[vd]||{})[pc.uid]||{}; setTodo(vd,pc.uid,{...cur,timeOverride:{timeH:pc.ov.timeH,timeM:pc.ov.timeM||0,endH:pc.ov.endH,endM:pc.ov.endM}}); state.modal=null; showToast("この日の時刻を変更しました"); render(); }},"✅ この日だけこの時刻にする"));
+      if(hasOv) m.appendChild(btn({style:{width:"100%",padding:"8px",marginBottom:"8px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#94a3b8",cursor:"pointer",fontSize:"12px"},
+        onClick:()=>{ const cur={...((state.todos[vd]||{})[pc.uid]||{})}; delete cur.timeOverride; setTodo(vd,pc.uid,cur); state.modal=null; showToast("時刻を元に戻しました"); render(); }},"↩ 時刻を元に戻す"));
+    }
+  }
   // 定期ルーティンを編集（設定へ）
   m.appendChild(btn({style:{width:"100%",padding:"10px",marginBottom:"8px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#94a3b8",cursor:"pointer",fontSize:"12px"},
     onClick:()=>{ state.modal=null; state.tab="タスク"; state.taskSubTab="定期ルーティン"; render(); }},"⚙ 定期ルーティンを編集"));
@@ -4716,6 +4740,9 @@ function dismissPastUnchecked(ct, vd){
 // たまにやることの指定日dsでの時刻 {h,m}。時刻なしは null。
 // 曜日別の時間（さらに直で分けられる）があれば優先、なければ基本の timeH/timeM。
 function customTodoTimeFor(ct, ds){
+  // その日だけの時刻上書き（最優先）
+  const _r=(state.todos[ds]||{})[ct.uid];
+  if(_r&&_r.timeOverride&&_r.timeOverride.timeH!=null){ const o=_r.timeOverride; return {h:o.timeH,m:o.timeM||0,eh:o.endH,em:o.endM,en:!!o.endNextDay,sn:!!o.startNextDay}; }
   // 直ごとモード：当日のシフトの時刻（その直の中で曜日別の上書きがあれば優先）
   if(ct.shiftSchedule){
     const k=getPlanShiftKey(ds)||"off";
