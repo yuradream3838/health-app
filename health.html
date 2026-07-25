@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.70"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.71"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -3649,7 +3649,7 @@ function renderDaySchedule(vd,ds,isToday){
     flush();
     return arr;
   };
-  const blockArea=(items,leftBase,widthArea,defaultColor,onTap)=>{
+  const blockArea=(items,leftBase,widthArea,defaultColor,onTap,onMove)=>{
     layoutLanes(items).forEach(({ev,s:sMin,e:eMin,lane,lanes})=>{
       const color=ev.color||defaultColor;
       const top=((sMin/60)-START_H)*HOUR_H;
@@ -3668,7 +3668,25 @@ function renderDaySchedule(vd,ds,isToday){
       block.appendChild(div({style:{fontSize:"12px",fontWeight:700,color:tcol,lineHeight:1.2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},
         (ev.isRepeat?"🔁":"")+ev.title+(ev.place?` 📍${ev.place}`:"")+(ev.note?" 📝":"")));
       if(height>34&&!ev.isPoint&&lanes===1)block.appendChild(div({style:{fontSize:"10px",color:tcol==="#ffffff"?"#ffffffcc":"#0a1120aa",lineHeight:1.2}},`${Math.floor(sMin/60)}:${String(sMin%60).padStart(2,'0')}〜${Math.floor(eMin/60)}:${String(eMin%60).padStart(2,'0')}`));
-      if(onTap)block.addEventListener('click',()=>onTap(ev));
+      // ドラッグで時間移動（単発の直接予定のみ・0時またぎ以外）
+      const movable = onMove && ev.uid!=null && !ev.isRepeat && !ev.isPattern && !ev.customTodo && !ev._tail && !ev.allDay && !ev.endNextDay;
+      if(movable){
+        const durMin=Math.max(12, eMin-sMin);
+        const origTopPx=Math.max(0,top);
+        let pid=null, startClientY=0, curTopPx=origTopPx, dragging=false;
+        block.style.touchAction="none";
+        block.addEventListener('pointerdown',e=>{ pid=e.pointerId; startClientY=e.clientY; curTopPx=parseFloat(block.style.top)||origTopPx; dragging=false; try{block.setPointerCapture(pid);}catch(_){} e.stopPropagation(); });
+        block.addEventListener('pointermove',e=>{ if(pid==null||e.pointerId!==pid)return; const dy=e.clientY-startClientY; if(Math.abs(dy)>4)dragging=true; if(dragging){ e.stopPropagation(); curTopPx=Math.max(0,Math.min((END_H-START_H)*HOUR_H-height, origTopPx+dy)); block.style.top=curTopPx+'px'; block.style.opacity="0.85"; block.style.zIndex="6"; } });
+        const endDrag=e=>{ if(pid==null||(e&&e.pointerId!==pid))return; try{block.releasePointerCapture(pid);}catch(_){} pid=null; block.style.opacity=""; block.style.zIndex="3";
+          if(dragging){ if(e)e.stopPropagation();
+            let ns=Math.round(((curTopPx/HOUR_H)+START_H)*60/5)*5; // 5分刻み
+            ns=Math.max(0,Math.min(1440-durMin, ns));
+            onMove(ev, ns, durMin);
+          } else if(onTap){ onTap(ev); }
+        };
+        block.addEventListener('pointerup',endDrag);
+        block.addEventListener('pointercancel',endDrag);
+      } else if(onTap){ block.addEventListener('click',()=>onTap(ev)); }
       tl.appendChild(block);
     });
   };
@@ -3697,6 +3715,17 @@ function renderDaySchedule(vd,ds,isToday){
     state.newEvPlace=ev.place||"";state.newEvNote=ev.note||"";
     state.editScope="this";
     render();
+  },(ev,newStartMin,durMin)=>{
+    // ドラッグで時間移動：該当日の単発予定の開始/終了を更新（duration維持・5分刻み）
+    const arr=state.schedule[vd]||[];
+    const idx=arr.findIndex(x=>x.uid===ev.uid);
+    if(idx<0)return;
+    const endTotal=newStartMin+durMin;
+    const sh=Math.floor(newStartMin/60), sm=newStartMin%60;
+    const eh=Math.floor(endTotal/60), em=endTotal%60;
+    arr[idx]={...arr[idx],startH:sh,startM:sm,endH:eh,endM:em,endNextDay:false};
+    saveSchedule(); render();
+    showToast(`⏰ ${sh}:${String(sm).padStart(2,'0')}〜 に移動`);
   });
   blockArea(actuals,"50% + 2px","50% - 6px","#22c55e",(ev)=>{ if(ev._tail){ state.viewDate=addDays(vd,-1); render(); return; } if(ev.manualUid) openActualEdit(vd, ev.manualUid); });
 
@@ -4133,6 +4162,10 @@ function renderAddEventModal(vd){
   placeInp.style.cssText="width:100%;padding:9px 12px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:14px;font-family:inherit;box-sizing:border-box;margin-bottom:12px";
   placeInp.addEventListener('input',e=>{state.newEvPlace=e.target.value;});
   m.appendChild(placeInp);
+  // Googleマップで開く（入力した場所を検索）
+  const mapBtn=btn({style:{width:"100%",padding:"8px",marginBottom:"12px",borderRadius:"8px",cursor:"pointer",fontSize:"12px",fontWeight:600,border:"1px solid #22c55e55",background:"#22c55e14",color:"#4ade80"}},"🗺️ Googleマップで開く");
+  mapBtn.addEventListener('click',()=>{ const q=(state.newEvPlace||"").trim(); if(!q){showToast("場所を入力してください");return;} window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`,'_blank','noopener'); });
+  m.appendChild(mapBtn);
 
   // 詳細（メモ）
   m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"5px"}},"📝 詳細"));
