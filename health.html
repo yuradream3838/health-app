@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.75"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.76"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -274,7 +274,7 @@ function hideUndoBar(){
   // バーが消えたらスナップショットも破棄（メモリ節約）
   setTimeout(()=>{ if(!document.getElementById('undo-bar')?.classList.contains('show'))undoSnapshot=null; },300);
 }
-const TABS = ["予定","日記","タスク","分析"]; // 設定はヘッダーのボタンから
+const TABS = ["予定","日記","タスク","達成","分析"]; // 設定はヘッダーのボタンから
 const SYMPTOMS = [
   "頭痛","肩こり","腰痛","関節痛",
   "吐き気","胃もたれ",
@@ -977,6 +977,7 @@ function render(){
   if(state.tab==="予定")   content.appendChild(renderScheduleHub(vd,ds,isToday));
   if(state.tab==="日記")   content.appendChild(renderDiaryHub(vd,ds,curH,isToday));
   if(state.tab==="タスク") content.appendChild(renderTaskHub(vd,ds,isToday));
+  if(state.tab==="達成")   content.appendChild(renderAchievement(vd));
   if(state.tab==="分析")   content.appendChild(renderAnalysisHub(vd,ds,curH,isToday));
   if(state.tab==="設定")   content.appendChild(renderSettingsHub());
   }
@@ -5716,7 +5717,7 @@ function renderAchievement(vd){
 }
 
 function renderAnalysisHub(vd, ds, curH, isToday){
-  const SUB_TABS=["日次ログ","週次分析","総合分析","達成"];
+  const SUB_TABS=["日次ログ","週次分析","総合分析"];
   const wrap=div({style:{maxWidth:"600px",margin:"0 auto"}});
 
   // サブタブバー
@@ -5738,7 +5739,6 @@ function renderAnalysisHub(vd, ds, curH, isToday){
   if(state.analysisSubTab==="日次ログ")  inner.appendChild(renderLog());
   if(state.analysisSubTab==="週次分析")  inner.appendChild(renderWeekly());
   if(state.analysisSubTab==="総合分析")  inner.appendChild(renderAnalysis());
-  if(state.analysisSubTab==="達成")      inner.appendChild(renderAchievement(vd));
   wrap.appendChild(inner);
   return wrap;
 }
