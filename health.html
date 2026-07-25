@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.77"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.78"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -3627,6 +3627,34 @@ function renderDaySchedule(vd,ds,isToday){
         ad.appendChild(row);
       });
       wrap.appendChild(ad);
+    }
+  }
+
+  // 非表示にした予定を戻す（パターンの「この日は非表示」／繰り返し予定の除外／定期ルーティンの除外）
+  {
+    const hiddenItems=[];
+    // パターン予定：所有日(vd-2..vd)で hidden 指定のもの
+    for(let off=-2; off<=0; off++){
+      const D=addDays(vd,off);
+      const pov=getDaily(D).patternOv||{};
+      (state.planPatterns||[]).forEach(p=>{ if(pov[p.uid]&&pov[p.uid].hidden){ hiddenItems.push({label:(p.title||"予定")+(off!==0?"（前日分）":""), restore:()=>{ const d=getDaily(D); const ov={...(d.patternOv||{})}; delete ov[p.uid]; setDaily(D,{patternOv:ov}); showToast("予定を戻しました"); render(); }}); } });
+    }
+    // 繰り返し予定：この日を例外（この予定のみ削除）にしたもの
+    (state.repeatEvents||[]).forEach(e=>{ if((e.exceptions||[]).includes(vd) && repeatMatches({...e,exceptions:[]}, vd)){ hiddenItems.push({label:"🔁 "+(e.title||"予定"), restore:()=>{ e.exceptions=(e.exceptions||[]).filter(x=>x!==vd); saveRepeatEvents(); showToast("予定を戻しました"); render(); }}); } });
+    // 定期ルーティン：この日を除外したもの
+    (state.customTodos||[]).forEach(ct=>{ const rec=(state.todos[vd]||{})[ct.uid]; if(rec&&rec.excluded && customTodoDue(ct,vd)){ hiddenItems.push({label:"🔁 "+(ct.label||"定期ルーティン"), restore:()=>{ const cur=(state.todos[vd]||{})[ct.uid]||{}; setTodo(vd,ct.uid,{...cur,excluded:false}); showToast("予定を戻しました"); render(); }}); } });
+    if(hiddenItems.length){
+      const hc=div({className:"card",style:{padding:"8px 10px",marginBottom:"8px",border:"1px solid #33415577"}});
+      hc.appendChild(div({style:{fontSize:"10px",fontWeight:700,color:"#94a3b8",marginBottom:"6px"}},`🙈 非表示にした予定（${hiddenItems.length}）`));
+      hiddenItems.forEach(it=>{
+        const row=div({style:{display:"flex",alignItems:"center",gap:"8px",padding:"4px 2px"}});
+        row.appendChild(div({style:{flex:1,fontSize:"12px",color:"#64748b",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},it.label));
+        const rb=btn({style:{flexShrink:0,fontSize:"11px",padding:"3px 10px",borderRadius:"7px",cursor:"pointer",fontWeight:600,border:"1px solid #38bdf8",background:"#0ea5e918",color:"#38bdf8"}},"↩ 戻す");
+        rb.addEventListener('click',it.restore);
+        row.appendChild(rb);
+        hc.appendChild(row);
+      });
+      wrap.appendChild(hc);
     }
   }
 
