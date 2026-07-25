@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.87"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.88"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -1347,6 +1347,23 @@ function renderWidgetView(vd,ds){
       });
       wrap.appendChild(c);
     }
+  }
+
+  // ── 🎁 ご褒美（連続達成でアンロック・ヴィジェットでは閲覧のみ）──
+  if((state.rewards||[]).length){
+    const streak=currentOverallStreak().streak;
+    const c=div({className:"card",style:{padding:"12px 14px",marginBottom:"10px"}});
+    c.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#f472b6",marginBottom:"6px"}},`🎁 ご褒美（連続${streak}日）`));
+    (state.rewards||[]).slice().sort((a,b)=>a.days-b.days).forEach(r=>{
+      const unlocked=streak>=r.days;
+      const remain=r.days-streak;
+      const row=div({style:{display:"flex",alignItems:"center",gap:"9px",padding:"6px 0",borderBottom:"1px solid #1e3a5f55"}});
+      row.appendChild(div({style:{fontSize:"11px",fontWeight:700,color:unlocked?"#22c55e":"#64748b",width:"46px",flexShrink:0,textAlign:"center"}},`${r.days}日`));
+      row.appendChild(div({style:{flex:1,minWidth:0,fontSize:"13px",color:unlocked?"#e2e8f0":"#64748b",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},r.text));
+      row.appendChild(div({style:{fontSize:"10px",fontWeight:700,flexShrink:0,color:unlocked?"#22c55e":"#64748b"}},unlocked?"🎉達成":`あと${remain}日`));
+      c.appendChild(row);
+    });
+    wrap.appendChild(c);
   }
 
   wrap.appendChild(btn({style:{width:"100%",padding:"11px",marginTop:"4px",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:700,cursor:"pointer"},
