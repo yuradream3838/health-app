@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.96"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.97"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -3557,12 +3557,16 @@ function renderPlanPatternPanel(){
     const lkRow=div({style:{marginTop:"8px",display:"flex",alignItems:"center",gap:"6px",flexWrap:"wrap"}});
     lkRow.appendChild(span({style:{fontSize:"10px",color:"#64748b",flexShrink:0}},"🔗 連動ルーティン"));
     const lkSel=document.createElement('select');lkSel.className='sel';lkSel.style.cssText="flex:1;min-width:120px;font-size:12px;padding:4px 2px";
-    const curLk=p.linkRoutine?(p.linkRoutine.t==="set"?"set:"+p.linkRoutine.key:"item:"+p.linkRoutine.id):"";
+    const lkVal=lk=>!lk?"":(lk.t==="set"?"set:"+lk.key:lk.t==="item"?"item:"+lk.id:lk.t);
+    const curLk=lkVal(p.linkRoutine);
     const addOpt=(val,label)=>{const o=document.createElement('option');o.value=val;o.textContent=label;if(val===curLk)o.selected=true;lkSel.appendChild(o);};
     addOpt("","なし");
+    addOpt("wake","🌅 起床時刻を入力");
+    addOpt("bed","🌙 就寝時刻を入力");
+    addOpt("work","💼 シフトの時間を入力");
     (state.routines||[]).forEach(g=>addOpt("set:"+g.key,"セット: "+(g.title||g.key)));
     TODO_ITEMS.forEach(it=>addOpt("item:"+it.id,"単体: "+it.label));
-    lkSel.addEventListener('change',e=>{ const v=e.target.value; let lk=null; if(v.indexOf("set:")===0)lk={t:"set",key:v.slice(4)}; else if(v.indexOf("item:")===0)lk={t:"item",id:v.slice(5)}; upd(p.uid,{linkRoutine:lk}); });
+    lkSel.addEventListener('change',e=>{ const v=e.target.value; let lk=null; if(v==="wake"||v==="bed"||v==="work")lk={t:v}; else if(v.indexOf("set:")===0)lk={t:"set",key:v.slice(4)}; else if(v.indexOf("item:")===0)lk={t:"item",id:v.slice(5)}; upd(p.uid,{linkRoutine:lk}); });
     lkRow.appendChild(lkSel);
     box.appendChild(lkRow);
     box.appendChild(div({style:{fontSize:"9px",color:"#475569",marginTop:"3px"}},"連動先が完了すると、予定タブでこの予定がグレーアウトします"));
@@ -3771,6 +3775,9 @@ function patternLinkDone(p, vd){
   const lk=p&&p.linkRoutine; if(!lk)return false;
   if(lk.t==="set"){ const s=(state.routines||[]).find(g=>g.key===lk.key); return s?routineSetAllDone(s,vd):false; }
   if(lk.t==="item"){ const item=TODO_ITEMS.find(x=>x.id===lk.id); return item?isTodoDone(vd,item):false; }
+  if(lk.t==="wake"){ return getDaily(vd).wakeTime!=null; }        // 起床時刻を入力したら
+  if(lk.t==="bed"){ return getDaily(vd).bedTime!=null; }          // 就寝時刻を入力したら
+  if(lk.t==="work"){ const d=getDaily(vd); return d.workStart!=null && d.workEnd!=null; } // シフト（出勤・退勤）を入力したら
   return false;
 }
 // 通常の予定が実績に反映済みか（実績に fromEventUid=この予定 のレコードがあるか）
