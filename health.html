@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.95"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.96"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -2987,6 +2987,7 @@ function openActualEdit(vd, uid, startH){
   state.actEndNextDay=ex?!!ex.endNextDay:((sh+1)>=24);
   state.actColor=ex?(ex.color||"#f472b6"):"#f472b6";
   state.actUnplanned=ex?!!ex.unplanned:true;
+  state.actFromEventUid=ex?(ex.fromEventUid||null):null; // 手動追加/編集は予定紐付けなし（反映ボタン経由でのみ紐付く）
   state.actDate=vd;
   state.modal="addActual";
   render();
@@ -3035,7 +3036,7 @@ function renderActualModal(){
       const title=(state.actTitle||"").trim();
       if(!title){alert("内容を入力してください");return;}
       const d=getDaily(state.actDate);
-      const rec={uid:state.actEditUid||Date.now(),title,startH:state.actSH,startM:state.actSM,endH:state.actEH,endM:state.actEM,endNextDay:!!state.actEndNextDay,color:state.actColor,unplanned:!!state.actUnplanned};
+      const rec={uid:state.actEditUid||Date.now(),title,startH:state.actSH,startM:state.actSM,endH:state.actEH,endM:state.actEM,endNextDay:!!state.actEndNextDay,color:state.actColor,unplanned:!!state.actUnplanned,...(state.actFromEventUid?{fromEventUid:state.actFromEventUid}:{})};
       const list=(d.actuals||[]).filter(a=>a.uid!==rec.uid); list.push(rec);
       state.modal=null;
       setDaily(state.actDate,{actuals:list});
@@ -3772,6 +3773,11 @@ function patternLinkDone(p, vd){
   if(lk.t==="item"){ const item=TODO_ITEMS.find(x=>x.id===lk.id); return item?isTodoDone(vd,item):false; }
   return false;
 }
+// 通常の予定が実績に反映済みか（実績に fromEventUid=この予定 のレコードがあるか）
+function eventReflected(ev, vd){
+  if(!ev||ev.uid==null)return false;
+  return (getDaily(vd).actuals||[]).some(a=>a.fromEventUid!=null && String(a.fromEventUid)===String(ev.uid));
+}
 // ── 日スケジュール（予定 vs 実際・0〜24時） ──
 function renderDaySchedule(vd,ds,isToday){
   const wrap=div({});
@@ -3913,17 +3919,7 @@ function renderDaySchedule(vd,ds,isToday){
       div({style:{width:"34px",fontSize:"11px",color:"#64748b",marginTop:"-7px"}},`${h2}:00`)
     ]));
   }
-  // 過去の時間帯をグレーアウト（当日は現在時刻まで／過去日は終日）。z4=ブロック(z3)の上・現在線(z5)の下、タップは透過。
-  {
-    const fullH=(END_H-START_H)*HOUR_H;
-    let grayBottom=0;
-    if(vd<todayStr()) grayBottom=fullH;
-    else if(isToday){ const now=new Date(); grayBottom=Math.max(0,Math.min(fullH,((now.getHours()+now.getMinutes()/60)-START_H)*HOUR_H)); }
-    if(grayBottom>0){
-      tl.appendChild(div({id:"past-gray","data-hourh":HOUR_H,"data-starth":START_H,"data-today":(isToday?"1":"0"),
-        style:{position:"absolute",top:"0",left:"30px",right:0,height:`${grayBottom}px`,background:"rgba(15,23,42,0.58)",zIndex:4,pointerEvents:"none"}}));
-    }
-  }
+  // 時間経過ではグレーアウトしない。予定のグレーは完了ベース（実績反映／チェック／連動ルーティン完了）で各ブロックに適用。
   if(isToday){
     const now=new Date();const nowY=((now.getHours()+now.getMinutes()/60)-START_H)*HOUR_H;
     if(nowY>0&&nowY<(END_H-START_H)*HOUR_H){
@@ -3970,19 +3966,18 @@ function renderDaySchedule(vd,ds,isToday){
       const left=`calc((${leftBase}) + (${widthArea}) * ${(lane/lanes).toFixed(4)})`;
       const width=`calc((${widthArea}) * ${(1/lanes).toFixed(4)} - 2px)`;
       const tcol=textOn(color);
-      // 完了ベースのグレーアウト：定期ルーティン=チェック済み、パターン=連動ルーティン完了。
-      // これらは時間経過のグレー（past-gray, z4）より上（z5）に出して「時間だけ」では暗くしない。
-      const linkable = ev.customTodo || (ev.isPattern && !ev.shiftBlock);
+      // 完了ベースのグレーアウト（時間経過では暗くしない）：
+      //  定期ルーティン=チェック済み／パターン=連動ルーティン完了／通常の予定=実績に反映済み
       let blockDone=false;
       if(ev.customTodo) blockDone=!!(((state.todos[vd]||{})[ev.ctUid])||{}).checked;
       else if(ev.isPattern && !ev.shiftBlock){ const pp=(state.planPatterns||[]).find(x=>x.uid===ev.patternUid); blockDone=pp?patternLinkDone(pp,vd):false; }
-      const blockZ = linkable?5:3;
-      const blockOpacity = (linkable&&blockDone)?0.4:1;
+      else if(ev.uid!=null && !ev.isPattern && !ev._tail && !ev.customTodo) blockDone=eventReflected(ev,vd);
+      const blockOpacity = blockDone?0.4:1;
       const block=div({style:{
         position:"absolute",top:`${Math.max(0,top)}px`,left,width,
         height:`${height}px`,background:color,border:`1px solid ${color}`,
         borderRadius:"5px",padding:"1px 5px",opacity:blockOpacity,
-        overflow:"hidden",cursor:onTap?"pointer":"default",zIndex:blockZ,boxSizing:"border-box"
+        overflow:"hidden",cursor:onTap?"pointer":"default",zIndex:3,boxSizing:"border-box"
       }});
       // タイトルは折り返し＋高さに応じて行数をクランプ、狭い/低いブロックはフォント縮小
       const timeShown = height>34 && !ev.isPoint && lanes===1;
@@ -4649,10 +4644,11 @@ function renderAddEventModal(vd){
         state.actEndNextDay=!!state.newEvEndNextDay;
         state.actColor=state.newEvColor||"#f472b6";
         state.actUnplanned=false; // 予定通り行ったので突発ではない
+        state.actFromEventUid=state.editEventUid; // この予定に紐付け → 予定側がグレーアウト
         state.actDate=vd;
         state.modal="addActual";
         render();
-      }},"✓ 実際に行った（実績に追加）"));
+      }},"✓ 実際に行った（実績に反映）"));
     m.appendChild(btn({style:{width:"100%",padding:"7px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#475569",cursor:"pointer",fontSize:"12px",marginBottom:"8px"},
       onClick:()=>{
         if(isRepEdit){
