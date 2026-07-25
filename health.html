@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.88"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.89"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -1264,15 +1264,16 @@ function renderWidgetView(vd,ds){
 
   // ── 今日の目標（目標ツリーで「日次」を設定した目標）──
   {
-    const goals=gtCollectByPeriod("daily", getGoalKey("daily",vd));
+    const goals=gtCollectDaily(vd);
     if(goals.length){
       const c=div({className:"card",style:{padding:"12px 14px",marginBottom:"10px"}});
-      const doneN=goals.filter(n=>n.done).length;
+      const doneN=goals.filter(n=>dailyGoalDone(n,vd)).length;
       c.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#fbbf24",marginBottom:"6px"}},`☀️ 今日の目標 ${doneN}/${goals.length}`));
       goals.forEach(n=>{
         const prog=gtProgress(n); const hasKids=n.children&&n.children.length;
-        const sub=hasKids?`下位 ${prog.done}/${prog.total}`:null;
-        c.appendChild(checkRow(!!n.done,n.text||"(無題)",sub,()=>{ gtUpdate(n.id,{done:!n.done}); if(!n.done)showToast(`🎯 ${n.text||"目標"}`); render(); }));
+        const done=dailyGoalDone(n,vd);
+        const sub=[hasKids?`下位 ${prog.done}/${prog.total}`:null, dailyRangeLabel(n)||null].filter(Boolean).join("　")||null;
+        c.appendChild(checkRow(done,n.text||"(無題)",sub,()=>{ setDailyGoalDone(n,vd,!done); if(!done)showToast(`🎯 ${n.text||"目標"}`); render(); }));
       });
       wrap.appendChild(c);
     }
@@ -1735,6 +1736,14 @@ function gtCollectByPeriod(type, key, list=state.goalTree, out=[]){
   });
   return out;
 }
+// 一日目標の複数日対応：dailyEnd があれば periodKey の日付〜dailyEnd の各日に表示。完了は日ごと(dailyDone)。
+function dailyGoalStart(n){ if(!n||n.periodType!=="daily"||!n.periodKey)return null; const p=pkParse(n.periodKey); return (p&&p.date)||n.periodKey.replace("daily_",""); }
+function isRangeDaily(n){ const s=dailyGoalStart(n); return !!(s && n.dailyEnd && n.dailyEnd>s); }
+function gtDailyActive(n, vd){ const s=dailyGoalStart(n); if(!s)return false; const e=(n.dailyEnd&&n.dailyEnd>s)?n.dailyEnd:s; return vd>=s && vd<=e; }
+function gtCollectDaily(vd, list=state.goalTree, out=[]){ (list||[]).forEach(n=>{ if(gtDailyActive(n,vd))out.push(n); if(n.children&&n.children.length)gtCollectDaily(vd,n.children,out); }); return out; }
+function dailyGoalDone(n, vd){ return isRangeDaily(n) ? !!(n.dailyDone&&n.dailyDone[vd]) : !!n.done; }
+function setDailyGoalDone(n, vd, val){ if(isRangeDaily(n)){ const f=gtFind(n.id); if(f){ const dd={...(f.node.dailyDone||{})}; if(val)dd[vd]=true; else delete dd[vd]; f.node.dailyDone=dd; saveGoalTree(); } } else { gtUpdate(n.id,{done:val}); } }
+function dailyRangeLabel(n){ const s=dailyGoalStart(n); if(!s||!isRangeDaily(n))return ""; const f=x=>{const p=x.split('-');return `${parseInt(p[1])}/${parseInt(p[2])}`;}; return `📅 ${f(s)}〜${f(n.dailyEnd)}`; }
 // 達成済みか（葉なら done、親なら全下位が達成）
 function gtAchieved(n){ const p=gtProgress(n); return p.total>0 && p.done===p.total; }
 // periodKey → 日付範囲 {start,end}
@@ -1934,7 +1943,7 @@ function renderGoalTreeModal(){
   ta.addEventListener('input',e=>{state.goalTreeModal.text=e.target.value;});
   m.appendChild(ta);
   // 期間連動：どの期間タイプ＋どの特定期（Q1/Q2…、○月など）に紐付けるか
-  if(m0.periodType===undefined && m0.mode==="edit"){ const f=gtFind(m0.id); m0.periodType=(f&&f.node.periodType)||null; if(f&&f.node.periodKey)m0.periodKey=f.node.periodKey; }
+  if(m0.periodType===undefined && m0.mode==="edit"){ const f=gtFind(m0.id); m0.periodType=(f&&f.node.periodType)||null; if(f&&f.node.periodKey)m0.periodKey=f.node.periodKey; if(f&&f.node.dailyEnd)m0.dailyEnd=f.node.dailyEnd; }
   let parentKey=null;
   if(m0.mode==="add" && m0.parentId!=null){ const pf=gtFind(m0.parentId); parentKey=pf&&pf.node.periodKey; }
   else if(m0.mode==="edit"){ const ef=gtFind(m0.id); parentKey=ef&&ef.parent&&ef.parent.periodKey; }
@@ -1985,6 +1994,19 @@ function renderGoalTreeModal(){
       di.style.cssText="width:100%;padding:8px;background:#1e293b;border:1px solid #334155;border-radius:7px;color:#e2e8f0;font-size:14px;color-scheme:dark;font-family:inherit;box-sizing:border-box";
       di.addEventListener('change',e=>{ if(e.target.value){ m0.periodKey = m0.periodType==="daily"?`daily_${e.target.value}`:getGoalKey('weekly',e.target.value); render(); } });
       picker.appendChild(di);
+      // 一日目標：終了日（複数日にする場合・任意）
+      if(m0.periodType==="daily"){
+        const startD=parsed.date||todayStr();
+        picker.appendChild(div({style:{fontSize:"10px",color:"#64748b",margin:"8px 0 5px"}},"終了日（複数日にする場合・任意）"));
+        const de=document.createElement('input');de.type='date';de.value=m0.dailyEnd||"";de.min=startD;
+        de.style.cssText="width:100%;padding:8px;background:#1e293b;border:1px solid #334155;border-radius:7px;color:#e2e8f0;font-size:14px;color-scheme:dark;font-family:inherit;box-sizing:border-box";
+        de.addEventListener('change',e=>{ m0.dailyEnd=e.target.value||""; render(); });
+        picker.appendChild(de);
+        if(m0.dailyEnd&&m0.dailyEnd>startD){
+          picker.appendChild(div({style:{fontSize:"9px",color:"#a5b4fc",marginTop:"4px",fontWeight:600}},`📅 ${startD.replace(/-/g,"/")}〜${m0.dailyEnd.replace(/-/g,"/")} の各日に表示（完了は日ごと）`));
+          picker.appendChild(btn({style:{marginTop:"5px",fontSize:"10px",padding:"3px 9px",borderRadius:"6px",cursor:"pointer",border:"1px solid #334155",background:"transparent",color:"#94a3b8"},onClick:()=>{m0.dailyEnd="";render();}},"単日に戻す"));
+        }
+      }
     }
     picker.appendChild(div({style:{fontSize:"10px",color:"#a5b4fc",marginTop:"8px",textAlign:"center",fontWeight:600}},"連動先: "+pkLabel(m0.periodKey)));
     m.appendChild(picker);
@@ -2029,12 +2051,15 @@ function renderGoalTreeModal(){
       const pk=pt?(state.goalTreeModal.periodKey||pkDefault(pt,null,state.viewDate||todayStr())):null;
       const note=(state.goalTreeModal.note||"").trim();
       const linked=(state.goalTreeModal.linkedRoutines||[]).slice();
+      // 一日目標の複数日（終了日が開始日より後のときのみ有効）
+      const dStart=pt==="daily"?((pkParse(pk)||{}).date||(pk||"").replace("daily_","")):null;
+      const dailyEnd=(pt==="daily"&&state.goalTreeModal.dailyEnd&&dStart&&state.goalTreeModal.dailyEnd>dStart)?state.goalTreeModal.dailyEnd:null;
       if(m0.mode==="add"){
         gtAddChild(m0.parentId==null?null:m0.parentId, text);
         const list=m0.parentId==null?state.goalTree:(gtFind(m0.parentId)?.node.children||[]); const created=list[list.length-1];
-        if(created){ if(pt){created.periodType=pt;created.periodKey=pk;} if(note)created.note=note; if(linked.length)created.linkedRoutines=linked; saveGoalTree(); }
+        if(created){ if(pt){created.periodType=pt;created.periodKey=pk;} if(dailyEnd)created.dailyEnd=dailyEnd; if(note)created.note=note; if(linked.length)created.linkedRoutines=linked; saveGoalTree(); }
       } else {
-        gtUpdate(m0.id,{text, periodType:pt, periodKey:pk, note, linkedRoutines:linked});
+        gtUpdate(m0.id,{text, periodType:pt, periodKey:pk, note, linkedRoutines:linked, dailyEnd:dailyEnd||null});
       }
       state.goalTreeModal=null; render();
     }},"保存"));
@@ -2092,15 +2117,18 @@ function renderGoals(vd, ds){
   // 1件分の目標ボックス（carriedLabel を渡すと繰り越し表示）
   const renderGoalBox=(n, carriedLabel)=>{
     const prog=gtProgress(n); const hasKids=n.children&&n.children.length; const pct=prog.total?Math.round(prog.done/prog.total*100):0;
+    const range=isRangeDaily(n);
+    const done=range?dailyGoalDone(n,vd):n.done;
     const box=div({style:{padding:"8px",background:carriedLabel?"#f9731611":"#6366f111",border:`1px solid ${carriedLabel?"#f9731644":"#6366f133"}`,borderRadius:"8px",marginBottom:"6px"}});
     const head=div({style:{display:"flex",alignItems:"center",gap:"8px"}});
     const cb=btn({style:{width:"22px",height:"22px",flexShrink:0,borderRadius:"6px",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"13px",color:"#fff",
-      border:`2px solid ${n.done?"#22c55e":"#334155"}`,background:n.done?"#22c55e":"transparent"}},n.done?"✓":"");
-    cb.addEventListener('click',()=>{gtUpdate(n.id,{done:!n.done});render();});
+      border:`2px solid ${done?"#22c55e":"#334155"}`,background:done?"#22c55e":"transparent"}},done?"✓":"");
+    cb.addEventListener('click',()=>{ if(range)setDailyGoalDone(n,vd,!done); else gtUpdate(n.id,{done:!n.done}); render(); });
     head.appendChild(cb);
     const tx=div({style:{flex:1,minWidth:0,cursor:"pointer"}},[
       carriedLabel?div({style:{fontSize:"9px",color:"#fb923c",fontWeight:700,marginBottom:"2px"}},`🔴 繰り越し（${carriedLabel}・未達成）`):null,
-      div({style:{fontSize:"13px",fontWeight:600,color:n.done?"#475569":"#e2e8f0",textDecoration:n.done?"line-through":"none",wordBreak:"break-word"}},n.text||"(無題)"),
+      div({style:{fontSize:"13px",fontWeight:600,color:done?"#475569":"#e2e8f0",textDecoration:done?"line-through":"none",wordBreak:"break-word"}},n.text||"(無題)"),
+      range?div({style:{fontSize:"9px",color:"#a5b4fc",marginTop:"2px",fontWeight:600}},dailyRangeLabel(n)):null,
       hasKids?div({style:{fontSize:"9px",color:"#64748b",marginTop:"2px"}},`下位目標 ${prog.done}/${prog.total} (${pct}%)`):null
     ]);
     tx.addEventListener('click',()=>{state.goalView="tree";state.goalTreeModal={mode:"edit",id:n.id,text:n.text||""};render();});
@@ -2123,8 +2151,16 @@ function renderGoals(vd, ds){
 
   GOAL_TYPES.forEach(({type,icon,label})=>{
     const periodLabel=goalPeriodLabel(type,vd);
-    const {cur, carry}=gtCollectByPeriodCarry(type, vd); // 当該期間＋過去の未達成（繰り越し）
-    const doneCount=cur.filter(gtAchieved).length;
+    let cur, carry;
+    if(type==="daily"){
+      // 複数日の一日目標も含めて当日該当を収集。繰り越しは単日目標のみ（範囲目標は毎日出るので除外）
+      cur=gtCollectDaily(vd);
+      const curIds=new Set(cur.map(n=>n.id));
+      carry=gtCollectByPeriodCarry("daily", vd).carry.filter(n=>!isRangeDaily(n) && !curIds.has(n.id));
+    } else {
+      ({cur, carry}=gtCollectByPeriodCarry(type, vd)); // 当該期間＋過去の未達成（繰り越し）
+    }
+    const doneCount=type==="daily" ? cur.filter(n=>dailyGoalDone(n,vd)).length : cur.filter(gtAchieved).length;
     const total=cur.length+carry.length;
     const card=div({className:"card",style:{marginBottom:"10px"}});
     const headRow=div({style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:total?"8px":"0",cursor:"pointer"}},[
@@ -2155,7 +2191,7 @@ function renderGoalPeriodModal(){
   const {type,vd}=pm;
   const META={daily:{icon:"☀️",label:"一日目標"},weekly:{icon:"📆",label:"週間目標"},monthly:{icon:"🗓️",label:"月次目標"},quarterly:{icon:"📅",label:"四半期目標"},yearly:{icon:"🏆",label:"年間目標"}}[type]||{icon:"🎯",label:"目標"};
   const key=getGoalKey(type,vd);
-  const goals=gtCollectByPeriod(type,key);
+  const goals=type==="daily" ? gtCollectDaily(vd) : gtCollectByPeriod(type,key);
   const bg=div({className:"modal-center"});
   const m=div({className:"modal-box",style:{maxHeight:"85vh",overflowY:"auto"}});
   bg.addEventListener('click',()=>{state.goalPeriodModal=null;render();});
@@ -2167,13 +2203,16 @@ function renderGoalPeriodModal(){
   }
   goals.forEach(n=>{
     const prog=gtProgress(n); const hasKids=n.children&&n.children.length; const pct=prog.total?Math.round(prog.done/prog.total*100):0;
+    const range=isRangeDaily(n);
+    const done=range?dailyGoalDone(n,vd):n.done;
     const row=div({style:{display:"flex",alignItems:"center",gap:"8px",padding:"8px",background:"#0f172a",borderRadius:"8px",marginBottom:"6px"}});
     const cb=btn({style:{width:"22px",height:"22px",flexShrink:0,borderRadius:"6px",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"13px",color:"#fff",
-      border:`2px solid ${n.done?"#22c55e":"#334155"}`,background:n.done?"#22c55e":"transparent"}},n.done?"✓":"");
-    cb.addEventListener('click',(()=>{const id=n.id,d=n.done;return()=>{gtUpdate(id,{done:!d});render();};})());
+      border:`2px solid ${done?"#22c55e":"#334155"}`,background:done?"#22c55e":"transparent"}},done?"✓":"");
+    cb.addEventListener('click',(()=>{const nn=n,d=done;return()=>{ if(range)setDailyGoalDone(nn,vd,!d); else gtUpdate(nn.id,{done:!d}); render(); };})());
     row.appendChild(cb);
     const tx=div({style:{flex:1,minWidth:0,cursor:"pointer"}},[
-      div({style:{fontSize:"13px",fontWeight:600,color:n.done?"#475569":"#e2e8f0",textDecoration:n.done?"line-through":"none",wordBreak:"break-word"}},n.text||"(無題)"),
+      div({style:{fontSize:"13px",fontWeight:600,color:done?"#475569":"#e2e8f0",textDecoration:done?"line-through":"none",wordBreak:"break-word"}},n.text||"(無題)"),
+      range?div({style:{fontSize:"9px",color:"#a5b4fc",marginTop:"2px",fontWeight:600}},dailyRangeLabel(n)):null,
       hasKids?div({style:{fontSize:"9px",color:"#64748b",marginTop:"2px"}},`下位目標 ${prog.done}/${prog.total} (${pct}%)`):null
     ]);
     tx.addEventListener('click',(()=>{const id=n.id,t=n.text||"";return()=>{state.goalTreeModal={mode:"edit",id,text:t};render();};})());
@@ -2191,7 +2230,19 @@ function renderGoalPeriodModal(){
   inp.style.cssText="width:100%;padding:9px 12px;background:#1e293b;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:14px;font-family:inherit;box-sizing:border-box;margin-bottom:8px";
   inp.addEventListener('input',e=>{pm._add=e.target.value;});
   addWrap.appendChild(inp);
-  const doAdd=()=>{ const t=(pm._add||"").trim(); if(!t){inp.focus();return;} state.goalTree=[...(state.goalTree||[]),{id:gtNewId(),text:t,done:false,collapsed:false,children:[],periodType:type,periodKey:key}]; saveGoalTree(); pm._add=""; showToast("🎯 目標を追加しました"); render(); };
+  // 一日目標のみ：複数日にする終了日（任意）
+  if(type==="daily"){
+    if(pm._addEnd===undefined)pm._addEnd="";
+    const er=div({style:{display:"flex",alignItems:"center",gap:"8px",marginBottom:"8px"}});
+    er.appendChild(span({style:{fontSize:"10px",color:"#64748b",flexShrink:0}},`${vd.replace(/-/g,"/")}〜`));
+    const de=document.createElement('input');de.type='date';de.value=pm._addEnd;de.min=vd;
+    de.style.cssText="flex:1;min-width:0;padding:7px 9px;background:#1e293b;border:1px solid #334155;border-radius:7px;color:#e2e8f0;font-size:13px;font-family:inherit;color-scheme:dark";
+    de.addEventListener('change',e=>{pm._addEnd=e.target.value;});
+    er.appendChild(de);
+    addWrap.appendChild(er);
+    addWrap.appendChild(div({style:{fontSize:"9px",color:"#475569",marginBottom:"8px"}},"※ 終了日を選ぶと、その日まで毎日この一日目標が表示されます（完了は日ごと）"));
+  }
+  const doAdd=()=>{ const t=(pm._add||"").trim(); if(!t){inp.focus();return;} const node={id:gtNewId(),text:t,done:false,collapsed:false,children:[],periodType:type,periodKey:key}; if(type==="daily" && pm._addEnd && pm._addEnd>vd){ node.dailyEnd=pm._addEnd; } state.goalTree=[...(state.goalTree||[]),node]; saveGoalTree(); pm._add=""; pm._addEnd=""; showToast("🎯 目標を追加しました"); render(); };
   inp.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();doAdd();}});
   addWrap.appendChild(btn({style:{width:"100%",padding:"9px",borderRadius:"8px",cursor:"pointer",fontWeight:700,fontSize:"12px",border:"none",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",color:"#fff"},onClick:doAdd},"＋ 追加"));
   m.appendChild(addWrap);
