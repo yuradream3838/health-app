@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.83"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.84"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -3648,12 +3648,16 @@ function renderDaySchedule(vd,ds,isToday){
     wrap.appendChild(sc);
   }
 
-  // 終日・時間未指定エリア（終日予定＋時間なしのたまにやること）
+  // 終日予定＋定期ルーティン一覧（時間指定あり・なし両方をチェックリストとして表示）
   {
-    const untimedCustom=dueCustomTodos(vd).filter(ct=>!customTodoTimeFor(ct,vd) && !(state.todos[vd]||{})[ct.uid]?.excluded);
-    if(allDayEvents.length||untimedCustom.length){
+    // この日に該当する定期ルーティン（除外した回は除く）。時刻ありは時間順、時刻なしは末尾。
+    const dueCustom=dueCustomTodos(vd)
+      .filter(ct=>!(state.todos[vd]||{})[ct.uid]?.excluded)
+      .map(ct=>{ const tt=customTodoTimeFor(ct,vd); return {ct, tt, sort: tt ? (tt.sn?1440:0)+tt.h*60+(tt.m||0) : 1e9}; })
+      .sort((a,b)=>a.sort-b.sort);
+    if(allDayEvents.length||dueCustom.length){
       const ad=div({className:"card",style:{padding:"8px 10px",marginBottom:"8px"}});
-      ad.appendChild(div({style:{fontSize:"10px",fontWeight:700,color:"#94a3b8",marginBottom:"6px"}},"📌 終日・時間未指定"));
+      ad.appendChild(div({style:{fontSize:"10px",fontWeight:700,color:"#94a3b8",marginBottom:"6px"}},"📌 終日・定期ルーティン"));
       allDayEvents.forEach(ev=>{
         const c=ev.color||EV_COLORS[0];
         const chip=div({style:{display:"flex",alignItems:"center",gap:"6px",padding:"6px 10px",background:c,border:`1px solid ${c}`,borderRadius:"6px",marginBottom:"4px",cursor:"pointer"}},[
@@ -3668,13 +3672,15 @@ function renderDaySchedule(vd,ds,isToday){
         };})());
         ad.appendChild(chip);
       });
-      untimedCustom.forEach(ct=>{
+      dueCustom.forEach(({ct,tt})=>{
         const rec=(state.todos[vd]||{})[ct.uid]||{};const done=!!rec.checked;
         const lbl=rec.labelOverride||ct.label;
+        const timeStr=tt?`${tt.sn?"翌":""}${String(tt.h).padStart(2,'0')}:${String(tt.m||0).padStart(2,'0')}`:"";
         const row=div({style:{display:"flex",alignItems:"center",gap:"8px",padding:"4px 2px"}});
         const cb=btn({style:{width:"20px",height:"20px",borderRadius:"5px",flexShrink:0,border:`2px solid ${done?"#22c55e":"#334155"}`,background:done?"#22c55e":"transparent",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"12px",color:"#fff"}},done?"✓":"");
         cb.addEventListener('click',(()=>{const id=ct.uid,label=lbl,wasDone=done,r=rec;return()=>{setTodo(vd,id,{...r,checked:!wasDone,time:!wasDone?new Date().toISOString():null});if(!wasDone)showToast(`✅ ${label}`);};})());
         row.appendChild(cb);
+        if(timeStr)row.appendChild(span({style:{flexShrink:0,fontSize:"11px",fontWeight:600,color:done?"#475569":"#94a3b8",minWidth:"42px"}},timeStr));
         const lab=div({style:{flex:1,fontSize:"12px",color:done?"#475569":"#e2e8f0",textDecoration:done?"line-through":"none",cursor:"pointer"}},`🔁 ${lbl}${rec.noteOverride?" 📝":""}`);
         lab.addEventListener('click',(()=>{const uid=ct.uid,l=lbl;return()=>{state.planCustomTodo={uid,label:l,vd};state.modal="planCustomTodo";render();};})());
         row.appendChild(lab);
