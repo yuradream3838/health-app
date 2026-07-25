@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "11.72"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "11.73"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -645,6 +645,8 @@ function loadStorage(){
     if(pp){const a=JSON.parse(pp); if(Array.isArray(a))state.planPatterns=a;}
     const cto=localStorage.getItem(STORAGE_KEY+"_customtodos");
     if(cto){const a=JSON.parse(cto); if(Array.isArray(a))state.customTodos=a;}
+    const sms=localStorage.getItem(STORAGE_KEY+"_streakms");
+    if(sms!=null){const v=parseInt(sms); if(!isNaN(v))state.lastStreakMilestone=v;}
     // 旧形式（v8.3 events/taskList/wishList/shopList）からの一度きり移行
     if(!sc && !tk){ migrateOldSchedule(); }
   }catch{}
@@ -1289,7 +1291,7 @@ function renderWidgetView(vd,ds){
     remain.forEach(item=>{
       const t=todo[item.id]||{}; const done=isTodoDone(vd,item);
       if(item.type==="check"){
-        c.appendChild(checkRow(done,item.label,null,()=>{ setTodo(vd,item.id,{checked:!t.checked,time:new Date().toISOString()}); if(!t.checked)showToast(`✅ ${item.label}`); }));
+        c.appendChild(checkRow(done,item.label,null,()=>{ setTodo(vd,item.id,{checked:!t.checked,time:new Date().toISOString()}); if(!t.checked){showToast(`✅ ${item.label}`);setTimeout(maybeCelebrateStreak,100);} }));
       } else {
         // タイマー項目：▶ 開始 / ⏹ 終了（マルチは開始で1セッション）
         const row=div({style:{display:"flex",alignItems:"center",gap:"10px",padding:"7px 0",borderBottom:"1px solid #1e3a5f55"}});
@@ -4685,20 +4687,10 @@ function renderTodo(vd, ds, isToday){
   const total = targetItems.length;
 
   // 全体連続達成（除外アイテムを除いた全項目完了した日が何日続いているか）
+  // 全ルーティンの連続達成（保護ルール込み）。今日が未完了なら昨日基準で数える。
   const totalStreak = (() => {
-    let count = 0;
-    const allDone = d => {
-      const td2=state.todos[d]||{};
-      const targets=TODO_ITEMS.filter(item=>!(td2[item.id]||{}).excluded);
-      return targets.length>0&&targets.every(item=>isTodoDone(d,item));
-    };
-    let chk = vd;
-    for(let i=0;i<365;i++){
-      if(allDone(chk)) count++;
-      else break;
-      chk = prevDay(chk);
-    }
-    return count;
+    const from = overallDoneOnDay(vd) ? vd : prevDay(vd);
+    return computeStreakProtected(overallDoneOnDay, from).streak;
   })();
 
   // ヘッダーカード
@@ -4907,7 +4899,7 @@ function renderTodo(vd, ds, isToday){
             }).length;
             const targets=TODO_ITEMS.filter(it=>!(( state.todos[vd]||{})[it.id]||{}).excluded);
             if(newDone>=targets.length){
-              setTimeout(()=>{showToast("🎉 全TODO完了！おめでとう！","#22c55e");showConfetti();},100);
+              setTimeout(()=>{showToast("🎉 全TODO完了！おめでとう！","#22c55e");showConfetti();maybeCelebrateStreak();},100);
             } else {
               showToast(`✅ ${item.label} 達成！`);
             }
@@ -4923,7 +4915,7 @@ function renderTodo(vd, ds, isToday){
             timerBtn.addEventListener('click',e=>{e.stopPropagation();setTodo(vd,item.id,{startTime:new Date().toISOString()});});
           } else if(!t.endTime){
             timerBtn=btn({style:{padding:"3px 10px",background:"#f9731633",border:"1px solid #f97316",borderRadius:"6px",color:"#f97316",fontSize:"12px",cursor:"pointer",fontWeight:600,flexShrink:0}},"⏹");
-            timerBtn.addEventListener('click',e=>{e.stopPropagation();setTodo(vd,item.id,{...t,endTime:new Date().toISOString()});showToast(`✅ ${item.label} 完了！`);});
+            timerBtn.addEventListener('click',e=>{e.stopPropagation();setTodo(vd,item.id,{...t,endTime:new Date().toISOString()});showToast(`✅ ${item.label} 完了！`);setTimeout(maybeCelebrateStreak,100);});
           } else {
             timerBtn=btn({style:{padding:"3px 8px",background:"#22c55e18",border:"1px solid #22c55e44",borderRadius:"6px",color:"#22c55e",fontSize:"11px",cursor:"pointer",flexShrink:0,whiteSpace:"nowrap"}},"✏️ 編集");
             timerBtn.addEventListener('click',(()=>{const td2=t;const itemId=item.id;return e=>{e.stopPropagation();
@@ -5453,10 +5445,90 @@ function heatColor(r, hasData){
   if(r<1)    return "#22c55e";
   return "#4ade80";
 }
+// その日、除外を除く全ルーティンを達成したか
+function overallDoneOnDay(ds){
+  const td=state.todos[ds]||{};
+  const targets=TODO_ITEMS.filter(it=>!(td[it.id]||{}).excluded);
+  if(!targets.length) return false;
+  return targets.every(it=>isTodoDone(ds,it));
+}
+// ── ストリーク（連続達成）＋保護（月1回まで未達成を許容）──
+const STREAK_MILESTONES=[3,7,14,30,50,100,150,200,300,365];
+// fromDs から遡って連続達成日数を数える。未達成日は同じ月(YYYY-MM)で未使用の保護が
+// あれば1回だけ許容して継続（保護日は日数に加算しない）。
+function computeStreakProtected(doneFn, fromDs){
+  let count=0, chk=fromDs; const protUsed=new Set(); const protectedDays=[];
+  for(let i=0;i<400;i++){
+    if(doneFn(chk)){ count++; }
+    else {
+      const mk=chk.slice(0,7);
+      // 単日の抜け（さらに過去の日が達成済み）だけ、月1回まで保護で橋渡し。
+      // 連続の起点（過去側が未達成）では保護を消費しない＝無駄打ちしない。
+      if(!protUsed.has(mk) && doneFn(prevDay(chk))){ protUsed.add(mk); protectedDays.push(chk); }
+      else break;
+    }
+    chk=prevDay(chk);
+  }
+  return {streak:count, protectedDays};
+}
+// 現在の連続達成（今日が未完了でも「まだ失敗ではない」ので昨日から数える）
+function currentOverallStreak(){
+  const t=todayStr();
+  const from=overallDoneOnDay(t)?t:prevDay(t);
+  return computeStreakProtected(overallDoneOnDay, from);
+}
+// 直近days日での最長連続（保護ルール込み・振り返り用）
+function bestOverallStreak(days){
+  const start=new Date(); start.setDate(start.getDate()-days);
+  let best=0, run=0; let protUsed=new Set();
+  for(let i=0;i<=days;i++){
+    const d=new Date(start); d.setDate(d.getDate()+i); const ds=fmtDS(d); if(ds>todayStr())break;
+    if(overallDoneOnDay(ds)){ run++; if(run>best)best=run; }
+    else { const mk=ds.slice(0,7); if(run>0 && !protUsed.has(mk) && overallDoneOnDay(addDays(ds,1))){ protUsed.add(mk); } else { run=0; protUsed=new Set(); } }
+  }
+  return best;
+}
+// マイルストーン到達をお祝い（達成時に一度だけ）
+function maybeCelebrateStreak(){
+  const cur=currentOverallStreak().streak;
+  const last=state.lastStreakMilestone||0;
+  const hit=STREAK_MILESTONES.filter(m=>m<=cur && m>last).pop();
+  if(hit){ state.lastStreakMilestone=hit; try{localStorage.setItem(STORAGE_KEY+"_streakms",String(hit));}catch{}
+    if(typeof showConfetti==="function")showConfetti(); showToast(`🔥 ${hit}日連続達成！おめでとう！`,"#22c55e"); }
+  else if(cur<last){ const nl=STREAK_MILESTONES.filter(m=>m<=cur).pop()||0; if(nl!==last){ state.lastStreakMilestone=nl; try{localStorage.setItem(STORAGE_KEY+"_streakms",String(nl));}catch{} } }
+}
 // 達成タブ（ヒートマップ／ストリーク等）
 function renderAchievement(vd){
   const wrap=div({style:{maxWidth:"600px",margin:"0 auto",padding:"12px 16px 60px"}});
   const today=todayStr();
+  // ── 連続達成（ストリーク）＋保護＋マイルストーン ──
+  {
+    const cs=currentOverallStreak();
+    const best=Math.max(bestOverallStreak(180), cs.streak);
+    const thisMonth=today.slice(0,7);
+    const protUsed=cs.protectedDays.some(d=>d.slice(0,7)===thisMonth);
+    const next=STREAK_MILESTONES.find(m=>m>cs.streak);
+    const sc=div({className:"card",style:{marginBottom:"10px"}});
+    sc.appendChild(div({style:{display:"flex",alignItems:"flex-end",justifyContent:"space-between",marginBottom:"10px"}},[
+      div({},[
+        div({style:{fontSize:"11px",color:"#94a3b8"}},"🔥 連続達成（全ルーティン）"),
+        div({style:{fontSize:"32px",fontWeight:800,color:"#f97316",lineHeight:1.1}},[txt(`${cs.streak}`),span({style:{fontSize:"14px",color:"#94a3b8",fontWeight:600}}," 日")])
+      ]),
+      div({style:{textAlign:"right"}},[
+        div({style:{fontSize:"10px",color:"#64748b"}},"自己ベスト"),
+        div({style:{fontSize:"18px",fontWeight:700,color:"#22c55e"}},`${best}日`)
+      ])
+    ]));
+    if(next){
+      const prevMs=[0,...STREAK_MILESTONES].filter(m=>m<=cs.streak).pop()||0;
+      const pctToNext=Math.max(3,Math.round((cs.streak-prevMs)/(next-prevMs)*100));
+      sc.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"3px"}},`次の記念日まであと ${next-cs.streak}日（🎉${next}日）`));
+      sc.appendChild(div({style:{height:"6px",background:"#0f172a",borderRadius:"4px",overflow:"hidden"}},[div({style:{height:"100%",width:`${pctToNext}%`,background:"linear-gradient(90deg,#f97316,#22c55e)"}})]));
+    }
+    sc.appendChild(div({style:{marginTop:"9px",fontSize:"10px",lineHeight:1.5,color:protUsed?"#64748b":"#38bdf8"}},
+      protUsed?"🛡 今月の保護は使用済み（次に未達成の日があると連続が途切れます）":"🛡 ストリーク保護：今月はあと1回、未達成の日があっても連続が途切れません"));
+    wrap.appendChild(sc);
+  }
   // ── ルーティン達成ヒートマップ（直近12週）──
   const card=div({className:"card"});
   card.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0",marginBottom:"3px"}},"🟩 ルーティン達成ヒートマップ"));
