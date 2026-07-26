@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.01"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.02"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -2549,7 +2549,96 @@ function renderKondo(vd,ds,curH,isToday){
     }
     wrap.appendChild(row);
   }
+  // 飲酒欲求も体調記録にまとめて表示
+  wrap.appendChild(renderCravingCard(vd, isToday));
   return wrap;
+}
+
+// 飲酒欲求（時間別記録）カード。体調記録タブにまとめて表示。
+function renderCravingCard(vd, isToday){
+  const cravings = (getDaily(vd).cravings||{});
+  const curH2 = new Date().getHours();
+  const cravingCard=div({className:"card"},[]);
+  cravingCard.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0",marginBottom:"4px"}},"🍺 飲酒欲求（時間別）"));
+  cravingCard.appendChild(div({style:{fontSize:"10px",color:"#475569",marginBottom:"10px"}},"各時間の飲酒欲求を1〜10で記録（タップで選択）"));
+  // 欲求グラフ（記録済み時間）
+  const recordedHours=Object.keys(cravings).map(Number).sort((a,b)=>a-b);
+  if(recordedHours.length>0){
+    const graphRow=div({style:{display:"flex",gap:"2px",alignItems:"flex-end",height:"48px",marginBottom:"10px"}});
+    for(let h=0;h<24;h++){
+      const v=cravings[h];
+      const col=v?v>=8?"#ef4444":v>=5?"#f97316":"#eab308":"#1e3a5f";
+      const ht=v?`${Math.round((v/10)*40)}px`:"4px";
+      const isNow2=h===curH2&&isToday;
+      graphRow.appendChild(div({style:{flex:1,display:"flex",flexDirection:"column",alignItems:"center"}},[
+        div({style:{width:"100%",height:ht,background:col,borderRadius:"2px 2px 0 0",minHeight:"4px",border:isNow2?"1px solid #38bdf8":"none"}}),
+        div({style:{fontSize:"8px",color:v?col:"#334155",marginTop:"2px"}},v?String(v):"")
+      ]));
+    }
+    cravingCard.appendChild(graphRow);
+  }
+  // 現在時刻の欲求入力（常に表示）
+  if(isToday){
+    const curCraving=cravings[curH2]||null;
+    cravingCard.appendChild(div({style:{marginBottom:"10px"}},[
+      div({style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"6px"}},[
+        div({style:{fontSize:"11px",color:"#94a3b8"}},`${String(curH2).padStart(2,'0')}時の飲酒欲求`),
+        curCraving?span({style:{fontSize:"13px",fontWeight:700,color:curCraving>=8?"#ef4444":curCraving>=5?"#f97316":"#eab308"}},`${curCraving}/10`):null
+      ]),
+      div({style:{display:"flex",gap:"3px"}},[1,2,3,4,5,6,7,8,9,10].map(n=>{
+        const col=n>=8?"#ef4444":n>=5?"#f97316":"#eab308";
+        const isSelected=curCraving===n;
+        const b=btn({style:{flex:1,height:"32px",border:"none",borderRadius:"5px",cursor:"pointer",fontSize:"11px",fontWeight:isSelected?700:400,
+          background:isSelected?col:curCraving&&n<=curCraving?col+"44":"#0f172a",color:isSelected?"#fff":"#64748b"}},String(n));
+        b.addEventListener('click',()=>{
+          const nd={...getDaily(vd)};
+          nd.cravings={...(nd.cravings||{})};
+          if(nd.cravings[curH2]===n) delete nd.cravings[curH2];
+          else nd.cravings[curH2]=n;
+          setDaily(vd,nd);render();
+        });
+        return b;
+      })),
+      div({style:{display:"flex",justifyContent:"space-between",fontSize:"9px",color:"#334155",marginTop:"3px"}},[
+        span({},"低い"),span({},"高い")
+      ])
+    ]));
+  }
+  // 全時間の入力（展開式）
+  if(!state.cravingExpanded) state.cravingExpanded=false;
+  const toggleBtn=btn({style:{width:"100%",padding:"6px",background:"#0f172a",border:"1px solid #1e3a5f",borderRadius:"8px",color:"#64748b",cursor:"pointer",fontSize:"11px",marginBottom:"8px"}},
+    state.cravingExpanded?"▲ 時間別入力を閉じる":"▼ 時間別入力（全時間）");
+  toggleBtn.addEventListener('click',()=>{state.cravingExpanded=!state.cravingExpanded;render();});
+  cravingCard.appendChild(toggleBtn);
+  if(state.cravingExpanded){
+    const hoursGrid=div({style:{display:"flex",flexDirection:"column",gap:"6px",marginBottom:"8px"}});
+    for(let h=0;h<24;h++){
+      const v=cravings[h]||null;
+      const isNow2=h===curH2&&isToday;
+      const rowEl=div({style:{display:"flex",alignItems:"center",gap:"6px"}});
+      rowEl.appendChild(div({style:{minWidth:"32px",fontSize:"11px",fontWeight:isNow2?700:400,color:isNow2?"#38bdf8":"#64748b"}},`${String(h).padStart(2,'0')}時`));
+      const btns=div({style:{display:"flex",gap:"2px",flex:1}});
+      [1,2,3,4,5,6,7,8,9,10].forEach(n=>{
+        const col=n>=8?"#ef4444":n>=5?"#f97316":"#eab308";
+        const isSelected=v===n;
+        const b=btn({style:{flex:1,height:"24px",border:"none",borderRadius:"4px",cursor:"pointer",fontSize:"10px",fontWeight:isSelected?700:400,
+          background:isSelected?col:v&&n<=v?col+"33":"#0f172a",color:isSelected?"#fff":"#475569"}},String(n));
+        b.addEventListener('click',(()=>{const hh=h,nn=n;return()=>{
+          const nd={...getDaily(vd)};
+          nd.cravings={...(nd.cravings||{})};
+          if(nd.cravings[hh]===nn) delete nd.cravings[hh];
+          else nd.cravings[hh]=nn;
+          setDaily(vd,nd);render();
+        };})());
+        btns.appendChild(b);
+      });
+      rowEl.appendChild(btns);
+      if(v) rowEl.appendChild(span({style:{minWidth:"20px",fontSize:"12px",fontWeight:700,color:v>=8?"#ef4444":v>=5?"#f97316":"#eab308",textAlign:"right"}},String(v)));
+      hoursGrid.appendChild(rowEl);
+    }
+    cravingCard.appendChild(hoursGrid);
+  }
+  return cravingCard;
 }
 
 async function doFetchWeather(city){
@@ -5582,96 +5671,6 @@ function renderAlcohol(vd,isToday){
     ])))
   ]);
   wrap.appendChild(graphCard);
-
-  // 飲酒欲求（時間別記録）
-  const cravings = (getDaily(vd).cravings||{});
-  const curH2 = new Date().getHours();
-  const cravingCard=div({className:"card"},[]);
-  cravingCard.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0",marginBottom:"4px"}},"🌡️ 飲酒欲求（時間別）"));
-  cravingCard.appendChild(div({style:{fontSize:"10px",color:"#475569",marginBottom:"10px"}},"各時間の飲酒欲求を1〜10で記録（タップで選択）"));
-
-  // 欲求グラフ（記録済み時間）
-  const recordedHours=Object.keys(cravings).map(Number).sort((a,b)=>a-b);
-  if(recordedHours.length>0){
-    const graphRow=div({style:{display:"flex",gap:"2px",alignItems:"flex-end",height:"48px",marginBottom:"10px"}});
-    for(let h=0;h<24;h++){
-      const v=cravings[h];
-      const col=v?v>=8?"#ef4444":v>=5?"#f97316":"#eab308":"#1e3a5f";
-      const ht=v?`${Math.round((v/10)*40)}px`:"4px";
-      const isNow2=h===curH2&&isToday;
-      graphRow.appendChild(div({style:{flex:1,display:"flex",flexDirection:"column",alignItems:"center"}},[
-        div({style:{width:"100%",height:ht,background:col,borderRadius:"2px 2px 0 0",minHeight:"4px",border:isNow2?"1px solid #38bdf8":"none"}}),
-        div({style:{fontSize:"8px",color:v?col:"#334155",marginTop:"2px"}},v?String(v):"")
-      ]));
-    }
-    cravingCard.appendChild(graphRow);
-  }
-
-  // 現在時刻の欲求入力（常に表示）
-  if(isToday){
-    const curCraving=cravings[curH2]||null;
-    cravingCard.appendChild(div({style:{marginBottom:"10px"}},[
-      div({style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"6px"}},[
-        div({style:{fontSize:"11px",color:"#94a3b8"}},`${String(curH2).padStart(2,'0')}時の飲酒欲求`),
-        curCraving?span({style:{fontSize:"13px",fontWeight:700,color:curCraving>=8?"#ef4444":curCraving>=5?"#f97316":"#eab308"}},`${curCraving}/10`):null
-      ]),
-      div({style:{display:"flex",gap:"3px"}},[1,2,3,4,5,6,7,8,9,10].map(n=>{
-        const col=n>=8?"#ef4444":n>=5?"#f97316":"#eab308";
-        const isSelected=curCraving===n;
-        const b=btn({style:{flex:1,height:"32px",border:"none",borderRadius:"5px",cursor:"pointer",fontSize:"11px",fontWeight:isSelected?700:400,
-          background:isSelected?col:curCraving&&n<=curCraving?col+"44":"#0f172a",color:isSelected?"#fff":"#64748b"}},String(n));
-        b.addEventListener('click',()=>{
-          const nd={...getDaily(vd)};
-          nd.cravings={...(nd.cravings||{})};
-          if(nd.cravings[curH2]===n) delete nd.cravings[curH2];
-          else nd.cravings[curH2]=n;
-          setDaily(vd,nd);render();
-        });
-        return b;
-      })),
-      div({style:{display:"flex",justifyContent:"space-between",fontSize:"9px",color:"#334155",marginTop:"3px"}},[
-        span({},"低い"),span({},"高い")
-      ])
-    ]));
-  }
-
-  // 全時間の入力（展開式）
-  if(!state.cravingExpanded) state.cravingExpanded=false;
-  const toggleBtn=btn({style:{width:"100%",padding:"6px",background:"#0f172a",border:"1px solid #1e3a5f",borderRadius:"8px",color:"#64748b",cursor:"pointer",fontSize:"11px",marginBottom:"8px"}},
-    state.cravingExpanded?"▲ 時間別入力を閉じる":"▼ 時間別入力（全時間）");
-  toggleBtn.addEventListener('click',()=>{state.cravingExpanded=!state.cravingExpanded;render();});
-  cravingCard.appendChild(toggleBtn);
-
-  if(state.cravingExpanded){
-    const hoursGrid=div({style:{display:"flex",flexDirection:"column",gap:"6px",marginBottom:"8px"}});
-    for(let h=0;h<24;h++){
-      const v=cravings[h]||null;
-      const isNow2=h===curH2&&isToday;
-      const rowEl=div({style:{display:"flex",alignItems:"center",gap:"6px"}});
-      rowEl.appendChild(div({style:{minWidth:"32px",fontSize:"11px",fontWeight:isNow2?700:400,color:isNow2?"#38bdf8":"#64748b"}},`${String(h).padStart(2,'0')}時`));
-      const btns=div({style:{display:"flex",gap:"2px",flex:1}});
-      [1,2,3,4,5,6,7,8,9,10].forEach(n=>{
-        const col=n>=8?"#ef4444":n>=5?"#f97316":"#eab308";
-        const isSelected=v===n;
-        const b=btn({style:{flex:1,height:"24px",border:"none",borderRadius:"4px",cursor:"pointer",fontSize:"10px",fontWeight:isSelected?700:400,
-          background:isSelected?col:v&&n<=v?col+"33":"#0f172a",color:isSelected?"#fff":"#475569"}},String(n));
-        b.addEventListener('click',(()=>{const hh=h,nn=n;return()=>{
-          const nd={...getDaily(vd)};
-          nd.cravings={...(nd.cravings||{})};
-          if(nd.cravings[hh]===nn) delete nd.cravings[hh]; // 同じ値タップで解除
-          else nd.cravings[hh]=nn;
-          setDaily(vd,nd);render();
-        };})()); 
-        btns.appendChild(b);
-      });
-      rowEl.appendChild(btns);
-      if(v) rowEl.appendChild(span({style:{minWidth:"20px",fontSize:"12px",fontWeight:700,color:v>=8?"#ef4444":v>=5?"#f97316":"#eab308",textAlign:"right"}},String(v)));
-      hoursGrid.appendChild(rowEl);
-    }
-    cravingCard.appendChild(hoursGrid);
-  }
-
-  wrap.appendChild(cravingCard);
 
   // 飲み物リスト
   const listCard=div({className:"card"},[
