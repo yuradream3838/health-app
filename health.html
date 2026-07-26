@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.02"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.03"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -592,7 +592,7 @@ const state = {
   analysisSubTab:"日次ログ", diarySubTab:"生活記録", taskSubTab:"ルーティン",
   storageAlert:false, storageExportYear:null,
   weather:[], weatherCity:null, weatherLoading:false, weatherError:null,
-  editHour:null, editDate:null, editScore:null, editSymptoms:[], editNote:"",
+  editHour:null, editDate:null, editScore:null, editSymptoms:[], editNote:"", editCraving:null,
   modal:null, // "food"|"addDrink"|"editEnd"
   foodOpenCat:null, foodSelected:[],
   newDrink:{typeId:"beer",ml:350,hour:new Date().getHours(),min:new Date().getMinutes(),pct:5},
@@ -2537,8 +2537,12 @@ function renderKondo(vd,ds,curH,isToday){
         div({style:{fontSize:"16px",fontWeight:800,color:scoreColor(log.score)}},String(log.score)),
         div({style:{fontSize:"8px",color:"#475569"}},"/10")
       ]):null,
+      (()=>{ const cv=(getDaily(vd).cravings||{})[hour]; return cv?div({style:{textAlign:"center",minWidth:"26px"}},[
+        div({style:{fontSize:"13px",fontWeight:700,color:cv>=8?"#ef4444":cv>=5?"#f97316":"#eab308"}},`🍺${cv}`),
+        div({style:{fontSize:"8px",color:"#475569"}},"欲求")
+      ]):null; })(),
       btn({style:{background:"transparent",border:"1px solid #334155",borderRadius:"7px",padding:"3px 8px",color:"#94a3b8",cursor:"pointer",fontSize:"10px",whiteSpace:"nowrap"},
-        onClick:(()=>{const h2=hour;return()=>{openScoreModal(vd,h2);};})()} ,log?"✏️":"+ 記録")
+        onClick:(()=>{const h2=hour;return()=>{openScoreModal(vd,h2);};})()} ,(log||(getDaily(vd).cravings||{})[hour])?"✏️":"+ 記録")
     ]);
     row.appendChild(inner);
     if(log&&(log.symptoms?.length>0||log.note)){
@@ -2549,22 +2553,19 @@ function renderKondo(vd,ds,curH,isToday){
     }
     wrap.appendChild(row);
   }
-  // 飲酒欲求も体調記録にまとめて表示
-  wrap.appendChild(renderCravingCard(vd, isToday));
   return wrap;
 }
 
-// 飲酒欲求（時間別記録）カード。体調記録タブにまとめて表示。
-function renderCravingCard(vd, isToday){
+// 飲酒欲求（時間別）グラフ。閲覧のみ（入力は体調記録の各時間から）。アルコールタブに表示。
+function renderCravingGraph(vd, isToday){
   const cravings = (getDaily(vd).cravings||{});
   const curH2 = new Date().getHours();
-  const cravingCard=div({className:"card"},[]);
-  cravingCard.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0",marginBottom:"4px"}},"🍺 飲酒欲求（時間別）"));
-  cravingCard.appendChild(div({style:{fontSize:"10px",color:"#475569",marginBottom:"10px"}},"各時間の飲酒欲求を1〜10で記録（タップで選択）"));
-  // 欲求グラフ（記録済み時間）
-  const recordedHours=Object.keys(cravings).map(Number).sort((a,b)=>a-b);
+  const card=div({className:"card"},[]);
+  card.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0",marginBottom:"4px"}},"🍺 飲酒欲求（時間別）"));
+  card.appendChild(div({style:{fontSize:"10px",color:"#475569",marginBottom:"10px"}},"入力は「体調記録」タブの各時間から。ここでは推移を確認できます"));
+  const recordedHours=Object.keys(cravings).map(Number);
   if(recordedHours.length>0){
-    const graphRow=div({style:{display:"flex",gap:"2px",alignItems:"flex-end",height:"48px",marginBottom:"10px"}});
+    const graphRow=div({style:{display:"flex",gap:"2px",alignItems:"flex-end",height:"48px",marginBottom:"6px"}});
     for(let h=0;h<24;h++){
       const v=cravings[h];
       const col=v?v>=8?"#ef4444":v>=5?"#f97316":"#eab308":"#1e3a5f";
@@ -2575,70 +2576,12 @@ function renderCravingCard(vd, isToday){
         div({style:{fontSize:"8px",color:v?col:"#334155",marginTop:"2px"}},v?String(v):"")
       ]));
     }
-    cravingCard.appendChild(graphRow);
+    card.appendChild(graphRow);
+    card.appendChild(div({style:{display:"flex",justifyContent:"space-between",fontSize:"8px",color:"#334155"}},[span({},"0時"),span({},"12時"),span({},"23時")]));
+  } else {
+    card.appendChild(div({style:{fontSize:"11px",color:"#475569",textAlign:"center",padding:"10px 0"}},"まだ記録がありません（体調記録の各時間から入力）"));
   }
-  // 現在時刻の欲求入力（常に表示）
-  if(isToday){
-    const curCraving=cravings[curH2]||null;
-    cravingCard.appendChild(div({style:{marginBottom:"10px"}},[
-      div({style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"6px"}},[
-        div({style:{fontSize:"11px",color:"#94a3b8"}},`${String(curH2).padStart(2,'0')}時の飲酒欲求`),
-        curCraving?span({style:{fontSize:"13px",fontWeight:700,color:curCraving>=8?"#ef4444":curCraving>=5?"#f97316":"#eab308"}},`${curCraving}/10`):null
-      ]),
-      div({style:{display:"flex",gap:"3px"}},[1,2,3,4,5,6,7,8,9,10].map(n=>{
-        const col=n>=8?"#ef4444":n>=5?"#f97316":"#eab308";
-        const isSelected=curCraving===n;
-        const b=btn({style:{flex:1,height:"32px",border:"none",borderRadius:"5px",cursor:"pointer",fontSize:"11px",fontWeight:isSelected?700:400,
-          background:isSelected?col:curCraving&&n<=curCraving?col+"44":"#0f172a",color:isSelected?"#fff":"#64748b"}},String(n));
-        b.addEventListener('click',()=>{
-          const nd={...getDaily(vd)};
-          nd.cravings={...(nd.cravings||{})};
-          if(nd.cravings[curH2]===n) delete nd.cravings[curH2];
-          else nd.cravings[curH2]=n;
-          setDaily(vd,nd);render();
-        });
-        return b;
-      })),
-      div({style:{display:"flex",justifyContent:"space-between",fontSize:"9px",color:"#334155",marginTop:"3px"}},[
-        span({},"低い"),span({},"高い")
-      ])
-    ]));
-  }
-  // 全時間の入力（展開式）
-  if(!state.cravingExpanded) state.cravingExpanded=false;
-  const toggleBtn=btn({style:{width:"100%",padding:"6px",background:"#0f172a",border:"1px solid #1e3a5f",borderRadius:"8px",color:"#64748b",cursor:"pointer",fontSize:"11px",marginBottom:"8px"}},
-    state.cravingExpanded?"▲ 時間別入力を閉じる":"▼ 時間別入力（全時間）");
-  toggleBtn.addEventListener('click',()=>{state.cravingExpanded=!state.cravingExpanded;render();});
-  cravingCard.appendChild(toggleBtn);
-  if(state.cravingExpanded){
-    const hoursGrid=div({style:{display:"flex",flexDirection:"column",gap:"6px",marginBottom:"8px"}});
-    for(let h=0;h<24;h++){
-      const v=cravings[h]||null;
-      const isNow2=h===curH2&&isToday;
-      const rowEl=div({style:{display:"flex",alignItems:"center",gap:"6px"}});
-      rowEl.appendChild(div({style:{minWidth:"32px",fontSize:"11px",fontWeight:isNow2?700:400,color:isNow2?"#38bdf8":"#64748b"}},`${String(h).padStart(2,'0')}時`));
-      const btns=div({style:{display:"flex",gap:"2px",flex:1}});
-      [1,2,3,4,5,6,7,8,9,10].forEach(n=>{
-        const col=n>=8?"#ef4444":n>=5?"#f97316":"#eab308";
-        const isSelected=v===n;
-        const b=btn({style:{flex:1,height:"24px",border:"none",borderRadius:"4px",cursor:"pointer",fontSize:"10px",fontWeight:isSelected?700:400,
-          background:isSelected?col:v&&n<=v?col+"33":"#0f172a",color:isSelected?"#fff":"#475569"}},String(n));
-        b.addEventListener('click',(()=>{const hh=h,nn=n;return()=>{
-          const nd={...getDaily(vd)};
-          nd.cravings={...(nd.cravings||{})};
-          if(nd.cravings[hh]===nn) delete nd.cravings[hh];
-          else nd.cravings[hh]=nn;
-          setDaily(vd,nd);render();
-        };})());
-        btns.appendChild(b);
-      });
-      rowEl.appendChild(btns);
-      if(v) rowEl.appendChild(span({style:{minWidth:"20px",fontSize:"12px",fontWeight:700,color:v>=8?"#ef4444":v>=5?"#f97316":"#eab308",textAlign:"right"}},String(v)));
-      hoursGrid.appendChild(rowEl);
-    }
-    cravingCard.appendChild(hoursGrid);
-  }
-  return cravingCard;
+  return card;
 }
 
 async function doFetchWeather(city){
@@ -2699,6 +2642,7 @@ function openScoreModal(dateStr,hour){
   const ex=getLog(dateStr,hour);
   state.editDate=dateStr;state.editHour=hour;
   state.editScore=ex?.score||null;state.editSymptoms=[...(ex?.symptoms||[])];state.editNote=ex?.note||"";
+  state.editCraving=(getDaily(dateStr).cravings||{})[hour]||null; // その時間の飲酒欲求
   render();
 }
 function renderScoreModal(){
@@ -2741,14 +2685,32 @@ function renderScoreModal(){
   ta.style.cssText="width:100%;min-height:56px;background:#0a1120;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:12px;padding:8px;resize:none;box-sizing:border-box;font-family:inherit";
   ta.addEventListener('input',e=>{state.editNote=e.target.value;});
   m.appendChild(ta);
-  m.appendChild(div({style:{display:"flex",gap:"8px",marginTop:"10px"}},[
+  // 🍺 飲酒欲求（任意）。各時間から入力。グラフはアルコールタブで確認できる
+  m.appendChild(h('p',{style:{margin:"12px 0 5px",fontSize:"11px",color:"#64748b"}},"🍺 飲酒欲求（任意・1〜10）"));
+  m.appendChild(div({style:{display:"flex",gap:"3px"}},[1,2,3,4,5,6,7,8,9,10].map(n=>{
+    const col=n>=8?"#ef4444":n>=5?"#f97316":"#eab308";
+    const on=state.editCraving===n;
+    return btn({style:{flex:1,height:"30px",border:"none",borderRadius:"5px",cursor:"pointer",fontSize:"11px",fontWeight:on?700:400,
+      background:on?col:(state.editCraving&&n<=state.editCraving?col+"44":"#0f172a"),color:on?"#fff":"#64748b"},
+      onClick:()=>{ state.editCraving = state.editCraving===n?null:n; render(); }},String(n));
+  })));
+  m.appendChild(div({style:{display:"flex",justifyContent:"space-between",fontSize:"9px",color:"#334155",marginTop:"3px"}},[span({},"低い"),span({},"高い")]));
+  const canSave=!!state.editScore||!!state.editCraving;
+  m.appendChild(div({style:{display:"flex",gap:"8px",marginTop:"12px"}},[
     btn({className:"btn-ghost",style:{flex:1},onClick:()=>{state.editHour=null;render();}},"キャンセル"),
-    btn({style:{flex:2,padding:"10px",borderRadius:"8px",border:"none",fontSize:"13px",fontWeight:600,cursor:state.editScore?"pointer":"not-allowed",background:state.editScore?"linear-gradient(135deg,#0ea5e9,#6366f1)":"#334155",color:state.editScore?"#fff":"#475569"},
+    btn({style:{flex:2,padding:"10px",borderRadius:"8px",border:"none",fontSize:"13px",fontWeight:600,cursor:canSave?"pointer":"not-allowed",background:canSave?"linear-gradient(135deg,#0ea5e9,#6366f1)":"#334155",color:canSave?"#fff":"#475569"},
       onClick:()=>{
-        if(!state.editScore)return;
-        const fc=state.forecast.find(f=>f.hour===state.editHour);
-        const baseline=state.forecast[0]?.pressure||1013;
-        setLog(state.editDate||todayStr(),state.editHour,{score:state.editScore,symptoms:state.editSymptoms,note:state.editNote,pressure:fc?.pressure||null,pressureDiff:fc?fc.pressure-baseline:null});
+        if(!canSave)return;
+        const date=state.editDate||todayStr(), hour=state.editHour;
+        if(state.editScore){
+          const fc=state.forecast.find(f=>f.hour===hour);
+          const baseline=state.forecast[0]?.pressure||1013;
+          setLog(date,hour,{score:state.editScore,symptoms:state.editSymptoms,note:state.editNote,pressure:fc?.pressure||null,pressureDiff:fc?fc.pressure-baseline:null});
+        }
+        // 飲酒欲求を保存（未選択なら削除）
+        const nd={...getDaily(date)}; nd.cravings={...(nd.cravings||{})};
+        if(state.editCraving) nd.cravings[hour]=state.editCraving; else delete nd.cravings[hour];
+        setDaily(date,nd);
         state.editHour=null;render();
       }
     },"保存する")
@@ -5671,6 +5633,9 @@ function renderAlcohol(vd,isToday){
     ])))
   ]);
   wrap.appendChild(graphCard);
+
+  // 飲酒欲求グラフ（閲覧のみ・入力は体調記録の各時間から）
+  wrap.appendChild(renderCravingGraph(vd, isToday));
 
   // 飲み物リスト
   const listCard=div({className:"card"},[
