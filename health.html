@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.00"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.01"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -588,7 +588,7 @@ const state = {
   goalEditType:null, goalEditText:"", goalEditProgress:"", goalEditDone:false, goalEditPeriodStr:"",
   goalView:"period", goalTree:[], goalTreeModal:null,
   aiCoach:null, aiCoachLoading:null, rewards:[], newRewardDays:7, newRewardText:"",
-  actEditUid:null, actTitle:"", actSH:9, actSM:0, actEH:10, actEM:0, actEndNextDay:false, actColor:"#f472b6", actUnplanned:true, actDate:null,
+  actEditUid:null, actTitle:"", actSH:9, actSM:0, actEH:10, actEM:0, actStartNextDay:false, actEndNextDay:false, actColor:"#f472b6", actUnplanned:true, actDate:null,
   analysisSubTab:"日次ログ", diarySubTab:"生活記録", taskSubTab:"ルーティン",
   storageAlert:false, storageExportYear:null,
   weather:[], weatherCity:null, weatherLoading:false, weatherError:null,
@@ -2830,14 +2830,15 @@ function repeatLabel(t, startDate){
 function itemAbsSpan(it){
   let s=(it.startH||0)*60+(it.startM||0);
   let e=(it.endH!=null?it.endH*60+(it.endM||0):s+15);
-  if(it.endNextDay) e+=1440;
+  if(it.startNextDay) s+=1440;  // 開始を翌日に
+  if(it.endNextDay) e+=1440;    // 終了を翌日に
   if(e<=s) e+=1440;
   return {s,e};
 }
 // 所有日(vd)に表示する部分：[start, min(1440,end)]
 function crossOwnerSeg(it){ const {s,e}=itemAbsSpan(it); if(s>=1440) return null; return {...it, startMin:s, endMin:Math.min(1440,e)}; }
-// 翌日にまたがった尾部：[0, end-1440]
-function crossTailSeg(it){ const {s,e}=itemAbsSpan(it); if(e<=1440) return null; return {...it, startMin:0, endMin:Math.min(1440,e-1440), _tail:true}; }
+// 翌日にまたがった尾部：[max(0,start-1440), end-1440]（開始が翌日の実績は翌日側で正しい開始時刻に）
+function crossTailSeg(it){ const {s,e}=itemAbsSpan(it); if(e<=1440) return null; return {...it, startMin:Math.max(0,s-1440), endMin:Math.min(1440,e-1440), _tail:true}; }
 
 function getActualActivities(vd){
   const acts=[];
@@ -2985,6 +2986,7 @@ function openActualEdit(vd, uid, startH){
   state.actEH=ex&&ex.endH!=null?ex.endH:((sh+1)%24);
   state.actEM=ex?(ex.endM||0):0;
   state.actEndNextDay=ex?!!ex.endNextDay:((sh+1)>=24);
+  state.actStartNextDay=ex?!!ex.startNextDay:false;
   state.actColor=ex?(ex.color||"#f472b6"):"#f472b6";
   state.actUnplanned=ex?!!ex.unplanned:true;
   state.actFromEventUid=ex?(ex.fromEventUid||null):null; // 手動追加/編集は予定紐付けなし（反映ボタン経由でのみ紐付く）
@@ -3010,6 +3012,10 @@ function renderActualModal(){
     span({style:{color:"#64748b"}},"〜"),
     timeInput(state.actEH,state.actEM,(H,M)=>{state.actEH=H;state.actEM=M;})
   ]));
+  const sndB=btn({style:{width:"100%",padding:"8px",borderRadius:"8px",cursor:"pointer",fontWeight:600,fontSize:"12px",marginBottom:"6px",
+    border:`1px solid ${state.actStartNextDay?"#38bdf8":"#334155"}`,background:state.actStartNextDay?"#0ea5e922":"transparent",color:state.actStartNextDay?"#38bdf8":"#64748b"}},state.actStartNextDay?"🌙 開始は翌日: ON":"🌙 開始は翌日: OFF");
+  sndB.addEventListener('click',()=>{state.actStartNextDay=!state.actStartNextDay;render();});
+  m.appendChild(sndB);
   const ndB=btn({style:{width:"100%",padding:"8px",borderRadius:"8px",cursor:"pointer",fontWeight:600,fontSize:"12px",marginBottom:"12px",
     border:`1px solid ${state.actEndNextDay?"#38bdf8":"#334155"}`,background:state.actEndNextDay?"#0ea5e922":"transparent",color:state.actEndNextDay?"#38bdf8":"#64748b"}},state.actEndNextDay?"🌙 終了は翌日: ON":"🌙 終了は翌日: OFF");
   ndB.addEventListener('click',()=>{state.actEndNextDay=!state.actEndNextDay;render();});
@@ -3036,7 +3042,7 @@ function renderActualModal(){
       const title=(state.actTitle||"").trim();
       if(!title){alert("内容を入力してください");return;}
       const d=getDaily(state.actDate);
-      const rec={uid:state.actEditUid||Date.now(),title,startH:state.actSH,startM:state.actSM,endH:state.actEH,endM:state.actEM,endNextDay:!!state.actEndNextDay,color:state.actColor,unplanned:!!state.actUnplanned,...(state.actFromEventUid?{fromEventUid:state.actFromEventUid}:{})};
+      const rec={uid:state.actEditUid||Date.now(),title,startH:state.actSH,startM:state.actSM,endH:state.actEH,endM:state.actEM,startNextDay:!!state.actStartNextDay,endNextDay:!!state.actEndNextDay,color:state.actColor,unplanned:!!state.actUnplanned,...(state.actFromEventUid?{fromEventUid:state.actFromEventUid}:{})};
       const list=(d.actuals||[]).filter(a=>a.uid!==rec.uid); list.push(rec);
       state.modal=null;
       setDaily(state.actDate,{actuals:list});
@@ -4668,6 +4674,7 @@ function renderAddEventModal(vd){
         state.actEH=state.newEvAllDay?((nowH+1)%24):state.newEvEndH;
         state.actEM=state.newEvAllDay?0:state.newEvEndM;
         state.actEndNextDay=!!state.newEvEndNextDay;
+        state.actStartNextDay=!!state.newEvStartNextDay;
         state.actColor=state.newEvColor||"#f472b6";
         state.actUnplanned=false; // 予定通り行ったので突発ではない
         state.actFromEventUid=state.editEventUid; // この予定に紐付け → 予定側がグレーアウト
