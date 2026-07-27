@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.03"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.04"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -718,14 +718,22 @@ function safeSet(key,value){
     return false;
   }
 }
+// logs+dailies はデータ量が大きいため、書き込み（JSON化＋localStorage）を
+// 500msデバウンス。状態はメモリ上で即時反映され、実書き込みだけまとめる。
+// タブ非表示/離脱時（pagehide・visibilitychange:hidden）に必ずflushして取りこぼしを防ぐ。
+let _saveTimer=null, _savePending=false;
+function flushStorage(){
+  if(_saveTimer){ clearTimeout(_saveTimer); _saveTimer=null; }
+  if(!_savePending) return true;
+  _savePending=false;
+  return safeSet(STORAGE_KEY,JSON.stringify({logs:state.logs,dailies:state.dailies}));
+}
 function saveStorage(){
   if(state && state.viewingBackup){ render(); return; } // 閲覧中は保存しない
-  const ok=safeSet(STORAGE_KEY,JSON.stringify({logs:state.logs,dailies:state.dailies}));
-  if(ok){
-    state.saved=true;render();setTimeout(()=>{state.saved=false;render();},2000);
-  }else{
-    render(); // 警告モーダル/トーストを反映
-  }
+  _savePending=true;
+  if(_saveTimer) clearTimeout(_saveTimer);
+  _saveTimer=setTimeout(()=>{ if(!flushStorage()) render(); }, 500);
+  state.saved=true; render(); setTimeout(()=>{state.saved=false;render();},1500);
 }
 
 function getDaily(dateStr){
@@ -950,6 +958,12 @@ let headerMounted = false;
 
 function render(){
   const root = document.getElementById('root');
+
+  // 同じ画面の再描画ではスクロール位置を維持（タブ切替時は維持しない＝自然な挙動）
+  const _prevScroll=window.scrollY;
+  const _vkey=[state.widget?'w':'',state.tab,state.scheduleSubTab,state.diarySubTab,state.taskSubTab,state.analysisSubTab,state.goalView].join('|');
+  const _sameView=_vkey===render._lastVKey; render._lastVKey=_vkey;
+  if(_sameView && _prevScroll>0) requestAnimationFrame(()=>{ try{ if(Math.abs(window.scrollY-_prevScroll)>1) window.scrollTo(0,_prevScroll); }catch(_){} });
 
   // ヘッダーは初回のみ生成（再描画しない）
   if(!headerMounted){
@@ -3860,6 +3874,15 @@ function eventReflected(ev, vd){
   if(!ev||ev.uid==null)return false;
   return (getDaily(vd).actuals||[]).some(a=>a.fromEventUid!=null && String(a.fromEventUid)===String(ev.uid));
 }
+// 予定ブロックが「完了」しているか（グレーアウト判定を一元化）：
+//  定期ルーティン=所有日でチェック済み／シフト=勤務時間入力／パターン=連動ルーティン完了／通常の予定=実績に反映済み
+function planBlockDone(ev, vd){
+  if(ev.customTodo) return !!(((state.todos[ev.ctDate||vd]||{})[ev.ctUid])||{}).checked;
+  if(ev.shiftBlock){ const d=getDaily(vd); return d.workStart!=null && d.workEnd!=null; }
+  if(ev.isPattern){ const pp=(state.planPatterns||[]).find(x=>x.uid===ev.patternUid); return pp?patternLinkDone(pp,vd):false; }
+  if(ev.uid!=null && !ev._tail) return eventReflected(ev,vd);
+  return false;
+}
 // ── 日スケジュール（予定 vs 実際・0〜24時） ──
 function renderDaySchedule(vd,ds,isToday){
   const wrap=div({});
@@ -4048,13 +4071,8 @@ function renderDaySchedule(vd,ds,isToday){
       const left=`calc((${leftBase}) + (${widthArea}) * ${(lane/lanes).toFixed(4)})`;
       const width=`calc((${widthArea}) * ${(1/lanes).toFixed(4)} - 2px)`;
       const tcol=textOn(color);
-      // 完了ベースのグレーアウト（時間経過では暗くしない）：
-      //  定期ルーティン=チェック済み／パターン=連動ルーティン完了／通常の予定=実績に反映済み
-      let blockDone=false;
-      if(ev.customTodo) blockDone=!!(((state.todos[ev.ctDate||vd]||{})[ev.ctUid])||{}).checked;
-      else if(ev.shiftBlock){ const d=getDaily(vd); blockDone=(d.workStart!=null && d.workEnd!=null); } // 仕事の予定＝勤務時間を入力したら
-      else if(ev.isPattern){ const pp=(state.planPatterns||[]).find(x=>x.uid===ev.patternUid); blockDone=pp?patternLinkDone(pp,vd):false; }
-      else if(ev.uid!=null && !ev.isPattern && !ev._tail && !ev.customTodo) blockDone=eventReflected(ev,vd);
+      // 完了ベースのグレーアウト（時間経過では暗くしない）。判定は planBlockDone に一元化
+      const blockDone=planBlockDone(ev,vd);
       const blockOpacity = blockDone?0.4:1;
       const block=div({style:{
         position:"absolute",top:`${Math.max(0,top)}px`,left,width,
@@ -4062,6 +4080,8 @@ function renderDaySchedule(vd,ds,isToday){
         borderRadius:"5px",padding:"1px 5px",opacity:blockOpacity,
         overflow:"hidden",cursor:onTap?"pointer":"default",zIndex:3,boxSizing:"border-box"
       }});
+      // 完了の目印（右上に小さな✓）
+      if(blockDone) block.appendChild(div({style:{position:"absolute",top:"1px",right:"2px",fontSize:"9px",lineHeight:1,color:tcol,opacity:0.9,fontWeight:700}},"✓"));
       // タイトルは折り返し＋高さに応じて行数をクランプ、狭い/低いブロックはフォント縮小
       const timeShown = height>34 && !ev.isPoint && lanes===1;
       const tFont = height<22 ? 9 : (height<34 ? 10 : (lanes>=3 ? 10 : 11));
@@ -4797,6 +4817,14 @@ function renderAddEventModal(vd){
   bg.appendChild(m);return bg;
 }
 
+// AI応答からJSONを頑健に取り出す（```フェンス除去＋最初の{…}を抽出）
+function parseAIJson(text){
+  let t=(text||"").replace(/```json|```/g,"").trim();
+  try{ return JSON.parse(t); }catch(_){}
+  const i=t.indexOf('{'), j=t.lastIndexOf('}');
+  if(i>=0 && j>i){ try{ return JSON.parse(t.slice(i,j+1)); }catch(_){} }
+  throw new Error("AI応答を解析できませんでした");
+}
 // ── AIスケジュール提案 ──
 // ── AI呼び出し共通（api.php・テキスト応答）──
 async function callAIText(system,prompt){
@@ -4901,7 +4929,7 @@ async function runAISchedule(vd){
   state.aiScheduleLoading=true;state.aiScheduleProposal=null;state.aiScheduleChat=[];render();
   try{
     const text=await callAIText(SCHED_SYS, `${buildScheduleContext(vd)}\n\n体調を踏まえてスケジュールを提案してください。`);
-    const proposal=JSON.parse(text.replace(/```json|```/g,"").trim());
+    const proposal=parseAIJson(text);
     if(!proposal.events||!proposal.events.length)throw new Error("提案が生成できませんでした");
     state.aiScheduleProposal=proposal;
     state.aiScheduleChat=[{role:"ai",text:proposal.comment||"スケジュールを提案しました。調整したいことがあれば教えてください。"}];
@@ -4919,7 +4947,7 @@ async function aiScheduleChatSend(vd){
   try{
     const prompt=`${buildScheduleContext(vd)}\n\n【これまでの提案・会話】\n${chatHistoryText(state.aiScheduleChat)}\n\nユーザーの最新の要望を反映し、調整後の1日分の完全なスケジュールをJSONで返してください。`;
     const text=await callAIText(SCHED_SYS, prompt);
-    const proposal=JSON.parse(text.replace(/```json|```/g,"").trim());
+    const proposal=parseAIJson(text);
     if(proposal.events&&proposal.events.length)state.aiScheduleProposal=proposal;
     state.aiScheduleChat=[...state.aiScheduleChat,{role:"ai",text:proposal.comment||"提案を更新しました。"}];
   }catch(e){
@@ -7002,7 +7030,7 @@ async function runAI(scored,dailies){
       throw new Error(data.error);
     }
     const text=data.text||"";
-    const r=JSON.parse(text.replace(/```json|```/g,"").trim());
+    const r=parseAIJson(text);
     state.aiAnalysisResult=r;
     state.aiAnalysisRemaining=(data.remaining!=null?data.remaining:null);
     state.aiAnalysisChat=[{role:"ai",text:r.summary||"分析しました。気になる点を質問してください。"}];
@@ -7772,6 +7800,9 @@ state.viewDate = todayStr();
 if(location.hash==='#widget'||location.hash==='#today'){ state.widget=true; }
 window.addEventListener('hashchange',()=>{ const w=(location.hash==='#widget'||location.hash==='#today'); if(w!==!!state.widget){ state.widget=w; if(w)state.viewDate=todayStr(); render(); } });
 migrateGoalsToTree(); // 旧・期間別の記入内容を目標ツリーへ一度だけ移行
+// デバウンス中の保存を離脱/非表示時に確実に書き出す（取りこぼし防止）
+window.addEventListener('pagehide',()=>{try{flushStorage();}catch(_){}});
+document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='hidden'){ try{flushStorage();}catch(_){}} });
 render();
 document.title="体調管理 v"+APP_VERSION;
 if(state._goalsMigratedCount){ setTimeout(()=>{ showToast(`過去の目標 ${state._goalsMigratedCount}件を目標ツリーに移動しました`,"#22c55e"); state._goalsMigratedCount=0; },900); }
