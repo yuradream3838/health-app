@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.08"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.09"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -305,7 +305,6 @@ const TODO_ITEMS = [
   {id:"training",      label:"トレーニング",          type:"timer", multi:true},
   {id:"shower",        label:"シャワー・スキンケア・体重測定", type:"check"},
   {id:"kakeibo",       label:"家計簿入力",            type:"check"},
-  {id:"health_input",  label:"体調管理入力",          type:"check"},
   {id:"diary",         label:"日記",                  type:"check"},
   {id:"stretch_pm",    label:"夜ストレッチ",          type:"check"},
   {id:"meditation_pm", label:"夜瞑想",                type:"check"},
@@ -2541,14 +2540,11 @@ function renderKondo(vd,ds,curH,isToday){
           ])
         ]):div({style:{fontSize:"11px",color:"#334155"}},"— hPa")
       ]),
-      log?.score!=null?div({style:{textAlign:"center",minWidth:"28px"}},[
-        div({style:{fontSize:"16px",fontWeight:800,color:scoreColor(log.score)}},String(log.score)),
-        div({style:{fontSize:"8px",color:"#475569"}},"/10")
-      ]):null,
-      (()=>{ const cv=(getDaily(vd).cravings||{})[hour]; return cv?div({style:{textAlign:"center",minWidth:"26px"}},[
-        div({style:{fontSize:"13px",fontWeight:700,color:cv>=8?"#ef4444":cv>=5?"#f97316":"#eab308"}},`🍺${cv}`),
-        div({style:{fontSize:"8px",color:"#475569"}},"欲求")
-      ]):null; })(),
+      (()=>{ const cv=(getDaily(vd).cravings||{})[hour]; if(log?.score==null && !cv)return null; return div({style:{textAlign:"center",minWidth:"30px"}},[
+        log?.score!=null?div({style:{fontSize:"16px",fontWeight:800,color:scoreColor(log.score),lineHeight:1.1}},String(log.score)):null,
+        log?.score!=null?div({style:{fontSize:"8px",color:"#475569"}},"/10"):null,
+        cv?div({style:{fontSize:"11px",fontWeight:700,color:cv>=8?"#ef4444":cv>=5?"#f97316":"#eab308",marginTop:log?.score!=null?"2px":"0"}},`🍺${cv}`):null
+      ]); })(),
       btn({style:{background:"transparent",border:"1px solid #334155",borderRadius:"7px",padding:"3px 8px",color:"#94a3b8",cursor:"pointer",fontSize:"10px",whiteSpace:"nowrap"},
         onClick:(()=>{const h2=hour;return()=>{openScoreModal(vd,h2);};})()} ,(log||(getDaily(vd).cravings||{})[hour])?"✏️":"+ 記録")
     ]);
