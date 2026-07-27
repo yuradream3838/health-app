@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.05"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.06"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -1276,18 +1276,17 @@ function renderWidgetView(vd,ds){
     return row;
   };
 
-  // ── 🎁 ご褒美（連続達成でアンロック・ヴィジェットでは閲覧のみ）──
+  // ── 🎁 ご褒美（連続日数・定期ルーティン・目標でアンロック・ヴィジェットでは閲覧のみ）──
   if((state.rewards||[]).length){
     const streak=currentOverallStreak().streak;
     const c=div({className:"card",style:{padding:"12px 14px",marginBottom:"10px"}});
     c.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#f472b6",marginBottom:"6px"}},`🎁 ご褒美（連続${streak}日）`));
-    (state.rewards||[]).slice().sort((a,b)=>a.days-b.days).forEach(r=>{
-      const unlocked=streak>=r.days;
-      const remain=r.days-streak;
+    (state.rewards||[]).forEach(r=>{
+      const st=rewardStatus(r);
       const row=div({style:{display:"flex",alignItems:"center",gap:"9px",padding:"6px 0",borderBottom:"1px solid #1e3a5f55"}});
-      row.appendChild(div({style:{fontSize:"11px",fontWeight:700,color:unlocked?"#22c55e":"#64748b",width:"46px",flexShrink:0,textAlign:"center"}},`${r.days}日`));
-      row.appendChild(div({style:{flex:1,minWidth:0,fontSize:"13px",color:unlocked?"#e2e8f0":"#64748b",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},r.text));
-      row.appendChild(div({style:{fontSize:"10px",fontWeight:700,flexShrink:0,color:unlocked?"#22c55e":"#64748b"}},unlocked?"🎉達成":`あと${remain}日`));
+      row.appendChild(div({style:{fontSize:"11px",fontWeight:700,color:st.unlocked?"#22c55e":"#64748b",width:"46px",flexShrink:0,textAlign:"center"}},st.badge));
+      row.appendChild(div({style:{flex:1,minWidth:0,fontSize:"13px",color:st.unlocked?"#e2e8f0":"#64748b",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},r.text));
+      row.appendChild(div({style:{fontSize:"10px",fontWeight:700,flexShrink:0,color:st.unlocked?"#22c55e":"#64748b"}},st.unlocked?"🎉達成":st.progress));
       c.appendChild(row);
     });
     wrap.appendChild(c);
@@ -3933,10 +3932,13 @@ function renderDaySchedule(vd,ds,isToday){
       .filter(ct=>!(state.todos[vd]||{})[ct.uid]?.excluded)
       .map(ct=>{ const tt=customTodoTimeFor(ct,vd); return {ct, tt, sort: tt ? (tt.sn?1440:0)+tt.h*60+(tt.m||0) : 1e9}; })
       .sort((a,b)=>a.sort-b.sort);
+    // 繰り越しになった定期ルーティン（過去に該当したが未実施のもの）を表示日に繰り越し
+    const dueIds=new Set(dueCustom.map(x=>x.ct.uid));
+    const carryCustom=(state.customTodos||[]).filter(ct=>!dueIds.has(ct.uid)).map(ct=>({ct,occ:customTodoOccurrence(ct,vd)})).filter(x=>x.occ&&x.occ.overdue);
     // 期日が来たTODO：その日に該当（当日は期日超過の未完了も繰り越して表示）
     const _tds=todayStr();
     const dueTodos=((state.tasks&&state.tasks.todo)||[]).filter(t=>!t.done && t.due && (t.due===vd || (vd===_tds && t.due<_tds)));
-    if(allDayEvents.length||dueCustom.length||dueTodos.length){
+    if(allDayEvents.length||dueCustom.length||carryCustom.length||dueTodos.length){
       const ad=div({className:"card",style:{padding:"8px 10px",marginBottom:"8px"}});
       ad.appendChild(div({style:{fontSize:"10px",fontWeight:700,color:"#94a3b8",marginBottom:"6px"}},"📌 終日・定期ルーティン・TODO"));
       allDayEvents.forEach(ev=>{
@@ -3964,6 +3966,19 @@ function renderDaySchedule(vd,ds,isToday){
         if(timeStr)row.appendChild(span({style:{flexShrink:0,fontSize:"11px",fontWeight:600,color:done?"#475569":"#94a3b8",minWidth:"42px"}},timeStr));
         const lab=div({style:{flex:1,fontSize:"12px",color:done?"#475569":"#e2e8f0",textDecoration:done?"line-through":"none",cursor:"pointer"}},`🔁 ${lbl}${rec.noteOverride?" 📝":""}`);
         lab.addEventListener('click',(()=>{const uid=ct.uid,l=lbl;return()=>{state.planCustomTodo={uid,label:l,vd};state.modal="planCustomTodo";render();};})());
+        row.appendChild(lab);
+        ad.appendChild(row);
+      });
+      // 繰り越しになった定期ルーティン
+      carryCustom.forEach(({ct,occ})=>{
+        const lbl=ct.label||"定期ルーティン";
+        const row=div({style:{display:"flex",alignItems:"center",gap:"8px",padding:"4px 2px"}});
+        const cb=btn({style:{width:"20px",height:"20px",borderRadius:"5px",flexShrink:0,border:"2px solid #f97316",background:"transparent",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"12px",color:"#fff"}},"");
+        cb.addEventListener('click',(()=>{const id=ct.uid,c2={...ct},label=lbl;return()=>{ dismissPastUnchecked(c2,vd); const cur=(state.todos[vd]||{})[id]||{}; setTodo(vd,id,{...cur,checked:true,time:new Date().toISOString()}); showToast(`✅ ${label}`); };})());
+        row.appendChild(cb);
+        row.appendChild(span({style:{flexShrink:0,fontSize:"10px",fontWeight:700,padding:"1px 6px",borderRadius:"8px",color:"#f97316",background:"#f973161f",border:"1px solid #f9731655"}},`繰越${occ.daysAgo?`${occ.daysAgo}日`:""}`));
+        const lab=div({style:{flex:1,fontSize:"12px",color:"#e2e8f0",cursor:"pointer",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},`🔁 ${lbl}`);
+        lab.addEventListener('click',(()=>{const uid=ct.uid,l=lbl,dd=occ.dueDate;return()=>{state.planCustomTodo={uid,label:l,vd:dd};state.modal="planCustomTodo";render();};})());
         row.appendChild(lab);
         ad.appendChild(row);
       });
@@ -4390,20 +4405,28 @@ function renderTaskMatrix(){
   card.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0",marginBottom:"2px"}},"✅ TODO"));
   card.appendChild(div({style:{fontSize:"10px",color:"#475569",marginBottom:"10px"}},"重要・緊急で優先順位付け／期日設定・「予定に追加」で作業をスケジュール化"));
 
-  const inputRow=div({style:{display:"flex",gap:"6px",marginBottom:"10px"}});
+  const inputRow=div({style:{display:"flex",gap:"6px",marginBottom:"8px"}});
   const inp=document.createElement('input');
-  inp.type='text';inp.placeholder="やることを追加...";
+  inp.type='text';inp.placeholder="やることを追加...";inp.value=state.newTodoText||"";
   inp.style.cssText="flex:1;padding:8px 12px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit";
+  inp.addEventListener('input',e=>{state.newTodoText=e.target.value;});
   const addFn=()=>{
-    const v=inp.value.trim();if(!v)return;
-    state.tasks.todo=[...(state.tasks.todo||[]),{uid:Date.now(),text:v,done:false,imp:false,urg:false}];
-    saveTasks();inp.value="";render();
+    const v=(state.newTodoText||"").trim();if(!v)return;
+    state.tasks.todo=[...(state.tasks.todo||[]),{uid:Date.now(),text:v,done:false,imp:!!state.newTodoImp,urg:!!state.newTodoUrg}];
+    state.newTodoText="";state.newTodoImp=false;state.newTodoUrg=false;
+    saveTasks();render();
   };
   inp.addEventListener('keydown',e=>{if(e.key==="Enter")addFn();});
   const addBtn=btn({style:{padding:"8px 16px",background:"#0ea5e918",border:"1px solid #0ea5e9",borderRadius:"8px",color:"#38bdf8",fontSize:"13px",fontWeight:600,cursor:"pointer"}},"＋");
   addBtn.addEventListener('click',addFn);
   inputRow.appendChild(inp);inputRow.appendChild(addBtn);
   card.appendChild(inputRow);
+  // 作成時に重要・緊急フラグを指定
+  const flagRow=div({style:{display:"flex",gap:"6px",marginBottom:"10px"}});
+  const mkFlag=(on,label,col,key)=>{const b=btn({style:{fontSize:"11px",padding:"5px 12px",borderRadius:"20px",cursor:"pointer",fontWeight:600,border:`1px solid ${on?col:"#334155"}`,background:on?col+"22":"transparent",color:on?col:"#64748b"}},label);b.addEventListener('click',()=>{state[key]=!state[key];render();});return b;};
+  flagRow.appendChild(mkFlag(!!state.newTodoImp,"⭐ 重要","#f97316","newTodoImp"));
+  flagRow.appendChild(mkFlag(!!state.newTodoUrg,"⚡ 緊急","#eab308","newTodoUrg"));
+  card.appendChild(flagRow);
 
   // 優先度ソート：重×急 → 重 → 急 → なし → 完了、同順位は期日の早い順
   const prio=t=>t.done?4:(t.imp&&t.urg)?0:t.urg?1:t.imp?2:3;
@@ -4897,6 +4920,24 @@ async function runAICoach(kind){
   state.aiCoachLoading=null; render();
 }
 function saveRewards(){ try{localStorage.setItem(STORAGE_KEY+"_rewards",JSON.stringify(state.rewards));}catch{} }
+// 定期ルーティンの累計達成回数（全日でチェックされた回数）
+function customTodoDoneCount(uid){ let n=0; for(const d in state.todos){ const r=state.todos[d]&&state.todos[d][uid]; if(r&&r.checked)n++; } return n; }
+// ご褒美のアンロック状況。trigger: {type:'streak',days} | {type:'routine',uid,count} | {type:'goal',id}
+// 旧データ（trigger無し・daysのみ）は連続日数として扱う。
+function rewardStatus(r){
+  const tr = r.trigger || {type:'streak', days:r.days||7};
+  if(tr.type==='routine'){
+    const ct=(state.customTodos||[]).find(c=>String(c.uid)===String(tr.uid));
+    const need=Math.max(1,tr.count||1), cnt=customTodoDoneCount(tr.uid);
+    return {unlocked:cnt>=need, badge:`🔁${need}`, progress:cnt>=need?"🎉達成":`${cnt}/${need}回`, name:ct?ct.label:"(削除済み)"};
+  }
+  if(tr.type==='goal'){
+    const f=gtFind(tr.id); const node=f&&f.node; const done=node?(node.done||gtAchieved(node)):false;
+    return {unlocked:done, badge:"🎯", progress:done?"🎉達成":"未達成", name:node?(node.text||"(無題)"):"(削除済み)"};
+  }
+  const need=tr.days||7, streak=currentOverallStreak().streak;
+  return {unlocked:streak>=need, badge:`${need}日`, progress:streak>=need?"🎉達成":`あと${need-streak}日`, name:null};
+}
 
 // スケジュール提案のシステムプロンプト（初回提案・対話の両方で共有）
 const SCHED_SYS=`あなたは体調に配慮する生活プランナーです。ユーザーの1日のスケジュールを提案し、以下のJSON形式のみで返答してください:
@@ -6038,31 +6079,75 @@ function renderAchievement(vd){
     cc.appendChild(div({style:{fontSize:"9px",color:"#475569"}},"※ボタンを押したときだけAIを呼びます（無料・1日の利用上限内）。目標ツリー・進捗・連結習慣を踏まえて提案します"));
     wrap.appendChild(cc);
   }
-  // ── 🎁 ご褒美（連続達成でアンロック）──
+  // ── 🎁 ご褒美（連続日数・定期ルーティン・目標でアンロック）──
   {
-    const streak=currentOverallStreak().streak;
     const rc=div({className:"card",style:{marginTop:"10px"}});
     rc.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#f472b6",marginBottom:"3px"}},"🎁 ご褒美"));
-    rc.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"8px"}},"連続達成◯日で自分にご褒美を。達成でアンロックされます"));
-    (state.rewards||[]).slice().sort((a,b)=>a.days-b.days).forEach(r=>{
-      const unlocked=streak>=r.days;
+    rc.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"8px"}},"連続達成◯日・定期ルーティン◯回・目標の達成でアンロックできます"));
+    (state.rewards||[]).forEach(r=>{
+      const st=rewardStatus(r);
       const row=div({style:{display:"flex",alignItems:"center",gap:"8px",padding:"7px 0",borderBottom:"1px solid #1e3a5f33"}});
-      row.appendChild(div({style:{fontSize:"11px",fontWeight:700,color:unlocked?"#22c55e":"#64748b",width:"46px",flexShrink:0,textAlign:"center"}},`${r.days}日`));
-      row.appendChild(div({style:{flex:1,minWidth:0,fontSize:"13px",color:unlocked?"#e2e8f0":"#64748b"}},[txt(r.text),unlocked?span({style:{fontSize:"10px",color:"#22c55e",marginLeft:"6px",fontWeight:700}},"🎉 達成！"):null]));
+      row.appendChild(div({style:{fontSize:"11px",fontWeight:700,color:st.unlocked?"#22c55e":"#64748b",width:"46px",flexShrink:0,textAlign:"center"}},st.badge));
+      row.appendChild(div({style:{flex:1,minWidth:0}},[
+        div({style:{fontSize:"13px",color:st.unlocked?"#e2e8f0":"#64748b",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},[txt(r.text),st.unlocked?span({style:{fontSize:"10px",color:"#22c55e",marginLeft:"6px",fontWeight:700}},"🎉達成"):null]),
+        div({style:{fontSize:"9px",color:"#64748b",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},st.name?`${st.name}（${st.progress}）`:st.progress)
+      ]));
       const del=btn({style:{background:"transparent",border:"none",color:"#334155",cursor:"pointer",fontSize:"14px",flexShrink:0}},"×");
       del.addEventListener('click',(()=>{const id=r.id;return()=>{state.rewards=state.rewards.filter(x=>x.id!==id);saveRewards();render();};})());
       row.appendChild(del); rc.appendChild(row);
     });
-    const form=div({style:{display:"flex",gap:"6px",marginTop:"8px",alignItems:"center"}});
-    const dsel=document.createElement('select'); dsel.className='sel'; dsel.style.cssText="width:74px;flex-shrink:0";
-    STREAK_MILESTONES.forEach(mm=>{const o=document.createElement('option');o.value=mm;o.textContent=`${mm}日`;if(mm===state.newRewardDays)o.selected=true;dsel.appendChild(o);});
-    dsel.addEventListener('change',e=>{state.newRewardDays=parseInt(e.target.value);});
+    // ── 追加フォーム（条件タイプを選べる）──
+    if(!state.newRewardType)state.newRewardType='streak';
+    const typeRow=div({style:{display:"flex",gap:"6px",marginTop:"8px",marginBottom:"6px"}});
+    [['streak','連続日数'],['routine','定期ルーティン'],['goal','目標']].forEach(([k,l])=>{
+      const on=state.newRewardType===k;
+      const b=btn({style:{flex:1,padding:"6px 0",borderRadius:"7px",cursor:"pointer",fontSize:"11px",fontWeight:600,border:`1px solid ${on?"#f472b6":"#334155"}`,background:on?"#f472b622":"transparent",color:on?"#f472b6":"#64748b"}},l);
+      b.addEventListener('click',()=>{state.newRewardType=k;render();});
+      typeRow.appendChild(b);
+    });
+    rc.appendChild(typeRow);
+    const paramRow=div({style:{display:"flex",gap:"6px",marginBottom:"6px",alignItems:"center"}});
+    if(state.newRewardType==='streak'){
+      const dsel=document.createElement('select');dsel.className='sel';dsel.style.cssText="flex:1;min-width:0";
+      STREAK_MILESTONES.forEach(mm=>{const o=document.createElement('option');o.value=mm;o.textContent=`連続${mm}日`;if(mm===(state.newRewardDays||7))o.selected=true;dsel.appendChild(o);});
+      dsel.addEventListener('change',e=>{state.newRewardDays=parseInt(e.target.value);});
+      paramRow.appendChild(dsel);
+    } else if(state.newRewardType==='routine'){
+      if(state.newRewardRoutineUid==null && (state.customTodos||[]).length) state.newRewardRoutineUid=state.customTodos[0].uid;
+      const rsel=document.createElement('select');rsel.className='sel';rsel.style.cssText="flex:1;min-width:0";
+      (state.customTodos||[]).forEach(ct=>{const o=document.createElement('option');o.value=ct.uid;o.textContent=ct.label||"(無題)";if(String(ct.uid)===String(state.newRewardRoutineUid))o.selected=true;rsel.appendChild(o);});
+      if(!(state.customTodos||[]).length){const o=document.createElement('option');o.textContent="(定期ルーティンなし)";rsel.appendChild(o);}
+      rsel.addEventListener('change',e=>{state.newRewardRoutineUid=e.target.value;});
+      paramRow.appendChild(rsel);
+      const cnt=document.createElement('input');cnt.type='number';cnt.min="1";cnt.value=String(state.newRewardRoutineCount||10);cnt.style.cssText="width:60px;flex-shrink:0;padding:8px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit";
+      cnt.addEventListener('input',e=>{state.newRewardRoutineCount=Math.max(1,parseInt(e.target.value)||1);});
+      paramRow.appendChild(cnt);
+      paramRow.appendChild(span({style:{fontSize:"11px",color:"#64748b",flexShrink:0}},"回"));
+    } else {
+      const flat=[]; const walk=(nodes,d)=>{(nodes||[]).forEach(n=>{flat.push({id:n.id,text:"　".repeat(d)+(n.text||"(無題)")});walk(n.children,d+1);});}; walk(state.goalTree,0);
+      if(state.newRewardGoalId==null && flat.length) state.newRewardGoalId=flat[0].id;
+      const gsel=document.createElement('select');gsel.className='sel';gsel.style.cssText="flex:1;min-width:0";
+      flat.forEach(g=>{const o=document.createElement('option');o.value=g.id;o.textContent=g.text;if(g.id===state.newRewardGoalId)o.selected=true;gsel.appendChild(o);});
+      if(!flat.length){const o=document.createElement('option');o.textContent="(目標なし)";gsel.appendChild(o);}
+      gsel.addEventListener('change',e=>{state.newRewardGoalId=e.target.value;});
+      paramRow.appendChild(gsel);
+    }
+    rc.appendChild(paramRow);
+    const form=div({style:{display:"flex",gap:"6px",alignItems:"center"}});
     const rin=document.createElement('input'); rin.type='text'; rin.placeholder="ご褒美（例：好きな物を食べる）"; rin.value=state.newRewardText||"";
     rin.style.cssText="flex:1;min-width:0;padding:8px 10px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit";
     rin.addEventListener('input',e=>{state.newRewardText=e.target.value;});
     const add=btn({style:{padding:"8px 14px",background:"#f472b618",border:"1px solid #f472b6",borderRadius:"8px",color:"#f472b6",fontSize:"14px",fontWeight:700,cursor:"pointer",flexShrink:0}},"＋");
-    add.addEventListener('click',()=>{const t=(state.newRewardText||"").trim();if(!t)return;state.rewards=[...(state.rewards||[]),{id:Date.now(),days:state.newRewardDays||7,text:t}];state.newRewardText="";saveRewards();render();});
-    form.appendChild(dsel);form.appendChild(rin);form.appendChild(add);
+    add.addEventListener('click',()=>{
+      const t=(state.newRewardText||"").trim();if(!t){showToast("ご褒美の内容を入力してください");return;}
+      let trigger;
+      if(state.newRewardType==='routine'){ if(!state.newRewardRoutineUid){showToast("定期ルーティンを選んでください");return;} trigger={type:'routine',uid:state.newRewardRoutineUid,count:state.newRewardRoutineCount||10}; }
+      else if(state.newRewardType==='goal'){ if(!state.newRewardGoalId){showToast("目標を選んでください");return;} trigger={type:'goal',id:state.newRewardGoalId}; }
+      else { trigger={type:'streak',days:state.newRewardDays||7}; }
+      state.rewards=[...(state.rewards||[]),{id:Date.now(),text:t,trigger,days:trigger.type==='streak'?trigger.days:undefined}];
+      state.newRewardText="";saveRewards();render();
+    });
+    form.appendChild(rin);form.appendChild(add);
     rc.appendChild(form);
     wrap.appendChild(rc);
   }
