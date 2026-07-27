@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.06"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.07"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -4922,6 +4922,21 @@ async function runAICoach(kind){
 function saveRewards(){ try{localStorage.setItem(STORAGE_KEY+"_rewards",JSON.stringify(state.rewards));}catch{} }
 // 定期ルーティンの累計達成回数（全日でチェックされた回数）
 function customTodoDoneCount(uid){ let n=0; for(const d in state.todos){ const r=state.todos[d]&&state.todos[d][uid]; if(r&&r.checked)n++; } return n; }
+// 目標ノードが達成済みか（範囲一日目標は当日のdailyDoneで判定）
+function goalNodeDone(g, key){
+  if(typeof isRangeDaily==="function" && isRangeDaily(g)){ const p=pkParse(key)||{}; return dailyGoalDone(g, p.date||(key||"").replace("daily_","")); }
+  return !!g.done || gtAchieved(g);
+}
+// 指定期間タイプで「その期の目標を全部達成した」期(periodKey)の数。
+// 例：daily → 今日の目標を全部達成した日数、weekly → 週間目標を全部達成した週数。
+function goalPeriodAchievedCount(periodType){
+  const keys=new Set();
+  (function walk(nodes){ (nodes||[]).forEach(n=>{ if(n.periodType===periodType && n.periodKey) keys.add(n.periodKey); walk(n.children); }); })(state.goalTree);
+  let cnt=0;
+  keys.forEach(k=>{ const goals=gtCollectByPeriod(periodType,k); if(goals.length && goals.every(g=>goalNodeDone(g,k))) cnt++; });
+  return cnt;
+}
+const GOAL_PERIOD_LABELS2={daily:"今日の目標",weekly:"週間目標",monthly:"月次目標",quarterly:"四半期目標",yearly:"年間目標"};
 // ご褒美のアンロック状況。trigger: {type:'streak',days} | {type:'routine',uid,count} | {type:'goal',id}
 // 旧データ（trigger無し・daysのみ）は連続日数として扱う。
 function rewardStatus(r){
@@ -4931,7 +4946,12 @@ function rewardStatus(r){
     const need=Math.max(1,tr.count||1), cnt=customTodoDoneCount(tr.uid);
     return {unlocked:cnt>=need, badge:`🔁${need}`, progress:cnt>=need?"🎉達成":`${cnt}/${need}回`, name:ct?ct.label:"(削除済み)"};
   }
-  if(tr.type==='goal'){
+  if(tr.type==='goalperiod'){
+    const need=Math.max(1,tr.count||1), cnt=goalPeriodAchievedCount(tr.period);
+    const unit=tr.period==='daily'?"日":"回";
+    return {unlocked:cnt>=need, badge:`🎯${need}`, progress:cnt>=need?"🎉達成":`${cnt}/${need}${unit}`, name:`${GOAL_PERIOD_LABELS2[tr.period]||"目標"}達成`};
+  }
+  if(tr.type==='goal'){ // 旧：特定の目標ノード（互換）
     const f=gtFind(tr.id); const node=f&&f.node; const done=node?(node.done||gtAchieved(node)):false;
     return {unlocked:done, badge:"🎯", progress:done?"🎉達成":"未達成", name:node?(node.text||"(無題)"):"(削除済み)"};
   }
@@ -6099,7 +6119,7 @@ function renderAchievement(vd){
     // ── 追加フォーム（条件タイプを選べる）──
     if(!state.newRewardType)state.newRewardType='streak';
     const typeRow=div({style:{display:"flex",gap:"6px",marginTop:"8px",marginBottom:"6px"}});
-    [['streak','連続日数'],['routine','定期ルーティン'],['goal','目標']].forEach(([k,l])=>{
+    [['streak','連続日数'],['routine','定期ルーティン'],['goalperiod','目標達成']].forEach(([k,l])=>{
       const on=state.newRewardType===k;
       const b=btn({style:{flex:1,padding:"6px 0",borderRadius:"7px",cursor:"pointer",fontSize:"11px",fontWeight:600,border:`1px solid ${on?"#f472b6":"#334155"}`,background:on?"#f472b622":"transparent",color:on?"#f472b6":"#64748b"}},l);
       b.addEventListener('click',()=>{state.newRewardType=k;render();});
@@ -6123,14 +6143,16 @@ function renderAchievement(vd){
       cnt.addEventListener('input',e=>{state.newRewardRoutineCount=Math.max(1,parseInt(e.target.value)||1);});
       paramRow.appendChild(cnt);
       paramRow.appendChild(span({style:{fontSize:"11px",color:"#64748b",flexShrink:0}},"回"));
-    } else {
-      const flat=[]; const walk=(nodes,d)=>{(nodes||[]).forEach(n=>{flat.push({id:n.id,text:"　".repeat(d)+(n.text||"(無題)")});walk(n.children,d+1);});}; walk(state.goalTree,0);
-      if(state.newRewardGoalId==null && flat.length) state.newRewardGoalId=flat[0].id;
-      const gsel=document.createElement('select');gsel.className='sel';gsel.style.cssText="flex:1;min-width:0";
-      flat.forEach(g=>{const o=document.createElement('option');o.value=g.id;o.textContent=g.text;if(g.id===state.newRewardGoalId)o.selected=true;gsel.appendChild(o);});
-      if(!flat.length){const o=document.createElement('option');o.textContent="(目標なし)";gsel.appendChild(o);}
-      gsel.addEventListener('change',e=>{state.newRewardGoalId=e.target.value;});
-      paramRow.appendChild(gsel);
+    } else { // 目標達成（期間×回数/日数）
+      if(!state.newRewardGoalPeriod)state.newRewardGoalPeriod='daily';
+      const psel=document.createElement('select');psel.className='sel';psel.style.cssText="flex:1;min-width:0";
+      [['daily','今日の目標'],['weekly','週間目標'],['monthly','月次目標'],['quarterly','四半期目標'],['yearly','年間目標']].forEach(([v,l])=>{const o=document.createElement('option');o.value=v;o.textContent=l;if(v===state.newRewardGoalPeriod)o.selected=true;psel.appendChild(o);});
+      psel.addEventListener('change',e=>{state.newRewardGoalPeriod=e.target.value;render();});
+      paramRow.appendChild(psel);
+      const cnt=document.createElement('input');cnt.type='number';cnt.min="1";cnt.value=String(state.newRewardGoalCount||(state.newRewardGoalPeriod==='daily'?7:1));cnt.style.cssText="width:60px;flex-shrink:0;padding:8px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit";
+      cnt.addEventListener('input',e=>{state.newRewardGoalCount=Math.max(1,parseInt(e.target.value)||1);});
+      paramRow.appendChild(cnt);
+      paramRow.appendChild(span({style:{fontSize:"11px",color:"#64748b",flexShrink:0}},state.newRewardGoalPeriod==='daily'?"日":"回"));
     }
     rc.appendChild(paramRow);
     const form=div({style:{display:"flex",gap:"6px",alignItems:"center"}});
@@ -6142,7 +6164,7 @@ function renderAchievement(vd){
       const t=(state.newRewardText||"").trim();if(!t){showToast("ご褒美の内容を入力してください");return;}
       let trigger;
       if(state.newRewardType==='routine'){ if(!state.newRewardRoutineUid){showToast("定期ルーティンを選んでください");return;} trigger={type:'routine',uid:state.newRewardRoutineUid,count:state.newRewardRoutineCount||10}; }
-      else if(state.newRewardType==='goal'){ if(!state.newRewardGoalId){showToast("目標を選んでください");return;} trigger={type:'goal',id:state.newRewardGoalId}; }
+      else if(state.newRewardType==='goalperiod'){ trigger={type:'goalperiod',period:state.newRewardGoalPeriod||'daily',count:state.newRewardGoalCount||(state.newRewardGoalPeriod==='daily'?7:1)}; }
       else { trigger={type:'streak',days:state.newRewardDays||7}; }
       state.rewards=[...(state.rewards||[]),{id:Date.now(),text:t,trigger,days:trigger.type==='streak'?trigger.days:undefined}];
       state.newRewardText="";saveRewards();render();
