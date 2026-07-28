@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.09"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.10"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -2676,6 +2676,16 @@ function renderScoreModal(){
       span({style:{fontSize:"9px",color:"#22c55e"}},"絶好調")
     ])
   ]));
+  // 🍺 飲酒欲求（任意）：体調スコアの直下に配置。グラフはアルコールタブで確認できる
+  m.appendChild(h('p',{style:{margin:"0 0 5px",fontSize:"11px",color:"#64748b"}},"🍺 飲酒欲求（任意・1〜10）"));
+  m.appendChild(div({style:{display:"flex",gap:"3px",marginBottom:"4px"}},[1,2,3,4,5,6,7,8,9,10].map(n=>{
+    const col=n>=8?"#ef4444":n>=5?"#f97316":"#eab308";
+    const on=state.editCraving===n;
+    return btn({style:{flex:1,height:"30px",border:"none",borderRadius:"5px",cursor:"pointer",fontSize:"11px",fontWeight:on?700:400,
+      background:on?col:(state.editCraving&&n<=state.editCraving?col+"44":"#0f172a"),color:on?"#fff":"#64748b"},
+      onClick:()=>{ state.editCraving = state.editCraving===n?null:n; render(); }},String(n));
+  })));
+  m.appendChild(div({style:{display:"flex",justifyContent:"space-between",fontSize:"9px",color:"#334155",marginBottom:"12px"}},[span({},"低い"),span({},"高い")]));
   m.appendChild(h('p',{style:{margin:"0 0 5px",fontSize:"11px",color:"#64748b"}},"体調状態（複数可）"));
   m.appendChild(div({style:{display:"flex",flexWrap:"wrap",gap:"4px",marginBottom:"12px"}},SYMPTOMS.map(s=>{
     const on=state.editSymptoms.includes(s);
@@ -2689,16 +2699,6 @@ function renderScoreModal(){
   ta.style.cssText="width:100%;min-height:56px;background:#0a1120;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:12px;padding:8px;resize:none;box-sizing:border-box;font-family:inherit";
   ta.addEventListener('input',e=>{state.editNote=e.target.value;});
   m.appendChild(ta);
-  // 🍺 飲酒欲求（任意）。各時間から入力。グラフはアルコールタブで確認できる
-  m.appendChild(h('p',{style:{margin:"12px 0 5px",fontSize:"11px",color:"#64748b"}},"🍺 飲酒欲求（任意・1〜10）"));
-  m.appendChild(div({style:{display:"flex",gap:"3px"}},[1,2,3,4,5,6,7,8,9,10].map(n=>{
-    const col=n>=8?"#ef4444":n>=5?"#f97316":"#eab308";
-    const on=state.editCraving===n;
-    return btn({style:{flex:1,height:"30px",border:"none",borderRadius:"5px",cursor:"pointer",fontSize:"11px",fontWeight:on?700:400,
-      background:on?col:(state.editCraving&&n<=state.editCraving?col+"44":"#0f172a"),color:on?"#fff":"#64748b"},
-      onClick:()=>{ state.editCraving = state.editCraving===n?null:n; render(); }},String(n));
-  })));
-  m.appendChild(div({style:{display:"flex",justifyContent:"space-between",fontSize:"9px",color:"#334155",marginTop:"3px"}},[span({},"低い"),span({},"高い")]));
   const canSave=!!state.editScore||!!state.editCraving;
   m.appendChild(div({style:{display:"flex",gap:"8px",marginTop:"12px"}},[
     btn({className:"btn-ghost",style:{flex:1},onClick:()=>{state.editHour=null;render();}},"キャンセル"),
