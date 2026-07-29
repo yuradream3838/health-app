@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.15"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.16"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -1239,6 +1239,8 @@ function renderWidgetView(vd,ds){
   openSched.addEventListener('click',()=>{ exitWidget(); state.tab="予定"; state.scheduleSubTab="日"; render(); });
   schedCard.appendChild(openSched);
   wrap.appendChild(schedCard);
+  // 🚱 休肝日◯日達成
+  wrap.appendChild(div({style:{textAlign:"center",marginBottom:"10px"}},[soberBadge()]));
 
   // ── クイック記録（体調・アルコール・食べたもの・射精）──
   {
@@ -3894,6 +3896,8 @@ function planBlockDone(ev, vd){
 // ── 日スケジュール（予定 vs 実際・0〜24時） ──
 function renderDaySchedule(vd,ds,isToday){
   const wrap=div({});
+  // 🚱 休肝日◯日達成（当日のみ・連続日数は今日基準のため）
+  if(isToday) wrap.appendChild(div({style:{textAlign:"center",marginBottom:"8px"}},[soberBadge()]));
   const allEv=getEventsForDate(vd);
   const prevEv=getEventsForDate(addDays(vd,-1)).filter(e=>!e.allDay); // 前日始まりの日跨ぎ予定
   const events=[
@@ -4936,6 +4940,24 @@ async function runAICoach(kind){
 function saveRewards(){ try{localStorage.setItem(STORAGE_KEY+"_rewards",JSON.stringify(state.rewards));}catch{} }
 // 定期ルーティンの累計達成回数（全日でチェックされた回数）
 function customTodoDoneCount(uid){ let n=0; for(const d in state.todos){ const r=state.todos[d]&&state.todos[d][uid]; if(r&&r.checked)n++; } return n; }
+// その日にアルコールを摂取したか（翌日開始の飲酒は翌日側にカウント）
+function dayHasAlcohol(ds){
+  const onDay=(getDaily(ds).drinks||[]).some(dr=>!dr.startNextDay);
+  const fromPrev=(getDaily(addDays(ds,-1)).drinks||[]).some(dr=>dr.startNextDay);
+  return onDay||fromPrev;
+}
+// 休肝日の連続日数（今日から遡って、飲酒のない日が連続する数）
+function alcoholFreeStreak(){
+  let n=0, d=todayStr();
+  for(let i=0;i<400;i++){ if(!dayHasAlcohol(d)){ n++; d=addDays(d,-1); } else break; }
+  return n;
+}
+// 休肝日◯日達成のバッジ（ヴィジェット・予定用）
+function soberBadge(){
+  const n=alcoholFreeStreak();
+  const on=n>=1;
+  return div({style:{display:"inline-flex",alignItems:"center",gap:"6px",padding:"4px 12px",borderRadius:"14px",background:(on?"#22c55e":"#64748b")+"18",border:`1px solid ${(on?"#22c55e":"#64748b")}55`,color:on?"#4ade80":"#94a3b8",fontSize:"12px",fontWeight:700}},`🚱 休肝日 ${n}日達成`);
+}
 // 目標ノードが達成済みか（範囲一日目標は当日のdailyDoneで判定）
 function goalNodeDone(g, key){
   if(typeof isRangeDaily==="function" && isRangeDaily(g)){ const p=pkParse(key)||{}; return dailyGoalDone(g, p.date||(key||"").replace("daily_","")); }
@@ -4959,6 +4981,10 @@ function rewardStatus(r){
     const ct=(state.customTodos||[]).find(c=>String(c.uid)===String(tr.uid));
     const need=Math.max(1,tr.count||1), cnt=customTodoDoneCount(tr.uid);
     return {unlocked:cnt>=need, badge:`🔁${need}`, progress:cnt>=need?"🎉達成":`${cnt}/${need}回`, name:ct?ct.label:"(削除済み)"};
+  }
+  if(tr.type==='sober'){
+    const need=Math.max(1,tr.count||1), cnt=alcoholFreeStreak();
+    return {unlocked:cnt>=need, badge:`🚱${need}`, progress:cnt>=need?"🎉達成":`${cnt}/${need}日`, name:"休肝日連続"};
   }
   if(tr.type==='goalperiod'){
     const need=Math.max(1,tr.count||1), cnt=goalPeriodAchievedCount(tr.period);
@@ -6132,10 +6158,10 @@ function renderAchievement(vd){
     });
     // ── 追加フォーム（条件タイプを選べる）──
     if(!state.newRewardType)state.newRewardType='streak';
-    const typeRow=div({style:{display:"flex",gap:"6px",marginTop:"8px",marginBottom:"6px"}});
-    [['streak','連続日数'],['routine','定期ルーティン'],['goalperiod','目標達成']].forEach(([k,l])=>{
+    const typeRow=div({style:{display:"flex",flexWrap:"wrap",gap:"6px",marginTop:"8px",marginBottom:"6px"}});
+    [['streak','連続日数'],['routine','定期ルーティン'],['goalperiod','目標達成'],['sober','休肝日']].forEach(([k,l])=>{
       const on=state.newRewardType===k;
-      const b=btn({style:{flex:1,padding:"6px 0",borderRadius:"7px",cursor:"pointer",fontSize:"11px",fontWeight:600,border:`1px solid ${on?"#f472b6":"#334155"}`,background:on?"#f472b622":"transparent",color:on?"#f472b6":"#64748b"}},l);
+      const b=btn({style:{flex:"1 1 22%",minWidth:"70px",padding:"6px 0",borderRadius:"7px",cursor:"pointer",fontSize:"11px",fontWeight:600,border:`1px solid ${on?"#f472b6":"#334155"}`,background:on?"#f472b622":"transparent",color:on?"#f472b6":"#64748b"}},l);
       b.addEventListener('click',()=>{state.newRewardType=k;render();});
       typeRow.appendChild(b);
     });
@@ -6157,6 +6183,12 @@ function renderAchievement(vd){
       cnt.addEventListener('input',e=>{state.newRewardRoutineCount=Math.max(1,parseInt(e.target.value)||1);});
       paramRow.appendChild(cnt);
       paramRow.appendChild(span({style:{fontSize:"11px",color:"#64748b",flexShrink:0}},"回"));
+    } else if(state.newRewardType==='sober'){ // 休肝日（連続◯日）
+      paramRow.appendChild(span({style:{fontSize:"12px",color:"#94a3b8",flexShrink:0}},"🚱 休肝日を連続"));
+      const cnt=document.createElement('input');cnt.type='number';cnt.min="1";cnt.value=String(state.newRewardSoberCount||7);cnt.style.cssText="width:64px;flex-shrink:0;padding:8px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit";
+      cnt.addEventListener('input',e=>{state.newRewardSoberCount=Math.max(1,parseInt(e.target.value)||1);});
+      paramRow.appendChild(cnt);
+      paramRow.appendChild(span({style:{fontSize:"12px",color:"#94a3b8",flexShrink:0}},"日達成で"));
     } else { // 目標達成（期間×回数/日数）
       if(!state.newRewardGoalPeriod)state.newRewardGoalPeriod='daily';
       const psel=document.createElement('select');psel.className='sel';psel.style.cssText="flex:1;min-width:0";
@@ -6179,6 +6211,7 @@ function renderAchievement(vd){
       let trigger;
       if(state.newRewardType==='routine'){ if(!state.newRewardRoutineUid){showToast("定期ルーティンを選んでください");return;} trigger={type:'routine',uid:state.newRewardRoutineUid,count:state.newRewardRoutineCount||10}; }
       else if(state.newRewardType==='goalperiod'){ trigger={type:'goalperiod',period:state.newRewardGoalPeriod||'daily',count:state.newRewardGoalCount||(state.newRewardGoalPeriod==='daily'?7:1)}; }
+      else if(state.newRewardType==='sober'){ trigger={type:'sober',count:state.newRewardSoberCount||7}; }
       else { trigger={type:'streak',days:state.newRewardDays||7}; }
       state.rewards=[...(state.rewards||[]),{id:Date.now(),text:t,trigger,days:trigger.type==='streak'?trigger.days:undefined}];
       state.newRewardText="";saveRewards();render();
