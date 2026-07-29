@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.13"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.14"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -1279,7 +1279,10 @@ function renderWidgetView(vd,ds){
       const st=rewardStatus(r);
       const row=div({style:{display:"flex",alignItems:"center",gap:"9px",padding:"6px 0",borderBottom:"1px solid #1e3a5f55"}});
       row.appendChild(div({style:{fontSize:"11px",fontWeight:700,color:st.unlocked?"#22c55e":"#64748b",width:"46px",flexShrink:0,textAlign:"center"}},st.badge));
-      row.appendChild(div({style:{flex:1,minWidth:0,fontSize:"13px",color:st.unlocked?"#e2e8f0":"#64748b",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},r.text));
+      row.appendChild(div({style:{flex:1,minWidth:0}},[
+        div({style:{fontSize:"13px",color:st.unlocked?"#e2e8f0":"#64748b",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},r.text),
+        div({style:{fontSize:"9px",color:"#64748b",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},st.name?`条件: ${st.name}`:`連続${(r.trigger&&r.trigger.days)||r.days||7}日`)
+      ]));
       row.appendChild(div({style:{fontSize:"10px",fontWeight:700,flexShrink:0,color:st.unlocked?"#22c55e":"#64748b"}},st.unlocked?"🎉達成":st.progress));
       c.appendChild(row);
     });
