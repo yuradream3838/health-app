@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.12"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.13"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -1535,8 +1535,7 @@ function renderDailyPanel(vd){
           stepBtn("＋100ml",0.1)
         ]),
         div({style:{display:"flex",gap:"5px"}},[
-          quick("+200ml",0.2),quick("+500ml",0.5),
-          quick("クリア",-cur,"#475569")
+          quick("+200ml",0.2),quick("+500ml",0.5)
         ])
       ]);
     })(),
