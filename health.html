@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.11"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.12"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -4106,15 +4106,20 @@ function renderDaySchedule(vd,ds,isToday){
       }});
       // 完了の目印（右上に小さな✓）
       if(blockDone) block.appendChild(div({style:{position:"absolute",top:"1px",right:"2px",fontSize:"9px",lineHeight:1,color:tcol,opacity:0.9,fontWeight:700}},"✓"));
-      // タイトルは折り返し＋高さに応じて行数をクランプ、狭い/低いブロックはフォント縮小
-      const timeShown = height>34 && !ev.isPoint && lanes===1;
-      const tFont = height<22 ? 9 : (height<34 ? 10 : (lanes>=3 ? 10 : 11));
-      const lineH = tFont*1.18;
+      // タイトルは折り返し＋高さに応じて行数をクランプ。入り切らないときは字を小さくして表示量を増やす（最小8px）
+      const titleText=(ev.isRepeat?"🔁":"")+ev.title+(ev.place?` 📍${ev.place}`:"")+(ev.note?" 📝":"");
+      const longTitle = titleText.length>=14;
+      // 長いタイトルは時刻行を省いてタイトルに高さを回す（なるべく全文を表示）
+      const timeShown = height>34 && !ev.isPoint && lanes===1 && !longTitle;
+      let tFont = height<20 ? 8 : (height<30 ? 9 : (lanes>=3 ? 9 : (lanes===2 ? 10 : 11)));
+      // 長いタイトルはさらに1〜2px小さく（狭い/低いブロックでもなるべく全体を表示、最小8px）
+      if(longTitle && tFont>8) tFont-=1;
+      if(titleText.length>=22 && tFont>8) tFont-=1;
+      const lineH = tFont*1.16;
       const availH = height - 2 - (timeShown ? (tFont+3) : 0);
       const clampLines = Math.max(1, Math.floor(availH/lineH));
-      block.appendChild(div({style:{fontSize:tFont+"px",fontWeight:700,color:tcol,lineHeight:"1.18",wordBreak:"break-word",overflowWrap:"anywhere",overflow:"hidden",
-        display:"-webkit-box",WebkitBoxOrient:"vertical",WebkitLineClamp:String(clampLines)}},
-        (ev.isRepeat?"🔁":"")+ev.title+(ev.place?` 📍${ev.place}`:"")+(ev.note?" 📝":"")));
+      block.appendChild(div({style:{fontSize:tFont+"px",fontWeight:700,color:tcol,lineHeight:"1.16",wordBreak:"break-word",overflowWrap:"anywhere",overflow:"hidden",
+        display:"-webkit-box",WebkitBoxOrient:"vertical",WebkitLineClamp:String(clampLines)}},titleText));
       if(timeShown)block.appendChild(div({style:{fontSize:"10px",color:tcol==="#ffffff"?"#ffffffcc":"#0a1120aa",lineHeight:1.2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},`${Math.floor(sMin/60)}:${String(sMin%60).padStart(2,'0')}〜${Math.floor(eMin/60)}:${String(eMin%60).padStart(2,'0')}`));
       // ドラッグで時間移動（単発の直接予定のみ・0時またぎ以外）
       const movable = onMove && ev.uid!=null && !ev.isRepeat && !ev.isPattern && !ev.customTodo && !ev._tail && !ev.allDay && !ev.endNextDay;
