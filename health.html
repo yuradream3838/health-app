@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.16"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.17"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -1194,12 +1194,15 @@ function renderWidgetView(vd,ds){
 
   // ヘッダー
   const head=div({className:"card",style:{padding:"12px 14px",marginBottom:"10px"}});
-  head.appendChild(div({style:{display:"flex",justifyContent:"space-between",alignItems:"center"}},[
+  head.appendChild(div({style:{display:"flex",justifyContent:"space-between",alignItems:"center",gap:"8px"}},[
     div({},[
       div({style:{fontSize:"16px",fontWeight:800,color:"#e2e8f0"}},`📌 今日`),
       div({style:{fontSize:"12px",color:"#64748b",marginTop:"2px"}},dObj.toLocaleDateString("ja-JP",{month:"long",day:"numeric",weekday:"short"}))
     ]),
-    sh?div({style:{fontSize:"12px",fontWeight:700,color:sh.color,background:sh.color+"22",border:`1px solid ${sh.color}55`,borderRadius:"10px",padding:"4px 12px"}},`💼 ${sh.label}`):null
+    div({style:{display:"flex",alignItems:"center",gap:"6px",flexWrap:"wrap",justifyContent:"flex-end"}},[
+      sh?div({style:{fontSize:"12px",fontWeight:700,color:sh.color,background:sh.color+"22",border:`1px solid ${sh.color}55`,borderRadius:"10px",padding:"4px 12px"}},`💼 ${sh.label}`):null,
+      soberBadge()
+    ])
   ]));
   wrap.appendChild(head);
 
@@ -1239,8 +1242,6 @@ function renderWidgetView(vd,ds){
   openSched.addEventListener('click',()=>{ exitWidget(); state.tab="予定"; state.scheduleSubTab="日"; render(); });
   schedCard.appendChild(openSched);
   wrap.appendChild(schedCard);
-  // 🚱 休肝日◯日達成
-  wrap.appendChild(div({style:{textAlign:"center",marginBottom:"10px"}},[soberBadge()]));
 
   // ── クイック記録（体調・アルコール・食べたもの・射精）──
   {
@@ -3896,8 +3897,6 @@ function planBlockDone(ev, vd){
 // ── 日スケジュール（予定 vs 実際・0〜24時） ──
 function renderDaySchedule(vd,ds,isToday){
   const wrap=div({});
-  // 🚱 休肝日◯日達成（当日のみ・連続日数は今日基準のため）
-  if(isToday) wrap.appendChild(div({style:{textAlign:"center",marginBottom:"8px"}},[soberBadge()]));
   const allEv=getEventsForDate(vd);
   const prevEv=getEventsForDate(addDays(vd,-1)).filter(e=>!e.allDay); // 前日始まりの日跨ぎ予定
   const events=[
@@ -3916,6 +3915,8 @@ function renderDaySchedule(vd,ds,isToday){
     btn({style:{width:"100%",padding:"9px",background:"linear-gradient(135deg,#0ea5e918,#6366f118)",border:"1px solid #6366f1",borderRadius:"8px",color:"#a5b4fc",fontSize:"12px",fontWeight:600,cursor:"pointer"},
       onClick:()=>runAISchedule(vd)},state.aiScheduleLoading?"🤖 提案中...":"🤖 AI提案")
   ]));
+  // 🚱 休肝日◯日達成（AI提案の下・当日のみ。連続日数は今日基準のため）
+  if(isToday) wrap.appendChild(div({style:{textAlign:"center",marginBottom:"10px"}},[soberBadge()]));
 
   // その日のシフトを変更（この日のみ・予定シフトの上書き。実績には触れない）
   {
@@ -4946,10 +4947,12 @@ function dayHasAlcohol(ds){
   const fromPrev=(getDaily(addDays(ds,-1)).drinks||[]).some(dr=>dr.startNextDay);
   return onDay||fromPrev;
 }
-// 休肝日の連続日数（今日から遡って、飲酒のない日が連続する数）
+// 休肝日の連続日数（今日から遡って、飲酒のない日が連続する数）。記録開始日より前は数えない。
 function alcoholFreeStreak(){
+  const dates=(state.dailies||[]).map(d=>d.dateStr).filter(Boolean);
+  const earliest=dates.length?dates.reduce((a,b)=>a<b?a:b):todayStr();
   let n=0, d=todayStr();
-  for(let i=0;i<400;i++){ if(!dayHasAlcohol(d)){ n++; d=addDays(d,-1); } else break; }
+  for(let i=0;i<800;i++){ if(d<earliest) break; if(!dayHasAlcohol(d)){ n++; d=addDays(d,-1); } else break; }
   return n;
 }
 // 休肝日◯日達成のバッジ（ヴィジェット・予定用）
