@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.19"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.20"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -3961,14 +3961,16 @@ function renderDaySchedule(vd,ds,isToday){
 
   // 終日予定＋定期ルーティン一覧（時間指定あり・なし両方をチェックリストとして表示）
   {
+    // 未来の日付では定期ルーティン一覧を表示しない（日をまたぐと表示が増えて煩雑になるため）
+    const _isFuture = vd>todayStr();
     // この日に該当する定期ルーティン（除外した回は除く）。時刻ありは時間順、時刻なしは末尾。
-    const dueCustom=dueCustomTodos(vd)
+    const dueCustom=_isFuture?[]:dueCustomTodos(vd)
       .filter(ct=>!(state.todos[vd]||{})[ct.uid]?.excluded)
       .map(ct=>{ const tt=customTodoTimeFor(ct,vd); return {ct, tt, sort: tt ? (tt.sn?1440:0)+tt.h*60+(tt.m||0) : 1e9}; })
       .sort((a,b)=>a.sort-b.sort);
     // 繰り越しになった定期ルーティン（過去に該当したが未実施のもの）を表示日に繰り越し
     const dueIds=new Set(dueCustom.map(x=>x.ct.uid));
-    const carryCustom=(state.customTodos||[]).filter(ct=>!dueIds.has(ct.uid)).map(ct=>({ct,occ:customTodoOccurrence(ct,vd)})).filter(x=>x.occ&&x.occ.overdue);
+    const carryCustom=_isFuture?[]:(state.customTodos||[]).filter(ct=>!dueIds.has(ct.uid)).map(ct=>({ct,occ:customTodoOccurrence(ct,vd)})).filter(x=>x.occ&&x.occ.overdue);
     // 期日が来たTODO：その日に該当（当日は期日超過の未完了も繰り越して表示）
     const _tds=todayStr();
     const dueTodos=((state.tasks&&state.tasks.todo)||[]).filter(t=>!t.done && t.due && (t.due===vd || (vd===_tds && t.due<_tds)));
