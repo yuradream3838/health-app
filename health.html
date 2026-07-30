@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.18"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.19"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -778,6 +778,22 @@ function div(attrs,children){return h('div',attrs,children);}
 function btn(attrs,children){return h('button',attrs,children);}
 function span(attrs,children){return h('span',attrs,children);}
 function txt(s){return document.createTextNode(String(s??''));}
+// 時刻入力（時計タイプ <input type=time>）。h:m を表示し、変更時 onSet(H,M) を呼ぶ。
+function clockField(h, m, onSet, extraCss){
+  const i=document.createElement('input'); i.type='time';
+  i.value=`${String(h==null?0:h).padStart(2,'0')}:${String(m||0).padStart(2,'0')}`;
+  i.style.cssText="flex:1;min-width:0;padding:8px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:15px;color-scheme:dark;font-family:inherit;box-sizing:border-box;"+(extraCss||"");
+  i.addEventListener('change',e=>{const q=(e.target.value||'').split(':');const H=Number(q[0]),M=Number(q[1]);if(!isNaN(H)&&!isNaN(M))onSet(H,M);});
+  return i;
+}
+// 勤務時刻用（10進の時＝7.5等／空欄＝null）。時計タイプ。
+function workTimeField(val, setter){
+  const i=document.createElement('input'); i.type='time';
+  i.value=(val==null)?"":`${String(Math.floor(val)).padStart(2,'0')}:${String(Math.round((val-Math.floor(val))*60)).padStart(2,'0')}`;
+  i.style.cssText="width:100%;padding:7px 6px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:14px;color-scheme:dark;font-family:inherit;box-sizing:border-box";
+  i.addEventListener('change',e=>{ const v=e.target.value; if(!v){setter(null);return;} const q=v.split(':'); const H=Number(q[0]),M=Number(q[1]); if(!isNaN(H)&&!isNaN(M)) setter(H+M/60); });
+  return i;
+}
 
 // ═══════════════════════════════════════════════════
 // BACグラフ（Canvas）
@@ -1576,9 +1592,9 @@ function renderDailyPanel(vd){
         ]);
       })(),
       div({style:{display:"flex",alignItems:"center",gap:"8px",marginBottom:"6px"}},[
-        div({style:{flex:1}},[div({style:{fontSize:"10px",color:"#64748b",marginBottom:"3px"}},"出勤"),mkSel("workStart",d.workStart,hOpts)]),
+        div({style:{flex:1}},[div({style:{fontSize:"10px",color:"#64748b",marginBottom:"3px"}},"出勤"),workTimeField(d.workStart,v=>{setDaily(vd,{workStart:v});render();})]),
         span({style:{color:"#475569",marginTop:"14px"}},"→"),
-        div({style:{flex:1}},[div({style:{fontSize:"10px",color:"#64748b",marginBottom:"3px"}},"退勤"),mkSel("workEnd",d.workEnd,hOpts)])
+        div({style:{flex:1}},[div({style:{fontSize:"10px",color:"#64748b",marginBottom:"3px"}},"退勤"),workTimeField(d.workEnd,v=>{setDaily(vd,{workEnd:v});render();})])
       ]),
       div({style:{display:"flex",alignItems:"center",gap:"8px"}},[
         span({style:{fontSize:"11px",color:"#94a3b8"}},"残業"),
@@ -3530,14 +3546,12 @@ function renderPlanPatternPanel(){
     box.appendChild(linkRow);
     // 時刻
     const timeRow=(getH1,getM1,getH2,getM2,set)=>{
-      const r=div({style:{display:"flex",gap:"4px",alignItems:"center",marginBottom:"5px",fontSize:"11px",color:"#64748b"}});
-      r.appendChild(span({},"開始"));
-      r.appendChild(mkSel2(getH1(),Array.from({length:24},(_,i)=>i),v=>`${v}時`,v=>set({startH:v})));
-      r.appendChild(mkSel2(getM1(),MIN,v=>`${String(v).padStart(2,'0')}分`,v=>set({startM:v})));
-      r.appendChild(span({style:{margin:"0 2px"}},"〜"));
-      r.appendChild(span({},"終了"));
-      r.appendChild(mkSel2(getH2(),Array.from({length:24},(_,i)=>i),v=>`${v}時`,v=>set({endH:v})));
-      r.appendChild(mkSel2(getM2(),MIN,v=>`${String(v).padStart(2,'0')}分`,v=>set({endM:v})));
+      const r=div({style:{display:"flex",gap:"6px",alignItems:"center",marginBottom:"5px",fontSize:"11px",color:"#64748b"}});
+      r.appendChild(span({style:{flexShrink:0}},"開始"));
+      r.appendChild(clockField(getH1(),getM1(),(H,M)=>set({startH:H,startM:M})));
+      r.appendChild(span({style:{margin:"0 2px",flexShrink:0}},"〜"));
+      r.appendChild(span({style:{flexShrink:0}},"終了"));
+      r.appendChild(clockField(getH2(),getM2(),(H,M)=>set({endH:H,endM:M})));
       return r;
     };
     if(p.byShift){
@@ -4695,15 +4709,8 @@ function renderAddEventModal(vd){
   const mkT=(label,getH,getM,setH,setM)=>{
     const w2=div({style:{marginBottom:"12px"}});
     w2.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"5px"}},label));
-    const row=document.createElement('div');row.style.cssText="display:flex;gap:8px;align-items:center";
-    const sH=document.createElement('select');sH.className='sel';
-    const sM=document.createElement('select');sM.className='sel';
-    Array.from({length:24},(_,i)=>{const o=document.createElement('option');o.value=i;o.textContent=`${String(i).padStart(2,'0')}時`;if(i===getH())o.selected=true;sH.appendChild(o);});
-    [0,5,10,15,20,25,30,35,40,45,50,55].forEach(i=>{const o=document.createElement('option');o.value=i;o.textContent=`${String(i).padStart(2,'0')}分`;if(i===getM())o.selected=true;sM.appendChild(o);});
-    sH.addEventListener('change',e=>setH(Number(e.target.value)));
-    sM.addEventListener('change',e=>setM(Number(e.target.value)));
-    row.appendChild(sH);row.appendChild(span({style:{color:"#475569",fontWeight:700}},"："));row.appendChild(sM);
-    w2.appendChild(row);return w2;
+    w2.appendChild(clockField(getH(),getM(),(H,M)=>{setH(H);setM(M);}));
+    return w2;
   };
   // 終日（時間指定なし）トグル
   const adBtn=btn({style:{width:"100%",padding:"8px",marginBottom:"12px",borderRadius:"8px",cursor:"pointer",fontSize:"12px",fontWeight:600,
@@ -5925,9 +5932,7 @@ function renderAddDrinkModal(vd){
   m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"6px"}},"飲み始め時刻"));
   const mkSel2=(field,value,opts)=>{const s=document.createElement('select');s.className='sel';opts.forEach(({v,l})=>{const o=document.createElement('option');o.value=v;o.textContent=l;if(v===value)o.selected=true;s.appendChild(o);});s.addEventListener('change',e=>{state.newDrink={...state.newDrink,[field]:Number(e.target.value)};});return s;};
   m.appendChild(div({style:{display:"flex",gap:"8px",alignItems:"center",marginBottom:"10px"}},[
-    mkSel2("hour",nd.hour,Array.from({length:24},(_,i)=>({v:i,l:`${String(i).padStart(2,"0")}時`}))),
-    span({style:{color:"#475569"}},"："),
-    mkSel2("min",nd.min,Array.from({length:60},(_,i)=>({v:i,l:`${String(i).padStart(2,"0")}分`})))
+    clockField(nd.hour,nd.min,(H,M)=>{state.newDrink={...state.newDrink,hour:H,min:M};})
   ]));
   // 翌日トグル
   (()=>{
@@ -5969,11 +5974,8 @@ function renderEditEndModal(vd){
   const m=div({className:"modal-box"});
   bg.addEventListener('click',()=>{state.modal=null;render();});m.addEventListener('click',e=>e.stopPropagation());
   m.appendChild(div({style:{fontSize:"15px",fontWeight:700,color:"#e2e8f0",marginBottom:"16px"}},"🍵 飲み終わり時刻を編集"));
-  const mkSel3=(field,value,opts)=>{const s=document.createElement('select');s.className='sel';opts.forEach(({v,l})=>{const o=document.createElement('option');o.value=v;o.textContent=l;if(v===value)o.selected=true;s.appendChild(o);});s.addEventListener('change',e=>{if(field==="h")state.editEndH=Number(e.target.value);else state.editEndM=Number(e.target.value);});return s;};
   m.appendChild(div({style:{display:"flex",gap:"10px",alignItems:"center",marginBottom:"20px"}},[
-    mkSel3("h",state.editEndH,Array.from({length:24},(_,i)=>({v:i,l:`${String(i).padStart(2,"0")}時`}))),
-    span({style:{color:"#475569",fontSize:"18px",fontWeight:700}},"："),
-    mkSel3("m",state.editEndM,Array.from({length:60},(_,i)=>({v:i,l:`${String(i).padStart(2,"0")}分`})))
+    clockField(state.editEndH,state.editEndM,(H,M)=>{state.editEndH=H;state.editEndM=M;})
   ]));
   m.appendChild(div({style:{display:"flex",gap:"8px"}},[
     btn({className:"btn-ghost",style:{flex:1},onClick:()=>{state.modal=null;render();}},"キャンセル"),
@@ -7420,15 +7422,7 @@ function renderAddNapModal(vd,isEdit){
   const mkTimeSel=(label,getH,getM,setH,setM)=>{
     const wrap2=div({style:{marginBottom:"12px"}});
     wrap2.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"5px"}},label));
-    const row=document.createElement('div');row.style.cssText="display:flex;gap:8px;align-items:center";
-    const selH=document.createElement('select');selH.className='sel';
-    const selM=document.createElement('select');selM.className='sel';
-    Array.from({length:24},(_,i)=>{const o=document.createElement('option');o.value=i;o.textContent=`${String(i).padStart(2,'0')}時`;if(i===getH())o.selected=true;selH.appendChild(o);});
-    Array.from({length:60},(_,i)=>{const o=document.createElement('option');o.value=i;o.textContent=`${String(i).padStart(2,'0')}分`;if(i===getM())o.selected=true;selM.appendChild(o);});
-    selH.addEventListener('change',e=>setH(Number(e.target.value)));
-    selM.addEventListener('change',e=>setM(Number(e.target.value)));
-    row.appendChild(selH);row.appendChild(span({style:{color:"#475569",fontWeight:700}},"："));row.appendChild(selM);
-    wrap2.appendChild(row);
+    wrap2.appendChild(clockField(getH(),getM(),(H,M)=>{setH(H);setM(M);}));
     return wrap2;
   };
 
@@ -7476,18 +7470,9 @@ function renderAddEjacModal(vd){
 
   // 時刻
   m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"5px"}},"時刻"));
-  const selH=document.createElement('select');selH.className='sel';
-  const selM=document.createElement('select');selM.className='sel';
-  Array.from({length:24},(_,i)=>{const o=document.createElement('option');o.value=i;o.textContent=`${String(i).padStart(2,'0')}時`;if(i===state.newEjacH)o.selected=true;selH.appendChild(o);});
-  Array.from({length:60},(_,i)=>{const o=document.createElement('option');o.value=i;o.textContent=`${String(i).padStart(2,'0')}分`;if(i===state.newEjacM)o.selected=true;selM.appendChild(o);});
-  selH.addEventListener('change',e=>{state.newEjacH=Number(e.target.value);});
-  selM.addEventListener('change',e=>{state.newEjacM=Number(e.target.value);});
-  const timeRow=document.createElement('div');
-  timeRow.style.cssText="display:flex;gap:8px;align-items:center;margin-bottom:14px";
-  timeRow.appendChild(selH);
-  timeRow.appendChild(span({style:{color:"#475569",fontWeight:700}},"："));
-  timeRow.appendChild(selM);
-  m.appendChild(timeRow);
+  m.appendChild(div({style:{display:"flex",gap:"8px",alignItems:"center",marginBottom:"14px"}},[
+    clockField(state.newEjacH,state.newEjacM,(H,M)=>{state.newEjacH=H;state.newEjacM=M;})
+  ]));
 
   // タグ選択
   m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"7px"}},"タグ（任意）"));
@@ -7523,15 +7508,7 @@ function renderEditSessionModal(vd){
   const mkTimeSel2=(label,val,onChange)=>{
     const wrap2=div({style:{marginBottom:"12px"}});
     wrap2.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"5px"}},label));
-    const row2=div({style:{display:"flex",gap:"8px",alignItems:"center"}});
-    const selH=document.createElement('select');selH.className='sel';
-    const selM=document.createElement('select');selM.className='sel';
-    Array.from({length:24},(_,i)=>{const o=document.createElement('option');o.value=i;o.textContent=`${String(i).padStart(2,'0')}時`;if(i===val.h)o.selected=true;selH.appendChild(o);});
-    Array.from({length:60},(_,i)=>{const o=document.createElement('option');o.value=i;o.textContent=`${String(i).padStart(2,'0')}分`;if(i===val.m)o.selected=true;selM.appendChild(o);});
-    selH.addEventListener('change',e=>onChange({...val,h:Number(e.target.value)}));
-    selM.addEventListener('change',e=>onChange({...val,m:Number(e.target.value)}));
-    row2.appendChild(selH);row2.appendChild(span({style:{color:"#475569",fontWeight:700}},"："));row2.appendChild(selM);
-    wrap2.appendChild(row2);
+    wrap2.appendChild(clockField(val.h,val.m,(H,M)=>onChange({...val,h:H,m:M})));
     return wrap2;
   };
 
@@ -7913,17 +7890,7 @@ function renderEditTimerModal(vd){
     const wrap2=div({style:{marginBottom:"12px"}},[
       div({style:{fontSize:"11px",color:"#64748b",marginBottom:"5px"}},label)
     ]);
-    const row2=div({style:{display:"flex",gap:"8px",alignItems:"center"}});
-    const selH=document.createElement('select');selH.className='sel';
-    const selM=document.createElement('select');selM.className='sel';
-    Array.from({length:24},(_,i)=>{const o=document.createElement('option');o.value=i;o.textContent=`${String(i).padStart(2,'0')}時`;if(i===val.h)o.selected=true;selH.appendChild(o);});
-    Array.from({length:60},(_,i)=>{const o=document.createElement('option');o.value=i;o.textContent=`${String(i).padStart(2,'0')}分`;if(i===val.m)o.selected=true;selM.appendChild(o);});
-    selH.addEventListener('change',e=>onChange({...val,h:Number(e.target.value)}));
-    selM.addEventListener('change',e=>onChange({...val,m:Number(e.target.value)}));
-    row2.appendChild(selH);
-    row2.appendChild(span({style:{color:"#475569",fontWeight:700}},"："));
-    row2.appendChild(selM);
-    wrap2.appendChild(row2);
+    wrap2.appendChild(clockField(val.h,val.m,(H,M)=>onChange({...val,h:H,m:M})));
     return wrap2;
   };
 
