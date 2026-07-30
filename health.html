@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.20"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.21"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -3062,7 +3062,7 @@ function openAddEvent(vd, startH, startM){
   state.newEvEndH=(sh+1)%24;state.newEvEndM=sm;state.newEvEndNextDay=(sh+1)>=24;
   state.newEvRepeat="none";state.newEvColor=EV_COLORS[0];
   state.newEvWeekdays=[parseDS(vd).getDay()];
-  state.newEvFromTask=null;state.newEvAllDay=false;state.newEvPlace="";state.newEvNote="";
+  state.newEvFromTask=null;state.newEvAllDay=false;state.newEvPlace="";state.newEvNote="";state.newEvPreDays=0;
   render();
 }
 // 実績（予定外の突発的な行動を含む）の追加・編集
@@ -3752,7 +3752,7 @@ function collectSearchItems(){
           state.modal="addEvent";state.editEventUid=e.uid;state.editEventIsRepeat=false;
           state.newEvTitle=e.title;state.newEvH=e.startH;state.newEvM=e.startM;state.newEvEndH=e.endH;state.newEvEndM=e.endM;
           state.newEvRepeat="none";state.newEvColor=e.color||EV_COLORS[0];state.newEvWeekdays=[parseDS(dsk).getDay()];state.newEvDate=dsk;
-          state.newEvFromTask=e.fromTask||null;state.newEvAllDay=!!e.allDay;state.newEvPlace=e.place||"";state.newEvNote=e.note||"";state.editScope="this";render(); }});
+          state.newEvFromTask=e.fromTask||null;state.newEvAllDay=!!e.allDay;state.newEvPlace=e.place||"";state.newEvNote=e.note||"";state.newEvPreDays=e.preDays||0;state.editScope="this";render(); }});
     });
   });
   // 2. 予定（繰り返し）
@@ -3766,7 +3766,7 @@ function collectSearchItems(){
         state.newEvTitle=e.title;state.newEvH=e.startH;state.newEvM=e.startM;state.newEvEndH=e.endH;state.newEvEndM=e.endM;
         state.newEvRepeat=e.repeatType||"weekly";state.newEvColor=e.color||EV_COLORS[0];
         state.newEvWeekdays=(e.weekdays&&e.weekdays.length)?[...e.weekdays]:[parseDS(e.startDate||todayStr()).getDay()];state.newEvDate=todayStr();
-        state.newEvFromTask=e.fromTask||null;state.newEvAllDay=!!e.allDay;state.newEvPlace=e.place||"";state.newEvNote=e.note||"";state.editScope="this";render(); }});
+        state.newEvFromTask=e.fromTask||null;state.newEvAllDay=!!e.allDay;state.newEvPlace=e.place||"";state.newEvNote=e.note||"";state.newEvPreDays=e.preDays||0;state.editScope="this";render(); }});
   });
   // 3. 定期ルーティン
   (state.customTodos||[]).forEach(ct=>{
@@ -3974,9 +3974,24 @@ function renderDaySchedule(vd,ds,isToday){
     // 期日が来たTODO：その日に該当（当日は期日超過の未完了も繰り越して表示）
     const _tds=todayStr();
     const dueTodos=((state.tasks&&state.tasks.todo)||[]).filter(t=>!t.done && t.due && (t.due===vd || (vd===_tds && t.due<_tds)));
-    if(allDayEvents.length||dueCustom.length||carryCustom.length||dueTodos.length){
+    // 🔔 事前表示：この先 preDays 日以内に控えている直接入力の予定を上部に表示
+    const preItems=[];
+    for(let off=1; off<=90; off++){
+      const dd=addDays(vd,off);
+      (state.schedule[dd]||[]).forEach(e=>{ if(e.preDays && e.preDays>=off){ preItems.push({title:e.title,color:e.color||EV_COLORS[0],daysAhead:off,dd,uid:e.uid,allDay:!!e.allDay,place:e.place,note:e.note}); } });
+    }
+    preItems.sort((a,b)=>a.daysAhead-b.daysAhead);
+    if(allDayEvents.length||dueCustom.length||carryCustom.length||dueTodos.length||preItems.length){
       const ad=div({className:"card",style:{padding:"8px 10px",marginBottom:"8px"}});
       ad.appendChild(div({style:{fontSize:"10px",fontWeight:700,color:"#94a3b8",marginBottom:"6px"}},"📌 終日・定期ルーティン・TODO"));
+      // 事前表示（この先の予定の予告）
+      preItems.forEach(p=>{
+        const row=div({style:{display:"flex",alignItems:"center",gap:"8px",padding:"4px 2px",cursor:"pointer"}});
+        row.appendChild(span({style:{flexShrink:0,fontSize:"10px",fontWeight:700,padding:"1px 6px",borderRadius:"8px",color:"#a5b4fc",background:"#6366f11f",border:"1px solid #6366f155"}},`🔔${p.daysAhead}日後`));
+        row.appendChild(div({style:{flex:1,fontSize:"12px",color:"#c7d2fe",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},`${p.title}${p.place?` 📍${p.place}`:""}${p.note?" 📝":""}`));
+        row.addEventListener('click',(()=>{const d=p.dd;return()=>{state.viewDate=d;render();};})());
+        ad.appendChild(row);
+      });
       allDayEvents.forEach(ev=>{
         const c=ev.color||EV_COLORS[0];
         const chip=div({style:{display:"flex",alignItems:"center",gap:"6px",padding:"6px 10px",background:c,border:`1px solid ${c}`,borderRadius:"6px",marginBottom:"4px",cursor:"pointer"}},[
@@ -3987,7 +4002,7 @@ function renderDaySchedule(vd,ds,isToday){
           state.newEvTitle=e2.title;state.newEvH=e2.startH||9;state.newEvM=e2.startM||0;state.newEvEndH=e2.endH||10;state.newEvEndM=e2.endM||0;
           state.newEvRepeat=e2.isRepeat?e2.repeatType:"none";state.newEvColor=e2.color||EV_COLORS[0];
           state.newEvWeekdays=(e2.weekdays&&e2.weekdays.length)?[...e2.weekdays]:[parseDS(e2.startDate||vd).getDay()];state.newEvDate=vd;
-          state.newEvFromTask=e2.fromTask||null;state.newEvAllDay=true;state.newEvPlace=e2.place||"";state.newEvNote=e2.note||"";state.editScope="this";render();
+          state.newEvFromTask=e2.fromTask||null;state.newEvAllDay=true;state.newEvPlace=e2.place||"";state.newEvNote=e2.note||"";state.newEvPreDays=e2.preDays||0;state.editScope="this";render();
         };})());
         ad.appendChild(chip);
       });
@@ -4208,7 +4223,7 @@ function renderDaySchedule(vd,ds,isToday){
     state.newEvWeekdays=(ev.weekdays&&ev.weekdays.length)?[...ev.weekdays]:[parseDS(ev.startDate||vd).getDay()];
     state.newEvFromTask=ev.fromTask||null;
     state.newEvAllDay=!!ev.allDay;
-    state.newEvPlace=ev.place||"";state.newEvNote=ev.note||"";
+    state.newEvPlace=ev.place||"";state.newEvNote=ev.note||"";state.newEvPreDays=ev.preDays||0;
     state.editScope="this";
     render();
   },(ev,newStartMin,durMin)=>{
@@ -4708,6 +4723,18 @@ function renderAddEventModal(vd){
   noteInp.addEventListener('input',e=>{state.newEvNote=e.target.value;});
   m.appendChild(noteInp);
 
+  // 🔔 事前表示（◯日前から予定の上に表示。0＝なし）
+  m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"5px"}},"🔔 事前表示（何日前から予定上部に表示するか・0でなし）"));
+  {
+    const preRow=div({style:{display:"flex",alignItems:"center",gap:"8px",marginBottom:"12px"}});
+    const pin=document.createElement('input');pin.type='number';pin.min="0";pin.value=String(Math.max(0,parseInt(state.newEvPreDays)||0));
+    pin.style.cssText="width:80px;padding:9px 10px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:14px;font-family:inherit";
+    pin.addEventListener('input',e=>{state.newEvPreDays=Math.max(0,parseInt(e.target.value)||0);});
+    preRow.appendChild(pin);
+    preRow.appendChild(span({style:{fontSize:"12px",color:"#94a3b8"}},"日前から表示"));
+    m.appendChild(preRow);
+  }
+
   const mkT=(label,getH,getM,setH,setM)=>{
     const w2=div({style:{marginBottom:"12px"}});
     w2.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"5px"}},label));
@@ -4855,7 +4882,8 @@ function renderAddEventModal(vd){
         if(!state.newEvTitle.trim()){alert("タイトルを入力してください");return;}
         const ft=state.newEvFromTask||null;
         const evPlace=(state.newEvPlace||"").trim(), evNote=(state.newEvNote||"").trim();
-        const evData={title:state.newEvTitle.trim(),startH:state.newEvH,startM:state.newEvM,endH:state.newEvEndH,endM:state.newEvEndM,endNextDay:!!state.newEvEndNextDay,color:state.newEvColor,allDay:!!state.newEvAllDay,...(evPlace?{place:evPlace}:{}),...(evNote?{note:evNote}:{}),...(ft?{fromTask:ft}:{})};
+        const evPre=Math.max(0,parseInt(state.newEvPreDays)||0);
+        const evData={title:state.newEvTitle.trim(),startH:state.newEvH,startM:state.newEvM,endH:state.newEvEndH,endM:state.newEvEndM,endNextDay:!!state.newEvEndNextDay,color:state.newEvColor,allDay:!!state.newEvAllDay,...(evPlace?{place:evPlace}:{}),...(evNote?{note:evNote}:{}),...(ft?{fromTask:ft}:{}),...(evPre>0?{preDays:evPre}:{})};
         const targetDate=isRepEdit?vd:(state.newEvDate||vd);
         const isNone=state.newEvRepeat==="none";
         const newWds=isW(state.newEvRepeat)?((state.newEvWeekdays&&state.newEvWeekdays.length)?[...state.newEvWeekdays].sort((a,b)=>a-b):[parseDS(targetDate).getDay()]):null;
