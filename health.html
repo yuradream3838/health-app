@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.17"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.18"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -3158,8 +3158,11 @@ function getPlannedExtras(vd){
       const s=Math.max(0,startAbs), e=Math.min(1440,endAbs);
       if(e<=s)continue;                                // vd に掛からない
       const ovObj=(getDaily(D).patternOv||{})[p.uid];
+      // このパターンが「終わる日」（＝起床する日）。0時をまたぐ睡眠は所有日の翌日に起床する。
+      const endMin=t.eH*60+(t.eM||0), startMin=t.sH*60+(t.sM||0);
+      const wakeDate=addD(D, (t.nextDay?1:0)+(endMin<=startMin?1:0));
       out.push({title:p.title,color:p.color||"#38bdf8",startH:Math.floor(s/60),startM:s%60,endH:Math.floor(e/60),endM:e%60,
-        isPattern:true,patternUid:p.uid,oSH:t.sH,oSM:t.sM,oEH:t.eH,oEM:t.eM,oNext:!!t.nextDay,ovDate:D,ovDay:!!(ovObj&&ovObj.startH!=null)});
+        isPattern:true,patternUid:p.uid,oSH:t.sH,oSM:t.sM,oEH:t.eH,oEM:t.eM,oNext:!!t.nextDay,ovDate:D,wakeDate,ovDay:!!(ovObj&&ovObj.startH!=null)});
     }
   });
   // たまにやること（カスタムTODO）で時刻設定があるものは、その日の予定(左)に表示。
@@ -3890,7 +3893,10 @@ function eventReflected(ev, vd){
 function planBlockDone(ev, vd){
   if(ev.customTodo) return !!(((state.todos[ev.ctDate||vd]||{})[ev.ctUid])||{}).checked;
   if(ev.shiftBlock){ const d=getDaily(vd); return d.workStart!=null && d.workEnd!=null; }
-  if(ev.isPattern){ const pp=(state.planPatterns||[]).find(x=>x.uid===ev.patternUid); return pp?patternLinkDone(pp,vd):false; }
+  if(ev.isPattern){ const pp=(state.planPatterns||[]).find(x=>x.uid===ev.patternUid); if(!pp)return false;
+    // 起床連動は「そのパターンが終わる日（起床する日）」の起床時刻で判定（当日開始の睡眠を誤ってグレーにしない）
+    const day = (pp.linkRoutine&&pp.linkRoutine.t==='wake') ? (ev.wakeDate||vd) : vd;
+    return patternLinkDone(pp,day); }
   if(ev.uid!=null && !ev._tail) return eventReflected(ev,vd);
   return false;
 }
