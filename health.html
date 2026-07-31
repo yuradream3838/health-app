@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.22"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.23"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -1786,7 +1786,9 @@ function isRangeDaily(n){ const s=dailyGoalStart(n); return !!(s && n.dailyEnd &
 function gtDailyActive(n, vd){ const s=dailyGoalStart(n); if(!s)return false; const e=(n.dailyEnd&&n.dailyEnd>s)?n.dailyEnd:s; return vd>=s && vd<=e; }
 function gtCollectDaily(vd, list=state.goalTree, out=[]){ (list||[]).forEach(n=>{ if(gtDailyActive(n,vd))out.push(n); if(n.children&&n.children.length)gtCollectDaily(vd,n.children,out); }); return out; }
 function dailyGoalDone(n, vd){ return isRangeDaily(n) ? !!(n.dailyDone&&n.dailyDone[vd]) : !!n.done; }
-function setDailyGoalDone(n, vd, val){ if(isRangeDaily(n)){ const f=gtFind(n.id); if(f){ const dd={...(f.node.dailyDone||{})}; if(val)dd[vd]=true; else delete dd[vd]; f.node.dailyDone=dd; saveGoalTree(); } } else { gtUpdate(n.id,{done:val}); } }
+function setDailyGoalDone(n, vd, val){ if(isRangeDaily(n)){ const f=gtFind(n.id); if(f){ const dd={...(f.node.dailyDone||{})}; if(val)dd[vd]=new Date().toISOString(); else delete dd[vd]; f.node.dailyDone=dd; saveGoalTree(); } } else { setGoalDone(n.id,val); } }
+// 目標の達成状態を切替。達成時は達成時刻(doneAt)を記録し、予定の「実績」に達成マーカーとして表示できるようにする。
+function setGoalDone(id, val){ gtUpdate(id, val?{done:true,doneAt:new Date().toISOString()}:{done:false,doneAt:null}); }
 function dailyRangeLabel(n){ const s=dailyGoalStart(n); if(!s||!isRangeDaily(n))return ""; const f=x=>{const p=x.split('-');return `${parseInt(p[1])}/${parseInt(p[2])}`;}; return `📅 ${f(s)}〜${f(n.dailyEnd)}`; }
 // 達成済みか（葉なら done、親なら全下位が達成）
 function gtAchieved(n){ const p=gtProgress(n); return p.total>0 && p.done===p.total; }
@@ -1939,7 +1941,7 @@ function renderGoalTreeNode(node, depth){
   // チェック
   const cb=btn({style:{width:"20px",height:"20px",flexShrink:0,borderRadius:"5px",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"12px",color:"#fff",
     border:`2px solid ${node.done?"#22c55e":"#334155"}`,background:node.done?"#22c55e":"transparent"}},node.done?"✓":"");
-  cb.addEventListener('click',()=>{gtUpdate(node.id,{done:!node.done});render();});
+  cb.addEventListener('click',()=>{setGoalDone(node.id,!node.done);render();});
   row.appendChild(cb);
   // テキスト（タップで編集）
   const label=div({style:{flex:1,minWidth:0,cursor:"pointer"}});
@@ -2081,6 +2083,27 @@ function renderGoalTreeModal(){
   noteTa.value=m0.note||"";noteTa.placeholder="進捗・気づきをメモ...";
   noteTa.addEventListener('input',e=>{state.goalTreeModal.note=e.target.value;});
   m.appendChild(noteTa);
+  // 目標を予定へ（この目標を予定タブのスケジュールに追加する）
+  if(m0.mode==="edit"){
+    m.appendChild(btn({style:{width:"100%",padding:"10px",marginBottom:"10px",background:"#0ea5e918",border:"1px solid #0ea5e955",borderRadius:"8px",color:"#38bdf8",fontSize:"13px",fontWeight:600,cursor:"pointer"},
+      onClick:()=>{
+        const text=(state.goalTreeModal.text||"").trim()||"目標";
+        const f=gtFind(m0.id); const node=f&&f.node;
+        let target=state.viewDate||todayStr();
+        if(node&&node.periodType==="daily"){ const ds=dailyGoalStart(node); if(ds)target=ds; } // 一日目標はその日へ
+        const now=new Date();
+        state.goalTreeModal=null;
+        state.tab="予定"; state.scheduleSubTab="日"; state.widget=false; state.viewDate=target;
+        state.modal="addEvent"; state.editEventUid=null; state.editEventIsRepeat=false;
+        state.newEvDate=target; state.newEvTitle="🎯 "+text;
+        state.newEvH=now.getHours(); state.newEvM=0;
+        state.newEvEndH=Math.min(23,now.getHours()+1); state.newEvEndM=0; state.newEvEndNextDay=false;
+        state.newEvRepeat="none"; state.newEvColor=EV_COLORS[0];
+        state.newEvWeekdays=[parseDS(target).getDay()];
+        state.newEvFromTask=null; state.newEvAllDay=false; state.newEvPlace=""; state.newEvNote=""; state.newEvPreDays=0;
+        render();
+      }},"📅 この目標を予定に追加"));
+  }
   const btns=[];
   if(m0.mode==="edit"){
     btns.push(btn({style:{padding:"9px 12px",background:"transparent",border:"1px solid #ef444455",borderRadius:"8px",color:"#f87171",cursor:"pointer",fontSize:"12px",fontWeight:600},
@@ -2181,7 +2204,7 @@ function renderGoals(vd, ds){
     const head=div({style:{display:"flex",alignItems:"center",gap:"8px"}});
     const cb=btn({style:{width:"22px",height:"22px",flexShrink:0,borderRadius:"6px",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"13px",color:"#fff",
       border:`2px solid ${done?"#22c55e":"#334155"}`,background:done?"#22c55e":"transparent"}},done?"✓":"");
-    cb.addEventListener('click',()=>{ if(range)setDailyGoalDone(n,vd,!done); else gtUpdate(n.id,{done:!n.done}); render(); });
+    cb.addEventListener('click',()=>{ if(range)setDailyGoalDone(n,vd,!done); else setGoalDone(n.id,!n.done); render(); });
     head.appendChild(cb);
     const tx=div({style:{flex:1,minWidth:0,cursor:"pointer"}},[
       carriedLabel?div({style:{fontSize:"9px",color:"#fb923c",fontWeight:700,marginBottom:"2px"}},`🔴 繰り越し（${carriedLabel}・未達成）`):null,
@@ -2266,7 +2289,7 @@ function renderGoalPeriodModal(){
     const row=div({style:{display:"flex",alignItems:"center",gap:"8px",padding:"8px",background:"#0f172a",borderRadius:"8px",marginBottom:"6px"}});
     const cb=btn({style:{width:"22px",height:"22px",flexShrink:0,borderRadius:"6px",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"13px",color:"#fff",
       border:`2px solid ${done?"#22c55e":"#334155"}`,background:done?"#22c55e":"transparent"}},done?"✓":"");
-    cb.addEventListener('click',(()=>{const nn=n,d=done;return()=>{ if(range)setDailyGoalDone(nn,vd,!d); else gtUpdate(nn.id,{done:!d}); render(); };})());
+    cb.addEventListener('click',(()=>{const nn=n,d=done;return()=>{ if(range)setDailyGoalDone(nn,vd,!d); else setGoalDone(nn.id,!d); render(); };})());
     row.appendChild(cb);
     const tx=div({style:{flex:1,minWidth:0,cursor:"pointer"}},[
       div({style:{fontSize:"13px",fontWeight:600,color:done?"#475569":"#e2e8f0",textDecoration:done?"line-through":"none",wordBreak:"break-word"}},n.text||"(無題)"),
@@ -2930,6 +2953,25 @@ function crossOwnerSeg(it){ const {s,e}=itemAbsSpan(it); if(s>=1440) return null
 // 翌日にまたがった尾部：[max(0,start-1440), end-1440]（開始が翌日の実績は翌日側で正しい開始時刻に）
 function crossTailSeg(it){ const {s,e}=itemAbsSpan(it); if(e<=1440) return null; return {...it, startMin:Math.max(0,s-1440), endMin:Math.min(1440,e-1440), _tail:true}; }
 
+// 達成した目標を「実際の行動」として返す（達成時刻の日付がvdのもの）。
+// 通常目標は node.doneAt、範囲一日目標は dailyDone[vd] のタイムスタンプを達成時刻に使う。
+function goalActualsForDate(vd){
+  const out=[];
+  const mm=iso=>{try{const x=new Date(iso);if(isNaN(x))return null;return x.getHours()*60+x.getMinutes();}catch{return null;}};
+  const onVd=iso=>{try{return fmtDS(new Date(iso))===vd;}catch{return false;}};
+  const push=(n,m)=>{ if(m!=null) out.push({title:`🎯 ${n.text||"目標"}`,startMin:m,endMin:m+12,isPoint:true,color:"#a78bfa",goalId:n.id}); };
+  const walk=list=>{ (list||[]).forEach(n=>{
+    if(isRangeDaily(n)){
+      const ts=n.dailyDone&&n.dailyDone[vd];
+      if(typeof ts==="string") push(n, mm(ts)); // 旧データの true は時刻不明なので表示しない
+    } else if(n.done && n.doneAt && onVd(n.doneAt)){
+      push(n, mm(n.doneAt));
+    }
+    if(n.children&&n.children.length) walk(n.children);
+  }); };
+  walk(state.goalTree);
+  return out;
+}
 function getActualActivities(vd){
   const acts=[];
   const routines=state.routines||[];
@@ -3048,6 +3090,8 @@ function getActualActivities(vd){
     if(s>=1440)return;
     acts.push({title:(a.unplanned?"⚡ ":"")+a.title,startMin:s,endMin:Math.min(1440,e),color:a.color||"#f472b6",manualUid:a.uid,unplanned:!!a.unplanned});
   });
+  // 達成した目標を実績に反映（達成時刻がvdのもの）。紫の点マーカーで表示。
+  goalActualsForDate(vd).forEach(g=>acts.push(g));
   return acts.sort((a,b)=>a.startMin-b.startMin);
 }
 
