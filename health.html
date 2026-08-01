@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.25"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.26"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -1052,7 +1052,7 @@ function updateHeaderDynamic(){
 
   // 保存ステータス
   const savedEl=document.getElementById('hdr-saved');
-  if(savedEl) savedEl.style.display=state.saved?'':'none';
+  if(savedEl) savedEl.style.visibility=state.saved?'visible':'hidden';
 
   // 日付ナビ
   const nav=document.getElementById('hdr-nav');
@@ -1083,10 +1083,12 @@ function renderHeader(){
   const ds=todayStr(), vd=state.viewDate, isToday=vd===ds;
   const showNav=true;
 
-  // 保存表示
+  // 保存表示（フローに影響しないよう日付ナビ行の右端に絶対配置。
+  //  以前はタイトル右に置いていたため、出現時に設定/今日ボタンが2行に折り返していた。
+  //  visibility切替なのでレイアウトは一切動かない）
   const savedSpan=document.createElement('span');
   savedSpan.id='hdr-saved';
-  savedSpan.style.cssText="font-size:10px;color:#22c55e;display:"+(state.saved?'':'none');
+  savedSpan.style.cssText="position:absolute;right:6px;top:50%;transform:translateY(-50%);font-size:10px;color:#22c55e;white-space:nowrap;pointer-events:none;visibility:"+(state.saved?'visible':'hidden');
   savedSpan.textContent="✓ 保存";
 
   // 日付ラベル（タップで日付選択ジャンプ）
@@ -1122,6 +1124,7 @@ function renderHeader(){
   centerGroup.style.cssText="display:flex;align-items:center;justify-content:center;gap:8px";
   centerGroup.appendChild(prevBtn); centerGroup.appendChild(dateBtn); centerGroup.appendChild(nextBtn);
   nav.appendChild(centerGroup);
+  nav.appendChild(savedSpan); // 右端に絶対配置（navはposition:relative）
 
   // タブバー（日付ナビとの境界を明確にする）
   const tabBar=document.createElement('div');
@@ -1170,7 +1173,6 @@ function renderHeader(){
   titleLeft.appendChild(wgBtn);
   const titleRight=document.createElement('div');
   titleRight.style.cssText="display:flex;align-items:center;gap:5px";
-  titleRight.appendChild(savedSpan);
   const timeSpan=document.createElement('span');
   timeSpan.style.cssText="font-size:11px;color:#64748b";
   timeSpan.textContent=`${new Date().getHours()}時`;
