@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.30"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.31"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -4818,30 +4818,35 @@ function renderAddEventModal(vd){
     if(!occ.timed.length && !occ.allDay.length){
       sec.appendChild(div({style:{fontSize:"11px",color:"#4ade80",padding:"2px 0"}},"予定なし（1日空いています）"));
     } else {
-      occ.timed.forEach(t=>{
-        sec.appendChild(div({style:{display:"flex",alignItems:"center",gap:"6px",fontSize:"11px",color:"#cbd5e1",padding:"2px 0"}},[
-          span({style:{width:"8px",height:"8px",borderRadius:"50%",background:t.color,flexShrink:0,display:"inline-block"}}),
-          span({style:{color:"#94a3b8",flexShrink:0}},`${hh(t.s)}〜${hh(t.e)}`),
-          span({style:{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},t.title)
-        ]));
+      sec.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"4px"}},"🟢 空き時間はタップで開始時刻にセット"));
+      // 予定（占有）と空き時間を時間順に1つのリストで並べる
+      const items=[
+        ...occ.timed.map(t=>({kind:"busy",s:t.s,e:t.e,title:t.title,color:t.color})),
+        ...occ.free.map(g=>({kind:"free",s:g.s,e:g.e}))
+      ].sort((a,b)=>a.s-b.s||a.e-b.e);
+      items.forEach(it=>{
+        if(it.kind==="busy"){
+          sec.appendChild(div({style:{display:"flex",alignItems:"center",gap:"6px",fontSize:"11px",color:"#cbd5e1",padding:"3px 0"}},[
+            span({style:{width:"8px",height:"8px",borderRadius:"50%",background:it.color,flexShrink:0,display:"inline-block"}}),
+            span({style:{color:"#94a3b8",flexShrink:0}},`${hh(it.s)}〜${hh(it.e)}`),
+            span({style:{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},it.title)
+          ]));
+        } else {
+          const row=div({style:{display:"flex",alignItems:"center",gap:"6px",fontSize:"11px",padding:"3px 6px",margin:"1px 0",borderRadius:"7px",cursor:"pointer",border:"1px dashed #22c55e55",background:"#22c55e10",color:"#4ade80"}},[
+            span({style:{flexShrink:0}},"🟢"),
+            span({style:{fontWeight:600,flexShrink:0}},`${hh(it.s)}〜${hh(it.e)}`),
+            span({style:{color:"#4ade80bb"}},"空き（タップ）")
+          ]);
+          row.addEventListener('click',(()=>{const s=it.s,e=it.e;return()=>{
+            state.newEvAllDay=false;
+            state.newEvH=Math.floor(s/60); state.newEvM=s%60;
+            let end=Math.min(e, s+60); if(end>=1440)end=1439;
+            state.newEvEndH=Math.floor(end/60); state.newEvEndM=end%60; state.newEvEndNextDay=false;
+            render();
+          };})());
+          sec.appendChild(row);
+        }
       });
-    }
-    // 空き時間（タップで開始時刻をセット）※占有がある日のみ提示
-    if(occ.free.length && (occ.timed.length||occ.allDay.length)){
-      sec.appendChild(div({style:{fontSize:"10px",color:"#64748b",margin:"7px 0 4px"}},"🟢 空き時間（タップで開始時刻に）"));
-      const fr=div({style:{display:"flex",flexWrap:"wrap",gap:"5px"}});
-      occ.free.forEach(g=>{
-        const gb=btn({style:{fontSize:"11px",padding:"3px 9px",borderRadius:"14px",cursor:"pointer",fontWeight:600,border:"1px solid #22c55e55",background:"#22c55e14",color:"#4ade80"}},`${hh(g.s)}〜${hh(g.e)}`);
-        gb.addEventListener('click',(()=>{const s=g.s,e=g.e;return()=>{
-          state.newEvAllDay=false;
-          state.newEvH=Math.floor(s/60); state.newEvM=s%60;
-          let end=Math.min(e, s+60); if(end>=1440)end=1439;
-          state.newEvEndH=Math.floor(end/60); state.newEvEndM=end%60; state.newEvEndNextDay=false;
-          render();
-        };})());
-        fr.appendChild(gb);
-      });
-      sec.appendChild(fr);
     }
     m.appendChild(sec);
   }
