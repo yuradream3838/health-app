@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.27"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.28"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -1334,12 +1334,26 @@ function renderWidgetView(vd,ds){
     }
   }
 
-  // ── 定期ルーティン（今日該当・チェック済みは非表示）──
+  // ── 定期ルーティン（今日該当・チェック済みは非表示。前日以前で未実施の繰り越し分も表示）──
   const dueCustom=dueCustomTodos(vd).filter(ct=>!(state.todos[vd]||{})[ct.uid]?.excluded);
   const dueRemain=dueCustom.filter(ct=>!(state.todos[vd]||{})[ct.uid]?.checked);
-  if(dueRemain.length){
+  const _futW=vd>todayStr();
+  const dueIdsW=new Set(dueCustom.map(ct=>ct.uid));
+  // 繰り越し：過去に該当したが未実施のもの（予定タブと同じ判定）
+  const carryCustom=_futW?[]:(state.customTodos||[]).filter(ct=>!dueIdsW.has(ct.uid)).map(ct=>({ct,occ:customTodoOccurrence(ct,vd)})).filter(x=>x.occ&&x.occ.overdue);
+  if(dueRemain.length || carryCustom.length){
     const c=div({className:"card",style:{padding:"12px 14px",marginBottom:"10px"}});
-    c.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#a78bfa",marginBottom:"6px"}},`🔁 定期ルーティン 残り${dueRemain.length}件`));
+    c.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#a78bfa",marginBottom:"6px"}},`🔁 定期ルーティン 残り${dueRemain.length}件${carryCustom.length?`　+繰越${carryCustom.length}`:""}`));
+    // 繰り越し（過去の未実施）を上に
+    carryCustom.forEach(({ct,occ})=>{
+      const lbl=ct.label||"定期ルーティン";
+      const sub=`🔴 繰越${occ.daysAgo?`${occ.daysAgo}日前`:""}・未実施`;
+      const rrow=checkRow(false,`🔁 ${lbl}`,sub,()=>{ dismissPastUnchecked(ct,vd); const cur=(state.todos[vd]||{})[ct.uid]||{}; setTodo(vd,ct.uid,{...cur,checked:true,time:new Date().toISOString()}); showToast(`✅ ${lbl}`); });
+      const edit=btn({style:{flexShrink:0,fontSize:"12px",padding:"3px 9px",borderRadius:"6px",cursor:"pointer",fontWeight:600,border:"1px solid #334155",background:"transparent",color:"#94a3b8"}},"✏️");
+      edit.addEventListener('click',(()=>{const uid=ct.uid,l=lbl,dd=occ.dueDate;return()=>{ state.planCustomTodo={uid,label:l,vd:dd}; state.modal="planCustomTodo"; render(); };})());
+      rrow.appendChild(edit);
+      c.appendChild(rrow);
+    });
     dueRemain.forEach(ct=>{
       const rec=(state.todos[vd]||{})[ct.uid]||{};
       const lbl=rec.labelOverride||ct.label;
