@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.29"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.30"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -3273,6 +3273,32 @@ function getPlannedExtras(vd){
   }
   return out;
 }
+// 指定日Dの占有状況（予定＋シフト・パターン・定期ルーティンなど時間を占めるすべて）と空き時間を返す。
+// 予定追加モーダルで「その日の予定・空き時間」を確認するために使う。excludeUidの予定は除外（編集中の自分自身）。
+function dayOccupancy(D, excludeUid){
+  const allDay=[], timed=[];
+  getEventsForDate(D).forEach(e=>{
+    if(excludeUid!=null && String(e.uid)===String(excludeUid))return;
+    if(e.allDay){ allDay.push({title:e.title||"予定",color:e.color||"#38bdf8"}); return; }
+    let s=(e.startH||0)*60+(e.startM||0), en=(e.endH||0)*60+(e.endM||0);
+    if(e.endNextDay)en+=1440; if(en<=s)en+=1440;
+    const cs=Math.max(0,Math.min(1440,s)), ce=Math.max(0,Math.min(1440,en));
+    if(ce>cs) timed.push({s:cs,e:ce,title:e.title||"予定",color:e.color||"#38bdf8"});
+  });
+  getPlannedExtras(D).forEach(x=>{
+    const s=(x.startH||0)*60+(x.startM||0), en=(x.endH||0)*60+(x.endM||0);
+    const cs=Math.max(0,Math.min(1440,s)), ce=Math.max(0,Math.min(1440,en));
+    if(ce>cs) timed.push({s:cs,e:ce,title:x.title||"予定",color:x.color||"#38bdf8"});
+  });
+  timed.sort((a,b)=>a.s-b.s||a.e-b.e);
+  // 占有区間をマージして、30分以上の空きスロットを算出
+  const merged=[];
+  timed.forEach(t=>{ const last=merged[merged.length-1]; if(last && t.s<=last.e){ last.e=Math.max(last.e,t.e); } else merged.push({s:t.s,e:t.e}); });
+  const free=[]; let cur=0;
+  merged.forEach(iv=>{ if(iv.s-cur>=30) free.push({s:cur,e:iv.s}); cur=Math.max(cur,iv.e); });
+  if(1440-cur>=30) free.push({s:cur,e:1440});
+  return {allDay, timed, free};
+}
 // パターンpの指定日dsでの時刻 {sH,sM,eH,eM,nextDay}。非表示/対象外は null
 function patternTimesFor(p,ds){
   if(!p||p.enabled===false)return null;
@@ -4775,6 +4801,49 @@ function renderAddEventModal(vd){
     dInp.style.cssText="width:100%;padding:9px 12px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:14px;font-family:inherit;box-sizing:border-box;margin-bottom:12px;color-scheme:dark";
     dInp.addEventListener('change',e=>{ if(e.target.value){ state.newEvDate=e.target.value; render(); } });
     m.appendChild(dInp);
+  }
+
+  // 📋 この日の予定・空き時間（空いている日・時間帯を見ながら入れられるように）
+  {
+    const planDate = isRepEdit ? vd : (state.newEvDate||vd);
+    const occ = dayOccupancy(planDate, state.editEventUid);
+    const hh=mm=>`${String(Math.floor(mm/60)).padStart(2,'0')}:${String(mm%60).padStart(2,'0')}`;
+    const p=planDate.split('-'); const dl=`${parseInt(p[1])}/${parseInt(p[2])}`;
+    const sec=div({style:{marginBottom:"12px",background:"#0b1220",border:"1px solid #1e3a5f",borderRadius:"10px",padding:"10px 12px"}});
+    sec.appendChild(div({style:{fontSize:"11px",fontWeight:700,color:"#7dd3fc",marginBottom:"6px"}},`📋 ${dl} の予定`));
+    if(occ.allDay.length){
+      sec.appendChild(div({style:{display:"flex",flexWrap:"wrap",gap:"4px",marginBottom:"6px"}},
+        occ.allDay.map(a=>span({style:{fontSize:"10px",padding:"2px 8px",borderRadius:"20px",background:"#1e3a5f",color:"#cbd5e1"}},`🗓 ${a.title}`))));
+    }
+    if(!occ.timed.length && !occ.allDay.length){
+      sec.appendChild(div({style:{fontSize:"11px",color:"#4ade80",padding:"2px 0"}},"予定なし（1日空いています）"));
+    } else {
+      occ.timed.forEach(t=>{
+        sec.appendChild(div({style:{display:"flex",alignItems:"center",gap:"6px",fontSize:"11px",color:"#cbd5e1",padding:"2px 0"}},[
+          span({style:{width:"8px",height:"8px",borderRadius:"50%",background:t.color,flexShrink:0,display:"inline-block"}}),
+          span({style:{color:"#94a3b8",flexShrink:0}},`${hh(t.s)}〜${hh(t.e)}`),
+          span({style:{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},t.title)
+        ]));
+      });
+    }
+    // 空き時間（タップで開始時刻をセット）※占有がある日のみ提示
+    if(occ.free.length && (occ.timed.length||occ.allDay.length)){
+      sec.appendChild(div({style:{fontSize:"10px",color:"#64748b",margin:"7px 0 4px"}},"🟢 空き時間（タップで開始時刻に）"));
+      const fr=div({style:{display:"flex",flexWrap:"wrap",gap:"5px"}});
+      occ.free.forEach(g=>{
+        const gb=btn({style:{fontSize:"11px",padding:"3px 9px",borderRadius:"14px",cursor:"pointer",fontWeight:600,border:"1px solid #22c55e55",background:"#22c55e14",color:"#4ade80"}},`${hh(g.s)}〜${hh(g.e)}`);
+        gb.addEventListener('click',(()=>{const s=g.s,e=g.e;return()=>{
+          state.newEvAllDay=false;
+          state.newEvH=Math.floor(s/60); state.newEvM=s%60;
+          let end=Math.min(e, s+60); if(end>=1440)end=1439;
+          state.newEvEndH=Math.floor(end/60); state.newEvEndM=end%60; state.newEvEndNextDay=false;
+          render();
+        };})());
+        fr.appendChild(gb);
+      });
+      sec.appendChild(fr);
+    }
+    m.appendChild(sec);
   }
 
   // 場所
