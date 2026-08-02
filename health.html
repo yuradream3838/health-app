@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.28"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.29"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -6267,6 +6267,24 @@ function renderAchievement(vd){
         div({style:{fontSize:"13px",color:st.unlocked?"#e2e8f0":"#64748b",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},[txt(r.text),st.unlocked?span({style:{fontSize:"10px",color:"#22c55e",marginLeft:"6px",fontWeight:700}},"🎉達成"):null]),
         div({style:{fontSize:"9px",color:"#64748b",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},st.name?`${st.name}（${st.progress}）`:st.progress)
       ]));
+      // 条件を達成したら「予定に追加」ボタンを表示（ご褒美を予定タブのスケジュールへ）
+      if(st.unlocked){
+        const planB=btn({style:{flexShrink:0,fontSize:"11px",padding:"3px 8px",borderRadius:"6px",cursor:"pointer",whiteSpace:"nowrap",fontWeight:600,border:"1px solid #0ea5e9",background:"#0ea5e918",color:"#38bdf8"}},"📅 予定に追加");
+        planB.addEventListener('click',(()=>{const text=r.text;return()=>{
+          const target=state.viewDate||todayStr();
+          const now=new Date();
+          state.tab="予定"; state.scheduleSubTab="日"; state.widget=false; state.viewDate=target;
+          state.modal="addEvent"; state.editEventUid=null; state.editEventIsRepeat=false;
+          state.newEvDate=target; state.newEvTitle="🎁 "+text;
+          state.newEvH=now.getHours(); state.newEvM=0;
+          state.newEvEndH=Math.min(23,now.getHours()+1); state.newEvEndM=0; state.newEvEndNextDay=false;
+          state.newEvRepeat="none"; state.newEvColor=EV_COLORS[0];
+          state.newEvWeekdays=[parseDS(target).getDay()];
+          state.newEvFromTask=null; state.newEvAllDay=false; state.newEvPlace=""; state.newEvNote=""; state.newEvPreDays=0;
+          render();
+        };})());
+        row.appendChild(planB);
+      }
       const del=btn({style:{background:"transparent",border:"none",color:"#334155",cursor:"pointer",fontSize:"14px",flexShrink:0}},"×");
       del.addEventListener('click',(()=>{const id=r.id;return()=>{state.rewards=state.rewards.filter(x=>x.id!==id);saveRewards();render();};})());
       row.appendChild(del); rc.appendChild(row);
