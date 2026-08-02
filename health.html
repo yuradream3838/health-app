@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.26"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.27"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -1314,17 +1314,22 @@ function renderWidgetView(vd,ds){
 
   // ── 今日の目標（目標ツリーで「日次」を設定した目標）──
   {
-    const goals=gtCollectDaily(vd);
-    if(goals.length){
+    const cur=gtCollectDaily(vd);
+    const curIds=new Set(cur.map(n=>n.id));
+    // 前日以前で未完了の単日目標も繰り越して表示（範囲目標は毎日出るため除外）
+    const carry=gtCollectByPeriodCarry("daily", vd).carry.filter(n=>!isRangeDaily(n) && !curIds.has(n.id));
+    if(cur.length || carry.length){
       const c=div({className:"card",style:{padding:"12px 14px",marginBottom:"10px"}});
-      const doneN=goals.filter(n=>dailyGoalDone(n,vd)).length;
-      c.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#fbbf24",marginBottom:"6px"}},`☀️ 今日の目標 ${doneN}/${goals.length}`));
-      goals.forEach(n=>{
+      const doneN=cur.filter(n=>dailyGoalDone(n,vd)).length;
+      c.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#fbbf24",marginBottom:"6px"}},`☀️ 今日の目標 ${doneN}/${cur.length}${carry.length?`　+繰越${carry.length}`:""}`));
+      const addRow=(n,carried)=>{
         const prog=gtProgress(n); const hasKids=n.children&&n.children.length;
         const done=dailyGoalDone(n,vd);
-        const sub=[hasKids?`下位 ${prog.done}/${prog.total}`:null, dailyRangeLabel(n)||null].filter(Boolean).join("　")||null;
+        const sub=[carried?`🔴 繰り越し（${pkShort(n.periodKey)}・未達成）`:null, hasKids?`下位 ${prog.done}/${prog.total}`:null, dailyRangeLabel(n)||null].filter(Boolean).join("　")||null;
         c.appendChild(checkRow(done,n.text||"(無題)",sub,()=>{ setDailyGoalDone(n,vd,!done); if(!done)showToast(`🎯 ${n.text||"目標"}`); render(); }));
-      });
+      };
+      carry.forEach(n=>addRow(n,true)); // 繰り越しを上に
+      cur.forEach(n=>addRow(n,false));
       wrap.appendChild(c);
     }
   }
