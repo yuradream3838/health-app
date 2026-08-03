@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.35"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.36"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -5388,9 +5388,6 @@ function customTodoOccurrence(ct, vd){
   if(customTodoDue(ct,vd)){
     return {dueDate:vd, overdue:false, excluded:!!recVd.excluded, checked:false};
   }
-  // 「開始」が翌日の定期ルーティン（startNextDay＝実際の時刻が翌日にずれる夜間ルーティン等）は
-  // 繰り越し表示しない。時刻が翌日にあるため「◯日前・未実施」の表示が実態と合わないため。
-  if(ct.startNextDay) return null;
   let ds=vd;
   for(let i=0;i<60;i++){
     ds=addDays(ds,-1);
@@ -5398,6 +5395,11 @@ function customTodoOccurrence(ct, vd){
     if(customTodoDue(ct,ds)){
       const rec=(state.todos[ds]||{})[ct.uid]||{};
       if(rec.checked||rec.excluded) return null; // 直近回は完了/除外 → 繰り越さない
+      // 「開始」が翌日の回（startNextDay＝実際の時刻が翌日にずれる夜間ルーティン等）は繰り越さない。
+      // 時刻が翌日にあり「◯日前・未実施」の表示が実態と合わないため。曜日別/シフト別の設定にも対応するため
+      // その回の実効時刻(customTodoTimeFor)で判定する。
+      const tt=customTodoTimeFor(ct,ds);
+      if(tt&&tt.sn) return null;
       const days=Math.round((parseDS(vd)-parseDS(ds))/86400000);
       return {dueDate:ds, overdue:true, excluded:false, checked:false, daysAgo:days};
     }
