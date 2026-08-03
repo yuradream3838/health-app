@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.32"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.33"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -4072,6 +4072,8 @@ function renderDaySchedule(vd,ds,isToday){
       .filter(ct=>!(state.todos[vd]||{})[ct.uid]?.checked)
       .map(ct=>{ const tt=customTodoTimeFor(ct,vd); return {ct, tt, sort: tt ? (tt.sn?1440:0)+tt.h*60+(tt.m||0) : 1e9}; })
       .sort((a,b)=>a.sort-b.sort);
+    // 完了した定期ルーティン（折りたたみで再表示し、完了時刻を編集できるようにする）
+    const doneCustom=dueCustomAll.filter(ct=>(state.todos[vd]||{})[ct.uid]?.checked);
     const carryCustom=_isFuture?[]:(state.customTodos||[]).filter(ct=>!dueIds.has(ct.uid)).map(ct=>({ct,occ:customTodoOccurrence(ct,vd)})).filter(x=>x.occ&&x.occ.overdue);
     // 期日が来たTODO：その日に該当（当日は期日超過の未完了も繰り越して表示）
     const _tds=todayStr();
@@ -4083,7 +4085,7 @@ function renderDaySchedule(vd,ds,isToday){
       (state.schedule[dd]||[]).forEach(e=>{ if(e.preDays && e.preDays>=off){ preItems.push({title:e.title,color:e.color||EV_COLORS[0],daysAhead:off,dd,uid:e.uid,allDay:!!e.allDay,place:e.place,note:e.note}); } });
     }
     preItems.sort((a,b)=>a.daysAhead-b.daysAhead);
-    if(allDayEvents.length||dueCustom.length||carryCustom.length||dueTodos.length||preItems.length){
+    if(allDayEvents.length||dueCustom.length||carryCustom.length||dueTodos.length||preItems.length||doneCustom.length){
       const ad=div({className:"card",style:{padding:"8px 10px",marginBottom:"8px"}});
       ad.appendChild(div({style:{fontSize:"10px",fontWeight:700,color:"#94a3b8",marginBottom:"6px"}},"📌 終日・定期ルーティン・TODO"));
       // 事前表示（この先の予定の予告）
@@ -4148,6 +4150,27 @@ function renderDaySchedule(vd,ds,isToday){
         row.appendChild(lab);
         ad.appendChild(row);
       });
+      // 完了した定期ルーティン（折りたたみ。タップで完了時刻の編集モーダルを開ける）
+      if(doneCustom.length){
+        const open=!!state.schedDoneOpen;
+        const tg=btn({style:{width:"100%",marginTop:"6px",padding:"6px",borderRadius:"7px",cursor:"pointer",fontSize:"11px",fontWeight:600,border:"1px solid #22c55e33",background:"transparent",color:"#4ade80"}},
+          open?`✅ 完了 ${doneCustom.length}件（隠す）`:`✅ 完了 ${doneCustom.length}件（時刻を編集）`);
+        tg.addEventListener('click',()=>{ state.schedDoneOpen=!open; render(); });
+        ad.appendChild(tg);
+        if(open){
+          doneCustom.forEach(ct=>{
+            const rec=(state.todos[vd]||{})[ct.uid]||{};
+            const lbl=rec.labelOverride||ct.label;
+            const tstr = rec.time ? (()=>{const t=new Date(rec.time);return `${String(t.getHours()).padStart(2,'0')}:${String(t.getMinutes()).padStart(2,'0')}`;})() : "";
+            const row=div({style:{display:"flex",alignItems:"center",gap:"8px",padding:"4px 2px",cursor:"pointer"}});
+            row.appendChild(span({style:{width:"20px",height:"20px",borderRadius:"5px",flexShrink:0,border:"2px solid #22c55e",background:"#22c55e",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"12px",color:"#fff"}},"✓"));
+            if(tstr)row.appendChild(span({style:{flexShrink:0,fontSize:"11px",fontWeight:600,color:"#4ade80",minWidth:"42px"}},tstr));
+            row.appendChild(div({style:{flex:1,fontSize:"12px",color:"#94a3b8",textDecoration:"line-through",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},`🔁 ${lbl}`));
+            row.addEventListener('click',(()=>{const uid=ct.uid,l=lbl;return()=>{ state.planCustomTodo={uid,label:l,vd}; state.modal="planCustomTodo"; render(); };})());
+            ad.appendChild(row);
+          });
+        }
+      }
       wrap.appendChild(ad);
     }
   }
