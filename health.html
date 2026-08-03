@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.33"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.34"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -5898,6 +5898,17 @@ function renderOccasional(vd){
     else statusStr="次:"+mdc(nextCustomTodoDate(ct));
     lab.appendChild(div({style:{fontSize:"9px",color:overdue?"#f97316":"#64748b"}},`${customTodoIntervalLabel(ct)}${_timeStr}　${statusStr}`));
     row.appendChild(lab);
+    // 完了時刻（タップで編集：planCustomTodo の「完了時刻を編集」を開く）
+    if(done){
+      const recVd=(state.todos[vd]||{})[ct.uid]||{};
+      if(recVd.time){
+        const dt=new Date(recVd.time);
+        const tb=btn({style:{fontSize:"10px",color:"#4ade80",whiteSpace:"nowrap",background:"transparent",border:"1px solid #22c55e44",borderRadius:"6px",padding:"3px 7px",cursor:"pointer",flexShrink:0}},
+          `${dt.getHours()}:${String(dt.getMinutes()).padStart(2,'0')} ✏️`);
+        tb.addEventListener('click',(()=>{const uid=ct.uid,l=ct.label||"定期ルーティン";return()=>{ state.planCustomTodo={uid,label:l,vd}; state.modal="planCustomTodo"; render(); };})());
+        row.appendChild(tb);
+      }
+    }
     // 除外／戻す
     if(active){
       const ex=btn({style:{background:"transparent",border:"1px solid #334155",borderRadius:"6px",color:"#64748b",cursor:"pointer",fontSize:"10px",padding:"3px 7px",flexShrink:0},title:"この回を除外"},"除外");
