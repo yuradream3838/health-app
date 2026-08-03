@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.34"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.35"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -5388,6 +5388,9 @@ function customTodoOccurrence(ct, vd){
   if(customTodoDue(ct,vd)){
     return {dueDate:vd, overdue:false, excluded:!!recVd.excluded, checked:false};
   }
+  // 「開始」が翌日の定期ルーティン（startNextDay＝実際の時刻が翌日にずれる夜間ルーティン等）は
+  // 繰り越し表示しない。時刻が翌日にあるため「◯日前・未実施」の表示が実態と合わないため。
+  if(ct.startNextDay) return null;
   let ds=vd;
   for(let i=0;i<60;i++){
     ds=addDays(ds,-1);
