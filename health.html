@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.37"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.38"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -1326,7 +1326,12 @@ function renderWidgetView(vd,ds){
         const prog=gtProgress(n); const hasKids=n.children&&n.children.length;
         const done=dailyGoalDone(n,vd);
         const sub=[carried?`🔴 繰り越し（${pkShort(n.periodKey)}・未達成）`:null, hasKids?`下位 ${prog.done}/${prog.total}`:null, dailyRangeLabel(n)||null].filter(Boolean).join("　")||null;
-        c.appendChild(checkRow(done,n.text||"(無題)",sub,()=>{ setDailyGoalDone(n,vd,!done); if(!done)showToast(`🎯 ${n.text||"目標"}`); render(); }));
+        const rrow=checkRow(done,n.text||"(無題)",sub,()=>{ setDailyGoalDone(n,vd,!done); if(!done)showToast(`🎯 ${n.text||"目標"}`); render(); });
+        // 📅 予定に追加（連動なし＝予定/実績と目標達成は独立。完了状態は紐付けない）
+        const planB=btn({style:{flexShrink:0,fontSize:"12px",padding:"3px 9px",borderRadius:"6px",cursor:"pointer",fontWeight:600,border:"1px solid #0ea5e9",background:"#0ea5e918",color:"#38bdf8"}},"📅");
+        planB.addEventListener('click',(()=>{const node=n;return()=>{ openGoalAsEvent(node, vd); };})());
+        rrow.appendChild(planB);
+        c.appendChild(rrow);
       };
       carry.forEach(n=>addRow(n,true)); // 繰り越しを上に
       cur.forEach(n=>addRow(n,false));
@@ -1823,6 +1828,24 @@ function dailyGoalDone(n, vd){ return isRangeDaily(n) ? !!(n.dailyDone&&n.dailyD
 function setDailyGoalDone(n, vd, val){ if(isRangeDaily(n)){ const f=gtFind(n.id); if(f){ const dd={...(f.node.dailyDone||{})}; if(val)dd[vd]=new Date().toISOString(); else delete dd[vd]; f.node.dailyDone=dd; saveGoalTree(); } } else { setGoalDone(n.id,val); } }
 // 目標の達成状態を切替。達成時は達成時刻(doneAt)を記録し、予定の「実績」に達成マーカーとして表示できるようにする。
 function setGoalDone(id, val){ gtUpdate(id, val?{done:true,doneAt:new Date().toISOString()}:{done:false,doneAt:null}); }
+// 目標を「予定」として追加する（予定タブの日スケジュールに新規予定を作成）。
+// ★連動なし★：作成される予定は、目標の達成状態やスケジュールの実績とは完全に独立。
+//   fromGoal等の紐付けは一切しないため、予定を実績化しても目標は達成にならず、目標を達成しても予定は消化されない。
+function openGoalAsEvent(node, targetDate){
+  const text=((node&&node.text)||"目標").trim()||"目標";
+  const target=targetDate||state.viewDate||todayStr();
+  const now=new Date();
+  state.goalTreeModal=null; state.goalPeriodModal=null;
+  state.tab="予定"; state.scheduleSubTab="日"; state.widget=false; state.viewDate=target;
+  state.modal="addEvent"; state.editEventUid=null; state.editEventIsRepeat=false;
+  state.newEvDate=target; state.newEvTitle="🎯 "+text;
+  state.newEvH=now.getHours(); state.newEvM=0;
+  state.newEvEndH=Math.min(23,now.getHours()+1); state.newEvEndM=0; state.newEvEndNextDay=false;
+  state.newEvRepeat="none"; state.newEvColor=EV_COLORS[0];
+  state.newEvWeekdays=[parseDS(target).getDay()];
+  state.newEvFromTask=null; state.newEvAllDay=false; state.newEvPlace=""; state.newEvNote=""; state.newEvPreDays=0;
+  render();
+}
 function dailyRangeLabel(n){ const s=dailyGoalStart(n); if(!s||!isRangeDaily(n))return ""; const f=x=>{const p=x.split('-');return `${parseInt(p[1])}/${parseInt(p[2])}`;}; return `📅 ${f(s)}〜${f(n.dailyEnd)}`; }
 // 達成済みか（葉なら done、親なら全下位が達成）
 function gtAchieved(n){ const p=gtProgress(n); return p.total>0 && p.done===p.total; }
@@ -2117,25 +2140,14 @@ function renderGoalTreeModal(){
   noteTa.value=m0.note||"";noteTa.placeholder="進捗・気づきをメモ...";
   noteTa.addEventListener('input',e=>{state.goalTreeModal.note=e.target.value;});
   m.appendChild(noteTa);
-  // 目標を予定へ（この目標を予定タブのスケジュールに追加する）
+  // 目標を予定へ（この目標を予定タブのスケジュールに追加する。連動なし）
   if(m0.mode==="edit"){
     m.appendChild(btn({style:{width:"100%",padding:"10px",marginBottom:"10px",background:"#0ea5e918",border:"1px solid #0ea5e955",borderRadius:"8px",color:"#38bdf8",fontSize:"13px",fontWeight:600,cursor:"pointer"},
       onClick:()=>{
-        const text=(state.goalTreeModal.text||"").trim()||"目標";
-        const f=gtFind(m0.id); const node=f&&f.node;
+        const f=gtFind(m0.id); const node=(f&&f.node)||{text:state.goalTreeModal.text};
         let target=state.viewDate||todayStr();
         if(node&&node.periodType==="daily"){ const ds=dailyGoalStart(node); if(ds)target=ds; } // 一日目標はその日へ
-        const now=new Date();
-        state.goalTreeModal=null;
-        state.tab="予定"; state.scheduleSubTab="日"; state.widget=false; state.viewDate=target;
-        state.modal="addEvent"; state.editEventUid=null; state.editEventIsRepeat=false;
-        state.newEvDate=target; state.newEvTitle="🎯 "+text;
-        state.newEvH=now.getHours(); state.newEvM=0;
-        state.newEvEndH=Math.min(23,now.getHours()+1); state.newEvEndM=0; state.newEvEndNextDay=false;
-        state.newEvRepeat="none"; state.newEvColor=EV_COLORS[0];
-        state.newEvWeekdays=[parseDS(target).getDay()];
-        state.newEvFromTask=null; state.newEvAllDay=false; state.newEvPlace=""; state.newEvNote=""; state.newEvPreDays=0;
-        render();
+        openGoalAsEvent(node, target);
       }},"📅 この目標を予定に追加"));
   }
   const btns=[];
