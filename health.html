@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.40"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.41"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -4417,8 +4417,8 @@ function renderDaySchedule(vd,ds,isToday){
     }
     // 繰り返し予定：この日を例外（この予定のみ削除）にしたもの
     (state.repeatEvents||[]).forEach(e=>{ if((e.exceptions||[]).includes(vd) && repeatMatches({...e,exceptions:[]}, vd)){ hiddenItems.push({label:"🔁 "+(e.title||"予定"), restore:()=>{ e.exceptions=(e.exceptions||[]).filter(x=>x!==vd); saveRepeatEvents(); showToast("予定を戻しました"); render(); }}); } });
-    // 定期ルーティン：この日を除外したもの
-    (state.customTodos||[]).forEach(ct=>{ const rec=(state.todos[vd]||{})[ct.uid]; if(rec&&rec.excluded && customTodoDue(ct,vd)){ hiddenItems.push({label:"🔁 "+(ct.label||"定期ルーティン"), restore:()=>{ const cur=(state.todos[vd]||{})[ct.uid]||{}; setTodo(vd,ct.uid,{...cur,excluded:false}); showToast("予定を戻しました"); render(); }}); } });
+    // 定期ルーティン：この日を除外したもの（別の日へ移動した回=movedToは「非表示」ではないので除く）
+    (state.customTodos||[]).forEach(ct=>{ const rec=(state.todos[vd]||{})[ct.uid]; if(rec&&rec.excluded&&!rec.movedTo && customTodoDue(ct,vd)){ hiddenItems.push({label:"🔁 "+(ct.label||"定期ルーティン"), restore:()=>{ const cur=(state.todos[vd]||{})[ct.uid]||{}; setTodo(vd,ct.uid,{...cur,excluded:false}); showToast("予定を戻しました"); render(); }}); } });
     if(hiddenItems.length){
       const hc=div({className:"card",style:{padding:"8px 10px",marginTop:"8px",border:"1px solid #33415577"}});
       hc.appendChild(div({style:{fontSize:"10px",fontWeight:700,color:"#94a3b8",marginBottom:"6px"}},`🙈 非表示にした予定（${hiddenItems.length}）`));
@@ -5442,6 +5442,8 @@ function moveCustomTodoDay(uid, fromDs, toDs){
 // 完了/除外済みの過去回は繰り越さない（最新回のみ対象）。
 function customTodoOccurrence(ct, vd){
   const recVd=(state.todos[vd]||{})[ct.uid]||{};
+  // この日は別の日へ移動済み（movedTo）→ この日にはオカレンスなし
+  if(recVd.movedTo) return null;
   // 当日にチェック済み（当日該当 or 繰り越しをその日に実施）→ 当日の完了として表示
   if(recVd.checked) return {dueDate:vd, overdue:false, excluded:false, checked:true};
   if(customTodoDue(ct,vd)){
