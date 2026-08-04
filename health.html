@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.39"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.40"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -3456,6 +3456,24 @@ function renderPlanCustomTodoModal(){
   // この日のみ削除（＝この回を除外。定期ルーティン自体は残る）
   m.appendChild(btn({style:{width:"100%",padding:"11px",marginBottom:"8px",background:"#7f1d1d33",border:"1px solid #ef4444",borderRadius:"8px",color:"#fca5a5",fontSize:"13px",fontWeight:700,cursor:"pointer"},
     onClick:()=>{ pushUndo("この日の定期ルーティンを削除しました"); toggleExclude(vd,pc.uid); state.modal=null; showToast("この日のみ削除しました"); render(); }},"🗑 この日のみ削除"));
+  // 📅 この日を別の日に移動（この回だけ別日へ。定期ルーティン自体の周期は変えない）
+  {
+    const curRecM=(state.todos[vd]||{})[pc.uid]||{};
+    if(curRecM.movedFrom){
+      m.appendChild(div({style:{fontSize:"10px",color:"#a5b4fc",margin:"0 0 6px",fontWeight:600}},`↪ ${mdLabel(curRecM.movedFrom)} から移動してきた回`));
+      m.appendChild(btn({style:{width:"100%",padding:"9px",marginBottom:"8px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#94a3b8",cursor:"pointer",fontSize:"12px"},
+        onClick:()=>{ const src=curRecM.movedFrom; const r={...curRecM}; delete r.moved; delete r.movedFrom; delete r.timeOverride; delete r.labelOverride; delete r.noteOverride; setTodo(vd,pc.uid,r); const sr={...((state.todos[src]||{})[pc.uid]||{})}; delete sr.excluded; delete sr.movedTo; setTodo(src,pc.uid,sr); state.modal=null; showToast(`${mdLabel(src)} に戻しました`); render(); }},"↩ 元の日に戻す"));
+    }
+    if(pc.moveTo===undefined) pc.moveTo=addDays(vd,1);
+    m.appendChild(div({style:{fontSize:"11px",color:"#64748b",margin:"4px 0 5px"}},"📅 この日を別の日に移動"));
+    const di=document.createElement('input'); di.type='date'; di.value=pc.moveTo;
+    di.style.cssText="width:100%;padding:8px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:14px;color-scheme:dark;font-family:inherit;box-sizing:border-box;margin-bottom:8px";
+    di.addEventListener('change',e=>{ if(e.target.value) pc.moveTo=e.target.value; });
+    m.appendChild(di);
+    m.appendChild(btn({style:{width:"100%",padding:"10px",marginBottom:"8px",background:"#6366f118",border:"1px solid #6366f1",borderRadius:"8px",color:"#a5b4fc",fontSize:"13px",fontWeight:600,cursor:"pointer"},
+      onClick:()=>{ if(!pc.moveTo||pc.moveTo===vd){ showToast("移動先の日を選んでください"); return; } pushUndo("定期ルーティンを移動しました"); moveCustomTodoDay(pc.uid, vd, pc.moveTo); state.modal=null; showToast(`${mdLabel(pc.moveTo)} に移動しました`); render(); }},"📅 選んだ日に移動する"));
+    m.appendChild(div({style:{borderTop:"1px solid #1e293b",margin:"0 0 10px"}}));
+  }
   // この日だけ時刻を変更（その日限定の時刻上書き）
   {
     const ct=(state.customTodos||[]).find(c=>c.uid===pc.uid);
@@ -5368,6 +5386,8 @@ function customTodoCfgFor(ct, ds){
 }
 function customTodoDue(ct, ds){
   if(!ct||!ct.startDate)return false;
+  // 特定日を別の日へ移動してきた臨時オカレンス（moved）は、その日を該当日として扱う
+  if((state.todos[ds]||{})[ct.uid]?.moved) return true;
   ct=customTodoCfgFor(ct,ds);
   const d=parseDS(ds), s=parseDS(ct.startDate);
   if(d<s)return false;
@@ -5398,6 +5418,26 @@ function customTodoDue(ct, ds){
   return true;
 }
 function dueCustomTodos(ds){ return (state.customTodos||[]).filter(ct=>customTodoDue(ct,ds)); }
+// 特定日の定期ルーティンを別の日(toDs)へ移動する。元の日は除外し、移動先に臨時オカレンス(moved)を作る。
+// 内容の上書き（時刻・名前・メモ）は引き継ぐ。完了状態は引き継がない（未実施で移動）。
+function moveCustomTodoDay(uid, fromDs, toDs){
+  if(!toDs || toDs===fromDs) return;
+  const fromRec={...((state.todos[fromDs]||{})[uid]||{})};
+  const carry={}; // 引き継ぐこの日限定の上書き
+  if(fromRec.timeOverride) carry.timeOverride=fromRec.timeOverride;
+  if(fromRec.labelOverride) carry.labelOverride=fromRec.labelOverride;
+  if(fromRec.noteOverride) carry.noteOverride=fromRec.noteOverride;
+  // 元の日から消す
+  if(fromRec.moved){ // すでに移動で来ていた臨時オカレンス → それ自体を解除
+    delete fromRec.moved; delete fromRec.movedFrom; delete fromRec.timeOverride; delete fromRec.labelOverride; delete fromRec.noteOverride;
+    setTodo(fromDs, uid, fromRec);
+  } else { // 本来の該当日 → 除外
+    setTodo(fromDs, uid, {...fromRec, excluded:true, checked:false, time:null, timeOverride:undefined, movedTo:toDs});
+  }
+  // 移動先に臨時オカレンスを作る（除外は解除）
+  const toRec={...((state.todos[toDs]||{})[uid]||{})};
+  setTodo(toDs, uid, {...toRec, ...carry, moved:true, excluded:false, checked:false, time:null, movedFrom:fromDs});
+}
 // 表示日 vd で対応すべき「回」を返す。当日該当なら当日、そうでなければ直近の未実施回を繰り越す。
 // 完了/除外済みの過去回は繰り越さない（最新回のみ対象）。
 function customTodoOccurrence(ct, vd){
