@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.42"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.43"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -4043,10 +4043,13 @@ function planBlockDone(ev, vd){
   if(ev.customTodo) return !!(((state.todos[ev.ctDate||vd]||{})[ev.ctUid])||{}).checked;
   if(ev.shiftBlock){ const d=getDaily(vd); return d.workStart!=null && d.workEnd!=null; }
   if(ev.isPattern){ const pp=(state.planPatterns||[]).find(x=>x.uid===ev.patternUid); if(!pp)return false;
-    // 連動ルーティンの完了判定は「そのパターンが所有する日(ovDate)」で行う。日跨ぎで翌日側に表示された
-    // 前日パターンの尾部が、表示日(翌日)のルーティン完了で誤ってグレーになるのを防ぐ。
+    // 連動ルーティンの完了判定は「そのオカレンスが実際に始まる日」で行う。
+    //   ＝所有日(ovDate) ＋（翌日にずらすパターン(oNext)なら+1日）。
+    // これで、①日跨ぎで翌日側に表示された前日パターンの尾部は前日（開始日）で判定され、
+    //         翌日のルーティンで誤ってグレーにならず、
+    //        ②翌日にずらすパターン（インプット/アウトプット等）は表示日＝実施日で判定される。
     // 起床連動だけは「起床する日(wakeDate)」で判定（起床時刻はその日に記録されるため）。
-    const day = (pp.linkRoutine&&pp.linkRoutine.t==='wake') ? (ev.wakeDate||vd) : (ev.ovDate||vd);
+    const day = (pp.linkRoutine&&pp.linkRoutine.t==='wake') ? (ev.wakeDate||vd) : addDays(ev.ovDate||vd, ev.oNext?1:0);
     return patternLinkDone(pp,day); }
   if(ev.uid!=null && !ev._tail) return eventReflected(ev,vd);
   return false;
