@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.36"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.37"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -1341,13 +1341,17 @@ function renderWidgetView(vd,ds){
   const dueIdsW=new Set(dueCustom.map(ct=>ct.uid));
   // 繰り越し：過去に該当したが未実施のもの（予定タブと同じ判定）
   const carryCustom=_futW?[]:(state.customTodos||[]).filter(ct=>!dueIdsW.has(ct.uid)).map(ct=>({ct,occ:customTodoOccurrence(ct,vd)})).filter(x=>x.occ&&x.occ.overdue);
+  const carryReal=carryCustom.filter(x=>!x.occ.snToday); // 繰越件数は開始翌日(当日扱い)を除く
   if(dueRemain.length || carryCustom.length){
     const c=div({className:"card",style:{padding:"12px 14px",marginBottom:"10px"}});
-    c.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#a78bfa",marginBottom:"6px"}},`🔁 定期ルーティン 残り${dueRemain.length}件${carryCustom.length?`　+繰越${carryCustom.length}`:""}`));
-    // 繰り越し（過去の未実施）を上に
+    c.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#a78bfa",marginBottom:"6px"}},`🔁 定期ルーティン 残り${dueRemain.length}件${carryReal.length?`　+繰越${carryReal.length}`:""}`));
+    // 繰り越し／開始翌日（当日やる分）を上に
     carryCustom.forEach(({ct,occ})=>{
       const lbl=ct.label||"定期ルーティン";
-      const sub=`🔴 繰越${occ.daysAgo?`${occ.daysAgo}日前`:""}・未実施`;
+      const _snt=occ.snToday?customTodoTimeFor(ct,occ.dueDate):null;
+      const sub=occ.snToday
+        ? `🌙 開始翌日${_snt?`（${String(_snt.h).padStart(2,'0')}:${String(_snt.m||0).padStart(2,'0')}）`:""}`
+        : `🔴 繰越${occ.daysAgo?`${occ.daysAgo}日前`:""}・未実施`;
       const rrow=checkRow(false,`🔁 ${lbl}`,sub,()=>{ dismissPastUnchecked(ct,vd); const cur=(state.todos[vd]||{})[ct.uid]||{}; setTodo(vd,ct.uid,{...cur,checked:true,time:new Date().toISOString()}); showToast(`✅ ${lbl}`); });
       const edit=btn({style:{flexShrink:0,fontSize:"12px",padding:"3px 9px",borderRadius:"6px",cursor:"pointer",fontWeight:600,border:"1px solid #334155",background:"transparent",color:"#94a3b8"}},"✏️");
       edit.addEventListener('click',(()=>{const uid=ct.uid,l=lbl,dd=occ.dueDate;return()=>{ state.planCustomTodo={uid,label:l,vd:dd}; state.modal="planCustomTodo"; render(); };})());
@@ -4128,10 +4132,13 @@ function renderDaySchedule(vd,ds,isToday){
       carryCustom.forEach(({ct,occ})=>{
         const lbl=ct.label||"定期ルーティン";
         const row=div({style:{display:"flex",alignItems:"center",gap:"8px",padding:"4px 2px"}});
-        const cb=btn({style:{width:"20px",height:"20px",borderRadius:"5px",flexShrink:0,border:"2px solid #f97316",background:"transparent",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"12px",color:"#fff"}},"");
+        const _snCol=occ.snToday?"#a78bfa":"#f97316";
+        const cb=btn({style:{width:"20px",height:"20px",borderRadius:"5px",flexShrink:0,border:`2px solid ${_snCol}`,background:"transparent",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"12px",color:"#fff"}},"");
         cb.addEventListener('click',(()=>{const id=ct.uid,c2={...ct},label=lbl;return()=>{ dismissPastUnchecked(c2,vd); const cur=(state.todos[vd]||{})[id]||{}; setTodo(vd,id,{...cur,checked:true,time:new Date().toISOString()}); showToast(`✅ ${label}`); };})());
         row.appendChild(cb);
-        row.appendChild(span({style:{flexShrink:0,fontSize:"10px",fontWeight:700,padding:"1px 6px",borderRadius:"8px",color:"#f97316",background:"#f973161f",border:"1px solid #f9731655"}},`繰越${occ.daysAgo?`${occ.daysAgo}日`:""}`));
+        const _snt=occ.snToday?customTodoTimeFor(ct,occ.dueDate):null;
+        row.appendChild(span({style:{flexShrink:0,fontSize:"10px",fontWeight:700,padding:"1px 6px",borderRadius:"8px",color:_snCol,background:_snCol+"1f",border:`1px solid ${_snCol}55`}},
+          occ.snToday?`🌙翌${_snt?`${String(_snt.h).padStart(2,'0')}:${String(_snt.m||0).padStart(2,'0')}`:""}`:`繰越${occ.daysAgo?`${occ.daysAgo}日`:""}`));
         const lab=div({style:{flex:1,fontSize:"12px",color:"#e2e8f0",cursor:"pointer",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},`🔁 ${lbl}`);
         lab.addEventListener('click',(()=>{const uid=ct.uid,l=lbl,dd=occ.dueDate;return()=>{state.planCustomTodo={uid,label:l,vd:dd};state.modal="planCustomTodo";render();};})());
         row.appendChild(lab);
@@ -5395,12 +5402,16 @@ function customTodoOccurrence(ct, vd){
     if(customTodoDue(ct,ds)){
       const rec=(state.todos[ds]||{})[ct.uid]||{};
       if(rec.checked||rec.excluded) return null; // 直近回は完了/除外 → 繰り越さない
-      // 「開始」が翌日の回（startNextDay＝実際の時刻が翌日にずれる夜間ルーティン等）は繰り越さない。
-      // 時刻が翌日にあり「◯日前・未実施」の表示が実態と合わないため。曜日別/シフト別の設定にも対応するため
-      // その回の実効時刻(customTodoTimeFor)で判定する。
       const tt=customTodoTimeFor(ct,ds);
-      if(tt&&tt.sn) return null;
       const days=Math.round((parseDS(vd)-parseDS(ds))/86400000);
+      // 「開始」が翌日の回（startNextDay＝実際の時刻が翌日にずれる夜間ルーティン等）：
+      //  実際の時刻は該当日の翌日（=days===1で当日vd）にあるので、その日は「当日やるもの」として
+      //  表示する（snToday）。「◯日前・繰越」の表示にはしない。時刻が過ぎた翌々日以降は繰り越さない。
+      //  曜日別/シフト別の設定にも対応するため実効時刻(customTodoTimeFor)のsnで判定する。
+      if(tt&&tt.sn){
+        if(days===1) return {dueDate:ds, overdue:true, snToday:true, excluded:false, checked:false, daysAgo:days};
+        return null;
+      }
       return {dueDate:ds, overdue:true, excluded:false, checked:false, daysAgo:days};
     }
   }
@@ -5877,7 +5888,7 @@ function renderOccasional(vd){
     const excludedToday = occ && occ.excluded;   // 当日該当だが除外中
     const row=div({style:{display:"flex",alignItems:"center",gap:"10px",padding:"8px 2px",borderBottom:"1px solid #1e3a5f33",opacity:active?1:0.55}});
     if(active){
-      const cb=btn({style:{width:"22px",height:"22px",borderRadius:"6px",flexShrink:0,border:`2px solid ${done?"#22c55e":overdue?"#f97316":"#334155"}`,background:done?"#22c55e":"transparent",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"13px",color:"#fff"}},done?"✓":"");
+      const cb=btn({style:{width:"22px",height:"22px",borderRadius:"6px",flexShrink:0,border:`2px solid ${done?"#22c55e":(occ&&occ.snToday)?"#a78bfa":overdue?"#f97316":"#334155"}`,background:done?"#22c55e":"transparent",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"13px",color:"#fff"}},done?"✓":"");
       cb.addEventListener('click',(()=>{const o=occ,id=ct.uid,c2={...ct},label=ct.label,wasDone=done;return()=>{
         if(wasDone){ merge(vd,id,{checked:false,time:null}); }
         else {
@@ -5896,12 +5907,13 @@ function renderOccasional(vd){
     lab.appendChild(div({style:{fontSize:"13px",color:done?"#475569":"#e2e8f0",textDecoration:done?"line-through":"none"}},ct.label||"(無題)"));
     const _tt=customTodoTimeFor(ct,vd), _hasWd=ct.weekdayTimes&&Object.keys(ct.weekdayTimes).length;
     const _timeStr=_tt?` ・ ${_tt.h}:${String(_tt.m||0).padStart(2,'0')}${_hasWd?"(曜日別)":""}`:(_hasWd?" ・ 曜日別":"");
-    let statusStr;
-    if(overdue) statusStr=`🔴 ${occ.daysAgo}日前(${mdc(occ.dueDate)})から未実施`;
+    let statusStr; const _snToday=occ&&occ.snToday;
+    if(_snToday){ const st=customTodoTimeFor(ct,occ.dueDate); statusStr=`🌙 開始翌日・今日${st?`（${String(st.h).padStart(2,'0')}:${String(st.m||0).padStart(2,'0')}）`:""}`; }
+    else if(overdue) statusStr=`🔴 ${occ.daysAgo}日前(${mdc(occ.dueDate)})から未実施`;
     else if(excludedToday) statusStr="除外中";
     else if(occ) statusStr="今日";
     else statusStr="次:"+mdc(nextCustomTodoDate(ct));
-    lab.appendChild(div({style:{fontSize:"9px",color:overdue?"#f97316":"#64748b"}},`${customTodoIntervalLabel(ct)}${_timeStr}　${statusStr}`));
+    lab.appendChild(div({style:{fontSize:"9px",color:_snToday?"#a78bfa":(overdue?"#f97316":"#64748b")}},`${customTodoIntervalLabel(ct)}${_timeStr}　${statusStr}`));
     row.appendChild(lab);
     // 完了時刻（タップで編集：planCustomTodo の「完了時刻を編集」を開く）
     if(done){
