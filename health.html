@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.44"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.45"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -1317,23 +1317,31 @@ function renderWidgetView(vd,ds){
     const curIds=new Set(cur.map(n=>n.id));
     // 前日以前で未完了の単日目標も繰り越して表示（範囲目標は毎日出るため除外）
     const carry=gtCollectByPeriodCarry("daily", vd).carry.filter(n=>!isRangeDaily(n) && !curIds.has(n.id));
-    if(cur.length || carry.length){
+    // 直近の週間/月次などの目標の下にある「期日なし」の未達成目標（今やるべき具体目標）
+    const pending=gtCollectPeriodlessActive(vd).filter(x=>!curIds.has(x.node.id));
+    if(cur.length || carry.length || pending.length){
       const c=div({className:"card",style:{padding:"12px 14px",marginBottom:"10px"}});
       const doneN=cur.filter(n=>dailyGoalDone(n,vd)).length;
-      c.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#fbbf24",marginBottom:"6px"}},`☀️ 今日の目標 ${doneN}/${cur.length}${carry.length?`　+繰越${carry.length}`:""}`));
+      c.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#fbbf24",marginBottom:"6px"}},`☀️ 今日の目標 ${doneN}/${cur.length}${carry.length?`　+繰越${carry.length}`:""}${pending.length?`　+関連${pending.length}`:""}`));
+      const goalPlanBtn=(n)=>{ const planB=btn({style:{flexShrink:0,fontSize:"12px",padding:"3px 9px",borderRadius:"6px",cursor:"pointer",fontWeight:600,border:"1px solid #0ea5e9",background:"#0ea5e918",color:"#38bdf8"}},"📅"); planB.addEventListener('click',(()=>{const node=n;return()=>{ openGoalAsEvent(node, vd); };})()); return planB; };
       const addRow=(n,carried)=>{
         const prog=gtProgress(n); const hasKids=n.children&&n.children.length;
         const done=dailyGoalDone(n,vd);
         const sub=[carried?`🔴 繰り越し（${pkShort(n.periodKey)}・未達成）`:null, hasKids?`下位 ${prog.done}/${prog.total}`:null, dailyRangeLabel(n)||null].filter(Boolean).join("　")||null;
         const rrow=checkRow(done,n.text||"(無題)",sub,()=>{ setDailyGoalDone(n,vd,!done); if(!done)showToast(`🎯 ${n.text||"目標"}`); render(); });
-        // 📅 予定に追加（連動なし＝予定/実績と目標達成は独立。完了状態は紐付けない）
-        const planB=btn({style:{flexShrink:0,fontSize:"12px",padding:"3px 9px",borderRadius:"6px",cursor:"pointer",fontWeight:600,border:"1px solid #0ea5e9",background:"#0ea5e918",color:"#38bdf8"}},"📅");
-        planB.addEventListener('click',(()=>{const node=n;return()=>{ openGoalAsEvent(node, vd); };})());
-        rrow.appendChild(planB);
+        rrow.appendChild(goalPlanBtn(n));
         c.appendChild(rrow);
       };
       carry.forEach(n=>addRow(n,true)); // 繰り越しを上に
       cur.forEach(n=>addRow(n,false));
+      // 期日なしの関連目標（連動元の期間目標名を添える）
+      pending.forEach(({node:n,anc})=>{
+        const done=!!n.done;
+        const sub=`📎 ${GT_PERIOD_LABELS[anc.periodType]||"期間"}「${anc.text||"目標"}」`;
+        const rrow=checkRow(done,n.text||"(無題)",sub,()=>{ setGoalDone(n.id,!done); if(!done)showToast(`🎯 ${n.text||"目標"}`); render(); });
+        rrow.appendChild(goalPlanBtn(n));
+        c.appendChild(rrow);
+      });
       wrap.appendChild(c);
     }
   }
@@ -1823,6 +1831,19 @@ function dailyGoalStart(n){ if(!n||n.periodType!=="daily"||!n.periodKey)return n
 function isRangeDaily(n){ const s=dailyGoalStart(n); return !!(s && n.dailyEnd && n.dailyEnd>s); }
 function gtDailyActive(n, vd){ const s=dailyGoalStart(n); if(!s)return false; const e=(n.dailyEnd&&n.dailyEnd>s)?n.dailyEnd:s; return vd>=s && vd<=e; }
 function gtCollectDaily(vd, list=state.goalTree, out=[]){ (list||[]).forEach(n=>{ if(gtDailyActive(n,vd))out.push(n); if(n.children&&n.children.length)gtCollectDaily(vd,n.children,out); }); return out; }
+// 直近（vdを含む期間）の週間/月次などの目標の下位にある「期日なし」の未達成の葉目標を集める。
+// 予定タブ・今日ヴィジェットに「今やるべき具体目標」として表示するため。{node, anc}（ancは連動元の期間目標）。
+function gtCollectPeriodlessActive(vd, list=state.goalTree, ancestor=null, out=[]){
+  (list||[]).forEach(n=>{
+    const hasPeriod=!!(n.periodType&&n.periodKey);
+    let anc=ancestor;
+    if(hasPeriod){ const r=goalPeriodRange(n.periodType,n.periodKey); anc=(r && vd>=r.start && vd<=r.end)?n:null; } // 最も近い期間祖先が「有効(vdを含む)」なら連動、無効なら切る
+    const isLeaf=!(n.children&&n.children.length);
+    if(!hasPeriod && ancestor && isLeaf && !n.done) out.push({node:n, anc:ancestor});
+    if(!isLeaf) gtCollectPeriodlessActive(vd, n.children, anc, out);
+  });
+  return out;
+}
 function dailyGoalDone(n, vd){ return isRangeDaily(n) ? !!(n.dailyDone&&n.dailyDone[vd]) : !!n.done; }
 function setDailyGoalDone(n, vd, val){ if(isRangeDaily(n)){ const f=gtFind(n.id); if(f){ const dd={...(f.node.dailyDone||{})}; if(val)dd[vd]=new Date().toISOString(); else delete dd[vd]; f.node.dailyDone=dd; saveGoalTree(); } } else { setGoalDone(n.id,val); } }
 // 目標の達成状態を切替。達成時は達成時刻(doneAt)を記録し、予定の「実績」に達成マーカーとして表示できるようにする。
@@ -4129,9 +4150,26 @@ function renderDaySchedule(vd,ds,isToday){
       (state.schedule[dd]||[]).forEach(e=>{ if(e.preDays && e.preDays>=off){ preItems.push({title:e.title,color:e.color||EV_COLORS[0],daysAhead:off,dd,uid:e.uid,allDay:!!e.allDay,place:e.place,note:e.note}); } });
     }
     preItems.sort((a,b)=>a.daysAhead-b.daysAhead);
-    if(allDayEvents.length||dueCustom.length||carryCustom.length||dueTodos.length||preItems.length||doneCustom.length){
+    // 🎯 今日の目標（日次目標＋直近の週間/月次目標の下の期日なし目標）
+    const gGoals=gtCollectDaily(vd);
+    const gGoalIds=new Set(gGoals.map(n=>n.id));
+    const gPend=gtCollectPeriodlessActive(vd).filter(x=>!gGoalIds.has(x.node.id));
+    if(allDayEvents.length||dueCustom.length||carryCustom.length||dueTodos.length||preItems.length||doneCustom.length||gGoals.length||gPend.length){
       const ad=div({className:"card",style:{padding:"8px 10px",marginBottom:"8px"}});
       ad.appendChild(div({style:{fontSize:"10px",fontWeight:700,color:"#94a3b8",marginBottom:"6px"}},"📌 終日・定期ルーティン・TODO"));
+      // 🎯 目標セクション
+      if(gGoals.length||gPend.length){
+        const goalRow=(n, subTxt, done, onToggle)=>{
+          const row=div({style:{display:"flex",alignItems:"center",gap:"8px",padding:"4px 2px"}});
+          const cb=btn({style:{width:"20px",height:"20px",borderRadius:"5px",flexShrink:0,border:`2px solid ${done?"#22c55e":"#fbbf24"}`,background:done?"#22c55e":"transparent",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"12px",color:"#fff"}},done?"✓":"");
+          cb.addEventListener('click',onToggle);
+          row.appendChild(cb);
+          row.appendChild(div({style:{flex:1,minWidth:0,fontSize:"12px",color:done?"#475569":"#e2e8f0",textDecoration:done?"line-through":"none",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},`🎯 ${n.text||"目標"}${subTxt?`　${subTxt}`:""}`));
+          ad.appendChild(row);
+        };
+        gGoals.forEach(n=>{ const done=dailyGoalDone(n,vd); goalRow(n, dailyRangeLabel(n)||null, done, (()=>{const nn=n,d=done;return()=>{ setDailyGoalDone(nn,vd,!d); if(!d)showToast(`🎯 ${nn.text||"目標"}`); render(); };})()); });
+        gPend.forEach(({node:n,anc})=>{ const done=!!n.done; goalRow(n, `📎${GT_PERIOD_LABELS[anc.periodType]||""}「${anc.text||"目標"}」`, done, (()=>{const nn=n,d=done;return()=>{ setGoalDone(nn.id,!d); if(!d)showToast(`🎯 ${nn.text||"目標"}`); render(); };})()); });
+      }
       // 事前表示（この先の予定の予告）
       preItems.forEach(p=>{
         const row=div({style:{display:"flex",alignItems:"center",gap:"8px",padding:"4px 2px",cursor:"pointer"}});
