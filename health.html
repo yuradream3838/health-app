@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.43"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.44"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -1980,6 +1980,10 @@ function gtAddChild(parentId, text){
 function gtUpdate(id, patch){ const f=gtFind(id); if(f){ Object.assign(f.node, patch); saveGoalTree(); } }
 function gtDelete(id){ const f=gtFind(id); if(f){ pushUndo("目標を削除しました"); const i=f.siblings.indexOf(f.node); if(i>=0)f.siblings.splice(i,1); saveGoalTree(); } }
 
+// 下位目標の並び替え用の日付キー（期間の開始日。期間なしは末尾）
+function goalSortDate(n){ const r=goalPeriodRange(n&&n.periodType, n&&n.periodKey); return (r&&r.start)?r.start:"9999-99-99"; }
+// 子目標を日付順に並べる（同日は元の順序を維持＝安定ソート）
+function sortedGoalChildren(node){ return [...(node.children||[])].sort((a,b)=>{ const c=goalSortDate(a).localeCompare(goalSortDate(b)); return c; }); }
 function renderGoalTreeNode(node, depth){
   const rows=[];
   const prog=gtProgress(node);
@@ -2027,7 +2031,7 @@ function renderGoalTreeNode(node, depth){
   addB.addEventListener('click',()=>{state.goalTreeModal={mode:"add",parentId:node.id,text:""};render();});
   row.appendChild(addB);
   rows.push(row);
-  if(hasKids && !node.collapsed){ node.children.forEach(c=>{ renderGoalTreeNode(c,depth+1).forEach(r=>rows.push(r)); }); }
+  if(hasKids && !node.collapsed){ sortedGoalChildren(node).forEach(c=>{ renderGoalTreeNode(c,depth+1).forEach(r=>rows.push(r)); }); }
   return rows;
 }
 
