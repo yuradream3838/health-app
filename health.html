@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.46"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.47"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -3320,7 +3320,10 @@ function getPlannedExtras(vd){
       if(ce<=cs)return; // vd に掛からない
       const rec=(state.todos[D]||{})[ct.uid]||{};
       const lbl=rec.labelOverride||ct.label;
-      out.push({title:`☑️ ${lbl}${rec.noteOverride?" 📝":""}`,color:ct.color||"#38bdf8",startH:Math.floor(cs/60),startM:cs%60,endH:Math.floor(ce/60),endM:ce%60,customTodo:true,ctUid:ct.uid,ctLabel:lbl,ctDate:D});
+      // 完了(チェック)は「実際に行う日」＝開始翌日(sn)なら所有日Dの翌日、それ以外はDに記録される。
+      // グレーアウト判定はこの日(ctCheckDate)を参照する（表示日と記録日のズレで別の日がグレーになるのを防ぐ）。
+      const ctCheckDate = tt.sn ? addD(D,1) : D;
+      out.push({title:`☑️ ${lbl}${rec.noteOverride?" 📝":""}`,color:ct.color||"#38bdf8",startH:Math.floor(cs/60),startM:cs%60,endH:Math.floor(ce/60),endM:ce%60,customTodo:true,ctUid:ct.uid,ctLabel:lbl,ctDate:D,ctCheckDate});
     });
   }
   return out;
@@ -4074,7 +4077,7 @@ function eventReflected(ev, vd){
 // 予定ブロックが「完了」しているか（グレーアウト判定を一元化）：
 //  定期ルーティン=所有日でチェック済み／シフト=勤務時間入力／パターン=連動ルーティン完了／通常の予定=実績に反映済み
 function planBlockDone(ev, vd){
-  if(ev.customTodo) return !!(((state.todos[ev.ctDate||vd]||{})[ev.ctUid])||{}).checked;
+  if(ev.customTodo) return !!(((state.todos[ev.ctCheckDate||ev.ctDate||vd]||{})[ev.ctUid])||{}).checked;
   if(ev.shiftBlock){ const d=getDaily(vd); return d.workStart!=null && d.workEnd!=null; }
   if(ev.isPattern){ const pp=(state.planPatterns||[]).find(x=>x.uid===ev.patternUid); if(!pp)return false;
     // 連動ルーティンの完了判定は「そのオカレンスが実際に始まる日」で行う。
