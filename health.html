@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.49"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.50"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -648,6 +648,8 @@ function loadStorage(){
     if(aic){try{const o=JSON.parse(aic); if(o&&typeof o==="object")state.aiCoach=o;}catch{}}
     const rwd=localStorage.getItem(STORAGE_KEY+"_rewards");
     if(rwd){try{const a=JSON.parse(rwd); if(Array.isArray(a))state.rewards=a;}catch{}}
+    const cra=localStorage.getItem(STORAGE_KEY+"_cravingalts");
+    if(cra){try{const a=JSON.parse(cra); if(Array.isArray(a))state.cravingAlts=a;}catch{}}
     // 旧形式（v8.3 events/taskList/wishList/shopList）からの一度きり移行
     if(!sc && !tk){ migrateOldSchedule(); }
   }catch{}
@@ -5269,6 +5271,30 @@ function soberBadge(){
   const on=n>=1;
   return div({style:{display:"inline-flex",alignItems:"center",gap:"6px",padding:"4px 12px",borderRadius:"14px",background:(on?"#22c55e":"#64748b")+"18",border:`1px solid ${(on?"#22c55e":"#64748b")}55`,color:on?"#4ade80":"#94a3b8",fontSize:"12px",fontWeight:700}},`🚱 休肝日 ${n}日達成`);
 }
+// ── 飲みすぎ防止：飲酒欲求への対処（代替行動＋我慢ログ）──
+const CRAVING_ALTS_DEFAULT=["💧 水を飲む","🍵 お茶・炭酸水","🚶 散歩する","🫁 深呼吸1分","🦷 歯を磨く","🛁 お風呂に入る","🍫 甘いもの","📱 スマホを置いて別のことを"];
+function getCravingAlts(){ if(!Array.isArray(state.cravingAlts)||!state.cravingAlts.length) state.cravingAlts=[...CRAVING_ALTS_DEFAULT]; return state.cravingAlts; }
+function saveCravingAlts(){ try{localStorage.setItem(STORAGE_KEY+"_cravingalts",JSON.stringify(state.cravingAlts||[]));}catch{} }
+function logResist(vd, alt){ const d=getDaily(vd); const resists=[...(d.resists||[]), {t:new Date().toISOString(), alt:alt||""}]; setDaily(vd,{resists}); }
+function resistCountOn(vd){ return ((getDaily(vd).resists)||[]).length; }
+function resistCountRange(vd, days){ let n=0; for(let i=0;i<days;i++) n+=resistCountOn(addDays(vd,-i)); return n; }
+function resistTotal(){ return (state.dailies||[]).reduce((a,d)=>a+((d.resists||[]).length),0); }
+// ── 飲みすぎ防止：飲酒の影響の可視化 ──
+// 飲酒日の翌日 vs 休肝日の翌日の平均スコア・睡眠を集計
+function alcoholImpactStats(){
+  const avgScore=ds=>{ const ls=state.logs.filter(l=>l.dateStr===ds&&l.score!=null).map(l=>l.score); return ls.length?ls.reduce((a,b)=>a+b,0)/ls.length:null; };
+  const dates=[...new Set((state.dailies||[]).map(d=>d.dateStr).filter(Boolean))];
+  const dNext=[],sNext=[],dSleep=[],sSleep=[];
+  dates.forEach(ds=>{ const nd=addDays(ds,1); const drank=dayHasAlcohol(ds);
+    const ns=avgScore(nd); if(ns!=null)(drank?dNext:sNext).push(ns);
+    const nsl=getNightSleepHours(nd); if(nsl!=null)(drank?dSleep:sSleep).push(nsl);
+  });
+  const mean=a=>a.length?a.reduce((x,y)=>x+y,0)/a.length:null;
+  return { drinkNextScore:mean(dNext), soberNextScore:mean(sNext), drinkN:dNext.length, soberN:sNext.length,
+           drinkNextSleep:mean(dSleep), soberNextSleep:mean(sSleep), drinkSleepN:dSleep.length, soberSleepN:sSleep.length };
+}
+// 直近days日の「アルコール由来カロリー」（純アルコール7.1kcal/g）
+function alcoholKcalRange(vd, days){ let kcal=0; for(let i=0;i<days;i++){ const ds=addDays(vd,-i); (getDaily(ds).drinks||[]).forEach(dr=>{ const dt=resolveDT(dr); kcal+=pureAlcohol(dr.ml, dr.pct!=null?dr.pct:dt.pct)*7.1; }); } return Math.round(kcal); }
 // 目標ノードが達成済みか（範囲一日目標は当日のdailyDoneで判定）
 function goalNodeDone(g, key){
   if(typeof isRangeDaily==="function" && isRangeDaily(g)){ const p=pkParse(key)||{}; return dailyGoalDone(g, p.date||(key||"").replace("daily_","")); }
@@ -5296,6 +5322,10 @@ function rewardStatus(r){
   if(tr.type==='sober'){
     const need=Math.max(1,tr.count||1), cnt=alcoholFreeStreak();
     return {unlocked:cnt>=need, badge:`🚱${need}`, progress:cnt>=need?"🎉達成":`${cnt}/${need}日`, name:"休肝日連続"};
+  }
+  if(tr.type==='resist'){
+    const need=Math.max(1,tr.count||1), cnt=resistTotal();
+    return {unlocked:cnt>=need, badge:`✊${need}`, progress:cnt>=need?"🎉達成":`${cnt}/${need}回`, name:"飲酒欲求を我慢"};
   }
   if(tr.type==='goalperiod'){
     const need=Math.max(1,tr.count||1), cnt=goalPeriodAchievedCount(tr.period);
@@ -6190,6 +6220,85 @@ function renderAlcohol(vd,isToday){
   }
   wrap.appendChild(listCard);
 
+  // 🧠 飲みたくなったら（代替行動＋我慢ログ）
+  {
+    const alts=getCravingAlts();
+    const todayN=resistCountOn(vd), weekN=resistCountRange(vd,7), totalN=resistTotal();
+    const c=div({className:"card"});
+    c.appendChild(div({style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"6px",flexWrap:"wrap",gap:"4px"}},[
+      div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0"}},"🧠 飲みたくなったら"),
+      div({style:{fontSize:"11px",color:"#4ade80",fontWeight:700}},`✊ 今日${todayN}・7日${weekN}・累計${totalN}`)
+    ]));
+    c.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"8px",lineHeight:1.5}},"欲求がきたら、代わりの行動をタップ。1回＝1我慢として記録されます。"));
+    const chips=div({style:{display:"flex",flexWrap:"wrap",gap:"6px",marginBottom:"8px"}});
+    alts.forEach(a=>{ const b=btn({style:{fontSize:"12px",padding:"7px 11px",borderRadius:"16px",cursor:"pointer",fontWeight:600,border:"1px solid #22c55e55",background:"#22c55e14",color:"#4ade80"}},a);
+      b.addEventListener('click',(()=>{const alt=a;return()=>{ logResist(vd,alt); showToast("✊ 我慢できた！えらい！"); if(typeof showConfetti==="function")showConfetti(); };})());
+      chips.appendChild(b); });
+    c.appendChild(chips);
+    const editToggle=btn({style:{fontSize:"10px",padding:"3px 9px",borderRadius:"6px",cursor:"pointer",border:"1px solid #334155",background:"transparent",color:"#94a3b8"}}, state.cravingAltsEdit?"✕ 閉じる":"✏️ 代替行動を編集");
+    editToggle.addEventListener('click',()=>{ state.cravingAltsEdit=!state.cravingAltsEdit; render(); });
+    c.appendChild(editToggle);
+    if(state.cravingAltsEdit){
+      const ta=document.createElement('textarea'); ta.value=alts.join("\n"); ta.placeholder="1行に1つ";
+      ta.style.cssText="width:100%;min-height:110px;margin-top:8px;padding:8px 10px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit;box-sizing:border-box;resize:vertical;line-height:1.6";
+      c.appendChild(ta);
+      c.appendChild(btn({style:{width:"100%",marginTop:"6px",padding:"9px",background:"#22c55e18",border:"1px solid #22c55e",borderRadius:"8px",color:"#4ade80",fontSize:"12px",fontWeight:600,cursor:"pointer"},
+        onClick:()=>{ const lines=ta.value.split("\n").map(s=>s.trim()).filter(Boolean); state.cravingAlts=lines.length?lines:[...CRAVING_ALTS_DEFAULT]; saveCravingAlts(); state.cravingAltsEdit=false; showToast("保存しました"); render(); }},"保存"));
+    }
+    const todayResists=(getDaily(vd).resists||[]);
+    if(todayResists.length){
+      const rl=div({style:{marginTop:"8px",borderTop:"1px solid #1e293b",paddingTop:"8px"}});
+      todayResists.forEach((r,i)=>{
+        const t=new Date(r.t); const tl=`${String(t.getHours()).padStart(2,'0')}:${String(t.getMinutes()).padStart(2,'0')}`;
+        const row=div({style:{display:"flex",alignItems:"center",gap:"8px",fontSize:"11px",color:"#94a3b8",padding:"2px 0"}},[
+          span({style:{color:"#4ade80"}},"✊"), span({style:{color:"#64748b",flexShrink:0}},tl), span({style:{flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},r.alt||"我慢した")
+        ]);
+        const del=btn({style:{background:"transparent",border:"none",color:"#334155",cursor:"pointer",fontSize:"13px"}},"×");
+        del.addEventListener('click',(()=>{const idx=i;return()=>{ const d=getDaily(vd); const arr=[...(d.resists||[])]; arr.splice(idx,1); setDaily(vd,{resists:arr}); render(); };})());
+        row.appendChild(del); rl.appendChild(row);
+      });
+      c.appendChild(rl);
+    }
+    wrap.appendChild(c);
+  }
+
+  // 📉 飲酒の影響（翌日への影響＋カロリー）
+  {
+    const st=alcoholImpactStats();
+    const c=div({className:"card"});
+    c.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0",marginBottom:"8px"}},"📉 飲酒の影響"));
+    if(st.drinkNextScore!=null && st.soberNextScore!=null){
+      const delta=st.drinkNextScore-st.soberNextScore;
+      c.appendChild(div({style:{marginBottom:"10px"}},[
+        div({style:{fontSize:"11px",color:"#94a3b8",marginBottom:"4px"}},"翌日の体調スコア（平均）"),
+        div({style:{display:"flex",gap:"8px",alignItems:"stretch"}},[
+          div({style:{flex:1,background:"#f59e0b14",border:"1px solid #f59e0b44",borderRadius:"8px",padding:"7px",textAlign:"center"}},[
+            div({style:{fontSize:"9px",color:"#f59e0b"}},`🍺 飲んだ翌日 (${st.drinkN}日)`),
+            div({style:{fontSize:"18px",fontWeight:800,color:"#f59e0b"}},st.drinkNextScore.toFixed(1))
+          ]),
+          div({style:{flex:1,background:"#22c55e14",border:"1px solid #22c55e44",borderRadius:"8px",padding:"7px",textAlign:"center"}},[
+            div({style:{fontSize:"9px",color:"#4ade80"}},`🚱 休肝日翌日 (${st.soberN}日)`),
+            div({style:{fontSize:"18px",fontWeight:800,color:"#4ade80"}},st.soberNextScore.toFixed(1))
+          ])
+        ]),
+        div({style:{fontSize:"11px",marginTop:"5px",textAlign:"center",fontWeight:700,color:delta<0?"#f97316":"#4ade80"}},
+          delta<-0.05?`飲んだ翌日は平均 ${Math.abs(delta).toFixed(1)} 低い`:(delta>0.05?`飲んだ翌日が +${delta.toFixed(1)}`:"差はほぼなし"))
+      ]));
+    } else {
+      c.appendChild(div({style:{fontSize:"11px",color:"#475569",marginBottom:"10px"}},"体調スコアの記録が増えると、飲んだ翌日と休肝日翌日の比較が出ます。"));
+    }
+    if(st.drinkNextSleep!=null && st.soberNextSleep!=null){
+      c.appendChild(div({style:{fontSize:"11px",color:"#94a3b8",marginBottom:"10px"}},`😴 翌日の睡眠：飲んだ翌日 ${st.drinkNextSleep.toFixed(1)}h ／ 休肝日翌日 ${st.soberNextSleep.toFixed(1)}h`));
+    }
+    const k7=alcoholKcalRange(vd,7), k30=alcoholKcalRange(vd,30);
+    c.appendChild(div({style:{display:"flex",gap:"8px"}},[
+      div({style:{flex:1,background:"#0f172a",borderRadius:"8px",padding:"7px",textAlign:"center"}},[div({style:{fontSize:"9px",color:"#64748b"}},"直近7日 アルコール由来kcal"),div({style:{fontSize:"16px",fontWeight:700,color:"#fbbf24"}},`${k7}`)]),
+      div({style:{flex:1,background:"#0f172a",borderRadius:"8px",padding:"7px",textAlign:"center"}},[div({style:{fontSize:"9px",color:"#64748b"}},"直近30日"),div({style:{fontSize:"16px",fontWeight:700,color:"#fbbf24"}},`${k30}`)])
+    ]));
+    c.appendChild(div({style:{fontSize:"9px",color:"#475569",marginTop:"6px"}},"※ kcalは純アルコール7.1kcal/gの概算（糖質は含まず）。"));
+    wrap.appendChild(c);
+  }
+
   // 目安
   wrap.appendChild(div({className:"card"},[
     div({style:{fontSize:"12px",fontWeight:600,color:"#94a3b8",marginBottom:"8px"}},"🩺 血中アルコール濃度の目安"),
@@ -6528,7 +6637,7 @@ function renderAchievement(vd){
     // ── 追加フォーム（条件タイプを選べる）──
     if(!state.newRewardType)state.newRewardType='streak';
     const typeRow=div({style:{display:"flex",flexWrap:"wrap",gap:"6px",marginTop:"8px",marginBottom:"6px"}});
-    [['streak','連続日数'],['routine','定期ルーティン'],['goalperiod','目標達成'],['sober','休肝日']].forEach(([k,l])=>{
+    [['streak','連続日数'],['routine','定期ルーティン'],['goalperiod','目標達成'],['sober','休肝日'],['resist','我慢']].forEach(([k,l])=>{
       const on=state.newRewardType===k;
       const b=btn({style:{flex:"1 1 22%",minWidth:"70px",padding:"6px 0",borderRadius:"7px",cursor:"pointer",fontSize:"11px",fontWeight:600,border:`1px solid ${on?"#f472b6":"#334155"}`,background:on?"#f472b622":"transparent",color:on?"#f472b6":"#64748b"}},l);
       b.addEventListener('click',()=>{state.newRewardType=k;render();});
@@ -6558,6 +6667,12 @@ function renderAchievement(vd){
       cnt.addEventListener('input',e=>{state.newRewardSoberCount=Math.max(1,parseInt(e.target.value)||1);});
       paramRow.appendChild(cnt);
       paramRow.appendChild(span({style:{fontSize:"12px",color:"#94a3b8",flexShrink:0}},"日達成で"));
+    } else if(state.newRewardType==='resist'){ // 飲酒欲求を我慢（累計◯回）
+      paramRow.appendChild(span({style:{fontSize:"12px",color:"#94a3b8",flexShrink:0}},"✊ 我慢を累計"));
+      const cnt=document.createElement('input');cnt.type='number';cnt.min="1";cnt.value=String(state.newRewardResistCount||10);cnt.style.cssText="width:64px;flex-shrink:0;padding:8px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit";
+      cnt.addEventListener('input',e=>{state.newRewardResistCount=Math.max(1,parseInt(e.target.value)||1);});
+      paramRow.appendChild(cnt);
+      paramRow.appendChild(span({style:{fontSize:"12px",color:"#94a3b8",flexShrink:0}},"回達成で"));
     } else { // 目標達成（期間×回数/日数）
       if(!state.newRewardGoalPeriod)state.newRewardGoalPeriod='daily';
       const psel=document.createElement('select');psel.className='sel';psel.style.cssText="flex:1;min-width:0";
@@ -6581,6 +6696,7 @@ function renderAchievement(vd){
       if(state.newRewardType==='routine'){ if(!state.newRewardRoutineUid){showToast("定期ルーティンを選んでください");return;} trigger={type:'routine',uid:state.newRewardRoutineUid,count:state.newRewardRoutineCount||10}; }
       else if(state.newRewardType==='goalperiod'){ trigger={type:'goalperiod',period:state.newRewardGoalPeriod||'daily',count:state.newRewardGoalCount||(state.newRewardGoalPeriod==='daily'?7:1)}; }
       else if(state.newRewardType==='sober'){ trigger={type:'sober',count:state.newRewardSoberCount||7}; }
+      else if(state.newRewardType==='resist'){ trigger={type:'resist',count:state.newRewardResistCount||10}; }
       else { trigger={type:'streak',days:state.newRewardDays||7}; }
       state.rewards=[...(state.rewards||[]),{id:Date.now(),text:t,trigger,days:trigger.type==='streak'?trigger.days:undefined}];
       state.newRewardText="";saveRewards();render();
