@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.51"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.52"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -4079,12 +4079,15 @@ function planBlockDone(ev, vd){
   if(ev.customTodo) return !!(((state.todos[ev.ctDate||vd]||{})[ev.ctUid])||{}).checked;
   if(ev.shiftBlock){ const d=getDaily(vd); return d.workStart!=null && d.workEnd!=null; }
   if(ev.isPattern){ const pp=(state.planPatterns||[]).find(x=>x.uid===ev.patternUid); if(!pp)return false;
-    // 連動ルーティンの完了判定は「そのパターンが所有する日(ovDate)」で行う。
-    //   連動する単体/セットのルーティンは、その所有日のルーティンとしてチェック＝記録されるため
-    //   （翌日にずらす(nextDay)パターンでも、シャワー等は所有日側にチェックが入る）。
-    //   翌日側に表示された前日パターンの尾部も、所有日で判定するので誤グレーにならない。
+    // 連動ルーティンの完了判定に使う日を決める。連動する単体/セットのルーティンは
+    // 「実際にやった日」のTODOとしてチェック＝記録されるが、その日は時刻帯で変わる：
+    //   ・深夜帯(0〜5時)のルーティン（シャワー・ナイト等）は所有日側に記録される
+    //   ・朝(5時〜)のルーティン（モーニング等）は、翌日にずらす(nextDay)場合は表示日側に記録される
+    // よって nextDay かつ開始が5時以降なら「翌日(表示日)」、それ以外は「所有日(ovDate)」で判定する。
     // 起床連動だけは「起床する日(wakeDate)」で判定（起床時刻はその日に記録されるため）。
-    const day = (pp.linkRoutine&&pp.linkRoutine.t==='wake') ? (ev.wakeDate||vd) : (ev.ovDate||vd);
+    let day;
+    if(pp.linkRoutine&&pp.linkRoutine.t==='wake') day = ev.wakeDate||vd;
+    else { const sh=(ev.oSH!=null?ev.oSH:ev.startH); day = addDays(ev.ovDate||vd, (ev.oNext && sh>=5)?1:0); }
     return patternLinkDone(pp,day); }
   if(ev.uid!=null && !ev._tail) return eventReflected(ev,vd);
   return false;
