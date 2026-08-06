@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.50"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.51"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -6235,7 +6235,19 @@ function renderAlcohol(vd,isToday){
       b.addEventListener('click',(()=>{const alt=a;return()=>{ logResist(vd,alt); showToast("✊ 我慢できた！えらい！"); if(typeof showConfetti==="function")showConfetti(); };})());
       chips.appendChild(b); });
     c.appendChild(chips);
-    const editToggle=btn({style:{fontSize:"10px",padding:"3px 9px",borderRadius:"6px",cursor:"pointer",border:"1px solid #334155",background:"transparent",color:"#94a3b8"}}, state.cravingAltsEdit?"✕ 閉じる":"✏️ 代替行動を編集");
+    // 代替行動を追加（この欄から手軽に追加できる）
+    {
+      const addRow=div({style:{display:"flex",gap:"6px",marginBottom:"8px"}});
+      const ai=document.createElement('input'); ai.type='text'; ai.placeholder='代替行動を追加（例：🧊 氷を噛む）'; ai.value=state.cravingAltNew||'';
+      ai.style.cssText="flex:1;min-width:0;padding:7px 10px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:12px;font-family:inherit";
+      ai.addEventListener('input',e=>{state.cravingAltNew=e.target.value;});
+      const addAlt=()=>{ const v=(state.cravingAltNew||'').trim(); if(!v){showToast('内容を入力してください');return;} if(getCravingAlts().includes(v)){showToast('すでにあります');state.cravingAltNew='';render();return;} state.cravingAlts=[...getCravingAlts(), v]; saveCravingAlts(); state.cravingAltNew=''; showToast('追加しました'); render(); };
+      ai.addEventListener('keydown',e=>{if(e.key==='Enter')addAlt();});
+      const addBtn=btn({style:{padding:"7px 13px",background:"#22c55e18",border:"1px solid #22c55e",borderRadius:"8px",color:"#4ade80",fontSize:"14px",fontWeight:700,cursor:"pointer",flexShrink:0},onClick:addAlt},"＋");
+      addRow.appendChild(ai); addRow.appendChild(addBtn);
+      c.appendChild(addRow);
+    }
+    const editToggle=btn({style:{fontSize:"10px",padding:"3px 9px",borderRadius:"6px",cursor:"pointer",border:"1px solid #334155",background:"transparent",color:"#94a3b8"}}, state.cravingAltsEdit?"✕ 閉じる":"✏️ 一覧を編集・並べ替え");
     editToggle.addEventListener('click',()=>{ state.cravingAltsEdit=!state.cravingAltsEdit; render(); });
     c.appendChild(editToggle);
     if(state.cravingAltsEdit){
@@ -6248,14 +6260,39 @@ function renderAlcohol(vd,isToday){
     const todayResists=(getDaily(vd).resists||[]);
     if(todayResists.length){
       const rl=div({style:{marginTop:"8px",borderTop:"1px solid #1e293b",paddingTop:"8px"}});
+      rl.appendChild(div({style:{fontSize:"9px",color:"#475569",marginBottom:"4px"}},`今日の我慢 ${todayResists.length}回（タップで編集）`));
+      const saveResists=(arr)=>{ setDaily(vd,{resists:arr}); };
       todayResists.forEach((r,i)=>{
-        const t=new Date(r.t); const tl=`${String(t.getHours()).padStart(2,'0')}:${String(t.getMinutes()).padStart(2,'0')}`;
-        const row=div({style:{display:"flex",alignItems:"center",gap:"8px",fontSize:"11px",color:"#94a3b8",padding:"2px 0"}},[
-          span({style:{color:"#4ade80"}},"✊"), span({style:{color:"#64748b",flexShrink:0}},tl), span({style:{flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},r.alt||"我慢した")
-        ]);
-        const del=btn({style:{background:"transparent",border:"none",color:"#334155",cursor:"pointer",fontSize:"13px"}},"×");
-        del.addEventListener('click',(()=>{const idx=i;return()=>{ const d=getDaily(vd); const arr=[...(d.resists||[])]; arr.splice(idx,1); setDaily(vd,{resists:arr}); render(); };})());
-        row.appendChild(del); rl.appendChild(row);
+        const editing = state.resistEdit && state.resistEdit.date===vd && state.resistEdit.idx===i;
+        if(editing){
+          const re=state.resistEdit;
+          const row=div({style:{display:"flex",alignItems:"center",gap:"6px",padding:"3px 0"}});
+          const timeInp=document.createElement('input'); timeInp.type='time'; timeInp.value=`${String(re.h).padStart(2,'0')}:${String(re.m).padStart(2,'0')}`;
+          timeInp.style.cssText="flex-shrink:0;width:88px;padding:6px;background:#0f172a;border:1px solid #22c55e55;border-radius:7px;color:#e2e8f0;font-size:13px;color-scheme:dark;font-family:inherit";
+          timeInp.addEventListener('change',e=>{const p=(e.target.value||'').split(':');const h=+p[0],mm=+p[1];if(!isNaN(h)&&!isNaN(mm)){re.h=h;re.m=mm;}});
+          const txtInp=document.createElement('input'); txtInp.type='text'; txtInp.value=re.alt; txtInp.placeholder='行動';
+          txtInp.style.cssText="flex:1;min-width:0;padding:6px 8px;background:#0f172a;border:1px solid #22c55e55;border-radius:7px;color:#e2e8f0;font-size:12px;font-family:inherit";
+          txtInp.addEventListener('input',e=>{re.alt=e.target.value;});
+          const save=btn({style:{flexShrink:0,background:"#22c55e18",border:"1px solid #22c55e",borderRadius:"6px",color:"#4ade80",cursor:"pointer",fontSize:"12px",padding:"5px 9px",fontWeight:700}},"✓");
+          save.addEventListener('click',()=>{ const arr=[...(getDaily(vd).resists||[])]; const nt=parseDS(vd); nt.setHours(re.h,re.m,0,0); arr[i]={...arr[i], t:nt.toISOString(), alt:(re.alt||'').trim()}; saveResists(arr); state.resistEdit=null; showToast('更新しました'); render(); });
+          const cancel=btn({style:{flexShrink:0,background:"transparent",border:"1px solid #334155",borderRadius:"6px",color:"#94a3b8",cursor:"pointer",fontSize:"12px",padding:"5px 9px"}},"✕");
+          cancel.addEventListener('click',()=>{ state.resistEdit=null; render(); });
+          row.appendChild(timeInp); row.appendChild(txtInp); row.appendChild(save); row.appendChild(cancel);
+          rl.appendChild(row);
+        } else {
+          const t=new Date(r.t); const tl=`${String(t.getHours()).padStart(2,'0')}:${String(t.getMinutes()).padStart(2,'0')}`;
+          const row=div({style:{display:"flex",alignItems:"center",gap:"8px",fontSize:"11px",color:"#94a3b8",padding:"2px 0"}});
+          const lab=div({style:{display:"flex",alignItems:"center",gap:"8px",flex:1,minWidth:0,cursor:"pointer"}},[
+            span({style:{color:"#4ade80",flexShrink:0}},"✊"), span({style:{color:"#64748b",flexShrink:0}},tl), span({style:{flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},r.alt||"我慢した")
+          ]);
+          lab.addEventListener('click',(()=>{const idx=i,rr=r;return()=>{ const tt=new Date(rr.t); state.resistEdit={date:vd, idx, alt:rr.alt||'', h:tt.getHours(), m:tt.getMinutes()}; render(); };})());
+          row.appendChild(lab);
+          const editB=btn({style:{flexShrink:0,background:"transparent",border:"1px solid #334155",borderRadius:"6px",color:"#94a3b8",cursor:"pointer",fontSize:"11px",padding:"2px 7px"}},"✏️");
+          editB.addEventListener('click',(()=>{const idx=i,rr=r;return()=>{ const tt=new Date(rr.t); state.resistEdit={date:vd, idx, alt:rr.alt||'', h:tt.getHours(), m:tt.getMinutes()}; render(); };})());
+          const del=btn({style:{flexShrink:0,background:"transparent",border:"none",color:"#334155",cursor:"pointer",fontSize:"14px"}},"×");
+          del.addEventListener('click',(()=>{const idx=i;return()=>{ const arr=[...(getDaily(vd).resists||[])]; arr.splice(idx,1); saveResists(arr); if(state.resistEdit&&state.resistEdit.idx===idx)state.resistEdit=null; render(); };})());
+          row.appendChild(editB); row.appendChild(del); rl.appendChild(row);
+        }
       });
       c.appendChild(rl);
     }
