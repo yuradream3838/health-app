@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.45"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.46"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -3149,13 +3149,22 @@ function getActualActivities(vd){
     const s=Math.max(0,wsAbs), e=Math.min(1440,weAbs);
     if(e>s) acts.push({title:"💼 仕事",startMin:s,endMin:e,color:"#2dd4bf"});
   }
-  // 定期ルーティン：その日にチェックされたもの（当日該当・繰り越し実施の両方）を実際列へ
+  // 定期ルーティン：チェック済みを実際列へ。
+  //  完了時刻(rec.time)がある場合は「その時刻の日付」がvdのものだけ表示する（前日キーに記録されていても
+  //  0時すぎ＝翌日に完了したものは翌日側に出す＝日付ズレ防止）。前日・当日のキーを走査。
+  [addDays(vd,-1), vd].forEach(DD=>{
+    (state.customTodos||[]).forEach(ct=>{
+      const rec=(state.todos[DD]||{})[ct.uid];
+      if(rec&&rec.checked&&rec.time&&onVd(rec.time)){
+        const t2=new Date(rec.time); const mins=t2.getHours()*60+t2.getMinutes();
+        acts.push({title:"✓"+ct.label,startMin:mins,endMin:mins+12,isPoint:true,color:ct.color||"#22c55e"});
+      }
+    });
+  });
+  //  完了時刻の記録がない（チェックのみ）当日該当分は、予定時刻の位置に表示
   (state.customTodos||[]).forEach(ct=>{
     const rec=(state.todos[vd]||{})[ct.uid];
-    if(rec&&rec.checked){
-      if(rec.time){ const t2=new Date(rec.time); const mins=t2.getHours()*60+t2.getMinutes(); acts.push({title:"✓"+ct.label,startMin:mins,endMin:mins+12,isPoint:true,color:ct.color||"#22c55e"}); }
-      else { const tt=customTodoTimeFor(ct,vd); if(tt){ const sp=customTodoSpan(tt); if(sp.s<1440) acts.push({title:"✓"+ct.label,startMin:sp.s,endMin:Math.min(1440,sp.e),isPoint:(sp.e-sp.s)<=12,color:ct.color||"#22c55e"}); } }
-    }
+    if(rec&&rec.checked&&!rec.time){ const tt=customTodoTimeFor(ct,vd); if(tt){ const sp=customTodoSpan(tt); if(sp.s<1440) acts.push({title:"✓"+ct.label,startMin:sp.s,endMin:Math.min(1440,sp.e),isPoint:(sp.e-sp.s)<=12,color:ct.color||"#22c55e"}); } }
   });
   // 手動登録した実績（予定外・突発的な行動を含む）。日跨ぎは当日側を末尾までクリップ
   (daily.actuals||[]).forEach(a=>{
