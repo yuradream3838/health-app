@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.52"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.53"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -2166,6 +2166,33 @@ function renderGoalTreeModal(){
   noteTa.value=m0.note||"";noteTa.placeholder="進捗・気づきをメモ...";
   noteTa.addEventListener('input',e=>{state.goalTreeModal.note=e.target.value;});
   m.appendChild(noteTa);
+  // ✅ 完了日時の編集（達成済みの目標のみ）。予定タブの「実績」の表示位置に反映される。
+  if(m0.mode==="edit"){
+    const cf=gtFind(m0.id); const cnode=cf&&cf.node;
+    if(cnode && !isRangeDaily(cnode) && cnode.done){
+      const cur = cnode.doneAt ? new Date(cnode.doneAt) : new Date();
+      m.appendChild(div({style:{fontSize:"11px",color:"#4ade80",fontWeight:600,margin:"2px 0 5px"}},"✅ 完了日時（実績に反映）"));
+      const row=div({style:{display:"flex",gap:"6px",marginBottom:"12px"}});
+      const di=document.createElement('input'); di.type='date'; di.value=fmtDS(cur);
+      di.style.cssText="flex:1;min-width:0;padding:8px;background:#0f172a;border:1px solid #22c55e55;border-radius:8px;color:#e2e8f0;font-size:13px;color-scheme:dark;font-family:inherit";
+      const ti=document.createElement('input'); ti.type='time'; ti.value=`${String(cur.getHours()).padStart(2,'0')}:${String(cur.getMinutes()).padStart(2,'0')}`;
+      ti.style.cssText="width:96px;flex-shrink:0;padding:8px;background:#0f172a;border:1px solid #22c55e55;border-radius:8px;color:#e2e8f0;font-size:13px;color-scheme:dark;font-family:inherit";
+      const apply=()=>{ const dp=(di.value||fmtDS(cur)).split('-'); const tp=(ti.value||"00:00").split(':'); const dt=new Date(+dp[0],(+dp[1]||1)-1,+dp[2]||1,+tp[0]||0,+tp[1]||0,0,0); gtUpdate(cnode.id,{doneAt:dt.toISOString()}); showToast("完了日時を更新しました"); render(); };
+      di.addEventListener('change',apply); ti.addEventListener('change',apply);
+      row.appendChild(di); row.appendChild(ti); m.appendChild(row);
+    } else if(cnode && isRangeDaily(cnode) && cnode.dailyDone && Object.keys(cnode.dailyDone).some(k=>cnode.dailyDone[k])){
+      m.appendChild(div({style:{fontSize:"11px",color:"#4ade80",fontWeight:600,margin:"2px 0 5px"}},"✅ 各日の完了時刻（実績に反映）"));
+      Object.keys(cnode.dailyDone).filter(k=>cnode.dailyDone[k]).sort().forEach(dsk=>{
+        const ts=cnode.dailyDone[dsk]; const cur=(typeof ts==="string")?new Date(ts):null;
+        const row=div({style:{display:"flex",gap:"8px",alignItems:"center",marginBottom:"6px"}});
+        row.appendChild(span({style:{fontSize:"12px",color:"#94a3b8",width:"52px",flexShrink:0}},mdLabel(dsk)));
+        const ti=document.createElement('input'); ti.type='time'; ti.value=cur?`${String(cur.getHours()).padStart(2,'0')}:${String(cur.getMinutes()).padStart(2,'0')}`:"00:00";
+        ti.style.cssText="flex:1;min-width:0;padding:7px;background:#0f172a;border:1px solid #22c55e55;border-radius:8px;color:#e2e8f0;font-size:13px;color-scheme:dark;font-family:inherit";
+        ti.addEventListener('change',(()=>{const k=dsk;return e=>{ const tp=(e.target.value||"00:00").split(':'); const dd=parseDS(k); dd.setHours(+tp[0]||0,+tp[1]||0,0,0); const f2=gtFind(cnode.id); if(f2){ const map={...(f2.node.dailyDone||{})}; map[k]=dd.toISOString(); f2.node.dailyDone=map; saveGoalTree(); showToast("完了時刻を更新しました"); render(); } };})());
+        row.appendChild(ti); m.appendChild(row);
+      });
+    }
+  }
   // 目標を予定へ（この目標を予定タブのスケジュールに追加する。連動なし）
   if(m0.mode==="edit"){
     m.appendChild(btn({style:{width:"100%",padding:"10px",marginBottom:"10px",background:"#0ea5e918",border:"1px solid #0ea5e955",borderRadius:"8px",color:"#38bdf8",fontSize:"13px",fontWeight:600,cursor:"pointer"},
