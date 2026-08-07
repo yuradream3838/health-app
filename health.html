@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.53"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.54"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -648,8 +648,8 @@ function loadStorage(){
     if(aic){try{const o=JSON.parse(aic); if(o&&typeof o==="object")state.aiCoach=o;}catch{}}
     const rwd=localStorage.getItem(STORAGE_KEY+"_rewards");
     if(rwd){try{const a=JSON.parse(rwd); if(Array.isArray(a))state.rewards=a;}catch{}}
-    const cra=localStorage.getItem(STORAGE_KEY+"_cravingalts");
-    if(cra){try{const a=JSON.parse(cra); if(Array.isArray(a))state.cravingAlts=a;}catch{}}
+    const iva=localStorage.getItem(STORAGE_KEY+"_investactions");
+    if(iva){try{const a=JSON.parse(iva); if(Array.isArray(a)&&a.length)state.investActions=a;}catch{}}
     // 旧形式（v8.3 events/taskList/wishList/shopList）からの一度きり移行
     if(!sc && !tk){ migrateOldSchedule(); }
   }catch{}
@@ -1005,7 +1005,7 @@ function render(){
   if(state.tab==="予定")   content.appendChild(renderScheduleHub(vd,ds,isToday));
   if(state.tab==="日記")   content.appendChild(renderDiaryHub(vd,ds,curH,isToday));
   if(state.tab==="タスク") content.appendChild(renderTaskHub(vd,ds,isToday));
-  if(state.tab==="達成")   content.appendChild(renderAchievement(vd));
+  if(state.tab==="達成")   content.appendChild(renderAchieveHub(vd));
   if(state.tab==="分析")   content.appendChild(renderAnalysisHub(vd,ds,curH,isToday));
   if(state.tab==="設定")   content.appendChild(renderSettingsHub());
   }
@@ -1278,6 +1278,27 @@ function renderWidgetView(vd,ds){
     grid.appendChild(qbtn(`🍽️ 食べたもの${foodN?`（${foodN}）`:""}`,"#0ea5e9","#0ea5e918","#38bdf8",()=>{ state.modal="food"; state.foodSelected=[...(d.foods||[])]; state.foodOpenCat=null; render(); }));
     grid.appendChild(qbtn(`💧 射精${ejN?`（${ejN}）`:""}`,"#6366f1","#6366f118","#a5b4fc",()=>{ state.modal="addEjac"; state.newEjacH=new Date().getHours(); state.newEjacM=new Date().getMinutes(); state.newEjacTag=null; render(); }));
     c.appendChild(grid);
+    wrap.appendChild(c);
+  }
+
+  // ── 💰 未来投資（回数＋節約額・チップでその場記録）──
+  {
+    const c=div({className:"card",style:{padding:"12px 14px",marginBottom:"10px"}});
+    c.appendChild(div({style:{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:"8px"}},[
+      div({style:{fontSize:"13px",fontWeight:700,color:"#22c55e"}},`💰 未来投資 今日${investCountOn(vd)}回`),
+      div({style:{fontSize:"11px",color:"#64748b"}},`本日 ¥${investAmountOn(vd).toLocaleString()}／累計 ¥${investAmountTotal().toLocaleString()}`)
+    ]));
+    const chipRow=div({style:{display:"flex",flexWrap:"wrap",gap:"6px"}});
+    getInvestActions().slice(0,6).forEach(a=>{
+      const b=btn({style:{padding:"6px 9px",borderRadius:"13px",border:"1px solid #334155",background:"#0f172a",color:"#cbd5e1",fontSize:"11px",cursor:"pointer",fontFamily:"inherit"}},
+        a.amount>0?`${a.label} +¥${a.amount}`:a.label);
+      b.addEventListener('click',()=>{ logInvest(vd,a); showToast(`💰 ${a.label}${a.amount>0?` +¥${a.amount}`:""}`); render(); });
+      chipRow.appendChild(b);
+    });
+    c.appendChild(chipRow);
+    const openInv=btn({style:{width:"100%",marginTop:"8px",padding:"7px",background:"transparent",border:"1px solid #334155",borderRadius:"7px",color:"#64748b",cursor:"pointer",fontSize:"11px"}},"未来投資をすべて見る →");
+    openInv.addEventListener('click',()=>{ exitWidget(); state.tab="達成"; state.achieveSubTab="未来投資"; render(); });
+    c.appendChild(openInv);
     wrap.appendChild(c);
   }
 
@@ -5301,14 +5322,43 @@ function soberBadge(){
   const on=n>=1;
   return div({style:{display:"inline-flex",alignItems:"center",gap:"6px",padding:"4px 12px",borderRadius:"14px",background:(on?"#22c55e":"#64748b")+"18",border:`1px solid ${(on?"#22c55e":"#64748b")}55`,color:on?"#4ade80":"#94a3b8",fontSize:"12px",fontWeight:700}},`🚱 休肝日 ${n}日達成`);
 }
-// ── 飲みすぎ防止：飲酒欲求への対処（代替行動＋我慢ログ）──
-const CRAVING_ALTS_DEFAULT=["💧 水を飲む","🍵 お茶・炭酸水","🚶 散歩する","🫁 深呼吸1分","🦷 歯を磨く","🛁 お風呂に入る","🍫 甘いもの","📱 スマホを置いて別のことを"];
-function getCravingAlts(){ if(!Array.isArray(state.cravingAlts)||!state.cravingAlts.length) state.cravingAlts=[...CRAVING_ALTS_DEFAULT]; return state.cravingAlts; }
-function saveCravingAlts(){ try{localStorage.setItem(STORAGE_KEY+"_cravingalts",JSON.stringify(state.cravingAlts||[]));}catch{} }
-function logResist(vd, alt){ const d=getDaily(vd); const resists=[...(d.resists||[]), {t:new Date().toISOString(), alt:alt||""}]; setDaily(vd,{resists}); }
-function resistCountOn(vd){ return ((getDaily(vd).resists)||[]).length; }
-function resistCountRange(vd, days){ let n=0; for(let i=0;i<days;i++) n+=resistCountOn(addDays(vd,-i)); return n; }
-function resistTotal(){ return (state.dailies||[]).reduce((a,d)=>a+((d.resists||[]).length),0); }
+// ── 未来投資（短期の衝動を我慢＝未来の自分への投資として記録。回数＋節約額を蓄積）──
+const INVEST_ACTIONS_DEFAULT=[
+  {label:"飲酒を我慢",        cat:"🍺 飲酒", amount:500},
+  {label:"1杯で止めた",       cat:"🍺 飲酒", amount:300},
+  {label:"コンビニに寄らない", cat:"🛒 買い物", amount:500},
+  {label:"衝動買いをやめた",   cat:"🛒 買い物", amount:1000},
+  {label:"自販機を使わない",   cat:"🛒 買い物", amount:150},
+  {label:"加工食品を食べない", cat:"🍔 食事", amount:0},
+  {label:"外食せず自炊",       cat:"🍔 食事", amount:800},
+  {label:"お菓子を我慢",       cat:"🍔 食事", amount:200},
+  {label:"二度寝しない",       cat:"💪 その他", amount:0},
+  {label:"運動した",           cat:"💪 その他", amount:0},
+];
+function getInvestActions(){ if(!Array.isArray(state.investActions)||!state.investActions.length) state.investActions=INVEST_ACTIONS_DEFAULT.map(a=>({...a})); return state.investActions; }
+function saveInvestActions(){ try{localStorage.setItem(STORAGE_KEY+"_investactions",JSON.stringify(state.investActions||[]));}catch{} }
+function logInvest(vd, act){ const d=getDaily(vd); const investments=[...(d.investments||[]), {t:new Date().toISOString(), label:(act&&act.label)||"", cat:(act&&act.cat)||"", amount:Math.max(0,(act&&act.amount)||0)}]; setDaily(vd,{investments}); }
+function investListOn(vd){ return ((getDaily(vd).investments)||[]); }
+function investCountOn(vd){ return investListOn(vd).length; }
+function investCountRange(vd, days){ let n=0; for(let i=0;i<days;i++) n+=investCountOn(addDays(vd,-i)); return n; }
+function investTotal(){ return (state.dailies||[]).reduce((a,d)=>a+((d.investments||[]).length),0); }
+function investAmountOn(vd){ return investListOn(vd).reduce((a,r)=>a+(r.amount||0),0); }
+function investAmountRange(vd, days){ let n=0; for(let i=0;i<days;i++) n+=investAmountOn(addDays(vd,-i)); return n; }
+function investAmountTotal(){ return (state.dailies||[]).reduce((a,d)=>a+((d.investments||[]).reduce((x,r)=>x+(r.amount||0),0)),0); }
+// 旧「我慢(resists)」データを investments（🍺飲酒・¥0）へ一度だけ移行
+function migrateResistsToInvest(){
+  let done=false; try{done=localStorage.getItem(STORAGE_KEY+"_investmigrated")==="1";}catch{}
+  if(done)return;
+  let changed=false;
+  (state.dailies||[]).forEach(d=>{
+    if(Array.isArray(d.resists)&&d.resists.length){
+      d.investments=[...(d.investments||[]), ...d.resists.map(r=>({t:r.t||new Date().toISOString(), label:r.alt||"我慢", cat:"🍺 飲酒", amount:0}))];
+      delete d.resists; changed=true;
+    }
+  });
+  if(changed) saveStorage();
+  try{localStorage.setItem(STORAGE_KEY+"_investmigrated","1");}catch{}
+}
 // ── 飲みすぎ防止：飲酒の影響の可視化 ──
 // 飲酒日の翌日 vs 休肝日の翌日の平均スコア・睡眠を集計
 function alcoholImpactStats(){
@@ -5353,9 +5403,9 @@ function rewardStatus(r){
     const need=Math.max(1,tr.count||1), cnt=alcoholFreeStreak();
     return {unlocked:cnt>=need, badge:`🚱${need}`, progress:cnt>=need?"🎉達成":`${cnt}/${need}日`, name:"休肝日連続"};
   }
-  if(tr.type==='resist'){
-    const need=Math.max(1,tr.count||1), cnt=resistTotal();
-    return {unlocked:cnt>=need, badge:`✊${need}`, progress:cnt>=need?"🎉達成":`${cnt}/${need}回`, name:"飲酒欲求を我慢"};
+  if(tr.type==='invest'||tr.type==='resist'){ // resist=旧名（互換）
+    const need=Math.max(1,tr.count||1), cnt=investTotal();
+    return {unlocked:cnt>=need, badge:`💰${need}`, progress:cnt>=need?"🎉達成":`${cnt}/${need}回`, name:"未来投資"};
   }
   if(tr.type==='goalperiod'){
     const need=Math.max(1,tr.count||1), cnt=goalPeriodAchievedCount(tr.period);
@@ -6250,84 +6300,7 @@ function renderAlcohol(vd,isToday){
   }
   wrap.appendChild(listCard);
 
-  // 🧠 飲みたくなったら（代替行動＋我慢ログ）
-  {
-    const alts=getCravingAlts();
-    const todayN=resistCountOn(vd), weekN=resistCountRange(vd,7), totalN=resistTotal();
-    const c=div({className:"card"});
-    c.appendChild(div({style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"6px",flexWrap:"wrap",gap:"4px"}},[
-      div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0"}},"🧠 飲みたくなったら"),
-      div({style:{fontSize:"11px",color:"#4ade80",fontWeight:700}},`✊ 今日${todayN}・7日${weekN}・累計${totalN}`)
-    ]));
-    c.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"8px",lineHeight:1.5}},"欲求がきたら、代わりの行動をタップ。1回＝1我慢として記録されます。"));
-    const chips=div({style:{display:"flex",flexWrap:"wrap",gap:"6px",marginBottom:"8px"}});
-    alts.forEach(a=>{ const b=btn({style:{fontSize:"12px",padding:"7px 11px",borderRadius:"16px",cursor:"pointer",fontWeight:600,border:"1px solid #22c55e55",background:"#22c55e14",color:"#4ade80"}},a);
-      b.addEventListener('click',(()=>{const alt=a;return()=>{ logResist(vd,alt); showToast("✊ 我慢できた！えらい！"); if(typeof showConfetti==="function")showConfetti(); };})());
-      chips.appendChild(b); });
-    c.appendChild(chips);
-    // 代替行動を追加（この欄から手軽に追加できる）
-    {
-      const addRow=div({style:{display:"flex",gap:"6px",marginBottom:"8px"}});
-      const ai=document.createElement('input'); ai.type='text'; ai.placeholder='代替行動を追加（例：🧊 氷を噛む）'; ai.value=state.cravingAltNew||'';
-      ai.style.cssText="flex:1;min-width:0;padding:7px 10px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:12px;font-family:inherit";
-      ai.addEventListener('input',e=>{state.cravingAltNew=e.target.value;});
-      const addAlt=()=>{ const v=(state.cravingAltNew||'').trim(); if(!v){showToast('内容を入力してください');return;} if(getCravingAlts().includes(v)){showToast('すでにあります');state.cravingAltNew='';render();return;} state.cravingAlts=[...getCravingAlts(), v]; saveCravingAlts(); state.cravingAltNew=''; showToast('追加しました'); render(); };
-      ai.addEventListener('keydown',e=>{if(e.key==='Enter')addAlt();});
-      const addBtn=btn({style:{padding:"7px 13px",background:"#22c55e18",border:"1px solid #22c55e",borderRadius:"8px",color:"#4ade80",fontSize:"14px",fontWeight:700,cursor:"pointer",flexShrink:0},onClick:addAlt},"＋");
-      addRow.appendChild(ai); addRow.appendChild(addBtn);
-      c.appendChild(addRow);
-    }
-    const editToggle=btn({style:{fontSize:"10px",padding:"3px 9px",borderRadius:"6px",cursor:"pointer",border:"1px solid #334155",background:"transparent",color:"#94a3b8"}}, state.cravingAltsEdit?"✕ 閉じる":"✏️ 一覧を編集・並べ替え");
-    editToggle.addEventListener('click',()=>{ state.cravingAltsEdit=!state.cravingAltsEdit; render(); });
-    c.appendChild(editToggle);
-    if(state.cravingAltsEdit){
-      const ta=document.createElement('textarea'); ta.value=alts.join("\n"); ta.placeholder="1行に1つ";
-      ta.style.cssText="width:100%;min-height:110px;margin-top:8px;padding:8px 10px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit;box-sizing:border-box;resize:vertical;line-height:1.6";
-      c.appendChild(ta);
-      c.appendChild(btn({style:{width:"100%",marginTop:"6px",padding:"9px",background:"#22c55e18",border:"1px solid #22c55e",borderRadius:"8px",color:"#4ade80",fontSize:"12px",fontWeight:600,cursor:"pointer"},
-        onClick:()=>{ const lines=ta.value.split("\n").map(s=>s.trim()).filter(Boolean); state.cravingAlts=lines.length?lines:[...CRAVING_ALTS_DEFAULT]; saveCravingAlts(); state.cravingAltsEdit=false; showToast("保存しました"); render(); }},"保存"));
-    }
-    const todayResists=(getDaily(vd).resists||[]);
-    if(todayResists.length){
-      const rl=div({style:{marginTop:"8px",borderTop:"1px solid #1e293b",paddingTop:"8px"}});
-      rl.appendChild(div({style:{fontSize:"9px",color:"#475569",marginBottom:"4px"}},`今日の我慢 ${todayResists.length}回（タップで編集）`));
-      const saveResists=(arr)=>{ setDaily(vd,{resists:arr}); };
-      todayResists.forEach((r,i)=>{
-        const editing = state.resistEdit && state.resistEdit.date===vd && state.resistEdit.idx===i;
-        if(editing){
-          const re=state.resistEdit;
-          const row=div({style:{display:"flex",alignItems:"center",gap:"6px",padding:"3px 0"}});
-          const timeInp=document.createElement('input'); timeInp.type='time'; timeInp.value=`${String(re.h).padStart(2,'0')}:${String(re.m).padStart(2,'0')}`;
-          timeInp.style.cssText="flex-shrink:0;width:88px;padding:6px;background:#0f172a;border:1px solid #22c55e55;border-radius:7px;color:#e2e8f0;font-size:13px;color-scheme:dark;font-family:inherit";
-          timeInp.addEventListener('change',e=>{const p=(e.target.value||'').split(':');const h=+p[0],mm=+p[1];if(!isNaN(h)&&!isNaN(mm)){re.h=h;re.m=mm;}});
-          const txtInp=document.createElement('input'); txtInp.type='text'; txtInp.value=re.alt; txtInp.placeholder='行動';
-          txtInp.style.cssText="flex:1;min-width:0;padding:6px 8px;background:#0f172a;border:1px solid #22c55e55;border-radius:7px;color:#e2e8f0;font-size:12px;font-family:inherit";
-          txtInp.addEventListener('input',e=>{re.alt=e.target.value;});
-          const save=btn({style:{flexShrink:0,background:"#22c55e18",border:"1px solid #22c55e",borderRadius:"6px",color:"#4ade80",cursor:"pointer",fontSize:"12px",padding:"5px 9px",fontWeight:700}},"✓");
-          save.addEventListener('click',()=>{ const arr=[...(getDaily(vd).resists||[])]; const nt=parseDS(vd); nt.setHours(re.h,re.m,0,0); arr[i]={...arr[i], t:nt.toISOString(), alt:(re.alt||'').trim()}; saveResists(arr); state.resistEdit=null; showToast('更新しました'); render(); });
-          const cancel=btn({style:{flexShrink:0,background:"transparent",border:"1px solid #334155",borderRadius:"6px",color:"#94a3b8",cursor:"pointer",fontSize:"12px",padding:"5px 9px"}},"✕");
-          cancel.addEventListener('click',()=>{ state.resistEdit=null; render(); });
-          row.appendChild(timeInp); row.appendChild(txtInp); row.appendChild(save); row.appendChild(cancel);
-          rl.appendChild(row);
-        } else {
-          const t=new Date(r.t); const tl=`${String(t.getHours()).padStart(2,'0')}:${String(t.getMinutes()).padStart(2,'0')}`;
-          const row=div({style:{display:"flex",alignItems:"center",gap:"8px",fontSize:"11px",color:"#94a3b8",padding:"2px 0"}});
-          const lab=div({style:{display:"flex",alignItems:"center",gap:"8px",flex:1,minWidth:0,cursor:"pointer"}},[
-            span({style:{color:"#4ade80",flexShrink:0}},"✊"), span({style:{color:"#64748b",flexShrink:0}},tl), span({style:{flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},r.alt||"我慢した")
-          ]);
-          lab.addEventListener('click',(()=>{const idx=i,rr=r;return()=>{ const tt=new Date(rr.t); state.resistEdit={date:vd, idx, alt:rr.alt||'', h:tt.getHours(), m:tt.getMinutes()}; render(); };})());
-          row.appendChild(lab);
-          const editB=btn({style:{flexShrink:0,background:"transparent",border:"1px solid #334155",borderRadius:"6px",color:"#94a3b8",cursor:"pointer",fontSize:"11px",padding:"2px 7px"}},"✏️");
-          editB.addEventListener('click',(()=>{const idx=i,rr=r;return()=>{ const tt=new Date(rr.t); state.resistEdit={date:vd, idx, alt:rr.alt||'', h:tt.getHours(), m:tt.getMinutes()}; render(); };})());
-          const del=btn({style:{flexShrink:0,background:"transparent",border:"none",color:"#334155",cursor:"pointer",fontSize:"14px"}},"×");
-          del.addEventListener('click',(()=>{const idx=i;return()=>{ const arr=[...(getDaily(vd).resists||[])]; arr.splice(idx,1); saveResists(arr); if(state.resistEdit&&state.resistEdit.idx===idx)state.resistEdit=null; render(); };})());
-          row.appendChild(editB); row.appendChild(del); rl.appendChild(row);
-        }
-      });
-      c.appendChild(rl);
-    }
-    wrap.appendChild(c);
-  }
+  // （旧「🧠 飲みたくなったら」カードは達成タブの「未来投資」に一本化）
 
   // 📉 飲酒の影響（翌日への影響＋カロリー）
   {
@@ -6579,6 +6552,129 @@ function maybeCelebrateStreak(){
   else if(cur<last){ const nl=STREAK_MILESTONES.filter(m=>m<=cur).pop()||0; if(nl!==last){ state.lastStreakMilestone=nl; try{localStorage.setItem(STORAGE_KEY+"_streakms",String(nl));}catch{} } }
 }
 // 達成タブ（ヒートマップ／ストリーク等）
+// ── 達成ハブ（達成・未来投資）──
+function renderAchieveHub(vd){
+  if(!state.achieveSubTab)state.achieveSubTab="達成";
+  return renderSubHub(["達成","未来投資"],state.achieveSubTab,t=>{state.achieveSubTab=t;render();},()=>{
+    if(state.achieveSubTab==="未来投資") return renderInvestPanel(vd);
+    return renderAchievement(vd);
+  });
+}
+
+// ── 未来投資パネル（我慢／未来につながる行動を回数・金額で集計）──
+function renderInvestPanel(vd){
+  const wrap=div({style:{maxWidth:"600px",margin:"0 auto",padding:"12px 16px 60px"}});
+  const isToday=vd===todayStr();
+  // ── サマリー ──
+  const sc=div({className:"card",style:{marginBottom:"10px"}});
+  sc.appendChild(div({style:{fontSize:"11px",color:"#94a3b8",marginBottom:"8px"}},"💰 未来投資"));
+  const sumRow=div({style:{display:"flex",gap:"8px",textAlign:"center"}});
+  const stat=(label,val,sub,col)=>div({style:{flex:1}},[
+    div({style:{fontSize:"10px",color:"#64748b"}},label),
+    div({style:{fontSize:"22px",fontWeight:800,color:col||"#22c55e",lineHeight:1.15}},val),
+    sub?div({style:{fontSize:"9px",color:"#64748b"}},sub):null
+  ]);
+  sumRow.appendChild(stat("今日",`${investCountOn(vd)}`,`¥${investAmountOn(vd).toLocaleString()}`,"#38bdf8"));
+  sumRow.appendChild(stat("7日間",`${investCountRange(vd,7)}`,`¥${investAmountRange(vd,7).toLocaleString()}`,"#a78bfa"));
+  sumRow.appendChild(stat("累計",`${investTotal()}回`,`¥${investAmountTotal().toLocaleString()} 節約`,"#22c55e"));
+  sc.appendChild(sumRow);
+  wrap.appendChild(sc);
+
+  // ── 行動チップ（カテゴリ別・タップで記録）──
+  const acts=getInvestActions();
+  const cats=[]; acts.forEach(a=>{ if(!cats.includes(a.cat))cats.push(a.cat); });
+  const chipCard=div({className:"card",style:{marginBottom:"10px"}});
+  chipCard.appendChild(div({style:{fontSize:"11px",color:"#94a3b8",marginBottom:"8px"}},isToday?"タップして記録（未来への投資）":`${mdLabel(vd)}に記録`));
+  cats.forEach(cat=>{
+    chipCard.appendChild(div({style:{fontSize:"10px",color:"#64748b",margin:"6px 0 4px"}},cat));
+    const row=div({style:{display:"flex",flexWrap:"wrap",gap:"6px"}});
+    acts.filter(a=>a.cat===cat).forEach(a=>{
+      const b=btn({style:{padding:"7px 10px",borderRadius:"14px",border:"1px solid #334155",background:"#0f172a",color:"#cbd5e1",fontSize:"12px",cursor:"pointer",fontFamily:"inherit"}},
+        a.amount>0?`${a.label} +¥${a.amount}`:a.label);
+      b.addEventListener('click',()=>{ logInvest(vd,a); showToast(`💰 ${a.label}${a.amount>0?` +¥${a.amount}`:""}`); render(); });
+      row.appendChild(b);
+    });
+    chipCard.appendChild(row);
+  });
+  // 行動の追加・編集トグル
+  const editToggle=btn({style:{marginTop:"10px",padding:"6px 10px",borderRadius:"8px",border:"1px solid #334155",background:"transparent",color:"#64748b",fontSize:"11px",cursor:"pointer",fontFamily:"inherit"}},
+    state.investActEdit?"✕ 行動の編集を閉じる":"⚙️ 行動を追加・編集");
+  editToggle.addEventListener('click',()=>{state.investActEdit=!state.investActEdit;render();});
+  chipCard.appendChild(editToggle);
+  if(state.investActEdit){
+    const eb=div({style:{marginTop:"8px",paddingTop:"8px",borderTop:"1px solid #1e293b"}});
+    // 既存行動の編集・削除
+    acts.forEach((a,i)=>{
+      const r=div({style:{display:"flex",gap:"4px",alignItems:"center",marginBottom:"4px"}});
+      const li=document.createElement('input');li.type='text';li.value=a.label;li.style.cssText="flex:1;min-width:0;padding:6px 8px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#e2e8f0;font-size:12px;font-family:inherit";
+      li.addEventListener('change',e=>{a.label=e.target.value;saveInvestActions();});
+      const ci=document.createElement('input');ci.type='text';ci.value=a.cat;ci.style.cssText="width:80px;flex-shrink:0;padding:6px 8px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#e2e8f0;font-size:12px;font-family:inherit";
+      ci.addEventListener('change',e=>{a.cat=e.target.value;saveInvestActions();render();});
+      const ai=document.createElement('input');ai.type='number';ai.min="0";ai.value=String(a.amount||0);ai.style.cssText="width:66px;flex-shrink:0;padding:6px 8px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#e2e8f0;font-size:12px;font-family:inherit";
+      ai.addEventListener('change',e=>{a.amount=Math.max(0,parseInt(e.target.value)||0);saveInvestActions();});
+      const del=btn({style:{padding:"6px 8px",background:"transparent",border:"1px solid #7f1d1d",borderRadius:"6px",color:"#f87171",fontSize:"12px",cursor:"pointer",flexShrink:0}},"🗑");
+      del.addEventListener('click',()=>{acts.splice(i,1);saveInvestActions();render();});
+      r.appendChild(li);r.appendChild(ci);r.appendChild(ai);r.appendChild(del);
+      eb.appendChild(r);
+    });
+    // 新規追加
+    const nr=div({style:{display:"flex",gap:"4px",alignItems:"center",marginTop:"8px"}});
+    const nl=document.createElement('input');nl.type='text';nl.placeholder="行動";nl.value=state.newInvestLabel||"";nl.style.cssText="flex:1;min-width:0;padding:6px 8px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#e2e8f0;font-size:12px;font-family:inherit";
+    nl.addEventListener('input',e=>{state.newInvestLabel=e.target.value;});
+    const nc=document.createElement('input');nc.type='text';nc.placeholder="分類";nc.value=state.newInvestCat||"";nc.style.cssText="width:80px;flex-shrink:0;padding:6px 8px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#e2e8f0;font-size:12px;font-family:inherit";
+    nc.addEventListener('input',e=>{state.newInvestCat=e.target.value;});
+    const na=document.createElement('input');na.type='number';na.min="0";na.placeholder="¥";na.value=state.newInvestAmount!=null?String(state.newInvestAmount):"";na.style.cssText="width:66px;flex-shrink:0;padding:6px 8px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#e2e8f0;font-size:12px;font-family:inherit";
+    na.addEventListener('input',e=>{state.newInvestAmount=Math.max(0,parseInt(e.target.value)||0);});
+    const add=btn({style:{padding:"6px 12px",background:"#22c55e18",border:"1px solid #22c55e",borderRadius:"6px",color:"#22c55e",fontSize:"13px",fontWeight:700,cursor:"pointer",flexShrink:0}},"＋");
+    add.addEventListener('click',()=>{
+      const l=(state.newInvestLabel||"").trim();if(!l){showToast("行動を入力してください");return;}
+      acts.push({label:l,cat:(state.newInvestCat||"").trim()||"💪 その他",amount:Math.max(0,state.newInvestAmount||0)});
+      saveInvestActions();state.newInvestLabel="";state.newInvestCat="";state.newInvestAmount=null;render();
+    });
+    nr.appendChild(nl);nr.appendChild(nc);nr.appendChild(na);nr.appendChild(add);
+    eb.appendChild(nr);
+    chipCard.appendChild(eb);
+  }
+  wrap.appendChild(chipCard);
+
+  // ── 今日の記録（編集・削除）──
+  const list=investListOn(vd);
+  const logCard=div({className:"card"});
+  logCard.appendChild(div({style:{fontSize:"11px",color:"#94a3b8",marginBottom:"8px"}},`${isToday?"今日":mdLabel(vd)}の記録（${list.length}件）`));
+  if(!list.length){
+    logCard.appendChild(div({style:{fontSize:"12px",color:"#64748b",padding:"6px 0"}},"まだ記録がありません。上のチップから記録できます。"));
+  } else {
+    list.forEach((r,i)=>{
+      const row=div({style:{display:"flex",gap:"6px",alignItems:"center",padding:"6px 0",borderBottom:"1px solid #1e293b"}});
+      const tm=(()=>{try{const d=new Date(r.t);return hhmm(d.getHours(),d.getMinutes());}catch{return"";}})();
+      if(state.investEdit&&state.investEdit.vd===vd&&state.investEdit.i===i){
+        const li=document.createElement('input');li.type='text';li.value=r.label||"";li.style.cssText="flex:1;min-width:0;padding:6px 8px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#e2e8f0;font-size:12px;font-family:inherit";
+        li.addEventListener('input',e=>{r.label=e.target.value;});
+        const ai=document.createElement('input');ai.type='number';ai.min="0";ai.value=String(r.amount||0);ai.style.cssText="width:70px;flex-shrink:0;padding:6px 8px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#e2e8f0;font-size:12px;font-family:inherit";
+        ai.addEventListener('input',e=>{r.amount=Math.max(0,parseInt(e.target.value)||0);});
+        const ok=btn({style:{padding:"6px 10px",background:"#22c55e18",border:"1px solid #22c55e",borderRadius:"6px",color:"#22c55e",fontSize:"12px",cursor:"pointer",flexShrink:0}},"✓");
+        ok.addEventListener('click',()=>{ setDaily(vd,{investments:investListOn(vd)}); state.investEdit=null; render(); });
+        row.appendChild(li);row.appendChild(ai);row.appendChild(ok);
+      } else {
+        row.appendChild(span({style:{fontSize:"10px",color:"#64748b",flexShrink:0,width:"38px"}},tm));
+        row.appendChild(div({style:{flex:1,minWidth:0}},[
+          div({style:{fontSize:"13px",color:"#e2e8f0"}},r.label||"(無題)"),
+          r.cat?div({style:{fontSize:"10px",color:"#64748b"}},r.cat):null
+        ]));
+        row.appendChild(span({style:{fontSize:"12px",color:"#22c55e",fontWeight:700,flexShrink:0}},r.amount>0?`¥${(r.amount||0).toLocaleString()}`:"—"));
+        const ed=btn({style:{padding:"5px 8px",background:"transparent",border:"1px solid #334155",borderRadius:"6px",color:"#94a3b8",fontSize:"11px",cursor:"pointer",flexShrink:0}},"✏️");
+        ed.addEventListener('click',()=>{state.investEdit={vd,i};render();});
+        const del=btn({style:{padding:"5px 8px",background:"transparent",border:"1px solid #7f1d1d",borderRadius:"6px",color:"#f87171",fontSize:"11px",cursor:"pointer",flexShrink:0}},"🗑");
+        del.addEventListener('click',()=>{ const arr=investListOn(vd).slice(); arr.splice(i,1); setDaily(vd,{investments:arr}); render(); });
+        row.appendChild(ed);row.appendChild(del);
+      }
+      logCard.appendChild(row);
+    });
+  }
+  wrap.appendChild(logCard);
+  return wrap;
+}
+
 function renderAchievement(vd){
   const wrap=div({style:{maxWidth:"600px",margin:"0 auto",padding:"12px 16px 60px"}});
   const today=todayStr();
@@ -6704,7 +6800,7 @@ function renderAchievement(vd){
     // ── 追加フォーム（条件タイプを選べる）──
     if(!state.newRewardType)state.newRewardType='streak';
     const typeRow=div({style:{display:"flex",flexWrap:"wrap",gap:"6px",marginTop:"8px",marginBottom:"6px"}});
-    [['streak','連続日数'],['routine','定期ルーティン'],['goalperiod','目標達成'],['sober','休肝日'],['resist','我慢']].forEach(([k,l])=>{
+    [['streak','連続日数'],['routine','定期ルーティン'],['goalperiod','目標達成'],['sober','休肝日'],['invest','未来投資']].forEach(([k,l])=>{
       const on=state.newRewardType===k;
       const b=btn({style:{flex:"1 1 22%",minWidth:"70px",padding:"6px 0",borderRadius:"7px",cursor:"pointer",fontSize:"11px",fontWeight:600,border:`1px solid ${on?"#f472b6":"#334155"}`,background:on?"#f472b622":"transparent",color:on?"#f472b6":"#64748b"}},l);
       b.addEventListener('click',()=>{state.newRewardType=k;render();});
@@ -6734,10 +6830,10 @@ function renderAchievement(vd){
       cnt.addEventListener('input',e=>{state.newRewardSoberCount=Math.max(1,parseInt(e.target.value)||1);});
       paramRow.appendChild(cnt);
       paramRow.appendChild(span({style:{fontSize:"12px",color:"#94a3b8",flexShrink:0}},"日達成で"));
-    } else if(state.newRewardType==='resist'){ // 飲酒欲求を我慢（累計◯回）
-      paramRow.appendChild(span({style:{fontSize:"12px",color:"#94a3b8",flexShrink:0}},"✊ 我慢を累計"));
-      const cnt=document.createElement('input');cnt.type='number';cnt.min="1";cnt.value=String(state.newRewardResistCount||10);cnt.style.cssText="width:64px;flex-shrink:0;padding:8px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit";
-      cnt.addEventListener('input',e=>{state.newRewardResistCount=Math.max(1,parseInt(e.target.value)||1);});
+    } else if(state.newRewardType==='invest'){ // 未来投資（累計◯回）
+      paramRow.appendChild(span({style:{fontSize:"12px",color:"#94a3b8",flexShrink:0}},"💰 未来投資を累計"));
+      const cnt=document.createElement('input');cnt.type='number';cnt.min="1";cnt.value=String(state.newRewardInvestCount||10);cnt.style.cssText="width:64px;flex-shrink:0;padding:8px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit";
+      cnt.addEventListener('input',e=>{state.newRewardInvestCount=Math.max(1,parseInt(e.target.value)||1);});
       paramRow.appendChild(cnt);
       paramRow.appendChild(span({style:{fontSize:"12px",color:"#94a3b8",flexShrink:0}},"回達成で"));
     } else { // 目標達成（期間×回数/日数）
@@ -6763,7 +6859,7 @@ function renderAchievement(vd){
       if(state.newRewardType==='routine'){ if(!state.newRewardRoutineUid){showToast("定期ルーティンを選んでください");return;} trigger={type:'routine',uid:state.newRewardRoutineUid,count:state.newRewardRoutineCount||10}; }
       else if(state.newRewardType==='goalperiod'){ trigger={type:'goalperiod',period:state.newRewardGoalPeriod||'daily',count:state.newRewardGoalCount||(state.newRewardGoalPeriod==='daily'?7:1)}; }
       else if(state.newRewardType==='sober'){ trigger={type:'sober',count:state.newRewardSoberCount||7}; }
-      else if(state.newRewardType==='resist'){ trigger={type:'resist',count:state.newRewardResistCount||10}; }
+      else if(state.newRewardType==='invest'){ trigger={type:'invest',count:state.newRewardInvestCount||10}; }
       else { trigger={type:'streak',days:state.newRewardDays||7}; }
       state.rewards=[...(state.rewards||[]),{id:Date.now(),text:t,trigger,days:trigger.type==='streak'?trigger.days:undefined}];
       state.newRewardText="";saveRewards();render();
@@ -8488,6 +8584,7 @@ state.viewDate = todayStr();
 state.widget=true;
 window.addEventListener('hashchange',()=>{ const w=(location.hash==='#widget'||location.hash==='#today'); if(w!==!!state.widget){ state.widget=w; if(w)state.viewDate=todayStr(); render(); } });
 migrateGoalsToTree(); // 旧・期間別の記入内容を目標ツリーへ一度だけ移行
+migrateResistsToInvest(); // 旧「我慢」ログを未来投資へ一度だけ移行
 // デバウンス中の保存を離脱/非表示時に確実に書き出す（取りこぼし防止）
 window.addEventListener('pagehide',()=>{try{flushStorage();}catch(_){}});
 document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='hidden'){ try{flushStorage();}catch(_){}} });
