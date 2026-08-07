@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.54"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.55"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -5404,6 +5404,10 @@ function rewardStatus(r){
     return {unlocked:cnt>=need, badge:`🚱${need}`, progress:cnt>=need?"🎉達成":`${cnt}/${need}日`, name:"休肝日連続"};
   }
   if(tr.type==='invest'||tr.type==='resist'){ // resist=旧名（互換）
+    if(tr.metric==='amount'){
+      const need=Math.max(1,tr.amount||1000), cnt=investAmountTotal();
+      return {unlocked:cnt>=need, badge:`💰¥${need.toLocaleString()}`, progress:cnt>=need?"🎉達成":`¥${cnt.toLocaleString()}/¥${need.toLocaleString()}`, name:"未来投資（節約額）"};
+    }
     const need=Math.max(1,tr.count||1), cnt=investTotal();
     return {unlocked:cnt>=need, badge:`💰${need}`, progress:cnt>=need?"🎉達成":`${cnt}/${need}回`, name:"未来投資"};
   }
@@ -6300,6 +6304,34 @@ function renderAlcohol(vd,isToday){
   }
   wrap.appendChild(listCard);
 
+  // ── 💧 水分補給リマインド（飲酒した日は水分をとるよう促す）──
+  if(drinks.length>0){
+    const d=getDaily(vd);
+    const curW=d.water!=null?d.water:0;
+    const targetW=Math.round((0.2*drinks.length + 1.5)*10)/10; // 目安：ベース1.5L＋1杯につき0.2L
+    const ok=curW>=targetW;
+    const hc=div({className:"card",style:{border:`1px solid ${ok?"#22c55e55":"#38bdf855"}`,background:ok?"#22c55e0d":"#38bdf80d"}});
+    hc.appendChild(div({style:{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:"6px"}},[
+      div({style:{fontSize:"13px",fontWeight:700,color:ok?"#22c55e":"#38bdf8"}},ok?"💧 水分バッチリ！":"💧 水を飲みましょう"),
+      div({style:{fontSize:"11px",color:"#64748b"}},`${curW}L / 目安 ${targetW}L`)
+    ]));
+    hc.appendChild(div({style:{fontSize:"11px",color:"#94a3b8",lineHeight:1.6,marginBottom:ok?"0":"8px"}},
+      ok?"しっかり水分がとれています。飲酒後・就寝前にもう一杯の水を。":"アルコールは脱水を招きます。飲んだお酒と同じくらいの量の水を飲みましょう。"));
+    if(!ok){
+      const bar=div({style:{height:"6px",background:"#0f172a",borderRadius:"4px",overflow:"hidden",marginBottom:"8px"}},[
+        div({style:{height:"100%",width:`${Math.min(100,Math.round(curW/targetW*100))}%`,background:"linear-gradient(90deg,#38bdf8,#22c55e)"}})]);
+      hc.appendChild(bar);
+      const btnRow=div({style:{display:"flex",gap:"6px"}});
+      [["＋コップ1杯 (0.2L)",0.2],["＋0.5L",0.5]].forEach(([lbl,amt])=>{
+        const b=btn({style:{flex:1,padding:"9px",borderRadius:"8px",border:"1px solid #38bdf8",background:"#38bdf818",color:"#38bdf8",fontSize:"12px",fontWeight:600,cursor:"pointer",fontFamily:"inherit"}},lbl);
+        b.addEventListener('click',(()=>{const a=amt;return()=>{ const cur=(getDaily(vd).water)||0; const nv=Math.round((cur+a)*10)/10; setDaily(vd,{water:nv}); showToast(`💧 水 +${a}L（計${nv}L）`,"#38bdf8"); render(); };})());
+        btnRow.appendChild(b);
+      });
+      hc.appendChild(btnRow);
+    }
+    wrap.appendChild(hc);
+  }
+
   // （旧「🧠 飲みたくなったら」カードは達成タブの「未来投資」に一本化）
 
   // 📉 飲酒の影響（翌日への影響＋カロリー）
@@ -6365,7 +6397,7 @@ function getSoberTime(drinks){
   return"12h以上";
 }
 function removeDrink(vd,uid){pushUndo("飲酒記録を削除しました");const d=getDaily(vd);setDaily(vd,{drinks:(d.drinks||[]).filter(x=>x.uid!==uid)});}
-function recordEnd(vd,uid){const n=new Date();const d=getDaily(vd);setDaily(vd,{drinks:(d.drinks||[]).map(x=>x.uid===uid?{...x,endHour:n.getHours(),endMin:n.getMinutes()}:x)});render();}
+function recordEnd(vd,uid){const n=new Date();const d=getDaily(vd);setDaily(vd,{drinks:(d.drinks||[]).map(x=>x.uid===uid?{...x,endHour:n.getHours(),endMin:n.getMinutes()}:x)});showToast("💧 水を飲みましょう（アルコールと同量の水分補給を）","#38bdf8");render();}
 function clearEnd(vd,uid){const d=getDaily(vd);setDaily(vd,{drinks:(d.drinks||[]).map(x=>{if(x.uid!==uid)return x;const c={...x};delete c.endHour;delete c.endMin;return c;})});render();}
 
 // ── 追加・編集モーダル ────────────────────────────
@@ -6807,7 +6839,7 @@ function renderAchievement(vd){
       typeRow.appendChild(b);
     });
     rc.appendChild(typeRow);
-    const paramRow=div({style:{display:"flex",gap:"6px",marginBottom:"6px",alignItems:"center"}});
+    const paramRow=div({style:{display:"flex",flexWrap:"wrap",gap:"6px",marginBottom:"6px",alignItems:"center"}});
     if(state.newRewardType==='streak'){
       const dsel=document.createElement('select');dsel.className='sel';dsel.style.cssText="flex:1;min-width:0";
       STREAK_MILESTONES.forEach(mm=>{const o=document.createElement('option');o.value=mm;o.textContent=`連続${mm}日`;if(mm===(state.newRewardDays||7))o.selected=true;dsel.appendChild(o);});
@@ -6830,12 +6862,30 @@ function renderAchievement(vd){
       cnt.addEventListener('input',e=>{state.newRewardSoberCount=Math.max(1,parseInt(e.target.value)||1);});
       paramRow.appendChild(cnt);
       paramRow.appendChild(span({style:{fontSize:"12px",color:"#94a3b8",flexShrink:0}},"日達成で"));
-    } else if(state.newRewardType==='invest'){ // 未来投資（累計◯回）
-      paramRow.appendChild(span({style:{fontSize:"12px",color:"#94a3b8",flexShrink:0}},"💰 未来投資を累計"));
-      const cnt=document.createElement('input');cnt.type='number';cnt.min="1";cnt.value=String(state.newRewardInvestCount||10);cnt.style.cssText="width:64px;flex-shrink:0;padding:8px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit";
-      cnt.addEventListener('input',e=>{state.newRewardInvestCount=Math.max(1,parseInt(e.target.value)||1);});
-      paramRow.appendChild(cnt);
-      paramRow.appendChild(span({style:{fontSize:"12px",color:"#94a3b8",flexShrink:0}},"回達成で"));
+    } else if(state.newRewardType==='invest'){ // 未来投資（累計◯回 or 累計節約額¥）
+      if(!state.newRewardInvestMetric)state.newRewardInvestMetric='count';
+      const isAmt=state.newRewardInvestMetric==='amount';
+      // 回数／金額の切替
+      const mtRow=div({style:{display:"flex",gap:"4px",flexShrink:0}});
+      [['count','回数'],['amount','金額']].forEach(([k,l])=>{
+        const on=state.newRewardInvestMetric===k;
+        const b=btn({style:{padding:"6px 10px",borderRadius:"7px",cursor:"pointer",fontSize:"11px",fontWeight:600,border:`1px solid ${on?"#22c55e":"#334155"}`,background:on?"#22c55e22":"transparent",color:on?"#22c55e":"#64748b"}},l);
+        b.addEventListener('click',()=>{state.newRewardInvestMetric=k;render();});
+        mtRow.appendChild(b);
+      });
+      paramRow.appendChild(mtRow);
+      paramRow.appendChild(span({style:{fontSize:"12px",color:"#94a3b8",flexShrink:0}},isAmt?"💰 累計 ¥":"💰 累計"));
+      if(isAmt){
+        const amt=document.createElement('input');amt.type='number';amt.min="1";amt.step="100";amt.value=String(state.newRewardInvestAmount||5000);amt.style.cssText="width:82px;flex-shrink:0;padding:8px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit";
+        amt.addEventListener('input',e=>{state.newRewardInvestAmount=Math.max(1,parseInt(e.target.value)||1);});
+        paramRow.appendChild(amt);
+        paramRow.appendChild(span({style:{fontSize:"12px",color:"#94a3b8",flexShrink:0}},"節約で"));
+      } else {
+        const cnt=document.createElement('input');cnt.type='number';cnt.min="1";cnt.value=String(state.newRewardInvestCount||10);cnt.style.cssText="width:64px;flex-shrink:0;padding:8px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit";
+        cnt.addEventListener('input',e=>{state.newRewardInvestCount=Math.max(1,parseInt(e.target.value)||1);});
+        paramRow.appendChild(cnt);
+        paramRow.appendChild(span({style:{fontSize:"12px",color:"#94a3b8",flexShrink:0}},"回達成で"));
+      }
     } else { // 目標達成（期間×回数/日数）
       if(!state.newRewardGoalPeriod)state.newRewardGoalPeriod='daily';
       const psel=document.createElement('select');psel.className='sel';psel.style.cssText="flex:1;min-width:0";
@@ -6859,7 +6909,7 @@ function renderAchievement(vd){
       if(state.newRewardType==='routine'){ if(!state.newRewardRoutineUid){showToast("定期ルーティンを選んでください");return;} trigger={type:'routine',uid:state.newRewardRoutineUid,count:state.newRewardRoutineCount||10}; }
       else if(state.newRewardType==='goalperiod'){ trigger={type:'goalperiod',period:state.newRewardGoalPeriod||'daily',count:state.newRewardGoalCount||(state.newRewardGoalPeriod==='daily'?7:1)}; }
       else if(state.newRewardType==='sober'){ trigger={type:'sober',count:state.newRewardSoberCount||7}; }
-      else if(state.newRewardType==='invest'){ trigger={type:'invest',count:state.newRewardInvestCount||10}; }
+      else if(state.newRewardType==='invest'){ trigger=(state.newRewardInvestMetric==='amount')?{type:'invest',metric:'amount',amount:state.newRewardInvestAmount||5000}:{type:'invest',count:state.newRewardInvestCount||10}; }
       else { trigger={type:'streak',days:state.newRewardDays||7}; }
       state.rewards=[...(state.rewards||[]),{id:Date.now(),text:t,trigger,days:trigger.type==='streak'?trigger.days:undefined}];
       state.newRewardText="";saveRewards();render();
