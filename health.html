@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.55"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.56"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -650,6 +650,12 @@ function loadStorage(){
     if(rwd){try{const a=JSON.parse(rwd); if(Array.isArray(a))state.rewards=a;}catch{}}
     const iva=localStorage.getItem(STORAGE_KEY+"_investactions");
     if(iva){try{const a=JSON.parse(iva); if(Array.isArray(a)&&a.length)state.investActions=a;}catch{}}
+    const ift=localStorage.getItem(STORAGE_KEY+"_ifthen");
+    if(ift!=null){try{const a=JSON.parse(ift); if(Array.isArray(a))state.ifThenPlans=a;}catch{}}
+    else { // 初回のみ例を1件だけ用意（削除しても再追加されない）
+      state.ifThenPlans=[{id:Date.now(),cue:"帰宅後に飲みたくなったら",action:"まず炭酸水を1杯飲む",weekdays:[5],afterH:18,active:true}];
+      try{localStorage.setItem(STORAGE_KEY+"_ifthen",JSON.stringify(state.ifThenPlans));}catch{}
+    }
     // 旧形式（v8.3 events/taskList/wishList/shopList）からの一度きり移行
     if(!sc && !tk){ migrateOldSchedule(); }
   }catch{}
@@ -1279,6 +1285,23 @@ function renderWidgetView(vd,ds){
     grid.appendChild(qbtn(`💧 射精${ejN?`（${ejN}）`:""}`,"#6366f1","#6366f118","#a5b4fc",()=>{ state.modal="addEjac"; state.newEjacH=new Date().getHours(); state.newEjacM=new Date().getMinutes(); state.newEjacTag=null; render(); }));
     c.appendChild(grid);
     wrap.appendChild(c);
+  }
+
+  // ── 🔀 if-thenプラン（今の状況に該当するものだけ強調表示）──
+  if(vd===todayStr()){
+    const active=getIfThenPlans().filter(ifThenActiveNow);
+    if(active.length){
+      const c=div({className:"card",style:{padding:"12px 14px",marginBottom:"10px",border:"1px solid #f59e0b66",background:"#f59e0b12"}});
+      c.appendChild(div({style:{fontSize:"12px",fontWeight:700,color:"#fbbf24",marginBottom:"6px"}},"🔀 今のあなたのプラン"));
+      active.forEach(p=>{
+        c.appendChild(div({style:{fontSize:"13px",color:"#e2e8f0",lineHeight:1.5,padding:"4px 0"}},[
+          txt(p.cue||""),
+          span({style:{color:"#f59e0b",fontWeight:700}}," → "),
+          span({style:{fontWeight:700}},p.action||"")
+        ]));
+      });
+      wrap.appendChild(c);
+    }
   }
 
   // ── 💰 未来投資（回数＋節約額・チップでその場記録）──
@@ -5359,6 +5382,22 @@ function migrateResistsToInvest(){
   if(changed) saveStorage();
   try{localStorage.setItem(STORAGE_KEY+"_investmigrated","1");}catch{}
 }
+// ── if-thenプラン（実行意図：「〜のとき→〜する」）──
+function getIfThenPlans(){ if(!Array.isArray(state.ifThenPlans))state.ifThenPlans=[]; return state.ifThenPlans; }
+function saveIfThenPlans(){ try{localStorage.setItem(STORAGE_KEY+"_ifthen",JSON.stringify(state.ifThenPlans||[]));}catch{} }
+function ifThenActiveNow(p){
+  if(!p||p.active===false)return false;
+  const now=new Date();
+  if(Array.isArray(p.weekdays)&&p.weekdays.length && !p.weekdays.includes(now.getDay()))return false;
+  if(p.afterH!=null && now.getHours()<p.afterH)return false;
+  return true;
+}
+function ifThenCondLabel(p){
+  const WD=["日","月","火","水","木","金","土"];
+  const wd=(Array.isArray(p.weekdays)&&p.weekdays.length)?p.weekdays.slice().sort((a,b)=>a-b).map(d=>WD[d]).join("・")+"曜":"毎日";
+  const tm=(p.afterH!=null)?`${p.afterH}時以降`:"終日";
+  return `${wd}・${tm}`;
+}
 // ── 飲みすぎ防止：飲酒の影響の可視化 ──
 // 飲酒日の翌日 vs 休肝日の翌日の平均スコア・睡眠を集計
 function alcoholImpactStats(){
@@ -6704,6 +6743,79 @@ function renderInvestPanel(vd){
     });
   }
   wrap.appendChild(logCard);
+
+  // ── 🔀 if-thenプラン（「〜のとき→〜する」を事前に決めておく）──
+  {
+    const plans=getIfThenPlans();
+    const itc=div({className:"card",style:{marginTop:"10px"}});
+    itc.appendChild(div({style:{fontSize:"11px",color:"#94a3b8",marginBottom:"4px"}},"🔀 if-thenプラン"));
+    itc.appendChild(div({style:{fontSize:"10px",color:"#64748b",lineHeight:1.5,marginBottom:"8px"}},"「◯◯のとき→△△する」を先に決めておくと、飲みたくなった瞬間に迷わず動けます。該当する曜日・時間帯には強調表示されます。"));
+    if(!plans.length){
+      itc.appendChild(div({style:{fontSize:"12px",color:"#64748b",padding:"4px 0 8px"}},"まだプランがありません。下から登録できます。"));
+    }
+    const WD=["日","月","火","水","木","金","土"];
+    plans.forEach((p,i)=>{
+      const on=ifThenActiveNow(p);
+      const isEd=state.ifThenEdit===p.id;
+      const box=div({style:{border:`1px solid ${on?"#f59e0b":"#1e293b"}`,background:on?"#f59e0b12":"#0f172a",borderRadius:"10px",padding:"9px 10px",marginBottom:"8px"}});
+      if(isEd){
+        const ci=document.createElement('input');ci.type='text';ci.placeholder="◯◯のとき（例：帰宅後に飲みたくなったら）";ci.value=p.cue||"";ci.style.cssText="width:100%;box-sizing:border-box;padding:7px 9px;margin-bottom:6px;background:#0b1220;border:1px solid #334155;border-radius:7px;color:#e2e8f0;font-size:12px;font-family:inherit";
+        ci.addEventListener('input',e=>{p.cue=e.target.value;});
+        const ai=document.createElement('input');ai.type='text';ai.placeholder="→ △△する（例：炭酸水を1杯飲む）";ai.value=p.action||"";ai.style.cssText="width:100%;box-sizing:border-box;padding:7px 9px;margin-bottom:8px;background:#0b1220;border:1px solid #334155;border-radius:7px;color:#e2e8f0;font-size:12px;font-family:inherit";
+        ai.addEventListener('input',e=>{p.action=e.target.value;});
+        itc.appendChild(box); // ensure order; append inputs below
+        box.appendChild(ci);box.appendChild(ai);
+        // 曜日チップ
+        const wdRow=div({style:{display:"flex",gap:"4px",flexWrap:"wrap",marginBottom:"8px"}});
+        WD.forEach((w,di)=>{
+          const sel=Array.isArray(p.weekdays)&&p.weekdays.includes(di);
+          const b=btn({style:{width:"30px",padding:"6px 0",borderRadius:"6px",cursor:"pointer",fontSize:"11px",fontWeight:600,border:`1px solid ${sel?"#f59e0b":"#334155"}`,background:sel?"#f59e0b22":"transparent",color:sel?"#fbbf24":"#64748b"}},w);
+          b.addEventListener('click',()=>{ if(!Array.isArray(p.weekdays))p.weekdays=[]; if(sel)p.weekdays=p.weekdays.filter(x=>x!==di); else p.weekdays=[...p.weekdays,di]; saveIfThenPlans(); render(); });
+          wdRow.appendChild(b);
+        });
+        box.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"3px"}},"曜日（未選択＝毎日）"));
+        box.appendChild(wdRow);
+        // 時間帯
+        const tmRow=div({style:{display:"flex",alignItems:"center",gap:"6px",marginBottom:"8px"}});
+        tmRow.appendChild(span({style:{fontSize:"11px",color:"#94a3b8"}},"時間帯："));
+        const tsel=document.createElement('select');tsel.className='sel';tsel.style.cssText="flex:1;min-width:0";
+        const optAny=document.createElement('option');optAny.value="";optAny.textContent="終日";if(p.afterH==null)optAny.selected=true;tsel.appendChild(optAny);
+        for(let hh=6;hh<=23;hh++){const o=document.createElement('option');o.value=hh;o.textContent=`${hh}時以降`;if(p.afterH===hh)o.selected=true;tsel.appendChild(o);}
+        tsel.addEventListener('change',e=>{p.afterH=e.target.value===""?null:parseInt(e.target.value);saveIfThenPlans();});
+        tmRow.appendChild(tsel);
+        box.appendChild(tmRow);
+        const okRow=div({style:{display:"flex",gap:"6px"}});
+        const ok=btn({style:{flex:1,padding:"8px",background:"#22c55e18",border:"1px solid #22c55e",borderRadius:"7px",color:"#22c55e",fontSize:"12px",fontWeight:700,cursor:"pointer"}},"✓ 完了");
+        ok.addEventListener('click',()=>{ p.cue=(p.cue||"").trim(); p.action=(p.action||"").trim(); saveIfThenPlans(); state.ifThenEdit=null; render(); });
+        okRow.appendChild(ok);
+        box.appendChild(okRow);
+      } else {
+        const head=div({style:{display:"flex",alignItems:"center",gap:"8px"}});
+        const tgl=btn({style:{width:"20px",height:"20px",borderRadius:"5px",flexShrink:0,border:`2px solid ${p.active!==false?"#22c55e":"#334155"}`,background:p.active!==false?"#22c55e":"transparent",cursor:"pointer",color:"#fff",fontSize:"11px",display:"flex",alignItems:"center",justifyContent:"center"}},p.active!==false?"✓":"");
+        tgl.addEventListener('click',()=>{p.active=p.active===false?true:false;saveIfThenPlans();render();});
+        head.appendChild(tgl);
+        head.appendChild(div({style:{flex:1,minWidth:0}},[
+          div({style:{fontSize:"13px",color:p.active!==false?"#e2e8f0":"#64748b",lineHeight:1.4}},[
+            txt(p.cue||"(未設定)"),
+            span({style:{color:"#f59e0b",fontWeight:700}}," → "),
+            txt(p.action||"(未設定)")
+          ]),
+          div({style:{fontSize:"10px",color:"#64748b",marginTop:"2px"}},[txt(ifThenCondLabel(p)), on?span({style:{color:"#fbbf24",fontWeight:700}}," ・ 🔥今が該当"):null])
+        ]));
+        const ed=btn({style:{padding:"5px 8px",background:"transparent",border:"1px solid #334155",borderRadius:"6px",color:"#94a3b8",fontSize:"11px",cursor:"pointer",flexShrink:0}},"✏️");
+        ed.addEventListener('click',()=>{state.ifThenEdit=p.id;render();});
+        const del=btn({style:{padding:"5px 8px",background:"transparent",border:"1px solid #7f1d1d",borderRadius:"6px",color:"#f87171",fontSize:"11px",cursor:"pointer",flexShrink:0}},"🗑");
+        del.addEventListener('click',()=>{ state.ifThenPlans=plans.filter(x=>x!==p); saveIfThenPlans(); render(); });
+        head.appendChild(ed);head.appendChild(del);
+        box.appendChild(head);
+        itc.appendChild(box);
+      }
+    });
+    const addP=btn({style:{width:"100%",padding:"9px",borderRadius:"8px",border:"1px dashed #f59e0b",background:"#f59e0b0d",color:"#fbbf24",fontSize:"12px",fontWeight:600,cursor:"pointer",fontFamily:"inherit"}},"＋ プランを追加");
+    addP.addEventListener('click',()=>{ const np={id:Date.now(),cue:"",action:"",weekdays:[],afterH:null,active:true}; state.ifThenPlans=[...plans,np]; saveIfThenPlans(); state.ifThenEdit=np.id; render(); });
+    itc.appendChild(addP);
+    wrap.appendChild(itc);
+  }
   return wrap;
 }
 
@@ -7973,6 +8085,9 @@ function exportData(){
     planPatterns:state.planPatterns,
     customTodos:state.customTodos,
     goalTree:state.goalTree,
+    rewards:state.rewards,
+    investActions:state.investActions,
+    ifThenPlans:state.ifThenPlans,
     weather,
     city
   };
@@ -8030,6 +8145,9 @@ function importData(e){
       if(Array.isArray(p.planPatterns)){state.planPatterns=p.planPatterns;savePlanPatterns();}
       if(Array.isArray(p.customTodos)){state.customTodos=p.customTodos;saveCustomTodos();}
       if(Array.isArray(p.goalTree)){state.goalTree=p.goalTree;saveGoalTree();}
+      if(Array.isArray(p.rewards)){state.rewards=p.rewards;saveRewards();}
+      if(Array.isArray(p.investActions)){state.investActions=p.investActions;saveInvestActions();}
+      if(Array.isArray(p.ifThenPlans)){state.ifThenPlans=p.ifThenPlans;saveIfThenPlans();}
       if(p.weather){try{localStorage.setItem(STORAGE_KEY+"_weather",JSON.stringify(p.weather));}catch{}}
       if(p.city){state.weatherCity=p.city;try{localStorage.setItem(STORAGE_KEY+"_city",JSON.stringify(p.city));}catch{}}
       // 旧形式（v8.3）のバックアップは新モデルへ移行して取り込む
@@ -8049,7 +8167,7 @@ function importData(e){
 }
 
 // ── バックアップの閲覧（読み取り専用・現在のデータは上書きしない）──
-const VIEW_FIELDS=["logs","dailies","todos","goals","goalTree","schedule","repeatEvents","tasks","routines","shiftPattern","planPatterns","customTodos","weatherCity","events","taskList","wishList","shopList"];
+const VIEW_FIELDS=["logs","dailies","todos","goals","goalTree","schedule","repeatEvents","tasks","routines","shiftPattern","planPatterns","customTodos","rewards","investActions","ifThenPlans","weatherCity","events","taskList","wishList","shopList"];
 function viewBackupFile(e){
   const file=e.target.files[0];if(!file)return;
   const reader=new FileReader();
@@ -8073,6 +8191,9 @@ function viewBackupFile(e){
       if(Array.isArray(p.planPatterns))state.planPatterns=p.planPatterns;
       if(Array.isArray(p.customTodos))state.customTodos=p.customTodos;
       state.goalTree=Array.isArray(p.goalTree)?p.goalTree:[];
+      if(Array.isArray(p.rewards))state.rewards=p.rewards;
+      if(Array.isArray(p.investActions))state.investActions=p.investActions;
+      if(Array.isArray(p.ifThenPlans))state.ifThenPlans=p.ifThenPlans;
       if(p.city)state.weatherCity=p.city;
       state._viewWeather=p.weather||{}; // 閲覧用の天気（localStorageには入れない）
       // 旧形式（v8.3）バックアップも移行して閲覧
