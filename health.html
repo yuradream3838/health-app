@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.60"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.61"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -6381,7 +6381,9 @@ function renderAlcohol(vd,isToday){
         div({style:{padding:"0 10px 8px"}},[
           div({style:{display:"flex",alignItems:"center",gap:"8px",padding:"5px 8px",marginBottom:"6px",background:"#0ea5e90d",borderRadius:"7px",border:"1px solid #0ea5e933"}},[
             span({style:{fontSize:"12px",color:"#38bdf8",flexShrink:0}},"💧 一緒に水"),
-            span({style:{fontSize:"12px",color:(d.water||0)>0?"#7dd3fc":"#64748b",flex:1}},(d.water||0)>0?`${(d.water||0)*100}ml（${((d.water||0)*0.1).toFixed(1)}L）`:"まだ（飲んだら記録）"),
+            (()=>{const wml=(d.water||0)*100, tgt=d.ml||0, met=tgt>0&&wml>=tgt;
+              return span({style:{fontSize:"12px",color:met?"#22c55e":(wml>0?"#7dd3fc":"#64748b"),flex:1}},
+                `${wml}ml ／ 目安 ${tgt}ml${met?" ✓":""}`);})(),
             (()=>{const can=(d.water||0)>0;const b=btn({style:{width:"30px",height:"28px",borderRadius:"6px",border:`1px solid ${can?"#334155":"#1e293b"}`,background:"transparent",color:can?"#94a3b8":"#334155",fontSize:"15px",cursor:can?"pointer":"default",flexShrink:0}},"−");if(can)b.addEventListener('click',(()=>{const uid=d.uid;return()=>adjustDrinkWater(vd,uid,-1);})());return b;})(),
             (()=>{const uid=d.uid;const b=btn({style:{padding:"0 12px",height:"28px",borderRadius:"6px",border:"1px solid #38bdf8",background:"#38bdf818",color:"#38bdf8",fontSize:"12px",fontWeight:700,cursor:"pointer",flexShrink:0}},"＋100ml");b.addEventListener('click',()=>{adjustDrinkWater(vd,uid,1);showToast("💧 水 +100ml","#38bdf8");});return b;})()
           ])
@@ -6402,34 +6404,6 @@ function renderAlcohol(vd,isToday){
     });
   }
   wrap.appendChild(listCard);
-
-  // ── 💧 水分補給リマインド（飲酒した日は水分をとるよう促す）──
-  if(drinks.length>0){
-    const d=getDaily(vd);
-    const curW=d.water!=null?d.water:0;
-    const targetW=Math.round((0.2*drinks.length + 1.5)*10)/10; // 目安：ベース1.5L＋1杯につき0.2L
-    const ok=curW>=targetW;
-    const hc=div({className:"card",style:{border:`1px solid ${ok?"#22c55e55":"#38bdf855"}`,background:ok?"#22c55e0d":"#38bdf80d"}});
-    hc.appendChild(div({style:{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:"6px"}},[
-      div({style:{fontSize:"13px",fontWeight:700,color:ok?"#22c55e":"#38bdf8"}},ok?"💧 水分バッチリ！":"💧 水を飲みましょう"),
-      div({style:{fontSize:"11px",color:"#64748b"}},`${curW}L / 目安 ${targetW}L`)
-    ]));
-    hc.appendChild(div({style:{fontSize:"11px",color:"#94a3b8",lineHeight:1.6,marginBottom:ok?"0":"8px"}},
-      ok?"しっかり水分がとれています。飲酒後・就寝前にもう一杯の水を。":"アルコールは脱水を招きます。飲んだお酒と同じくらいの量の水を飲みましょう。"));
-    if(!ok){
-      const bar=div({style:{height:"6px",background:"#0f172a",borderRadius:"4px",overflow:"hidden",marginBottom:"8px"}},[
-        div({style:{height:"100%",width:`${Math.min(100,Math.round(curW/targetW*100))}%`,background:"linear-gradient(90deg,#38bdf8,#22c55e)"}})]);
-      hc.appendChild(bar);
-      const btnRow=div({style:{display:"flex",gap:"6px"}});
-      [["＋コップ1杯 (0.2L)",0.2],["＋0.5L",0.5]].forEach(([lbl,amt])=>{
-        const b=btn({style:{flex:1,padding:"9px",borderRadius:"8px",border:"1px solid #38bdf8",background:"#38bdf818",color:"#38bdf8",fontSize:"12px",fontWeight:600,cursor:"pointer",fontFamily:"inherit"}},lbl);
-        b.addEventListener('click',(()=>{const a=amt;return()=>{ const cur=(getDaily(vd).water)||0; const nv=Math.round((cur+a)*10)/10; setDaily(vd,{water:nv}); showToast(`💧 水 +${a}L（計${nv}L）`,"#38bdf8"); render(); };})());
-        btnRow.appendChild(b);
-      });
-      hc.appendChild(btnRow);
-    }
-    wrap.appendChild(hc);
-  }
 
   // （旧「🧠 飲みたくなったら」カードは達成タブの「未来投資」に一本化）
 
