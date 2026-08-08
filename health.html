@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.63"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.64"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -6505,12 +6505,17 @@ function renderAlcohol(vd,isToday){
 
 function getSoberTime(drinks){
   if(!drinks.length)return"—";
-  const nowMin=new Date().getHours()*60+new Date().getMinutes();
   const dd=drinks.map(d=>{let startMin=d.hour*60+(d.min||0);if(d.startNextDay)startMin+=1440;let endMin=d.endHour!=null?d.endHour*60+(d.endMin||0):startMin+20;if(d.startNextDay&&d.endHour!=null)endMin+=1440;if(endMin<startMin)endMin+=1440;return{startMin,endMin,alcoholG:pureAlcohol(d.ml,d.drinkType.pct)};});
-  for(let t=nowMin+5;t<=nowMin+14*60;t+=5){
-    if(userBAC(dd,t)<=0.02)return`${Math.floor(t/60)%24}:${String(t%60).padStart(2,"0")}`;
+  // 全ての杯を吸収し終えた後はBACは単調減少するので、そこから素面(≦0.02‰)になる絶対時刻を探す。
+  // 「今」に依存させない（翌日記録の飲酒や過去日の表示でも正しく出す）。
+  const lastDone=Math.max(...dd.map(d=>d.endMin+15));
+  for(let t=lastDone;t<=lastDone+24*60;t+=5){
+    if(userBAC(dd,t)<=0.02){
+      const day=Math.floor(t/1440), hh=Math.floor((t%1440)/60), mm=t%60;
+      return `${day>=1?"翌":""}${hh}:${String(mm).padStart(2,"0")}`;
+    }
   }
-  return"12h以上";
+  return"24h以上";
 }
 function removeDrink(vd,uid){
   pushUndo("飲酒記録を削除しました");
