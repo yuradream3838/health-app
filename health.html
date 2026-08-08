@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.57"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.58"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -6725,18 +6725,26 @@ function renderInvestPanel(vd){
   chipCard.appendChild(editToggle);
   if(state.investActEdit){
     const eb=div({style:{marginTop:"8px",paddingTop:"8px",borderTop:"1px solid #1e293b"}});
-    // 既存行動の編集・削除
+    eb.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"6px"}},"↕ ボタンで並び替え・チップの表示順が変わります"));
+    // 既存行動の編集・削除・並び替え
     acts.forEach((a,i)=>{
       const r=div({style:{display:"flex",gap:"4px",alignItems:"center",marginBottom:"4px"}});
+      // 並び替え（▲▼）
+      const moveCol=div({style:{display:"flex",flexDirection:"column",gap:"2px",flexShrink:0}});
+      const mkMove=(sym,dir)=>{ const can=(dir<0&&i>0)||(dir>0&&i<acts.length-1);
+        const b=btn({style:{width:"22px",height:"15px",lineHeight:"1",padding:0,borderRadius:"4px",border:"1px solid #334155",background:can?"#0f172a":"transparent",color:can?"#94a3b8":"#334155",fontSize:"9px",cursor:can?"pointer":"default"}},sym);
+        if(can)b.addEventListener('click',()=>{ const j=i+dir; const t=acts[i];acts[i]=acts[j];acts[j]=t; saveInvestActions(); render(); });
+        return b; };
+      moveCol.appendChild(mkMove("▲",-1)); moveCol.appendChild(mkMove("▼",1));
       const li=document.createElement('input');li.type='text';li.value=a.label;li.style.cssText="flex:1;min-width:0;padding:6px 8px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#e2e8f0;font-size:12px;font-family:inherit";
       li.addEventListener('change',e=>{a.label=e.target.value;saveInvestActions();});
-      const ci=document.createElement('input');ci.type='text';ci.value=a.cat;ci.style.cssText="width:80px;flex-shrink:0;padding:6px 8px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#e2e8f0;font-size:12px;font-family:inherit";
+      const ci=document.createElement('input');ci.type='text';ci.value=a.cat;ci.style.cssText="width:74px;flex-shrink:0;padding:6px 8px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#e2e8f0;font-size:12px;font-family:inherit";
       ci.addEventListener('change',e=>{a.cat=e.target.value;saveInvestActions();render();});
-      const ai=document.createElement('input');ai.type='number';ai.min="0";ai.value=String(a.amount||0);ai.style.cssText="width:66px;flex-shrink:0;padding:6px 8px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#e2e8f0;font-size:12px;font-family:inherit";
+      const ai=document.createElement('input');ai.type='number';ai.min="0";ai.value=String(a.amount||0);ai.style.cssText="width:58px;flex-shrink:0;padding:6px 8px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#e2e8f0;font-size:12px;font-family:inherit";
       ai.addEventListener('change',e=>{a.amount=Math.max(0,parseInt(e.target.value)||0);saveInvestActions();});
       const del=btn({style:{padding:"6px 8px",background:"transparent",border:"1px solid #7f1d1d",borderRadius:"6px",color:"#f87171",fontSize:"12px",cursor:"pointer",flexShrink:0}},"🗑");
       del.addEventListener('click',()=>{acts.splice(i,1);saveInvestActions();render();});
-      r.appendChild(li);r.appendChild(ci);r.appendChild(ai);r.appendChild(del);
+      r.appendChild(moveCol);r.appendChild(li);r.appendChild(ci);r.appendChild(ai);r.appendChild(del);
       eb.appendChild(r);
     });
     // 新規追加
