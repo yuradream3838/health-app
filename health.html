@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.62"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.63"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -570,6 +570,11 @@ function calcBAC(drinks, wKg, sex, nowMin){
   }
   return bac;
 }
+// ユーザーの体重・性別を用いたBAC（未設定は 60kg・男性）
+function bacWeightKg(){ const w=parseFloat(state.bacWeight); return (w&&w>0)?w:60; }
+function bacSexV(){ return state.bacSex==="f"?"f":"m"; }
+function userBAC(dd,t){ return calcBAC(dd, bacWeightKg(), bacSexV(), t); }
+function saveBacProfile(){ try{localStorage.setItem(STORAGE_KEY+"_bacprofile",JSON.stringify({weight:bacWeightKg(),sex:bacSexV()}));}catch{} }
 function bacLevel(b){
   if(b>=1.5)return{label:"危険⚠️",color:"#ef4444",bg:"#3f0000"};
   if(b>=0.8)return{label:"酩酊",  color:"#f97316",bg:"#2d1500"};
@@ -586,6 +591,7 @@ const state = {
   logs:[], dailies:[], forecast:[],
   todos:{}, weeklyIdx:0, goals:{},
   schedule:{}, repeatEvents:[], tasks:{todo:[],shopping:[]},
+  bacWeight:60, bacSex:"m",
   routines:cloneRoutines(),
   shiftPattern:defaultShiftPattern(), swapMode:false, swapFirst:null,
   planPatterns:defaultPlanPatterns(), customTodos:[], customTodoModal:null,
@@ -629,6 +635,8 @@ function loadStorage(){
     migrateFoods();
     const city=localStorage.getItem(STORAGE_KEY+"_city");
     if(city){const c=JSON.parse(city);state.weatherCity=c;}
+    const prof=localStorage.getItem(STORAGE_KEY+"_bacprofile");
+    if(prof){try{const p=JSON.parse(prof); if(p&&typeof p==="object"){ if(p.weight)state.bacWeight=p.weight; if(p.sex)state.bacSex=p.sex; }}catch{}}
     const todos=localStorage.getItem(STORAGE_KEY+"_todo");
     if(todos){state.todos=JSON.parse(todos);}
     const goals=localStorage.getItem(STORAGE_KEY+"_goals");
@@ -857,13 +865,13 @@ function renderBACChart(drinks, showCurrent, nowMinPassed){
   const chartStart=Math.max(0,Math.min(firstMin,showCurrent?nowMin:firstMin)-60);
   let chartEnd=chartStart+8*60;
   for(let t=firstMin;t<=firstMin+14*60;t+=10){
-    if(calcBAC(dd,60,'m',t)<=0.02){chartEnd=t+60;break;}
+    if(userBAC(dd,t)<=0.02){chartEnd=t+60;break;}
   }
   chartEnd=Math.max(chartEnd,refMin+120);
   const totalMin=chartEnd-chartStart;
 
-  const curBac=showCurrent?calcBAC(dd,60,'m',nowMin):0;
-  const maxBac=Math.max(0.3,...Array.from({length:50},(_,i)=>calcBAC(dd,60,'m',chartStart+totalMin*(i/49))));
+  const curBac=showCurrent?userBAC(dd,nowMin):0;
+  const maxBac=Math.max(0.3,...Array.from({length:50},(_,i)=>userBAC(dd,chartStart+totalMin*(i/49))));
 
   const PT=14,PB=24,cH=H-PT-PB;
   const yS=b=>PT+cH-(b/maxBac)*cH;
@@ -916,7 +924,7 @@ function renderBACChart(drinks, showCurrent, nowMinPassed){
   ctx.moveTo(xG(chartStart),yS(0));
   for(let i=0;i<=STEPS;i++){
     const t=chartStart+totalMin*(i/STEPS);
-    ctx.lineTo(xG(t),yS(calcBAC(dd,60,'m',t)));
+    ctx.lineTo(xG(t),yS(userBAC(dd,t)));
   }
   ctx.lineTo(xG(chartEnd),yS(0));ctx.closePath();
   const grad=ctx.createLinearGradient(0,PT,0,PT+cH);
@@ -928,7 +936,7 @@ function renderBACChart(drinks, showCurrent, nowMinPassed){
   ctx.beginPath();
   for(let i=0;i<=STEPS;i++){
     const t=chartStart+totalMin*(i/STEPS);
-    i===0?ctx.moveTo(xG(t),yS(calcBAC(dd,60,'m',t))):ctx.lineTo(xG(t),yS(calcBAC(dd,60,'m',t)));
+    i===0?ctx.moveTo(xG(t),yS(userBAC(dd,t))):ctx.lineTo(xG(t),yS(userBAC(dd,t)));
   }
   ctx.stroke();
 
@@ -6308,14 +6316,14 @@ function renderAlcohol(vd,isToday){
     nowMinCalc=nowMin+1440;
   }
 
-  const curBac=(drinks.length&&showCurrent)?calcBAC(dd,60,'m',nowMinCalc):0;
+  const curBac=(drinks.length&&showCurrent)?userBAC(dd,nowMinCalc):0;
   const lv=bacLevel(curBac);
 
   // 今以降のピーク値
   const peakBac=(drinks.length&&showCurrent)?(() => {
     let peak=curBac;
     for(let t=nowMinCalc;t<=nowMinCalc+8*60;t+=5){
-      const b=calcBAC(dd,60,'m',t);
+      const b=userBAC(dd,t);
       if(b>peak)peak=b;
     }
     return peak;
@@ -6354,6 +6362,24 @@ function renderAlcohol(vd,isToday){
       span({style:{fontSize:"10px",color:"#64748b"}},l)
     ])))
   ]);
+  // ⚙️ 計算条件（体重・性別）— BACはWidmark式で体重・性別に依存
+  {
+    const cfg=div({style:{display:"flex",alignItems:"center",gap:"8px",marginTop:"10px",paddingTop:"10px",borderTop:"1px solid #1e293b",flexWrap:"wrap"}});
+    cfg.appendChild(span({style:{fontSize:"11px",color:"#64748b",flexShrink:0}},"⚙️ 計算条件"));
+    const wIn=document.createElement('input');wIn.type='number';wIn.min="30";wIn.max="200";wIn.value=String(bacWeightKg());
+    wIn.style.cssText="width:60px;padding:5px 7px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#e2e8f0;font-size:12px;font-family:inherit";
+    wIn.addEventListener('change',e=>{ state.bacWeight=Math.max(30,Math.min(200,parseFloat(e.target.value)||60)); saveBacProfile(); render(); });
+    cfg.appendChild(wIn);
+    cfg.appendChild(span({style:{fontSize:"11px",color:"#94a3b8",flexShrink:0}},"kg"));
+    [['m','男性'],['f','女性']].forEach(([k,l])=>{
+      const on=bacSexV()===k;
+      const b=btn({style:{padding:"5px 12px",borderRadius:"7px",cursor:"pointer",fontSize:"12px",fontWeight:600,border:`1px solid ${on?"#38bdf8":"#334155"}`,background:on?"#0ea5e922":"transparent",color:on?"#38bdf8":"#64748b"}},l);
+      b.addEventListener('click',()=>{state.bacSex=k;saveBacProfile();render();});
+      cfg.appendChild(b);
+    });
+    graphCard.appendChild(cfg);
+    graphCard.appendChild(div({style:{fontSize:"10px",color:"#475569",marginTop:"6px",lineHeight:1.5}},"※ 体重・性別から血中アルコール濃度を推定（Widmark式）。あくまで目安で、体質・体調・食事により個人差があります。"));
+  }
   wrap.appendChild(graphCard);
 
   // 飲酒欲求グラフ（閲覧のみ・入力は体調記録の各時間から）
@@ -6482,7 +6508,7 @@ function getSoberTime(drinks){
   const nowMin=new Date().getHours()*60+new Date().getMinutes();
   const dd=drinks.map(d=>{let startMin=d.hour*60+(d.min||0);if(d.startNextDay)startMin+=1440;let endMin=d.endHour!=null?d.endHour*60+(d.endMin||0):startMin+20;if(d.startNextDay&&d.endHour!=null)endMin+=1440;if(endMin<startMin)endMin+=1440;return{startMin,endMin,alcoholG:pureAlcohol(d.ml,d.drinkType.pct)};});
   for(let t=nowMin+5;t<=nowMin+14*60;t+=5){
-    if(calcBAC(dd,60,'m',t)<=0.02)return`${Math.floor(t/60)%24}:${String(t%60).padStart(2,"0")}`;
+    if(userBAC(dd,t)<=0.02)return`${Math.floor(t/60)%24}:${String(t%60).padStart(2,"0")}`;
   }
   return"12h以上";
 }
@@ -8169,6 +8195,7 @@ function exportData(){
     rewards:state.rewards,
     investActions:state.investActions,
     ifThenPlans:state.ifThenPlans,
+    bacProfile:{weight:bacWeightKg(),sex:bacSexV()},
     weather,
     city
   };
@@ -8229,6 +8256,7 @@ function importData(e){
       if(Array.isArray(p.rewards)){state.rewards=p.rewards;saveRewards();}
       if(Array.isArray(p.investActions)){state.investActions=p.investActions;saveInvestActions();}
       if(Array.isArray(p.ifThenPlans)){state.ifThenPlans=p.ifThenPlans;saveIfThenPlans();}
+      if(p.bacProfile&&typeof p.bacProfile==="object"){ if(p.bacProfile.weight)state.bacWeight=p.bacProfile.weight; if(p.bacProfile.sex)state.bacSex=p.bacProfile.sex; saveBacProfile(); }
       if(p.weather){try{localStorage.setItem(STORAGE_KEY+"_weather",JSON.stringify(p.weather));}catch{}}
       if(p.city){state.weatherCity=p.city;try{localStorage.setItem(STORAGE_KEY+"_city",JSON.stringify(p.city));}catch{}}
       // 旧形式（v8.3）のバックアップは新モデルへ移行して取り込む
