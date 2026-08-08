@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.59"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.60"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -6381,9 +6381,9 @@ function renderAlcohol(vd,isToday){
         div({style:{padding:"0 10px 8px"}},[
           div({style:{display:"flex",alignItems:"center",gap:"8px",padding:"5px 8px",marginBottom:"6px",background:"#0ea5e90d",borderRadius:"7px",border:"1px solid #0ea5e933"}},[
             span({style:{fontSize:"12px",color:"#38bdf8",flexShrink:0}},"💧 一緒に水"),
-            span({style:{fontSize:"12px",color:(d.water||0)>0?"#7dd3fc":"#64748b",flex:1}},(d.water||0)>0?`${d.water}杯（${((d.water||0)*0.2).toFixed(1)}L）`:"まだ（飲んだら記録）"),
+            span({style:{fontSize:"12px",color:(d.water||0)>0?"#7dd3fc":"#64748b",flex:1}},(d.water||0)>0?`${(d.water||0)*100}ml（${((d.water||0)*0.1).toFixed(1)}L）`:"まだ（飲んだら記録）"),
             (()=>{const can=(d.water||0)>0;const b=btn({style:{width:"30px",height:"28px",borderRadius:"6px",border:`1px solid ${can?"#334155":"#1e293b"}`,background:"transparent",color:can?"#94a3b8":"#334155",fontSize:"15px",cursor:can?"pointer":"default",flexShrink:0}},"−");if(can)b.addEventListener('click',(()=>{const uid=d.uid;return()=>adjustDrinkWater(vd,uid,-1);})());return b;})(),
-            (()=>{const uid=d.uid;const b=btn({style:{padding:"0 12px",height:"28px",borderRadius:"6px",border:"1px solid #38bdf8",background:"#38bdf818",color:"#38bdf8",fontSize:"12px",fontWeight:700,cursor:"pointer",flexShrink:0}},"＋1杯");b.addEventListener('click',()=>{adjustDrinkWater(vd,uid,1);showToast("💧 水 +0.2L","#38bdf8");});return b;})()
+            (()=>{const uid=d.uid;const b=btn({style:{padding:"0 12px",height:"28px",borderRadius:"6px",border:"1px solid #38bdf8",background:"#38bdf818",color:"#38bdf8",fontSize:"12px",fontWeight:700,cursor:"pointer",flexShrink:0}},"＋100ml");b.addEventListener('click',()=>{adjustDrinkWater(vd,uid,1);showToast("💧 水 +100ml","#38bdf8");});return b;})()
           ])
         ]),
         div({style:{padding:"0 10px 8px"}},[
@@ -6499,12 +6499,12 @@ function removeDrink(vd,uid){
   pushUndo("飲酒記録を削除しました");
   const d=getDaily(vd);
   const target=(d.drinks||[]).find(x=>x.uid===uid);
-  const wc=(target&&target.water)?target.water:0; // その飲酒に紐づく水（杯）を飲水量から差し引く
+  const wc=(target&&target.water)?target.water:0; // その飲酒に紐づく水（100ml単位）を飲水量から差し引く
   const patch={drinks:(d.drinks||[]).filter(x=>x.uid!==uid)};
-  if(wc>0){ let dw=(d.water!=null?d.water:0)-wc*0.2; dw=Math.round(Math.max(0,dw)*10)/10; patch.water=dw; }
+  if(wc>0){ let dw=(d.water!=null?d.water:0)-wc*0.1; dw=Math.round(Math.max(0,dw)*10)/10; patch.water=dw; }
   setDaily(vd,patch);
 }
-// 飲酒項目ごとの水分（1杯=0.2L）を増減し、飲水量(d.water)にも反映
+// 飲酒項目ごとの水分（1単位=100ml=0.1L）を増減し、飲水量(d.water)にも反映
 function adjustDrinkWater(vd,uid,delta){
   const d=getDaily(vd);
   let applied=0;
@@ -6513,7 +6513,7 @@ function adjustDrinkWater(vd,uid,delta){
     const cur=x.water||0; const next=Math.max(0,cur+delta); applied=next-cur;
     return {...x, water:next};
   });
-  let dw=(d.water!=null?d.water:0)+applied*0.2;
+  let dw=(d.water!=null?d.water:0)+applied*0.1;
   dw=Math.round(Math.max(0,dw)*10)/10;
   setDaily(vd,{drinks, water:dw});
   render();
