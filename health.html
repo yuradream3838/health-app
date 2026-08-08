@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.61"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.62"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -545,13 +545,30 @@ const resolveDT = d => (d.drinkType?.pct ? d.drinkType : DRINK_TYPES.find(t=>t.i
 
 function calcBAC(drinks, wKg, sex, nowMin){
   const r = sex==="f"?0.55:0.68;
-  return Math.max(0, drinks.reduce((bac,d)=>{
-    if(nowMin<d.startMin)return bac;
-    const peak = d.alcoholG/(wKg*r);
-    const done = d.endMin+15;
-    if(nowMin<=done) return bac+peak*Math.min(1,(nowMin-d.startMin)/Math.max(1,done-d.startMin));
-    return bac+Math.max(0,peak-0.15*((nowMin-done)/60));
-  },0));
+  const active=(drinks||[]).filter(d=>d && d.startMin!=null && d.alcoholG>0);
+  if(!active.length) return 0;
+  const start=Math.min(...active.map(d=>d.startMin));
+  if(nowMin<=start) return 0;
+  // 吸収済みアルコールによるBAC（消去前・単調増加）。各杯は開始→終了+15分で線形に吸収。
+  const absorbed=t=>active.reduce((s,d)=>{
+    if(t<d.startMin) return s;
+    const peak=d.alcoholG/(wKg*r);
+    const done=d.endMin+15;
+    const frac=t<=done?Math.min(1,(t-d.startMin)/Math.max(1,done-d.startMin)):1;
+    return s+peak*frac;
+  },0);
+  // 消去は0次（体内総量に対して一定速度 β≈0.15‰/時）。複数杯でも合算に対して一定速度で減る。
+  // 体内にアルコールがある間だけ進むよう、0を下回らないように時間刻みで積分する。
+  const beta=0.15/60; // ‰/分
+  const STEP=5;
+  let bac=0, prevAbs=0, t=start;
+  while(t<nowMin){
+    const nt=Math.min(nowMin,t+STEP);
+    const abs=absorbed(nt);
+    bac=Math.max(0, bac + Math.max(0,abs-prevAbs) - beta*(nt-t));
+    prevAbs=abs; t=nt;
+  }
+  return bac;
 }
 function bacLevel(b){
   if(b>=1.5)return{label:"危険⚠️",color:"#ef4444",bg:"#3f0000"};
