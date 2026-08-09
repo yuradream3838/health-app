@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.66"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.67"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -1432,7 +1432,7 @@ function renderWidgetView(vd,ds){
     c.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#a78bfa",marginBottom:"6px"}},`🔁 定期ルーティン 残り${dueRemain.length}件${carryReal.length?`　+繰越${carryReal.length}`:""}`));
     // 繰り越し／開始翌日（当日やる分）を上に
     carryCustom.forEach(({ct,occ})=>{
-      const lbl=ct.label||"定期ルーティン";
+      const lbl=((state.todos[occ.dueDate]||{})[ct.uid]||{}).labelOverride||ct.label||"定期ルーティン";
       const _snt=occ.snToday?customTodoTimeFor(ct,occ.dueDate):null;
       const sub=occ.snToday
         ? `🌙 開始翌日${_snt?`（${String(_snt.h).padStart(2,'0')}:${String(_snt.m||0).padStart(2,'0')}）`:""}`
@@ -3582,7 +3582,7 @@ function renderPlanCustomTodoModal(){
   const pc=state.planCustomTodo||{};
   const vd=pc.vd;
   const bg=div({className:"modal-center"});
-  const m=div({className:"modal-box"});
+  const m=div({className:"modal-box",style:{maxHeight:"85vh",overflowY:"auto"}});
   bg.addEventListener('click',()=>{state.modal=null;render();});
   m.addEventListener('click',e=>e.stopPropagation());
   const dl=mdLabel(vd);
@@ -4346,7 +4346,7 @@ function renderDaySchedule(vd,ds,isToday){
       });
       // 繰り越しになった定期ルーティン
       carryCustom.forEach(({ct,occ})=>{
-        const lbl=ct.label||"定期ルーティン";
+        const lbl=((state.todos[occ.dueDate]||{})[ct.uid]||{}).labelOverride||ct.label||"定期ルーティン";
         const row=div({style:{display:"flex",alignItems:"center",gap:"8px",padding:"4px 2px"}});
         const _snCol=occ.snToday?"#a78bfa":"#f97316";
         const cb=btn({style:{width:"20px",height:"20px",borderRadius:"5px",flexShrink:0,border:`2px solid ${_snCol}`,background:"transparent",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"12px",color:"#fff"}},"");
