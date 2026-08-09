@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.67"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.68"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -3419,11 +3419,13 @@ function getPlannedExtras(vd){
       const s=Math.max(0,startAbs), e=Math.min(1440,endAbs);
       if(e<=s)continue;                                // vd に掛からない
       const ovObj=(getDaily(D).patternOv||{})[p.uid];
+      const dispTitle=(ovObj&&ovObj.labelOverride)||p.title;
+      const noteOv=(ovObj&&ovObj.noteOverride)||"";
       // このパターンが「終わる日」（＝起床する日）。0時をまたぐ睡眠は所有日の翌日に起床する。
       const endMin=t.eH*60+(t.eM||0), startMin=t.sH*60+(t.sM||0);
       const wakeDate=addD(D, (t.nextDay?1:0)+(endMin<=startMin?1:0));
-      out.push({title:p.title,color:p.color||"#38bdf8",startH:Math.floor(s/60),startM:s%60,endH:Math.floor(e/60),endM:e%60,
-        isPattern:true,patternUid:p.uid,oSH:t.sH,oSM:t.sM,oEH:t.eH,oEM:t.eM,oNext:!!t.nextDay,ovDate:D,wakeDate,ovDay:!!(ovObj&&ovObj.startH!=null)});
+      out.push({title:dispTitle+(noteOv?" 📝":""),color:p.color||"#38bdf8",startH:Math.floor(s/60),startM:s%60,endH:Math.floor(e/60),endM:e%60,
+        isPattern:true,patternUid:p.uid,oSH:t.sH,oSM:t.sM,oEH:t.eH,oEM:t.eM,oNext:!!t.nextDay,ovDate:D,wakeDate,ovDay:!!(ovObj&&ovObj.startH!=null),patternNote:noteOv});
     }
   });
   // たまにやること（カスタムTODO）で時刻設定があるものは、その日の予定(左)に表示。
@@ -3564,7 +3566,27 @@ function renderPatternEditModal(vd){
     ndB.addEventListener('click',()=>{state.patternEdit.nextDay=!pe.nextDay;render();});
     m.appendChild(ndB);
     m.appendChild(btn({style:{width:"100%",padding:"10px",marginBottom:"8px",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:600,cursor:"pointer"},
-      onClick:()=>{const d=getDaily(D);const ov={...(d.patternOv||{})};ov[pe.uid]={startH:pe.startH,startM:pe.startM,endH:pe.endH,endM:pe.endM,nextDay:!!pe.nextDay};setDaily(D,{patternOv:ov});state.modal=null;showToast("この日だけ変更しました");render();}},"✅ この日だけ変更"));
+      onClick:()=>{const d=getDaily(D);const ov={...(d.patternOv||{})};const prev=ov[pe.uid]||{};ov[pe.uid]={...prev,startH:pe.startH,startM:pe.startM,endH:pe.endH,endM:pe.endM,nextDay:!!pe.nextDay};delete ov[pe.uid].hidden;setDaily(D,{patternOv:ov});state.modal=null;showToast("この日だけ変更しました");render();}},"✅ この日だけ変更"));
+    // 📝 この日だけ内容（名前・メモ）を変更
+    {
+      const curOv=(getDaily(D).patternOv||{})[pe.uid]||{};
+      if(pe.lblOv===undefined)pe.lblOv=curOv.labelOverride||"";
+      if(pe.noteOv===undefined)pe.noteOv=curOv.noteOverride||"";
+      m.appendChild(div({style:{fontSize:"11px",color:"#64748b",margin:"8px 0 5px"}},"📝 この日だけ内容を変更"));
+      const lin=document.createElement('input'); lin.type='text'; lin.placeholder=`名前（既定: ${p?p.title:""}）`; lin.value=pe.lblOv;
+      lin.style.cssText="width:100%;padding:8px 10px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:14px;font-family:inherit;box-sizing:border-box;margin-bottom:6px";
+      lin.addEventListener('input',e=>{pe.lblOv=e.target.value;});
+      m.appendChild(lin);
+      const nta=document.createElement('textarea'); nta.placeholder="メモ（この日だけ・任意）"; nta.value=pe.noteOv;
+      nta.style.cssText="width:100%;min-height:44px;padding:8px 10px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit;box-sizing:border-box;margin-bottom:8px;resize:vertical;line-height:1.5";
+      nta.addEventListener('input',e=>{pe.noteOv=e.target.value;});
+      m.appendChild(nta);
+      m.appendChild(btn({style:{width:"100%",padding:"10px",marginBottom:"8px",background:"#22c55e18",border:"1px solid #22c55e",borderRadius:"8px",color:"#4ade80",fontSize:"13px",fontWeight:600,cursor:"pointer"},
+        onClick:()=>{const d=getDaily(D);const ov={...(d.patternOv||{})};const nx={...(ov[pe.uid]||{})};const lv=(pe.lblOv||"").trim(),nv=(pe.noteOv||"").trim();if(lv)nx.labelOverride=lv;else delete nx.labelOverride;if(nv)nx.noteOverride=nv;else delete nx.noteOverride;delete nx.hidden;if(Object.keys(nx).length)ov[pe.uid]=nx;else delete ov[pe.uid];setDaily(D,{patternOv:ov});state.modal=null;showToast("この日の内容を変更しました");render();}},"✅ この日だけの内容を保存"));
+      if(curOv.labelOverride||curOv.noteOverride)
+        m.appendChild(btn({style:{width:"100%",padding:"8px",marginBottom:"8px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#94a3b8",cursor:"pointer",fontSize:"12px"},
+          onClick:()=>{const d=getDaily(D);const ov={...(d.patternOv||{})};const prev={...(ov[pe.uid]||{})};delete prev.labelOverride;delete prev.noteOverride;if(Object.keys(prev).length)ov[pe.uid]=prev;else delete ov[pe.uid];setDaily(D,{patternOv:ov});state.modal=null;showToast("内容を元に戻しました");render();}},"↩ 内容を元に戻す"));
+    }
     m.appendChild(btn({className:"btn-ghost",style:{width:"100%",marginBottom:"8px"},
       onClick:()=>{const d=getDaily(D);const ov={...(d.patternOv||{})};ov[pe.uid]={hidden:true};setDaily(D,{patternOv:ov});state.modal=null;render();}},"🚫 この日は非表示"));
     if((getDaily(D).patternOv||{})[pe.uid])
