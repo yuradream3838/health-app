@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.70"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.71"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -3520,7 +3520,8 @@ function renderPatternEditModal(vd){
   const pe=state.patternEdit||{};
   const bg=div({className:"modal-center"});
   const m=div({className:"modal-box",style:{maxHeight:"85vh",overflowY:"auto"}});
-  bg.addEventListener('click',()=>{state.modal=null;render();});
+  let bgArmed=false; setTimeout(()=>{bgArmed=true;},350);
+  bg.addEventListener('click',()=>{ if(!bgArmed)return; state.modal=null;render();});
   m.addEventListener('click',e=>e.stopPropagation());
   const dl=mdLabel(vd);
   const timeRow=(cs)=>{
@@ -3605,7 +3606,8 @@ function renderPlanCustomTodoModal(){
   const vd=pc.vd;
   const bg=div({className:"modal-center"});
   const m=div({className:"modal-box",style:{maxHeight:"85vh",overflowY:"auto"}});
-  bg.addEventListener('click',()=>{state.modal=null;render();});
+  let bgArmed=false; setTimeout(()=>{bgArmed=true;},350);
+  bg.addEventListener('click',()=>{ if(!bgArmed)return; state.modal=null;render();});
   m.addEventListener('click',e=>e.stopPropagation());
   const dl=mdLabel(vd);
   m.appendChild(div({style:{fontSize:"15px",fontWeight:700,color:"#e2e8f0",marginBottom:"4px"}},`☑️ ${pc.label||"定期ルーティン"}`));
@@ -5052,7 +5054,9 @@ function renderAddEventModal(vd){
   const isRepEdit=isEdit&&state.editEventIsRepeat;
   const bg=div({className:"modal-center"});
   const m=div({className:"modal-box",style:{maxHeight:"85vh",overflowY:"auto"}});
-  bg.addEventListener('click',()=>{state.modal=null;render();});
+  // 開いた直後のタップ貫通（開いたタップがそのまま背景に届いて即閉じる）を防ぐ
+  let bgArmed=false; setTimeout(()=>{bgArmed=true;},350);
+  bg.addEventListener('click',()=>{ if(!bgArmed)return; state.modal=null;render();});
   m.addEventListener('click',e=>e.stopPropagation());
 
   // ── 情報表示モード（既存予定を開いたら、まず情報だけ表示。右上の編集で編集へ）──
