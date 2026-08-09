@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.75"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.76"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -3338,6 +3338,7 @@ function openActualEdit(vd, uid, startH){
   state.actColor=ex?(ex.color||"#f472b6"):"#f472b6";
   state.actUnplanned=ex?!!ex.unplanned:true;
   state.actFromEventUid=ex?(ex.fromEventUid||null):null; // 手動追加/編集は予定紐付けなし（反映ボタン経由でのみ紐付く）
+  state.actFromTask=null; // 手動の実績編集ではTODO画面へ移動しない
   state.actDate=vd;
   state.modal="addActual";
   render();
@@ -3392,7 +3393,12 @@ function renderActualModal(){
       const d=getDaily(state.actDate);
       const rec={uid:state.actEditUid||Date.now(),title,startH:state.actSH,startM:state.actSM,endH:state.actEH,endM:state.actEM,startNextDay:!!state.actStartNextDay,endNextDay:!!state.actEndNextDay,color:state.actColor,unplanned:!!state.actUnplanned,...(state.actFromEventUid?{fromEventUid:state.actFromEventUid}:{})};
       const list=(d.actuals||[]).filter(a=>a.uid!==rec.uid); list.push(rec);
+      const fromTask=state.actFromTask;
       state.modal=null;
+      if(fromTask){ // TODO由来の予定を実績化 → そのTODOの画面へ移動
+        state.actFromTask=null; state.widget=false; state.tab="タスク"; state.taskSubTab="TODO"; state.highlightTodo=fromTask;
+        setTimeout(()=>{ if(state.highlightTodo===fromTask){ state.highlightTodo=null; render(); } },2600);
+      }
       setDaily(state.actDate,{actuals:list});
     }},"保存"));
   m.appendChild(div({style:{display:"flex",gap:"8px",alignItems:"center"}},btns));
@@ -5016,7 +5022,9 @@ function renderTaskMatrix(){
   }
   sorted.forEach(item=>{
     const pc=prioColor(item);
-    const box=div({style:{padding:"8px 10px",background:"#0f172a",borderRadius:"8px",marginBottom:"4px",borderLeft:`3px solid ${item.done?"#334155":pc}`,opacity:item.done?"0.5":"1"}});
+    const isHi=state.highlightTodo===item.uid; // TODO由来の予定を実績化して移動してきたとき強調
+    const box=div({style:{padding:"8px 10px",background:isHi?"#38bdf81f":"#0f172a",borderRadius:"8px",marginBottom:"4px",borderLeft:`3px solid ${item.done?"#334155":pc}`,opacity:item.done?"0.5":"1",...(isHi?{outline:"2px solid #38bdf8",outlineOffset:"1px"}:{})}});
+    if(isHi) setTimeout(()=>{try{box.scrollIntoView({block:"center",behavior:"smooth"});}catch(_){}},60);
     // 1行目：チェック＋テキスト＋削除
     const row1=div({style:{display:"flex",alignItems:"center",gap:"8px"}});
     const cb=btn({style:{width:"22px",height:"22px",borderRadius:"6px",flexShrink:0,
@@ -5209,7 +5217,7 @@ function renderAddEventModal(vd){
         state.actEH=state.newEvAllDay?((nowH+1)%24):state.newEvEndH; state.actEM=state.newEvAllDay?0:state.newEvEndM;
         state.actEndNextDay=!!state.newEvEndNextDay; state.actStartNextDay=!!state.newEvStartNextDay;
         state.actColor=state.newEvColor||"#f472b6"; state.actUnplanned=false;
-        state.actFromEventUid=state.editEventUid; state.actDate=vd; state.modal="addActual"; render();
+        state.actFromEventUid=state.editEventUid; state.actFromTask=state.newEvFromTask||null; state.actDate=vd; state.modal="addActual"; render();
       }},"✓ 実際に行った（実績に反映）"));
     // 情報行
     const infoRow=(label,val)=> val?div({style:{marginBottom:"11px"}},[
@@ -5472,6 +5480,7 @@ function renderAddEventModal(vd){
         state.actColor=state.newEvColor||"#f472b6";
         state.actUnplanned=false; // 予定通り行ったので突発ではない
         state.actFromEventUid=state.editEventUid; // この予定に紐付け → 予定側がグレーアウト
+        state.actFromTask=state.newEvFromTask||null; // TODO由来なら保存後にTODO画面へ
         state.actDate=vd;
         state.modal="addActual";
         render();
