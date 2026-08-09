@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.76"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.77"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -3586,48 +3586,55 @@ function renderPatternEditModal(vd){
       m.appendChild(btn({className:"btn-ghost",style:{width:"100%",marginTop:"6px"},onClick:()=>{state.modal=null;render();}},"閉じる"));
       bg.appendChild(m);return bg;
     }
-    m.appendChild(div({style:{fontSize:"15px",fontWeight:700,color:"#e2e8f0",marginBottom:"4px"}},"💼 シフトを変更"));
-    m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"12px"}},`${dl} のシフト（この日のみ変更）`));
-    const row=div({style:{display:"flex",gap:"6px",marginBottom:"10px"}});
+    m.appendChild(div({style:{fontSize:"15px",fontWeight:700,color:"#e2e8f0",marginBottom:"2px"}},`✏️ ${dS.shiftLabel||pe.baseLabel||"勤務"}`));
+    m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"12px"}},`${dl} ・ この日だけ変更`));
+    if(pe.lblOv===undefined)pe.lblOv=dS.shiftLabel||"";
+    if(pe.noteOv===undefined)pe.noteOv=dS.shiftNote||"";
+    if(pe.placeOv===undefined)pe.placeOv=dS.shiftPlace||"";
+    if(pe.shiftTimeInit===undefined)pe.shiftTimeInit=`${pe.startH}:${pe.startM}-${pe.endH}:${pe.endM}`;
+    const uLabelS=(txt)=>div({style:{fontSize:"11px",color:"#64748b",margin:"0 0 4px"}},txt);
+    // 名前
+    m.appendChild(uLabelS("📝 名前"));
+    { const lin=document.createElement('input'); lin.type='text'; lin.placeholder=`名前（既定: ${pe.baseLabel||"勤務"}）`; lin.value=pe.lblOv;
+      lin.style.cssText="width:100%;padding:8px 10px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:14px;font-family:inherit;box-sizing:border-box;margin-bottom:10px";
+      lin.addEventListener('input',e=>{pe.lblOv=e.target.value;}); m.appendChild(lin); }
+    // 時間
+    m.appendChild(uLabelS("🕐 時間"));
+    m.appendChild(timeRow(state.patternEdit));
+    // 場所
+    m.appendChild(uLabelS("📍 場所"));
+    { const pin=document.createElement('input'); pin.type='text'; pin.placeholder="例：〇〇支店・現場名など"; pin.value=pe.placeOv;
+      pin.style.cssText="width:100%;padding:8px 10px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:14px;font-family:inherit;box-sizing:border-box;margin-bottom:10px";
+      pin.addEventListener('input',e=>{pe.placeOv=e.target.value;}); m.appendChild(pin); }
+    // メモ
+    m.appendChild(uLabelS("📝 メモ"));
+    { const nta=document.createElement('textarea'); nta.placeholder="メモ（この日だけ・任意）"; nta.value=pe.noteOv;
+      nta.style.cssText="width:100%;min-height:44px;padding:8px 10px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit;box-sizing:border-box;margin-bottom:10px;resize:vertical;line-height:1.5";
+      nta.addEventListener('input',e=>{pe.noteOv=e.target.value;}); m.appendChild(nta); }
+    // 単一保存（名前・時間・場所・メモをまとめて）
+    m.appendChild(btn({style:{width:"100%",padding:"12px",marginBottom:"8px",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"14px",fontWeight:700,cursor:"pointer"},
+      onClick:()=>{ const lv=(pe.lblOv||"").trim(), nv=(pe.noteOv||"").trim(), pv=(pe.placeOv||"").trim();
+        const patch={shiftLabel:lv||null,shiftNote:nv||null,shiftPlace:pv||null};
+        const timeChanged=`${pe.startH}:${pe.startM}-${pe.endH}:${pe.endM}`!==pe.shiftTimeInit;
+        const isCustom=(typeof dS.planShift==='object' && dS.planShift.startH!=null);
+        if(timeChanged||isCustom) patch.planShift={startH:pe.startH,startM:pe.startM,endH:pe.endH,endM:pe.endM};
+        setDaily(vd,patch); state.modal=null; showToast("この日だけ保存しました"); render(); }},"✅ この日だけ保存"));
+    if(dS.shiftLabel||dS.shiftNote||dS.shiftPlace||(typeof dS.planShift==='object'&&dS.planShift.startH!=null))
+      m.appendChild(btn({style:{width:"100%",padding:"8px",marginBottom:"12px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#94a3b8",cursor:"pointer",fontSize:"12px"},
+        onClick:()=>{ setDaily(vd,{shiftLabel:null,shiftNote:null,shiftPlace:null}); setDayShift(vd,null); state.modal=null; showToast("この日の変更を元に戻しました"); render(); }},"↩ この日の変更をすべて元に戻す"));
+    m.appendChild(div({style:{borderTop:"1px solid #1e293b",margin:"4px 0 10px"}}));
+    // シフト種別を変更（クイック）
+    m.appendChild(uLabelS("💼 シフト種別を変更"));
+    const row=div({style:{display:"flex",gap:"6px",marginBottom:"12px"}});
     SHIFT_OPTS.forEach(([k,l])=>{
       const on=getPlanShiftKey(vd)===k&&!(typeof getDaily(vd).planShift==='object');
       const b=btn({style:{flex:1,padding:"9px",borderRadius:"8px",cursor:"pointer",fontSize:"13px",fontWeight:600,
         border:`1px solid ${on?SHIFT_TYPES[k].color:"#334155"}`,background:on?SHIFT_TYPES[k].color+"22":"transparent",color:on?SHIFT_TYPES[k].color:"#64748b"}},l);
-      b.addEventListener('click',()=>{setDayShift(vd,k);state.modal=null;render();});
+      b.addEventListener('click',()=>{setDayShift(vd,k);state.modal=null;showToast(`${l}にしました`);render();});
       row.appendChild(b);
     });
     m.appendChild(row);
-    // 自由時間指定
-    const cs={startH:pe.startH,startM:pe.startM,endH:pe.endH,endM:pe.endM};
-    m.appendChild(timeRow(cs));
-    m.appendChild(btn({style:{width:"100%",padding:"10px",marginBottom:"8px",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:600,cursor:"pointer"},
-      onClick:()=>{setDaily(vd,{planShift:{startH:cs.startH,startM:cs.startM,endH:cs.endH,endM:cs.endM}});state.modal=null;showToast("この時間で設定しました");render();}},"✅ この時間で設定（この日のみ）"));
-    m.appendChild(btn({className:"btn-ghost",style:{width:"100%",marginBottom:"8px"},onClick:()=>{setDayShift(vd,null);state.modal=null;showToast("パターンに戻しました");render();}},"↩ パターンに戻す"));
-    m.appendChild(btn({style:{width:"100%",padding:"9px",marginBottom:"8px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#94a3b8",cursor:"pointer",fontSize:"12px"},onClick:()=>{state.modal=null;state.tab="設定";render();}},"⚙ シフトパターン設定を編集"));
-    // 📝 この日だけ名前・メモを変更
-    {
-      if(pe.lblOv===undefined)pe.lblOv=dS.shiftLabel||"";
-      if(pe.noteOv===undefined)pe.noteOv=dS.shiftNote||"";
-      if(pe.placeOv===undefined)pe.placeOv=dS.shiftPlace||"";
-      m.appendChild(div({style:{fontSize:"11px",color:"#64748b",margin:"8px 0 5px"}},"📝 この日だけ名前・場所・メモを変更"));
-      const lin=document.createElement('input'); lin.type='text'; lin.placeholder=`名前（既定: ${pe.baseLabel||"勤務"}）`; lin.value=pe.lblOv;
-      lin.style.cssText="width:100%;padding:8px 10px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:14px;font-family:inherit;box-sizing:border-box;margin-bottom:6px";
-      lin.addEventListener('input',e=>{pe.lblOv=e.target.value;});
-      m.appendChild(lin);
-      const pin=document.createElement('input'); pin.type='text'; pin.placeholder="📍 場所（例：〇〇支店・現場名など）"; pin.value=pe.placeOv;
-      pin.style.cssText="width:100%;padding:8px 10px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:14px;font-family:inherit;box-sizing:border-box;margin-bottom:6px";
-      pin.addEventListener('input',e=>{pe.placeOv=e.target.value;});
-      m.appendChild(pin);
-      const nta=document.createElement('textarea'); nta.placeholder="メモ（この日だけ・任意）"; nta.value=pe.noteOv;
-      nta.style.cssText="width:100%;min-height:44px;padding:8px 10px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit;box-sizing:border-box;margin-bottom:8px;resize:vertical;line-height:1.5";
-      nta.addEventListener('input',e=>{pe.noteOv=e.target.value;});
-      m.appendChild(nta);
-      m.appendChild(btn({style:{width:"100%",padding:"10px",marginBottom:"8px",background:"#22c55e18",border:"1px solid #22c55e",borderRadius:"8px",color:"#4ade80",fontSize:"13px",fontWeight:600,cursor:"pointer"},
-        onClick:()=>{ const lv=(pe.lblOv||"").trim(), nv=(pe.noteOv||"").trim(), pv=(pe.placeOv||"").trim(); setDaily(vd,{shiftLabel:lv||null,shiftNote:nv||null,shiftPlace:pv||null}); state.modal=null; showToast("この日の内容を変更しました"); render(); }},"✅ この日だけの内容を保存"));
-      if(dS.shiftLabel||dS.shiftNote||dS.shiftPlace)
-        m.appendChild(btn({style:{width:"100%",padding:"8px",marginBottom:"8px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#94a3b8",cursor:"pointer",fontSize:"12px"},
-          onClick:()=>{ setDaily(vd,{shiftLabel:null,shiftNote:null,shiftPlace:null}); state.modal=null; showToast("内容を元に戻しました"); render(); }},"↩ 内容を元に戻す"));
-    }
+    m.appendChild(btn({style:{width:"100%",padding:"10px",marginBottom:"8px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#94a3b8",cursor:"pointer",fontSize:"12px"},onClick:()=>{state.modal=null;state.tab="設定";render();}},"⚙ シフトパターン設定を編集"));
   } else {
     const D=pe.date||vd;
     const Ddl=mdLabel(D);
@@ -3655,41 +3662,44 @@ function renderPatternEditModal(vd){
       m.appendChild(btn({className:"btn-ghost",style:{width:"100%",marginTop:"6px"},onClick:()=>{state.modal=null;render();}},"閉じる"));
       bg.appendChild(m);return bg;
     }
-    m.appendChild(div({style:{fontSize:"15px",fontWeight:700,color:"#e2e8f0",marginBottom:"4px"}},`${p?p.title:"パターン予定"} を変更`));
-    m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"12px"}},`${Ddl} の時間${D!==vd?"（前夜からの睡眠）":""}`));
+    m.appendChild(div({style:{fontSize:"15px",fontWeight:700,color:"#e2e8f0",marginBottom:"2px"}},`✏️ ${ovI.labelOverride||(p?p.title:"パターン予定")}`));
+    m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"12px"}},`${Ddl} ・ この日だけ変更${D!==vd?"（前夜から）":""}`));
+    if(pe.lblOv===undefined)pe.lblOv=ovI.labelOverride||"";
+    if(pe.noteOv===undefined)pe.noteOv=ovI.noteOverride||"";
+    const uLabelP=(txt)=>div({style:{fontSize:"11px",color:"#64748b",margin:"0 0 4px"}},txt);
+    // 名前
+    m.appendChild(uLabelP("📝 名前"));
+    { const lin=document.createElement('input'); lin.type='text'; lin.placeholder=`名前（既定: ${p?p.title:""}）`; lin.value=pe.lblOv;
+      lin.style.cssText="width:100%;padding:8px 10px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:14px;font-family:inherit;box-sizing:border-box;margin-bottom:10px";
+      lin.addEventListener('input',e=>{pe.lblOv=e.target.value;}); m.appendChild(lin); }
+    // 時間＋翌日
+    m.appendChild(uLabelP("🕐 時間"));
     m.appendChild(timeRow(state.patternEdit));
-    const ndB=btn({style:{width:"100%",padding:"7px",marginBottom:"8px",borderRadius:"8px",cursor:"pointer",fontSize:"12px",fontWeight:600,
+    const ndB=btn({style:{width:"100%",padding:"7px",marginBottom:"10px",borderRadius:"8px",cursor:"pointer",fontSize:"12px",fontWeight:600,
       border:`1px solid ${pe.nextDay?"#38bdf8":"#334155"}`,background:pe.nextDay?"#0ea5e922":"transparent",color:pe.nextDay?"#38bdf8":"#64748b"}},pe.nextDay?"🌙 翌日にずらす: ON":"🌙 翌日にずらす: OFF");
     ndB.addEventListener('click',()=>{state.patternEdit.nextDay=!pe.nextDay;render();});
     m.appendChild(ndB);
-    m.appendChild(btn({style:{width:"100%",padding:"10px",marginBottom:"8px",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:600,cursor:"pointer"},
-      onClick:()=>{const d=getDaily(D);const ov={...(d.patternOv||{})};const prev=ov[pe.uid]||{};ov[pe.uid]={...prev,startH:pe.startH,startM:pe.startM,endH:pe.endH,endM:pe.endM,nextDay:!!pe.nextDay};delete ov[pe.uid].hidden;setDaily(D,{patternOv:ov});state.modal=null;showToast("この日だけ変更しました");render();}},"✅ この日だけ変更"));
-    // 📝 この日だけ内容（名前・メモ）を変更
-    {
-      const curOv=(getDaily(D).patternOv||{})[pe.uid]||{};
-      if(pe.lblOv===undefined)pe.lblOv=curOv.labelOverride||"";
-      if(pe.noteOv===undefined)pe.noteOv=curOv.noteOverride||"";
-      m.appendChild(div({style:{fontSize:"11px",color:"#64748b",margin:"8px 0 5px"}},"📝 この日だけ内容を変更"));
-      const lin=document.createElement('input'); lin.type='text'; lin.placeholder=`名前（既定: ${p?p.title:""}）`; lin.value=pe.lblOv;
-      lin.style.cssText="width:100%;padding:8px 10px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:14px;font-family:inherit;box-sizing:border-box;margin-bottom:6px";
-      lin.addEventListener('input',e=>{pe.lblOv=e.target.value;});
-      m.appendChild(lin);
-      const nta=document.createElement('textarea'); nta.placeholder="メモ（この日だけ・任意）"; nta.value=pe.noteOv;
-      nta.style.cssText="width:100%;min-height:44px;padding:8px 10px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit;box-sizing:border-box;margin-bottom:8px;resize:vertical;line-height:1.5";
-      nta.addEventListener('input',e=>{pe.noteOv=e.target.value;});
-      m.appendChild(nta);
-      m.appendChild(btn({style:{width:"100%",padding:"10px",marginBottom:"8px",background:"#22c55e18",border:"1px solid #22c55e",borderRadius:"8px",color:"#4ade80",fontSize:"13px",fontWeight:600,cursor:"pointer"},
-        onClick:()=>{const d=getDaily(D);const ov={...(d.patternOv||{})};const nx={...(ov[pe.uid]||{})};const lv=(pe.lblOv||"").trim(),nv=(pe.noteOv||"").trim();if(lv)nx.labelOverride=lv;else delete nx.labelOverride;if(nv)nx.noteOverride=nv;else delete nx.noteOverride;delete nx.hidden;if(Object.keys(nx).length)ov[pe.uid]=nx;else delete ov[pe.uid];setDaily(D,{patternOv:ov});state.modal=null;showToast("この日の内容を変更しました");render();}},"✅ この日だけの内容を保存"));
-      if(curOv.labelOverride||curOv.noteOverride)
-        m.appendChild(btn({style:{width:"100%",padding:"8px",marginBottom:"8px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#94a3b8",cursor:"pointer",fontSize:"12px"},
-          onClick:()=>{const d=getDaily(D);const ov={...(d.patternOv||{})};const prev={...(ov[pe.uid]||{})};delete prev.labelOverride;delete prev.noteOverride;if(Object.keys(prev).length)ov[pe.uid]=prev;else delete ov[pe.uid];setDaily(D,{patternOv:ov});state.modal=null;showToast("内容を元に戻しました");render();}},"↩ 内容を元に戻す"));
-    }
-    m.appendChild(btn({className:"btn-ghost",style:{width:"100%",marginBottom:"8px"},
-      onClick:()=>{const d=getDaily(D);const ov={...(d.patternOv||{})};ov[pe.uid]={hidden:true};setDaily(D,{patternOv:ov});state.modal=null;render();}},"🚫 この日は非表示"));
+    // メモ
+    m.appendChild(uLabelP("📝 メモ"));
+    { const nta=document.createElement('textarea'); nta.placeholder="メモ（この日だけ・任意）"; nta.value=pe.noteOv;
+      nta.style.cssText="width:100%;min-height:44px;padding:8px 10px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit;box-sizing:border-box;margin-bottom:10px;resize:vertical;line-height:1.5";
+      nta.addEventListener('input',e=>{pe.noteOv=e.target.value;}); m.appendChild(nta); }
+    // 単一保存（名前・時間・翌日・メモをまとめて）
+    m.appendChild(btn({style:{width:"100%",padding:"12px",marginBottom:"8px",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"14px",fontWeight:700,cursor:"pointer"},
+      onClick:()=>{ const d=getDaily(D); const ov={...(d.patternOv||{})}; const nx={...(ov[pe.uid]||{})};
+        nx.startH=pe.startH; nx.startM=pe.startM; nx.endH=pe.endH; nx.endM=pe.endM; nx.nextDay=!!pe.nextDay; delete nx.hidden;
+        const lv=(pe.lblOv||"").trim(), nv=(pe.noteOv||"").trim();
+        if(lv)nx.labelOverride=lv; else delete nx.labelOverride;
+        if(nv)nx.noteOverride=nv; else delete nx.noteOverride;
+        ov[pe.uid]=nx; setDaily(D,{patternOv:ov}); state.modal=null; showToast("この日だけ保存しました"); render(); }},"✅ この日だけ保存"));
     if((getDaily(D).patternOv||{})[pe.uid])
-      m.appendChild(btn({style:{width:"100%",padding:"8px",marginBottom:"8px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#64748b",cursor:"pointer",fontSize:"12px"},
-        onClick:()=>{const d=getDaily(D);const ov={...(d.patternOv||{})};delete ov[pe.uid];setDaily(D,{patternOv:ov});state.modal=null;showToast("この日をパターンに戻しました");render();}},"↩ この日をパターンに戻す"));
-    m.appendChild(btn({style:{width:"100%",padding:"9px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#94a3b8",cursor:"pointer",fontSize:"12px"},
+      m.appendChild(btn({style:{width:"100%",padding:"8px",marginBottom:"12px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#94a3b8",cursor:"pointer",fontSize:"12px"},
+        onClick:()=>{const d=getDaily(D);const ov={...(d.patternOv||{})};delete ov[pe.uid];setDaily(D,{patternOv:ov});state.modal=null;showToast("この日をパターンに戻しました");render();}},"↩ この日の変更をすべて元に戻す"));
+    m.appendChild(div({style:{borderTop:"1px solid #1e293b",margin:"4px 0 10px"}}));
+    // その他の操作
+    m.appendChild(btn({style:{width:"100%",padding:"10px",marginBottom:"8px",background:"#7f1d1d33",border:"1px solid #ef4444",borderRadius:"8px",color:"#fca5a5",fontSize:"13px",fontWeight:700,cursor:"pointer"},
+      onClick:()=>{const d=getDaily(D);const ov={...(d.patternOv||{})};ov[pe.uid]={hidden:true};setDaily(D,{patternOv:ov});state.modal=null;showToast("この日は非表示にしました");render();}},"🚫 この日は非表示"));
+    m.appendChild(btn({style:{width:"100%",padding:"10px",marginBottom:"8px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#94a3b8",cursor:"pointer",fontSize:"12px"},
       onClick:()=>{state.modal=null;state.tab="設定";render();}},"⚙ すべての日を変える（パターン設定）"));
   }
   m.appendChild(btn({className:"btn-ghost",style:{width:"100%",marginTop:"4px"},onClick:()=>{state.modal=null;render();}},"閉じる"));
@@ -3740,30 +3750,63 @@ function renderPlanCustomTodoModal(){
     m.appendChild(btn({className:"btn-ghost",style:{width:"100%",marginTop:"6px"},onClick:()=>{state.modal=null;render();}},"閉じる"));
     bg.appendChild(m);return bg;
   }
-  m.appendChild(div({style:{fontSize:"15px",fontWeight:700,color:"#e2e8f0",marginBottom:"4px"}},`☑️ ${pc.label||"定期ルーティン"}`));
-  m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"14px"}},`${dl} の予定`));
-  // ✅ 完了時刻を編集（チェック済みのときのみ）。実際列の表示位置に反映される
-  {
-    const rec=(state.todos[vd]||{})[pc.uid]||{};
-    if(rec.checked){
-      const cur = rec.time?new Date(rec.time):new Date();
-      if(pc.doneH===undefined){ pc.doneH=cur.getHours(); pc.doneM=cur.getMinutes(); }
-      m.appendChild(div({style:{fontSize:"11px",color:"#4ade80",margin:"0 0 5px",fontWeight:600}},"✅ 完了時刻を編集"));
-      const df=(getH,getM,set)=>{const i=document.createElement('input');i.type='time';i.value=`${String(getH()).padStart(2,'0')}:${String(getM()).padStart(2,'0')}`;i.style.cssText="flex:1;min-width:0;padding:8px;background:#0f172a;border:1px solid #22c55e55;border-radius:8px;color:#e2e8f0;font-size:15px;color-scheme:dark;font-family:inherit";i.addEventListener('change',e=>{const q=(e.target.value||'').split(':');const H=Number(q[0]),M=Number(q[1]);if(!isNaN(H)&&!isNaN(M))set(H,M);});return i;};
-      const drow=div({style:{display:"flex",gap:"8px",alignItems:"center",marginBottom:"8px"}});
-      drow.appendChild(df(()=>pc.doneH,()=>pc.doneM,(H,M)=>{pc.doneH=H;pc.doneM=M;}));
-      m.appendChild(drow);
-      m.appendChild(btn({style:{width:"100%",padding:"10px",marginBottom:"8px",background:"#22c55e18",border:"1px solid #22c55e",borderRadius:"8px",color:"#4ade80",fontSize:"13px",fontWeight:600,cursor:"pointer"},
-        onClick:()=>{ const p=(vd||"").split('-'); const dt=new Date(+p[0],+p[1]-1,+p[2],pc.doneH,pc.doneM,0,0); const cur2={...((state.todos[vd]||{})[pc.uid]||{})}; setTodo(vd,pc.uid,{...cur2,checked:true,time:dt.toISOString()}); state.modal=null; showToast("完了時刻を変更しました"); render(); }},"✅ 完了時刻を保存"));
-      m.appendChild(btn({style:{width:"100%",padding:"8px",marginBottom:"10px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#94a3b8",cursor:"pointer",fontSize:"12px"},
-        onClick:()=>{ const cur2={...((state.todos[vd]||{})[pc.uid]||{})}; delete cur2.time; setTodo(vd,pc.uid,{...cur2,checked:false}); state.modal=null; showToast("未完了に戻しました"); render(); }},"↩ 未完了に戻す"));
-      m.appendChild(div({style:{borderTop:"1px solid #1e293b",margin:"0 0 10px"}}));
-    }
+  // ── 編集モード（名前・時間・メモを1フォーム＋1ボタンで「この日だけ保存」）──
+  const ct=(state.customTodos||[]).find(c=>c.uid===pc.uid);
+  const rec=(state.todos[vd]||{})[pc.uid]||{};
+  const baseLbl=(ct&&ct.label)||pc.label||"定期ルーティン";
+  m.appendChild(div({style:{fontSize:"15px",fontWeight:700,color:"#e2e8f0",marginBottom:"2px"}},`✏️ ${rec.labelOverride||baseLbl}`));
+  m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"12px"}},`${dl} ・ この日だけ変更`));
+  if(pc.lblOv===undefined)pc.lblOv=rec.labelOverride||"";
+  if(pc.noteOv===undefined)pc.noteOv=rec.noteOverride||"";
+  if(!pc.ov){ const eff=ct?customTodoTimeFor(ct,vd):null; const now=new Date(); pc.ov=eff?{timeH:eff.h,timeM:eff.m,endH:eff.eh,endM:eff.em}:{timeH:now.getHours(),timeM:0,endH:(now.getHours()+1)%24,endM:0}; pc.ovInit=`${pc.ov.timeH}:${pc.ov.timeM}-${pc.ov.endH}:${pc.ov.endM}`; }
+  const hasAnyOv=!!(rec.labelOverride||rec.noteOverride||(rec.timeOverride&&rec.timeOverride.timeH!=null));
+  const uLabel=(txt)=>div({style:{fontSize:"11px",color:"#64748b",margin:"0 0 4px"}},txt);
+  // 名前
+  m.appendChild(uLabel("📝 名前"));
+  { const lin=document.createElement('input'); lin.type='text'; lin.placeholder=`名前（既定: ${baseLbl}）`; lin.value=pc.lblOv;
+    lin.style.cssText="width:100%;padding:8px 10px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:14px;font-family:inherit;box-sizing:border-box;margin-bottom:10px";
+    lin.addEventListener('input',e=>{pc.lblOv=e.target.value;}); m.appendChild(lin); }
+  // 時間
+  m.appendChild(uLabel("🕐 時間"));
+  if(ct){
+    const tf=(getH,getM,set)=>{const i=document.createElement('input');i.type='time';i.value=`${String(getH()??0).padStart(2,'0')}:${String(getM()||0).padStart(2,'0')}`;i.style.cssText="flex:1;min-width:0;padding:8px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:15px;color-scheme:dark;font-family:inherit";i.addEventListener('change',e=>{const q=(e.target.value||'').split(':');const H=Number(q[0]),M=Number(q[1]);if(!isNaN(H)&&!isNaN(M))set(H,M);});return i;};
+    const trow=div({style:{display:"flex",gap:"8px",alignItems:"center",marginBottom:"10px"}});
+    trow.appendChild(tf(()=>pc.ov.timeH,()=>pc.ov.timeM,(H,M)=>{pc.ov.timeH=H;pc.ov.timeM=M;}));
+    trow.appendChild(span({style:{color:"#64748b"}},"〜"));
+    trow.appendChild(tf(()=>pc.ov.endH!=null?pc.ov.endH:(pc.ov.timeH+1)%24,()=>pc.ov.endH!=null?pc.ov.endM:pc.ov.timeM,(H,M)=>{pc.ov.endH=H;pc.ov.endM=M;}));
+    m.appendChild(trow);
+  } else { m.appendChild(div({style:{fontSize:"12px",color:"#475569",marginBottom:"10px"}},"（このルーティンは時刻を持ちません）")); }
+  // メモ
+  m.appendChild(uLabel("📝 メモ"));
+  { const nta=document.createElement('textarea'); nta.placeholder="メモ（この日だけ・任意）"; nta.value=pc.noteOv;
+    nta.style.cssText="width:100%;min-height:44px;padding:8px 10px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit;box-sizing:border-box;margin-bottom:10px;resize:vertical;line-height:1.5";
+    nta.addEventListener('input',e=>{pc.noteOv=e.target.value;}); m.appendChild(nta); }
+  // 単一保存
+  m.appendChild(btn({style:{width:"100%",padding:"12px",marginBottom:"8px",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"14px",fontWeight:700,cursor:"pointer"},
+    onClick:()=>{ const cur={...((state.todos[vd]||{})[pc.uid]||{})};
+      const lv=(pc.lblOv||"").trim(), nv=(pc.noteOv||"").trim();
+      if(lv)cur.labelOverride=lv; else delete cur.labelOverride;
+      if(nv)cur.noteOverride=nv; else delete cur.noteOverride;
+      if(ct){ const timeChanged=`${pc.ov.timeH}:${pc.ov.timeM}-${pc.ov.endH}:${pc.ov.endM}`!==pc.ovInit; const hadTimeOv=!!(cur.timeOverride&&cur.timeOverride.timeH!=null);
+        if(timeChanged||hadTimeOv) cur.timeOverride={timeH:pc.ov.timeH,timeM:pc.ov.timeM||0,endH:pc.ov.endH,endM:pc.ov.endM}; }
+      setTodo(vd,pc.uid,cur); state.modal=null; showToast("この日だけ保存しました"); render(); }},"✅ この日だけ保存"));
+  if(hasAnyOv) m.appendChild(btn({style:{width:"100%",padding:"8px",marginBottom:"12px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#94a3b8",cursor:"pointer",fontSize:"12px"},
+    onClick:()=>{ const cur={...((state.todos[vd]||{})[pc.uid]||{})}; delete cur.labelOverride; delete cur.noteOverride; delete cur.timeOverride; setTodo(vd,pc.uid,cur); state.modal=null; showToast("この日の変更を元に戻しました"); render(); }},"↩ この日の変更をすべて元に戻す"));
+  m.appendChild(div({style:{borderTop:"1px solid #1e293b",margin:"4px 0 10px"}}));
+  // 完了時刻（チェック済みのとき）
+  if(rec.checked){
+    const cur = rec.time?new Date(rec.time):new Date();
+    if(pc.doneH===undefined){ pc.doneH=cur.getHours(); pc.doneM=cur.getMinutes(); }
+    m.appendChild(div({style:{fontSize:"11px",color:"#4ade80",margin:"0 0 5px",fontWeight:600}},"✅ 完了時刻を編集"));
+    const df=(getH,getM,set)=>{const i=document.createElement('input');i.type='time';i.value=`${String(getH()).padStart(2,'0')}:${String(getM()).padStart(2,'0')}`;i.style.cssText="flex:1;min-width:0;padding:8px;background:#0f172a;border:1px solid #22c55e55;border-radius:8px;color:#e2e8f0;font-size:15px;color-scheme:dark;font-family:inherit";i.addEventListener('change',e=>{const q=(e.target.value||'').split(':');const H=Number(q[0]),M=Number(q[1]);if(!isNaN(H)&&!isNaN(M))set(H,M);});return i;};
+    m.appendChild(div({style:{display:"flex",gap:"8px",alignItems:"center",marginBottom:"8px"}},[df(()=>pc.doneH,()=>pc.doneM,(H,M)=>{pc.doneH=H;pc.doneM=M;})]));
+    m.appendChild(btn({style:{width:"100%",padding:"9px",marginBottom:"6px",background:"#22c55e18",border:"1px solid #22c55e",borderRadius:"8px",color:"#4ade80",fontSize:"13px",fontWeight:600,cursor:"pointer"},
+      onClick:()=>{ const p=(vd||"").split('-'); const dt=new Date(+p[0],+p[1]-1,+p[2],pc.doneH,pc.doneM,0,0); const cur2={...((state.todos[vd]||{})[pc.uid]||{})}; setTodo(vd,pc.uid,{...cur2,checked:true,time:dt.toISOString()}); state.modal=null; showToast("完了時刻を変更しました"); render(); }},"✅ 完了時刻を保存"));
+    m.appendChild(btn({style:{width:"100%",padding:"8px",marginBottom:"12px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#94a3b8",cursor:"pointer",fontSize:"12px"},
+      onClick:()=>{ const cur2={...((state.todos[vd]||{})[pc.uid]||{})}; delete cur2.time; setTodo(vd,pc.uid,{...cur2,checked:false}); state.modal=null; showToast("未完了に戻しました"); render(); }},"↩ 未完了に戻す"));
+    m.appendChild(div({style:{borderTop:"1px solid #1e293b",margin:"0 0 10px"}}));
   }
-  // この日のみ削除（＝この回を除外。定期ルーティン自体は残る）
-  m.appendChild(btn({style:{width:"100%",padding:"11px",marginBottom:"8px",background:"#7f1d1d33",border:"1px solid #ef4444",borderRadius:"8px",color:"#fca5a5",fontSize:"13px",fontWeight:700,cursor:"pointer"},
-    onClick:()=>{ pushUndo("この日の定期ルーティンを削除しました"); toggleExclude(vd,pc.uid); state.modal=null; showToast("この日のみ削除しました"); render(); }},"🗑 この日のみ削除"));
-  // 📅 この日を別の日に移動（この回だけ別日へ。定期ルーティン自体の周期は変えない）
+  // 別の日に移動
   {
     const curRecM=(state.todos[vd]||{})[pc.uid]||{};
     if(curRecM.movedFrom){
@@ -3772,60 +3815,20 @@ function renderPlanCustomTodoModal(){
         onClick:()=>{ const src=curRecM.movedFrom; const r={...curRecM}; delete r.moved; delete r.movedFrom; delete r.timeOverride; delete r.labelOverride; delete r.noteOverride; setTodo(vd,pc.uid,r); const sr={...((state.todos[src]||{})[pc.uid]||{})}; delete sr.excluded; delete sr.movedTo; setTodo(src,pc.uid,sr); state.modal=null; showToast(`${mdLabel(src)} に戻しました`); render(); }},"↩ 元の日に戻す"));
     }
     if(pc.moveTo===undefined) pc.moveTo=addDays(vd,1);
-    m.appendChild(div({style:{fontSize:"11px",color:"#64748b",margin:"4px 0 5px"}},"📅 この日を別の日に移動"));
+    m.appendChild(uLabel("📅 別の日に移動"));
     const di=document.createElement('input'); di.type='date'; di.value=pc.moveTo;
-    di.style.cssText="width:100%;padding:8px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:14px;color-scheme:dark;font-family:inherit;box-sizing:border-box;margin-bottom:8px";
+    di.style.cssText="width:100%;padding:8px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:14px;color-scheme:dark;font-family:inherit;box-sizing:border-box;margin-bottom:6px";
     di.addEventListener('change',e=>{ if(e.target.value) pc.moveTo=e.target.value; });
     m.appendChild(di);
-    m.appendChild(btn({style:{width:"100%",padding:"10px",marginBottom:"8px",background:"#6366f118",border:"1px solid #6366f1",borderRadius:"8px",color:"#a5b4fc",fontSize:"13px",fontWeight:600,cursor:"pointer"},
+    m.appendChild(btn({style:{width:"100%",padding:"9px",marginBottom:"12px",background:"#6366f118",border:"1px solid #6366f1",borderRadius:"8px",color:"#a5b4fc",fontSize:"13px",fontWeight:600,cursor:"pointer"},
       onClick:()=>{ if(!pc.moveTo||pc.moveTo===vd){ showToast("移動先の日を選んでください"); return; } pushUndo("定期ルーティンを移動しました"); moveCustomTodoDay(pc.uid, vd, pc.moveTo); state.modal=null; showToast(`${mdLabel(pc.moveTo)} に移動しました`); render(); }},"📅 選んだ日に移動する"));
-    m.appendChild(div({style:{borderTop:"1px solid #1e293b",margin:"0 0 10px"}}));
   }
-  // この日だけ時刻を変更（その日限定の時刻上書き）
-  {
-    const ct=(state.customTodos||[]).find(c=>c.uid===pc.uid);
-    if(ct){
-      const curRec=(state.todos[vd]||{})[pc.uid]||{};
-      const hasOv=!!(curRec.timeOverride&&curRec.timeOverride.timeH!=null);
-      if(!pc.ov){
-        const eff=customTodoTimeFor(ct,vd);
-        const now=new Date();
-        pc.ov = eff ? {timeH:eff.h,timeM:eff.m,endH:eff.eh,endM:eff.em} : {timeH:now.getHours(),timeM:0,endH:(now.getHours()+1)%24,endM:0};
-      }
-      m.appendChild(div({style:{fontSize:"11px",color:"#64748b",margin:"4px 0 5px"}},"⏰ この日だけ時刻を変更"));
-      const tf=(getH,getM,set)=>{const i=document.createElement('input');i.type='time';i.value=`${String(getH()??0).padStart(2,'0')}:${String(getM()||0).padStart(2,'0')}`;i.style.cssText="flex:1;min-width:0;padding:8px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:15px;color-scheme:dark;font-family:inherit";i.addEventListener('change',e=>{const q=(e.target.value||'').split(':');const H=Number(q[0]),M=Number(q[1]);if(!isNaN(H)&&!isNaN(M))set(H,M);});return i;};
-      const trow=div({style:{display:"flex",gap:"8px",alignItems:"center",marginBottom:"8px"}});
-      trow.appendChild(tf(()=>pc.ov.timeH,()=>pc.ov.timeM,(H,M)=>{pc.ov.timeH=H;pc.ov.timeM=M;}));
-      trow.appendChild(span({style:{color:"#64748b"}},"〜"));
-      trow.appendChild(tf(()=>pc.ov.endH!=null?pc.ov.endH:(pc.ov.timeH+1)%24,()=>pc.ov.endH!=null?pc.ov.endM:pc.ov.timeM,(H,M)=>{pc.ov.endH=H;pc.ov.endM=M;}));
-      m.appendChild(trow);
-      m.appendChild(btn({style:{width:"100%",padding:"10px",marginBottom:"8px",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:600,cursor:"pointer"},
-        onClick:()=>{ const cur=(state.todos[vd]||{})[pc.uid]||{}; setTodo(vd,pc.uid,{...cur,timeOverride:{timeH:pc.ov.timeH,timeM:pc.ov.timeM||0,endH:pc.ov.endH,endM:pc.ov.endM}}); state.modal=null; showToast("この日の時刻を変更しました"); render(); }},"✅ この日だけこの時刻にする"));
-      if(hasOv) m.appendChild(btn({style:{width:"100%",padding:"8px",marginBottom:"8px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#94a3b8",cursor:"pointer",fontSize:"12px"},
-        onClick:()=>{ const cur={...((state.todos[vd]||{})[pc.uid]||{})}; delete cur.timeOverride; setTodo(vd,pc.uid,cur); state.modal=null; showToast("時刻を元に戻しました"); render(); }},"↩ 時刻を元に戻す"));
-      // この日だけ内容（名前・メモ）を変更
-      const curRec2=(state.todos[vd]||{})[pc.uid]||{};
-      const hasContentOv=!!(curRec2.labelOverride||curRec2.noteOverride);
-      if(pc.lblOv===undefined)pc.lblOv=curRec2.labelOverride||"";
-      if(pc.noteOv===undefined)pc.noteOv=curRec2.noteOverride||"";
-      m.appendChild(div({style:{fontSize:"11px",color:"#64748b",margin:"8px 0 5px"}},"📝 この日だけ内容を変更"));
-      const lin=document.createElement('input'); lin.type='text'; lin.placeholder=`名前（既定: ${ct.label||""}）`; lin.value=pc.lblOv;
-      lin.style.cssText="width:100%;padding:8px 10px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:14px;font-family:inherit;box-sizing:border-box;margin-bottom:6px";
-      lin.addEventListener('input',e=>{pc.lblOv=e.target.value;});
-      m.appendChild(lin);
-      const nta=document.createElement('textarea'); nta.placeholder="メモ（この日だけ・任意）"; nta.value=pc.noteOv;
-      nta.style.cssText="width:100%;min-height:44px;padding:8px 10px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit;box-sizing:border-box;margin-bottom:8px;resize:vertical;line-height:1.5";
-      nta.addEventListener('input',e=>{pc.noteOv=e.target.value;});
-      m.appendChild(nta);
-      m.appendChild(btn({style:{width:"100%",padding:"10px",marginBottom:"8px",background:"#22c55e18",border:"1px solid #22c55e",borderRadius:"8px",color:"#4ade80",fontSize:"13px",fontWeight:600,cursor:"pointer"},
-        onClick:()=>{ const cur={...((state.todos[vd]||{})[pc.uid]||{})}; const lv=(pc.lblOv||"").trim(), nv=(pc.noteOv||"").trim(); if(lv)cur.labelOverride=lv; else delete cur.labelOverride; if(nv)cur.noteOverride=nv; else delete cur.noteOverride; setTodo(vd,pc.uid,cur); state.modal=null; showToast("この日の内容を変更しました"); render(); }},"✅ この日だけの内容を保存"));
-      if(hasContentOv) m.appendChild(btn({style:{width:"100%",padding:"8px",marginBottom:"8px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#94a3b8",cursor:"pointer",fontSize:"12px"},
-        onClick:()=>{ const cur={...((state.todos[vd]||{})[pc.uid]||{})}; delete cur.labelOverride; delete cur.noteOverride; setTodo(vd,pc.uid,cur); state.modal=null; showToast("内容を元に戻しました"); render(); }},"↩ 内容を元に戻す"));
-    }
-  }
-  // 定期ルーティンを編集（設定へ）
+  // この日のみ削除
+  m.appendChild(btn({style:{width:"100%",padding:"11px",marginBottom:"8px",background:"#7f1d1d33",border:"1px solid #ef4444",borderRadius:"8px",color:"#fca5a5",fontSize:"13px",fontWeight:700,cursor:"pointer"},
+    onClick:()=>{ pushUndo("この日の定期ルーティンを削除しました"); toggleExclude(vd,pc.uid); state.modal=null; showToast("この日のみ削除しました"); render(); }},"🗑 この日のみ削除"));
+  // 定期ルーティン設定へ
   m.appendChild(btn({style:{width:"100%",padding:"10px",marginBottom:"8px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#94a3b8",cursor:"pointer",fontSize:"12px"},
-    onClick:()=>{ state.modal=null; state.tab="タスク"; state.taskSubTab="定期ルーティン"; render(); }},"⚙ 定期ルーティンを編集"));
+    onClick:()=>{ state.modal=null; state.tab="タスク"; state.taskSubTab="定期ルーティン"; render(); }},"⚙ すべての日を変える（定期ルーティン設定）"));
   m.appendChild(btn({className:"btn-ghost",style:{width:"100%",marginTop:"4px"},onClick:()=>{state.modal=null;render();}},"閉じる"));
   bg.appendChild(m);return bg;
 }
