@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.78"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.79"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -633,7 +633,7 @@ const state = {
   editTimerHasStart:false, editTimerHasEnd:false,
   editSessionItemId:null, editSessionUid:null, editSessionSessions:[],
   cravingExpanded:false,
-  newEjacH:0, newEjacM:0, newEjacTag:null,
+  newEjacH:0, newEjacM:0, newEjacTag:null, newEjacNextDay:false,
   newNapH:0, newNapM:0, newNapEndH:0, newNapEndM:0, newNapDur:30, editNapUid:null, todoSortMode:false,
   saved:false
 };
@@ -1320,7 +1320,7 @@ function renderWidgetView(vd,ds){
     grid.appendChild(qbtn(`💗 体調（今）${nowScore!=null?`：${nowScore}`:""}`,"#f43f5e","#f43f5e18","#fb7185",()=>{ openScoreModal(vd,curH); }));
     grid.appendChild(qbtn(`🍺 アルコール${drN?`（${drN}）`:""}`,"#f59e0b","#f59e0b18","#fbbf24",()=>{ const now=new Date(); state.modal="addDrink"; state.newDrink={typeId:"beer",ml:350,hour:now.getHours(),min:now.getMinutes(),pct:5,startNextDay:false}; render(); }));
     grid.appendChild(qbtn(`🍽️ 食べたもの${foodN?`（${foodN}）`:""}`,"#0ea5e9","#0ea5e918","#38bdf8",()=>{ state.modal="food"; state.foodSelected=[...(d.foods||[])]; state.foodOpenCat=null; render(); }));
-    grid.appendChild(qbtn(`💧 射精${ejN?`（${ejN}）`:""}`,"#6366f1","#6366f118","#a5b4fc",()=>{ state.modal="addEjac"; state.newEjacH=new Date().getHours(); state.newEjacM=new Date().getMinutes(); state.newEjacTag=null; render(); }));
+    grid.appendChild(qbtn(`💧 射精${ejN?`（${ejN}）`:""}`,"#6366f1","#6366f118","#a5b4fc",()=>{ state.modal="addEjac"; state.newEjacH=new Date().getHours(); state.newEjacM=new Date().getMinutes(); state.newEjacTag=null; state.newEjacNextDay=false; render(); }));
     c.appendChild(grid);
     wrap.appendChild(c);
   }
@@ -1773,14 +1773,15 @@ function renderDailyPanel(vd){
             state.newEjacH=new Date().getHours();
             state.newEjacM=new Date().getMinutes();
             state.newEjacTag=null;
+            state.newEjacNextDay=false;
             render();
           }},"+ 記録")
       ]),
       (d.ejaculations||[]).length===0
         ?div({style:{fontSize:"11px",color:"#475569",textAlign:"center",padding:"6px 0"}},"まだ記録がありません")
         :div({style:{display:"flex",flexWrap:"wrap",gap:"5px"}},[
-          ...[...(d.ejaculations||[])].sort((a,b)=>a.hour*60+(a.min||0)-(b.hour*60+(b.min||0))).map((e,i)=>{
-            const timeLabel=`${String(e.hour).padStart(2,'0')}:${String(e.min||0).padStart(2,'0')}`;
+          ...[...(d.ejaculations||[])].sort((a,b)=>(a.hour*60+(a.min||0)+(a.startNextDay?1440:0))-(b.hour*60+(b.min||0)+(b.startNextDay?1440:0))).map((e,i)=>{
+            const timeLabel=`${e.startNextDay?"翌":""}${String(e.hour).padStart(2,'0')}:${String(e.min||0).padStart(2,'0')}`;
             const item=div({style:{display:"flex",alignItems:"center",gap:"5px",padding:"3px 10px",background:"#0f172a",borderRadius:"20px",border:"1px solid #1e3a5f"}});
             item.appendChild(span({style:{fontSize:"12px",color:"#94a3b8"}},timeLabel));
             if(e.tag) item.appendChild(span({style:{fontSize:"10px",padding:"1px 7px",borderRadius:"10px",background:"#6366f122",color:"#818cf8",border:"1px solid #6366f133"}},e.tag));
@@ -3263,6 +3264,7 @@ function getActualActivities(vd){
   });
   // 射精も実際の行動として反映（ピンクで区別・点イベント）。タグは略記表示（自慰→ON / セックス→SE）
   (daily.ejaculations||[]).forEach(ej=>{
+    if(ej.startNextDay) return; // 翌日ぶんは翌日側のタイムラインで表示
     const s=(ej.hour||0)*60+(ej.min||0);
     const tagAbbr = ej.tag==="自慰"?"ON":ej.tag==="セックス"?"SE":(ej.tag||"");
     acts.push({title:`💧${tagAbbr?" "+tagAbbr:""}`,startMin:s,endMin:s+12,isPoint:true,color:"#ec4899"});
@@ -4380,7 +4382,12 @@ function renderDaySchedule(vd,ds,isToday){
   const prevActuals=(getDaily(addDays(vd,-1)).actuals||[])
     .map(a=>{const t=crossTailSeg(a); return t?{title:(a.unplanned?"⚡ ":"")+a.title,startMin:t.startMin,endMin:t.endMin,color:a.color||"#f472b6",manualUid:a.uid,_tail:true}:null;})
     .filter(Boolean);
-  const actuals=[...getActualActivities(vd), ...prevActuals];
+  // 前日の「翌日」射精は当日(vd)の早朝として表示
+  const prevEjacTails=(getDaily(addDays(vd,-1)).ejaculations||[]).filter(ej=>ej.startNextDay).map(ej=>{
+    const s=(ej.hour||0)*60+(ej.min||0); const tagAbbr=ej.tag==="自慰"?"ON":ej.tag==="セックス"?"SE":(ej.tag||"");
+    return {title:`💧${tagAbbr?" "+tagAbbr:""}`,startMin:s,endMin:s+12,isPoint:true,color:"#ec4899"};
+  });
+  const actuals=[...getActualActivities(vd), ...prevActuals, ...prevEjacTails];
 
   // 予定・実績の追加はタイムラインの空き時間タップで行う（左=予定 / 右=実績）
   wrap.appendChild(div({style:{marginBottom:"10px"}},[
@@ -8675,9 +8682,17 @@ function renderAddEjacModal(vd){
 
   // 時刻
   m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"5px"}},"時刻"));
-  m.appendChild(div({style:{display:"flex",gap:"8px",alignItems:"center",marginBottom:"14px"}},[
+  m.appendChild(div({style:{display:"flex",gap:"8px",alignItems:"center",marginBottom:"8px"}},[
     clockField(state.newEjacH,state.newEjacM,(H,M)=>{state.newEjacH=H;state.newEjacM=M;})
   ]));
+  // 翌日（0時をまたいだ深夜ぶんを、この日の記録として翌日の時刻で扱う）
+  {
+    const on=!!state.newEjacNextDay;
+    const nd=btn({style:{width:"100%",padding:"8px",marginBottom:"14px",borderRadius:"8px",cursor:"pointer",fontSize:"12px",fontWeight:600,
+      border:`1px solid ${on?"#38bdf8":"#334155"}`,background:on?"#0ea5e922":"transparent",color:on?"#38bdf8":"#64748b"}},on?"🌙 翌日: ON":"🌙 翌日: OFF");
+    nd.addEventListener('click',()=>{state.newEjacNextDay=!state.newEjacNextDay;render();});
+    m.appendChild(nd);
+  }
 
   // タグ選択
   m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"7px"}},"タグ（任意）"));
@@ -8696,7 +8711,7 @@ function renderAddEjacModal(vd){
     btn({style:{flex:2,padding:"10px",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:600,cursor:"pointer"},
       onClick:()=>{
         const nd={...getDaily(vd)};
-        nd.ejaculations=[...(nd.ejaculations||[]),{hour:state.newEjacH,min:state.newEjacM,tag:state.newEjacTag,uid:Date.now()}];
+        nd.ejaculations=[...(nd.ejaculations||[]),{hour:state.newEjacH,min:state.newEjacM,tag:state.newEjacTag,uid:Date.now(),...(state.newEjacNextDay?{startNextDay:true}:{})}];
         setDaily(vd,nd);state.modal=null;render();
       }},"記録する")
   ]));
