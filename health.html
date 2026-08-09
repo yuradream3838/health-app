@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.69"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.70"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -5086,8 +5086,9 @@ function renderAddEventModal(vd){
       div({style:{fontSize:"10px",color:"#64748b",marginBottom:"2px"}},label),
       div({style:{fontSize:"14px",color:"#e2e8f0",whiteSpace:"pre-wrap",wordBreak:"break-word",lineHeight:1.5}},val)
     ]):null;
-    m.appendChild(infoRow("📅 日付", dateStr));
-    m.appendChild(infoRow("🕐 時間", timeStr));
+    const addInfo=(l,v)=>{ const n=infoRow(l,v); if(n)m.appendChild(n); };
+    addInfo("📅 日付", dateStr);
+    addInfo("🕐 時間", timeStr);
     if((state.newEvPlace||"").trim()){
       const pr=div({style:{marginBottom:"11px"}});
       pr.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"2px"}},"📍 場所"));
@@ -5097,9 +5098,9 @@ function renderAddEventModal(vd){
       pr.appendChild(mb);
       m.appendChild(pr);
     }
-    m.appendChild(infoRow("📝 詳細", (state.newEvNote||"").trim()||null));
-    if(state.newEvRepeat && state.newEvRepeat!=="none") m.appendChild(infoRow("🔁 繰り返し", repeatLabel(state.newEvRepeat, startD)));
-    if(Math.max(0,parseInt(state.newEvPreDays)||0)>0) m.appendChild(infoRow("🔔 事前表示", `${parseInt(state.newEvPreDays)}日前から予定上部に表示`));
+    addInfo("📝 詳細", (state.newEvNote||"").trim()||null);
+    if(state.newEvRepeat && state.newEvRepeat!=="none") addInfo("🔁 繰り返し", repeatLabel(state.newEvRepeat, startD)||null);
+    if(Math.max(0,parseInt(state.newEvPreDays)||0)>0) addInfo("🔔 事前表示", `${parseInt(state.newEvPreDays)}日前から予定上部に表示`);
     m.appendChild(btn({className:"btn-ghost",style:{width:"100%",marginTop:"6px"},onClick:()=>{state.modal=null;render();}},"閉じる"));
     bg.appendChild(m);return bg;
   }
