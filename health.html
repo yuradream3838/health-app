@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.79"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.80"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -635,6 +635,7 @@ const state = {
   cravingExpanded:false,
   newEjacH:0, newEjacM:0, newEjacTag:null, newEjacNextDay:false,
   newNapH:0, newNapM:0, newNapEndH:0, newNapEndM:0, newNapDur:30, editNapUid:null, todoSortMode:false,
+  newAwakeH:3, newAwakeM:0, newAwakeEndH:3, newAwakeEndM:20, editAwakeUid:null,
   saved:false
 };
 
@@ -1062,6 +1063,8 @@ function render(){
   if(state.modal==="editSession")content.appendChild(renderEditSessionModal(vd));
   if(state.modal==="addEjac")  content.appendChild(renderAddEjacModal(vd));
   if(state.modal==="addNap")   content.appendChild(renderAddNapModal(vd));
+  if(state.modal==="addAwake") content.appendChild(renderAddAwakeModal(vd));
+  if(state.modal==="editAwake")content.appendChild(renderAddAwakeModal(vd,true));
   if(state.modal==="addEvent") content.appendChild(renderAddEventModal(vd));
   if(state.modal==="addActual") content.appendChild(renderActualModal());
   if(state.modal==="patternEdit") content.appendChild(renderPatternEditModal(vd));
@@ -1609,6 +1612,41 @@ function renderDailyPanel(vd){
         sleepRow("🌙 就寝（今夜）","bedTime",d.bedTime),
         div({style:{fontSize:"10px",color:"#475569"}},"起床＝今朝の目覚め／就寝＝今夜寝る時刻。「今」で現在時刻を記録。予定「実際」列に反映されます")
       ]);
+    })(),
+
+    // 中途覚醒（前夜の睡眠中に目が覚めた分。実睡眠から差し引かれる）
+    (()=>{
+      const awakes=d.awakenings||[];
+      const total=awakes.reduce((a,x)=>a+(x.mins||0),0);
+      const sec=div({style:{marginBottom:"12px"}});
+      sec.appendChild(div({style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"6px"}},[
+        span({style:{fontSize:"12px",color:"#94a3b8"}},[
+          txt("🌙 中途覚醒"),
+          awakes.length>0?span({style:{fontSize:"11px",color:"#64748b",marginLeft:"6px"}},`${awakes.length}回・計${total>=60?`${Math.floor(total/60)}h`:""}${total%60}m`):null
+        ]),
+        btn({style:{fontSize:"11px",padding:"3px 10px",background:"#6366f118",border:"1px solid #6366f1",borderRadius:"8px",color:"#a5b4fc",cursor:"pointer",fontWeight:600},
+          onClick:()=>{ state.modal="addAwake"; state.newAwakeH=3; state.newAwakeM=0; state.newAwakeEndH=3; state.newAwakeEndM=20; render(); }},"+ 記録")
+      ]));
+      if(awakes.length===0){
+        sec.appendChild(div({style:{fontSize:"11px",color:"#475569",textAlign:"center",padding:"6px 0"}},"まだ記録がありません"));
+      } else {
+        const list=div({style:{display:"flex",flexWrap:"wrap",gap:"5px"}});
+        [...awakes].sort((a,b)=>(a.hour*60+(a.min||0))-(b.hour*60+(b.min||0))).forEach(n=>{
+          const tL=`${String(n.hour).padStart(2,'0')}:${String(n.min||0).padStart(2,'0')}`;
+          const eL=n.endHour!=null?`${String(n.endHour).padStart(2,'0')}:${String(n.endMin||0).padStart(2,'0')}`:null;
+          const durL=n.mins>=60?`${Math.floor(n.mins/60)}h${n.mins%60}m`:`${n.mins||0}m`;
+          const item=div({style:{display:"flex",alignItems:"center",gap:"5px",padding:"3px 10px",background:"#0f172a",borderRadius:"20px",border:"1px solid #1e3a5f",cursor:"pointer"}});
+          item.appendChild(span({style:{fontSize:"11px",color:"#a5b4fc"}},eL?`${tL}〜${eL} (${durL})`:`${tL} ${durL}`));
+          item.addEventListener('click',(()=>{const aw=n;return()=>{ state.modal="editAwake"; state.editAwakeUid=aw.uid; state.newAwakeH=aw.hour; state.newAwakeM=aw.min||0; state.newAwakeEndH=aw.endHour!=null?aw.endHour:aw.hour; state.newAwakeEndM=aw.endHour!=null?(aw.endMin||0):aw.min||0; render(); };})());
+          const del=btn({style:{background:"transparent",border:"none",color:"#334155",cursor:"pointer",fontSize:"14px",padding:"0"}},"×");
+          del.addEventListener('click',(()=>{const uid=n.uid;return(e)=>{e.stopPropagation(); pushUndo("中途覚醒を削除しました");const nd={...getDaily(vd)};nd.awakenings=(nd.awakenings||[]).filter(x=>x.uid!==uid);setDaily(vd,nd);render();};})());
+          item.appendChild(del);
+          list.appendChild(item);
+        });
+        sec.appendChild(list);
+        sec.appendChild(div({style:{fontSize:"10px",color:"#475569",marginTop:"4px"}},"前夜の睡眠中に目が覚めた分。実睡眠から差し引かれます"));
+      }
+      return sec;
     })(),
 
     // 昼寝
@@ -3043,11 +3081,14 @@ function addDays(ds,n){const x=parseDS(ds);x.setDate(x.getDate()+n);return fmtDS
 // 共通の整形ヘルパー（各所でインライン定義していた重複を集約）
 function mdLabel(ds){ if(!ds)return ""; const p=(""+ds).split('-'); return p.length>=3?`${parseInt(p[1])}/${parseInt(p[2])}`:""; } // "M/D"
 function hhmm(h,m){ return `${String(h).padStart(2,'0')}:${String(m||0).padStart(2,'0')}`; } // "HH:MM"
-// その日の朝に起きた睡眠(＝前日の就寝→当日の起床)の時間数。未記録は null
+// その夜の中途覚醒の合計（分）。覚醒はその朝(ds)の記録に付く
+function getNightAwakeMins(ds){ return (getDaily(ds).awakenings||[]).reduce((a,x)=>a+(x.mins||0),0); }
+// その日の朝に起きた睡眠(＝前日の就寝→当日の起床)の時間数（中途覚醒を差し引いた実睡眠）。未記録は null
 function getNightSleepHours(ds){
   const bed=getDaily(addDays(ds,-1)).bedTime, wake=getDaily(ds).wakeTime;
   if(bed==null||wake==null)return null;
-  return (wake-bed+24)%24;
+  const gross=(wake-bed+24)%24;
+  return Math.max(0, gross - getNightAwakeMins(ds)/60);
 }
 // 旧食材「ヨーグルト・乳酸菌飲料」を「乳酸菌飲料」に置き換え
 function migrateFoods(){
@@ -8667,6 +8708,42 @@ function renderAddNapModal(vd,isEdit){
         } else {
           nd.naps=[...(nd.naps||[]),{uid:Date.now(),hour:state.newNapH,min:state.newNapM,endHour:state.newNapEndH,endMin:state.newNapEndM,mins}];
         }
+        setDaily(vd,nd);state.modal=null;render();
+      }},"保存")
+  ]));
+  bg.appendChild(m);return bg;
+}
+
+function renderAddAwakeModal(vd,isEdit){
+  const bg=div({className:"modal-center"});
+  const m=div({className:"modal-box"});
+  bg.addEventListener('click',()=>{state.modal=null;render();});
+  m.addEventListener('click',e=>e.stopPropagation());
+  m.appendChild(div({style:{fontSize:"15px",fontWeight:700,color:"#e2e8f0",marginBottom:"4px"}},isEdit?"🌙 中途覚醒を編集":"🌙 中途覚醒を記録"));
+  m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"14px"}},"睡眠中に目が覚めていた時間。実睡眠から差し引かれます"));
+  const mkTimeSel=(label,getH,getM,setH,setM)=>{
+    const wrap2=div({style:{marginBottom:"12px"}});
+    wrap2.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"5px"}},label));
+    wrap2.appendChild(clockField(getH(),getM(),(H,M)=>{setH(H);setM(M);}));
+    return wrap2;
+  };
+  m.appendChild(mkTimeSel("目が覚めた時刻",()=>state.newAwakeH,()=>state.newAwakeM,v=>{state.newAwakeH=v;},v=>{state.newAwakeM=v;}));
+  m.appendChild(mkTimeSel("また寝た時刻",()=>state.newAwakeEndH,()=>state.newAwakeEndM,v=>{state.newAwakeEndH=v;},v=>{state.newAwakeEndM=v;}));
+  if(isEdit){
+    m.appendChild(btn({style:{width:"100%",padding:"7px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#475569",cursor:"pointer",fontSize:"12px",marginBottom:"8px",marginTop:"4px"},
+      onClick:()=>{ pushUndo("中途覚醒を削除しました");const nd={...getDaily(vd)};nd.awakenings=(nd.awakenings||[]).filter(x=>x.uid!==state.editAwakeUid);setDaily(vd,nd);state.modal=null;render(); }},"この記録を削除"));
+  }
+  m.appendChild(div({style:{display:"flex",gap:"8px",marginTop:"8px"}},[
+    btn({className:"btn-ghost",style:{flex:1},onClick:()=>{state.modal=null;render();}},"キャンセル"),
+    btn({style:{flex:2,padding:"10px",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:600,cursor:"pointer"},
+      onClick:()=>{
+        let startMin=state.newAwakeH*60+state.newAwakeM;
+        let endMin=state.newAwakeEndH*60+state.newAwakeEndM;
+        if(endMin<startMin) endMin+=1440;
+        const mins=endMin-startMin;
+        const nd={...getDaily(vd)};
+        if(isEdit){ nd.awakenings=(nd.awakenings||[]).map(x=>x.uid===state.editAwakeUid?{...x,hour:state.newAwakeH,min:state.newAwakeM,endHour:state.newAwakeEndH,endMin:state.newAwakeEndM,mins}:x); }
+        else { nd.awakenings=[...(nd.awakenings||[]),{uid:Date.now(),hour:state.newAwakeH,min:state.newAwakeM,endHour:state.newAwakeEndH,endMin:state.newAwakeEndM,mins}]; }
         setDaily(vd,nd);state.modal=null;render();
       }},"保存")
   ]));
