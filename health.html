@@ -54,6 +54,12 @@ textarea{font-family:inherit}
 // エフェクト
 // ═══════════════════════════════════════════════════
 let toastTimer=null;
+// pointerupでモーダルを開いた直後に発生する互換クリック（ゴーストクリック）を1回だけ握りつぶす。
+// これがないと、開いたモーダル上のボタン（例：Googleマップ）が同じタップで押されてしまう。
+let swallowClickUntil=0;
+document.addEventListener('click', e=>{
+  if(swallowClickUntil && Date.now()<swallowClickUntil){ swallowClickUntil=0; e.stopPropagation(); e.preventDefault(); }
+}, true);
 function showToast(msg, color="#22c55e"){
   const el=document.getElementById('toast');
   if(!el)return;
@@ -214,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.74"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.75"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -397,7 +403,7 @@ function getPlanShiftBlock(ds){
     let end=sh.end; if(end>24)end=24;
     b={startH:Math.floor(sh.start),startM:Math.round((sh.start%1)*60),endH:Math.floor(end),endM:Math.round((end%1)*60),label:sh.label,color:sh.color};
   }
-  b.ovLabel=d.shiftLabel||""; b.note=d.shiftNote||"";  // その日だけの名前・メモ
+  b.ovLabel=d.shiftLabel||""; b.note=d.shiftNote||""; b.place=d.shiftPlace||"";  // その日だけの名前・メモ・場所
   return b;
 }
 // 週カレンダー等の表示用（＝予定シフト）
@@ -3400,7 +3406,7 @@ function getPlannedExtras(vd){
   // シフト計画（パターン or 予定上書き・カスタム時刻）を予定(左)へ。実績(workStart)とは独立
   const sb=getPlanShiftBlock(vd);
   if(sb){
-    out.push({title:`💼 ${sb.ovLabel||sb.label}${sb.note?" 📝":""}`,color:sb.color,startH:sb.startH,startM:sb.startM,endH:sb.endH,endM:sb.endM,isPattern:true,shiftBlock:true,shiftBaseLabel:sb.label,shiftNote:sb.note,shiftOvLabel:sb.ovLabel});
+    out.push({title:`💼 ${sb.ovLabel||sb.label}${sb.place?` 📍${sb.place}`:""}${sb.note?" 📝":""}`,color:sb.color,startH:sb.startH,startM:sb.startM,endH:sb.endH,endM:sb.endM,isPattern:true,shiftBlock:true,shiftBaseLabel:sb.label,shiftNote:sb.note,shiftOvLabel:sb.ovLabel,shiftPlace:sb.place});
   }
   // パターン予定（睡眠など）。シフト連動なら当日のシフトで時間が変わる。0時またぎは分割
   // 日をまたぐ睡眠などは「就寝する日」を1つの夜として扱う：
@@ -3562,6 +3568,14 @@ function renderPatternEditModal(vd){
       const addS=(l,v)=>{ const n=infoRowS(l,v); if(n)m.appendChild(n); };
       addS("📅 日付", dl);
       addS("🕐 時間", `${hhmm(pe.startH,pe.startM)}〜${hhmm(pe.endH,pe.endM)}`);
+      if((dS.shiftPlace||"").trim()){
+        const pr=div({style:{marginBottom:"11px"}});
+        pr.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"2px"}},"📍 場所"));
+        pr.appendChild(div({style:{fontSize:"14px",color:"#e2e8f0",wordBreak:"break-word",marginBottom:"5px"}},dS.shiftPlace));
+        const mb=btn({style:{padding:"6px 12px",borderRadius:"8px",cursor:"pointer",fontSize:"12px",fontWeight:600,border:"1px solid #22c55e55",background:"#22c55e14",color:"#4ade80"}},"🗺️ Googleマップで開く");
+        mb.addEventListener('click',()=>{ window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(dS.shiftPlace.trim())}`,'_blank','noopener'); });
+        pr.appendChild(mb); m.appendChild(pr);
+      }
       addS("📝 メモ", (dS.shiftNote||"").trim()||null);
       m.appendChild(btn({className:"btn-ghost",style:{width:"100%",marginTop:"6px"},onClick:()=>{state.modal=null;render();}},"閉じる"));
       bg.appendChild(m);return bg;
@@ -3588,20 +3602,25 @@ function renderPatternEditModal(vd){
     {
       if(pe.lblOv===undefined)pe.lblOv=dS.shiftLabel||"";
       if(pe.noteOv===undefined)pe.noteOv=dS.shiftNote||"";
-      m.appendChild(div({style:{fontSize:"11px",color:"#64748b",margin:"8px 0 5px"}},"📝 この日だけ名前・メモを変更"));
+      if(pe.placeOv===undefined)pe.placeOv=dS.shiftPlace||"";
+      m.appendChild(div({style:{fontSize:"11px",color:"#64748b",margin:"8px 0 5px"}},"📝 この日だけ名前・場所・メモを変更"));
       const lin=document.createElement('input'); lin.type='text'; lin.placeholder=`名前（既定: ${pe.baseLabel||"勤務"}）`; lin.value=pe.lblOv;
       lin.style.cssText="width:100%;padding:8px 10px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:14px;font-family:inherit;box-sizing:border-box;margin-bottom:6px";
       lin.addEventListener('input',e=>{pe.lblOv=e.target.value;});
       m.appendChild(lin);
+      const pin=document.createElement('input'); pin.type='text'; pin.placeholder="📍 場所（例：〇〇支店・現場名など）"; pin.value=pe.placeOv;
+      pin.style.cssText="width:100%;padding:8px 10px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:14px;font-family:inherit;box-sizing:border-box;margin-bottom:6px";
+      pin.addEventListener('input',e=>{pe.placeOv=e.target.value;});
+      m.appendChild(pin);
       const nta=document.createElement('textarea'); nta.placeholder="メモ（この日だけ・任意）"; nta.value=pe.noteOv;
       nta.style.cssText="width:100%;min-height:44px;padding:8px 10px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit;box-sizing:border-box;margin-bottom:8px;resize:vertical;line-height:1.5";
       nta.addEventListener('input',e=>{pe.noteOv=e.target.value;});
       m.appendChild(nta);
       m.appendChild(btn({style:{width:"100%",padding:"10px",marginBottom:"8px",background:"#22c55e18",border:"1px solid #22c55e",borderRadius:"8px",color:"#4ade80",fontSize:"13px",fontWeight:600,cursor:"pointer"},
-        onClick:()=>{ const lv=(pe.lblOv||"").trim(), nv=(pe.noteOv||"").trim(); setDaily(vd,{shiftLabel:lv||null,shiftNote:nv||null}); state.modal=null; showToast("この日の内容を変更しました"); render(); }},"✅ この日だけの内容を保存"));
-      if(dS.shiftLabel||dS.shiftNote)
+        onClick:()=>{ const lv=(pe.lblOv||"").trim(), nv=(pe.noteOv||"").trim(), pv=(pe.placeOv||"").trim(); setDaily(vd,{shiftLabel:lv||null,shiftNote:nv||null,shiftPlace:pv||null}); state.modal=null; showToast("この日の内容を変更しました"); render(); }},"✅ この日だけの内容を保存"));
+      if(dS.shiftLabel||dS.shiftNote||dS.shiftPlace)
         m.appendChild(btn({style:{width:"100%",padding:"8px",marginBottom:"8px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#94a3b8",cursor:"pointer",fontSize:"12px"},
-          onClick:()=>{ setDaily(vd,{shiftLabel:null,shiftNote:null}); state.modal=null; showToast("内容を元に戻しました"); render(); }},"↩ 内容を元に戻す"));
+          onClick:()=>{ setDaily(vd,{shiftLabel:null,shiftNote:null,shiftPlace:null}); state.modal=null; showToast("内容を元に戻しました"); render(); }},"↩ 内容を元に戻す"));
     }
   } else {
     const D=pe.date||vd;
@@ -4670,7 +4689,7 @@ function renderDaySchedule(vd,ds,isToday){
             let ns=Math.round(((curTopPx/HOUR_H)+START_H)*60/5)*5; // 5分刻み
             ns=Math.max(0,Math.min(1440-durMin, ns));
             onMove(ev, ns, durMin);
-          } else if(onTap){ onTap(ev); }
+          } else if(onTap){ swallowClickUntil=Date.now()+700; setTimeout(()=>{swallowClickUntil=0;},750); onTap(ev); }
         };
         block.addEventListener('pointerup',endDrag);
         block.addEventListener('pointercancel',endDrag);
