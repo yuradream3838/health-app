@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.65"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.66"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -675,6 +675,8 @@ function loadStorage(){
     if(rwd){try{const a=JSON.parse(rwd); if(Array.isArray(a))state.rewards=a;}catch{}}
     const iva=localStorage.getItem(STORAGE_KEY+"_investactions");
     if(iva){try{const a=JSON.parse(iva); if(Array.isArray(a)&&a.length)state.investActions=a;}catch{}}
+    const isp=localStorage.getItem(STORAGE_KEY+"_investspends");
+    if(isp){try{const a=JSON.parse(isp); if(Array.isArray(a))state.investSpends=a;}catch{}}
     const ift=localStorage.getItem(STORAGE_KEY+"_ifthen");
     if(ift!=null){try{const a=JSON.parse(ift); if(Array.isArray(a))state.ifThenPlans=a;}catch{}}
     else { // 初回のみ例を1件だけ用意（削除しても再追加されない）
@@ -1334,7 +1336,7 @@ function renderWidgetView(vd,ds){
     const c=div({className:"card",style:{padding:"12px 14px",marginBottom:"10px"}});
     c.appendChild(div({style:{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:"8px"}},[
       div({style:{fontSize:"13px",fontWeight:700,color:"#22c55e"}},`💰 未来投資 今日${investCountOn(vd)}回`),
-      div({style:{fontSize:"11px",color:"#64748b"}},`本日 ¥${investAmountOn(vd).toLocaleString()}／累計 ¥${investAmountTotal().toLocaleString()}`)
+      div({style:{fontSize:"11px",color:"#64748b"}},`本日 ¥${investAmountOn(vd).toLocaleString()}／🏦貯金 ¥${investBalance().toLocaleString()}`)
     ]));
     const chipRow=div({style:{display:"flex",flexWrap:"wrap",gap:"6px"}});
     getInvestActions().slice(0,6).forEach(a=>{
@@ -5448,6 +5450,12 @@ function investTotal(){ return (state.dailies||[]).reduce((a,d)=>a+((d.investmen
 function investAmountOn(vd){ return investListOn(vd).reduce((a,r)=>a+(r.amount||0),0); }
 function investAmountRange(vd, days){ let n=0; for(let i=0;i<days;i++) n+=investAmountOn(addDays(vd,-i)); return n; }
 function investAmountTotal(){ return (state.dailies||[]).reduce((a,d)=>a+((d.investments||[]).reduce((x,r)=>x+(r.amount||0),0)),0); }
+// ── 未来投資の「貯金」：累計投資額 − ご褒美で使った額 ──
+function getInvestSpends(){ if(!Array.isArray(state.investSpends))state.investSpends=[]; return state.investSpends; }
+function saveInvestSpends(){ try{localStorage.setItem(STORAGE_KEY+"_investspends",JSON.stringify(state.investSpends||[]));}catch{} }
+function investSpentTotal(){ return getInvestSpends().reduce((a,s)=>a+(s.amount||0),0); }
+function investBalance(){ return investAmountTotal()-investSpentTotal(); } // 現在の貯金残高（マイナスもあり得る）
+function addInvestSpend(label, amount){ getInvestSpends().push({t:new Date().toISOString(), label:(label||"ご褒美").trim()||"ご褒美", amount:Math.max(0,amount||0)}); saveInvestSpends(); }
 // 旧「我慢(resists)」データを investments（🍺飲酒・¥0）へ一度だけ移行
 function migrateResistsToInvest(){
   let done=false; try{done=localStorage.getItem(STORAGE_KEY+"_investmigrated")==="1";}catch{}
@@ -6747,6 +6755,18 @@ function renderInvestPanel(vd){
   // ── サマリー ──
   const sc=div({className:"card",style:{marginBottom:"10px"}});
   sc.appendChild(div({style:{fontSize:"11px",color:"#94a3b8",marginBottom:"8px"}},"💰 未来投資"));
+  // ── 貯金残高（累計投資 − ご褒美で使った額）──
+  const bal=investBalance();
+  sc.appendChild(div({style:{display:"flex",alignItems:"flex-end",justifyContent:"space-between",marginBottom:"12px",paddingBottom:"10px",borderBottom:"1px solid #1e293b"}},[
+    div({},[
+      div({style:{fontSize:"10px",color:"#64748b"}},"🏦 現在の貯金"),
+      div({style:{fontSize:"30px",fontWeight:800,color:bal>=0?"#22c55e":"#f87171",lineHeight:1.1}},`¥${bal.toLocaleString()}`)
+    ]),
+    div({style:{textAlign:"right",fontSize:"10px",color:"#64748b",lineHeight:1.7}},[
+      div({},`累計投資 ¥${investAmountTotal().toLocaleString()}`),
+      div({},`使用 −¥${investSpentTotal().toLocaleString()}`)
+    ])
+  ]));
   const sumRow=div({style:{display:"flex",gap:"8px",textAlign:"center"}});
   const stat=(label,val,sub,col)=>div({style:{flex:1}},[
     div({style:{fontSize:"10px",color:"#64748b"}},label),
@@ -6755,7 +6775,7 @@ function renderInvestPanel(vd){
   ]);
   sumRow.appendChild(stat("今日",`${investCountOn(vd)}`,`¥${investAmountOn(vd).toLocaleString()}`,"#38bdf8"));
   sumRow.appendChild(stat("7日間",`${investCountRange(vd,7)}`,`¥${investAmountRange(vd,7).toLocaleString()}`,"#a78bfa"));
-  sumRow.appendChild(stat("累計",`${investTotal()}回`,`¥${investAmountTotal().toLocaleString()} 節約`,"#22c55e"));
+  sumRow.appendChild(stat("累計",`${investTotal()}回`,"投資回数","#22c55e"));
   sc.appendChild(sumRow);
   wrap.appendChild(sc);
 
@@ -6859,6 +6879,48 @@ function renderInvestPanel(vd){
     });
   }
   wrap.appendChild(logCard);
+
+  // ── 🎁 貯金を使う（ご褒美で使った額を残高から引く）──
+  {
+    const spends=getInvestSpends();
+    const spCard=div({className:"card",style:{marginTop:"10px"}});
+    spCard.appendChild(div({style:{fontSize:"11px",color:"#94a3b8",marginBottom:"4px"}},"🎁 貯金を使う"));
+    spCard.appendChild(div({style:{fontSize:"10px",color:"#64748b",lineHeight:1.5,marginBottom:"8px"}},`貯金でご褒美を買ったら記録すると残高から引かれます（現在の貯金 ¥${investBalance().toLocaleString()}）。`));
+    // 入力（内容＋金額）
+    const form=div({style:{display:"flex",gap:"6px",alignItems:"center",marginBottom:spends.length?"10px":"0"}});
+    const li=document.createElement('input');li.type='text';li.placeholder="ご褒美の内容（例：焼肉）";li.value=state.newSpendLabel||"";li.style.cssText="flex:1;min-width:0;padding:7px 9px;background:#0f172a;border:1px solid #334155;border-radius:7px;color:#e2e8f0;font-size:12px;font-family:inherit";
+    li.addEventListener('input',e=>{state.newSpendLabel=e.target.value;});
+    const ai=document.createElement('input');ai.type='number';ai.min="0";ai.placeholder="¥";ai.value=state.newSpendAmount!=null?String(state.newSpendAmount):"";ai.style.cssText="width:80px;flex-shrink:0;padding:7px 9px;background:#0f172a;border:1px solid #334155;border-radius:7px;color:#e2e8f0;font-size:12px;font-family:inherit";
+    ai.addEventListener('input',e=>{state.newSpendAmount=Math.max(0,parseInt(e.target.value)||0);});
+    const useBtn=btn({style:{padding:"7px 12px",background:"#f472b618",border:"1px solid #f472b6",borderRadius:"7px",color:"#f472b6",fontSize:"12px",fontWeight:700,cursor:"pointer",flexShrink:0}},"使う");
+    useBtn.addEventListener('click',()=>{
+      const amt=Math.max(0,state.newSpendAmount||0);
+      if(!amt){showToast("金額を入力してください");return;}
+      addInvestSpend(state.newSpendLabel||"ご褒美", amt);
+      state.newSpendLabel="";state.newSpendAmount=null;
+      showToast(`🎁 −¥${amt.toLocaleString()}（残高 ¥${investBalance().toLocaleString()}）`,"#f472b6");
+      render();
+    });
+    form.appendChild(li);form.appendChild(ai);form.appendChild(useBtn);
+    spCard.appendChild(form);
+    // 使用履歴（新しい順・削除可）
+    if(spends.length){
+      spCard.appendChild(div({style:{fontSize:"10px",color:"#64748b",margin:"4px 0 4px"}},`使用履歴（${spends.length}件）`));
+      spends.slice().reverse().forEach((s)=>{
+        const idx=spends.indexOf(s);
+        const tm=(()=>{try{const d=new Date(s.t);return `${mdLabel(fmtDS(d))} ${hhmm(d.getHours(),d.getMinutes())}`;}catch{return"";}})();
+        const row=div({style:{display:"flex",gap:"6px",alignItems:"center",padding:"6px 0",borderBottom:"1px solid #1e293b"}});
+        row.appendChild(span({style:{fontSize:"10px",color:"#64748b",flexShrink:0,width:"78px"}},tm));
+        row.appendChild(div({style:{flex:1,minWidth:0,fontSize:"13px",color:"#e2e8f0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},s.label||"ご褒美"));
+        row.appendChild(span({style:{fontSize:"12px",color:"#f472b6",fontWeight:700,flexShrink:0}},`−¥${(s.amount||0).toLocaleString()}`));
+        const del=btn({style:{padding:"5px 8px",background:"transparent",border:"1px solid #7f1d1d",borderRadius:"6px",color:"#f87171",fontSize:"11px",cursor:"pointer",flexShrink:0}},"🗑");
+        del.addEventListener('click',(()=>{const i=idx;return()=>{ getInvestSpends().splice(i,1); saveInvestSpends(); render(); };})());
+        row.appendChild(del);
+        spCard.appendChild(row);
+      });
+    }
+    wrap.appendChild(spCard);
+  }
 
   // ── 🔀 if-thenプラン（「〜のとき→〜する」を事前に決めておく）──
   {
@@ -8204,6 +8266,7 @@ function exportData(){
     rewards:state.rewards,
     investActions:state.investActions,
     ifThenPlans:state.ifThenPlans,
+    investSpends:state.investSpends,
     bacProfile:{weight:bacWeightKg(),sex:bacSexV()},
     weather,
     city
@@ -8265,6 +8328,7 @@ function importData(e){
       if(Array.isArray(p.rewards)){state.rewards=p.rewards;saveRewards();}
       if(Array.isArray(p.investActions)){state.investActions=p.investActions;saveInvestActions();}
       if(Array.isArray(p.ifThenPlans)){state.ifThenPlans=p.ifThenPlans;saveIfThenPlans();}
+      if(Array.isArray(p.investSpends)){state.investSpends=p.investSpends;saveInvestSpends();}
       if(p.bacProfile&&typeof p.bacProfile==="object"){ if(p.bacProfile.weight)state.bacWeight=p.bacProfile.weight; if(p.bacProfile.sex)state.bacSex=p.bacProfile.sex; saveBacProfile(); }
       if(p.weather){try{localStorage.setItem(STORAGE_KEY+"_weather",JSON.stringify(p.weather));}catch{}}
       if(p.city){state.weatherCity=p.city;try{localStorage.setItem(STORAGE_KEY+"_city",JSON.stringify(p.city));}catch{}}
