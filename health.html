@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.80"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.81"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -636,6 +636,7 @@ const state = {
   newEjacH:0, newEjacM:0, newEjacTag:null, newEjacNextDay:false,
   newNapH:0, newNapM:0, newNapEndH:0, newNapEndM:0, newNapDur:30, editNapUid:null, todoSortMode:false,
   newAwakeH:3, newAwakeM:0, newAwakeEndH:3, newAwakeEndM:20, editAwakeUid:null,
+  newMedName:"", newMedH:0, newMedM:0, editMedUid:null,
   saved:false
 };
 
@@ -1065,6 +1066,8 @@ function render(){
   if(state.modal==="addNap")   content.appendChild(renderAddNapModal(vd));
   if(state.modal==="addAwake") content.appendChild(renderAddAwakeModal(vd));
   if(state.modal==="editAwake")content.appendChild(renderAddAwakeModal(vd,true));
+  if(state.modal==="addMed")   content.appendChild(renderAddMedModal(vd));
+  if(state.modal==="editMed")  content.appendChild(renderAddMedModal(vd,true));
   if(state.modal==="addEvent") content.appendChild(renderAddEventModal(vd));
   if(state.modal==="addActual") content.appendChild(renderActualModal());
   if(state.modal==="patternEdit") content.appendChild(renderPatternEditModal(vd));
@@ -1839,6 +1842,38 @@ function renderDailyPanel(vd){
           })
         ])
     ]),
+
+    // 服薬
+    (()=>{
+      const meds=d.meds||[];
+      const sec=div({style:{marginBottom:"0"}});
+      sec.appendChild(div({style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"6px"}},[
+        span({style:{fontSize:"12px",color:"#94a3b8"}},[
+          txt("💊 服薬"),
+          meds.length>0?span({style:{fontSize:"11px",color:"#64748b",marginLeft:"6px"}},`${meds.length}件`):null
+        ]),
+        btn({style:{fontSize:"11px",padding:"3px 10px",background:"#0ea5e918",border:"1px solid #0ea5e9",borderRadius:"8px",color:"#38bdf8",cursor:"pointer",fontWeight:600},
+          onClick:()=>{ const now=new Date(); state.modal="addMed"; state.newMedName=""; state.newMedH=now.getHours(); state.newMedM=now.getMinutes(); render(); }},"+ 記録")
+      ]));
+      if(meds.length===0){
+        sec.appendChild(div({style:{fontSize:"11px",color:"#475569",textAlign:"center",padding:"6px 0"}},"まだ記録がありません"));
+      } else {
+        const list=div({style:{display:"flex",flexWrap:"wrap",gap:"5px"}});
+        [...meds].sort((a,b)=>(a.hour*60+(a.min||0))-(b.hour*60+(b.min||0))).forEach(md0=>{
+          const tL=`${String(md0.hour).padStart(2,'0')}:${String(md0.min||0).padStart(2,'0')}`;
+          const item=div({style:{display:"flex",alignItems:"center",gap:"5px",padding:"3px 10px",background:"#0f172a",borderRadius:"20px",border:"1px solid #1e3a5f",cursor:"pointer"}});
+          item.appendChild(span({style:{fontSize:"11px",color:"#94a3b8"}},tL));
+          item.appendChild(span({style:{fontSize:"11px",color:"#7dd3fc"}},md0.name||""));
+          item.addEventListener('click',(()=>{const rec=md0;return()=>{ state.modal="editMed"; state.editMedUid=rec.uid; state.newMedName=rec.name||""; state.newMedH=rec.hour; state.newMedM=rec.min||0; render(); };})());
+          const del=btn({style:{background:"transparent",border:"none",color:"#334155",cursor:"pointer",fontSize:"14px",padding:"0"}},"×");
+          del.addEventListener('click',(()=>{const uid=md0.uid;return(e)=>{e.stopPropagation(); pushUndo("服薬を削除しました");const nd={...getDaily(vd)};nd.meds=(nd.meds||[]).filter(x=>x.uid!==uid);setDaily(vd,nd);render();};})());
+          item.appendChild(del);
+          list.appendChild(item);
+        });
+        sec.appendChild(list);
+      }
+      return sec;
+    })(),
 
   ]);
   return card;
@@ -3292,8 +3327,15 @@ function getActualActivities(vd){
       let wakeAbs= wake!=null ? ((off+1)*1440 + wake*60) : null;
       if(bedAbs==null) bedAbs=wakeAbs-480;   // 就寝未記録→8h仮定
       if(wakeAbs==null) wakeAbs=bedAbs+480;   // 起床未記録→8h仮定
-      const s=Math.max(0,Math.round(bedAbs)), e=Math.min(1440,Math.round(wakeAbs));
-      if(e>s) acts.push({title:"😴 睡眠",startMin:s,endMin:e,color:SC});
+      // 中途覚醒（その朝の記録）を睡眠から差し引き、覚醒時間帯は睡眠実績を出さない
+      const awakes=getDaily(addDays(D,1)).awakenings||[];
+      let segs=[[bedAbs,wakeAbs]];
+      awakes.forEach(aw=>{
+        const awBase=(aw.hour<12?off+1:off);
+        const a0=awBase*1440+aw.hour*60+(aw.min||0), a1=a0+(aw.mins||0);
+        segs=segs.reduce((acc,[s0,s1])=>{ if(a1<=s0||a0>=s1){acc.push([s0,s1]);} else { if(a0>s0)acc.push([s0,a0]); if(a1<s1)acc.push([a1,s1]); } return acc; },[]);
+      });
+      segs.forEach(([s0,s1])=>{ const s=Math.max(0,Math.round(s0)), e=Math.min(1440,Math.round(s1)); if(e>s) acts.push({title:"😴 睡眠",startMin:s,endMin:e,color:SC}); });
     }
   }
   // 昼寝も反映
@@ -3309,6 +3351,11 @@ function getActualActivities(vd){
     const s=(ej.hour||0)*60+(ej.min||0);
     const tagAbbr = ej.tag==="自慰"?"ON":ej.tag==="セックス"?"SE":(ej.tag||"");
     acts.push({title:`💧${tagAbbr?" "+tagAbbr:""}`,startMin:s,endMin:s+12,isPoint:true,color:"#ec4899"});
+  });
+  // 服薬（点イベント）
+  (daily.meds||[]).forEach(md0=>{
+    const s=(md0.hour||0)*60+(md0.min||0);
+    acts.push({title:`💊 ${md0.name||""}`.trim(),startMin:s,endMin:s+12,isPoint:true,color:"#14b8a6"});
   });
   // 日記で記録した実際の勤務は実際(右)列に反映（予定シフトとは独立）。
   // 残業込みで0時を跨ぐ場合は、その勤務を所有する日(D)を基準に絶対分で計算し、
@@ -8746,6 +8793,57 @@ function renderAddAwakeModal(vd,isEdit){
         else { nd.awakenings=[...(nd.awakenings||[]),{uid:Date.now(),hour:state.newAwakeH,min:state.newAwakeM,endHour:state.newAwakeEndH,endMin:state.newAwakeEndM,mins}]; }
         setDaily(vd,nd);state.modal=null;render();
       }},"保存")
+  ]));
+  bg.appendChild(m);return bg;
+}
+
+// 過去に記録した薬名（よく使う候補）
+function recentMedNames(){
+  const seen=new Set(), out=[];
+  for(let i=(state.dailies||[]).length-1;i>=0 && out.length<12;i--){
+    ((state.dailies[i].meds)||[]).forEach(x=>{ const n=(x.name||"").trim(); if(n&&!seen.has(n)){ seen.add(n); out.push(n); } });
+  }
+  return out;
+}
+function renderAddMedModal(vd,isEdit){
+  const bg=div({className:"modal-center"});
+  const m=div({className:"modal-box",style:{maxHeight:"85vh",overflowY:"auto"}});
+  bg.addEventListener('click',()=>{state.modal=null;render();});
+  m.addEventListener('click',e=>e.stopPropagation());
+  m.appendChild(div({style:{fontSize:"15px",fontWeight:700,color:"#e2e8f0",marginBottom:"16px"}},isEdit?"💊 服薬を編集":"💊 服薬を記録"));
+  // 薬名
+  m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"5px"}},"薬の名前"));
+  const nin=document.createElement('input'); nin.type='text'; nin.placeholder="例：ロキソニン・胃薬など"; nin.value=state.newMedName||"";
+  nin.style.cssText="width:100%;padding:9px 12px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:14px;font-family:inherit;box-sizing:border-box;margin-bottom:8px";
+  nin.addEventListener('input',e=>{state.newMedName=e.target.value;});
+  m.appendChild(nin);
+  // よく使う候補
+  const recents=recentMedNames();
+  if(recents.length){
+    const chips=div({style:{display:"flex",flexWrap:"wrap",gap:"5px",marginBottom:"12px"}});
+    recents.forEach(nm=>{ const b=btn({style:{fontSize:"11px",padding:"4px 10px",borderRadius:"14px",border:"1px solid #334155",background:"#0f172a",color:"#cbd5e1",cursor:"pointer"}},nm);
+      b.addEventListener('click',()=>{state.newMedName=nm;render();}); chips.appendChild(b); });
+    m.appendChild(chips);
+  }
+  // 時刻
+  m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"5px"}},"時刻"));
+  m.appendChild(div({style:{display:"flex",gap:"8px",alignItems:"center",marginBottom:"16px"}},[
+    clockField(state.newMedH,state.newMedM,(H,M)=>{state.newMedH=H;state.newMedM=M;})
+  ]));
+  if(isEdit){
+    m.appendChild(btn({style:{width:"100%",padding:"7px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#475569",cursor:"pointer",fontSize:"12px",marginBottom:"8px"},
+      onClick:()=>{ pushUndo("服薬を削除しました");const nd={...getDaily(vd)};nd.meds=(nd.meds||[]).filter(x=>x.uid!==state.editMedUid);setDaily(vd,nd);state.modal=null;render(); }},"この記録を削除"));
+  }
+  m.appendChild(div({style:{display:"flex",gap:"8px"}},[
+    btn({className:"btn-ghost",style:{flex:1},onClick:()=>{state.modal=null;render();}},"キャンセル"),
+    btn({style:{flex:2,padding:"10px",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:600,cursor:"pointer"},
+      onClick:()=>{
+        const name=(state.newMedName||"").trim(); if(!name){alert("薬の名前を入力してください");return;}
+        const nd={...getDaily(vd)};
+        if(isEdit){ nd.meds=(nd.meds||[]).map(x=>x.uid===state.editMedUid?{...x,name,hour:state.newMedH,min:state.newMedM}:x); }
+        else { nd.meds=[...(nd.meds||[]),{uid:Date.now(),name,hour:state.newMedH,min:state.newMedM}]; }
+        setDaily(vd,nd);state.modal=null;render();
+      }},"記録する")
   ]));
   bg.appendChild(m);return bg;
 }
