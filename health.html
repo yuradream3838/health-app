@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.64"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.65"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -4281,12 +4281,14 @@ function renderDaySchedule(vd,ds,isToday){
     // 🎯 今日の目標（日次目標＋直近の週間/月次目標の下の期日なし目標）
     const gGoals=gtCollectDaily(vd);
     const gGoalIds=new Set(gGoals.map(n=>n.id));
+    // 前日以前で未完了の単日目標も繰り越して表示（範囲目標は毎日出るため除外）
+    const gCarry=gtCollectByPeriodCarry("daily", vd).carry.filter(n=>!isRangeDaily(n) && !gGoalIds.has(n.id));
     const gPend=gtCollectPeriodlessActive(vd).filter(x=>!gGoalIds.has(x.node.id));
-    if(allDayEvents.length||dueCustom.length||carryCustom.length||dueTodos.length||preItems.length||doneCustom.length||gGoals.length||gPend.length){
+    if(allDayEvents.length||dueCustom.length||carryCustom.length||dueTodos.length||preItems.length||doneCustom.length||gGoals.length||gCarry.length||gPend.length){
       const ad=div({className:"card",style:{padding:"8px 10px",marginBottom:"8px"}});
       ad.appendChild(div({style:{fontSize:"10px",fontWeight:700,color:"#94a3b8",marginBottom:"6px"}},"📌 終日・定期ルーティン・TODO"));
       // 🎯 目標セクション
-      if(gGoals.length||gPend.length){
+      if(gGoals.length||gCarry.length||gPend.length){
         const goalRow=(n, subTxt, done, onToggle)=>{
           const row=div({style:{display:"flex",alignItems:"center",gap:"8px",padding:"4px 2px"}});
           const cb=btn({style:{width:"20px",height:"20px",borderRadius:"5px",flexShrink:0,border:`2px solid ${done?"#22c55e":"#fbbf24"}`,background:done?"#22c55e":"transparent",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"12px",color:"#fff"}},done?"✓":"");
@@ -4295,6 +4297,8 @@ function renderDaySchedule(vd,ds,isToday){
           row.appendChild(div({style:{flex:1,minWidth:0,fontSize:"12px",color:done?"#475569":"#e2e8f0",textDecoration:done?"line-through":"none",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},`🎯 ${n.text||"目標"}${subTxt?`　${subTxt}`:""}`));
           ad.appendChild(row);
         };
+        // 繰り越しを上に
+        gCarry.forEach(n=>{ const done=dailyGoalDone(n,vd); goalRow(n, `🔴 繰り越し（${pkShort(n.periodKey)}・未達成）`, done, (()=>{const nn=n,d=done;return()=>{ setDailyGoalDone(nn,vd,!d); if(!d)showToast(`🎯 ${nn.text||"目標"}`); render(); };})()); });
         gGoals.forEach(n=>{ const done=dailyGoalDone(n,vd); goalRow(n, dailyRangeLabel(n)||null, done, (()=>{const nn=n,d=done;return()=>{ setDailyGoalDone(nn,vd,!d); if(!d)showToast(`🎯 ${nn.text||"目標"}`); render(); };})()); });
         gPend.forEach(({node:n,anc})=>{ const done=!!n.done; goalRow(n, `📎${GT_PERIOD_LABELS[anc.periodType]||""}「${anc.text||"目標"}」`, done, (()=>{const nn=n,d=done;return()=>{ setGoalDone(nn.id,!d); if(!d)showToast(`🎯 ${nn.text||"目標"}`); render(); };})()); });
       }
