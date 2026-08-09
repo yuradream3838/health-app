@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.73"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.74"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -385,15 +385,20 @@ function getPlanShiftKey(ds){
 }
 // 予定(左)に描くシフトブロック（キー or カスタム時刻に対応）。休み/なしは null
 function getPlanShiftBlock(ds){
-  const ps=getDaily(ds).planShift;
+  const d=getDaily(ds);
+  const ps=d.planShift;
+  let b=null;
   if(ps&&typeof ps==='object'&&ps.startH!=null){
-    return {startH:ps.startH,startM:ps.startM||0,endH:ps.endH,endM:ps.endM||0,label:"勤務",color:ps.startH<12?SHIFT_TYPES.s1.color:SHIFT_TYPES.s2.color,custom:true};
+    b={startH:ps.startH,startM:ps.startM||0,endH:ps.endH,endM:ps.endM||0,label:"勤務",color:ps.startH<12?SHIFT_TYPES.s1.color:SHIFT_TYPES.s2.color,custom:true};
+  } else {
+    const key=(ps!=null)?ps:getPatternShift(ds);
+    if(!key||key==="off"||key==="off2")return null;
+    const sh=SHIFT_TYPES[key]; if(!sh||sh.start==null)return null;
+    let end=sh.end; if(end>24)end=24;
+    b={startH:Math.floor(sh.start),startM:Math.round((sh.start%1)*60),endH:Math.floor(end),endM:Math.round((end%1)*60),label:sh.label,color:sh.color};
   }
-  const key=(ps!=null)?ps:getPatternShift(ds);
-  if(!key||key==="off"||key==="off2")return null;
-  const sh=SHIFT_TYPES[key]; if(!sh||sh.start==null)return null;
-  let end=sh.end; if(end>24)end=24;
-  return {startH:Math.floor(sh.start),startM:Math.round((sh.start%1)*60),endH:Math.floor(end),endM:Math.round((end%1)*60),label:sh.label,color:sh.color};
+  b.ovLabel=d.shiftLabel||""; b.note=d.shiftNote||"";  // その日だけの名前・メモ
+  return b;
 }
 // 週カレンダー等の表示用（＝予定シフト）
 function currentShiftKey(ds){ return getPlanShiftKey(ds); }
@@ -3395,7 +3400,7 @@ function getPlannedExtras(vd){
   // シフト計画（パターン or 予定上書き・カスタム時刻）を予定(左)へ。実績(workStart)とは独立
   const sb=getPlanShiftBlock(vd);
   if(sb){
-    out.push({title:`💼 ${sb.label}`,color:sb.color,startH:sb.startH,startM:sb.startM,endH:sb.endH,endM:sb.endM,isPattern:true,shiftBlock:true});
+    out.push({title:`💼 ${sb.ovLabel||sb.label}${sb.note?" 📝":""}`,color:sb.color,startH:sb.startH,startM:sb.startM,endH:sb.endH,endM:sb.endM,isPattern:true,shiftBlock:true,shiftBaseLabel:sb.label,shiftNote:sb.note,shiftOvLabel:sb.ovLabel});
   }
   // パターン予定（睡眠など）。シフト連動なら当日のシフトで時間が変わる。0時またぎは分割
   // 日をまたぐ睡眠などは「就寝する日」を1つの夜として扱う：
@@ -3503,7 +3508,7 @@ function patternTimesFor(p,ds){
 
 // パターン予定ブロックのタップ → 編集モーダル
 function openPatternEdit(ev,vd){
-  if(ev.shiftBlock){ state.patternEdit={kind:"shift",startH:ev.startH,startM:ev.startM,endH:ev.endH,endM:ev.endM}; }
+  if(ev.shiftBlock){ state.patternEdit={kind:"shift",startH:ev.startH,startM:ev.startM,endH:ev.endH,endM:ev.endM,baseLabel:ev.shiftBaseLabel||"勤務"}; }
   else { state.patternEdit={kind:"plan",uid:ev.patternUid,date:ev.ovDate||vd,startH:ev.oSH,startM:ev.oSM,endH:ev.oEH,endM:ev.oEM,nextDay:!!ev.oNext,ovDay:ev.ovDay}; }
   state.modal="patternEdit"; render();
 }
@@ -3538,6 +3543,29 @@ function renderPatternEditModal(vd){
   };
 
   if(pe.kind==="shift"){
+    const dS=getDaily(vd);
+    // ── 情報表示モード（タップで開いたら、まず情報だけ。右上の編集で操作へ）──
+    if(!pe.editMode){
+      const nameS=dS.shiftLabel||pe.baseLabel||"勤務";
+      m.appendChild(div({style:{display:"flex",alignItems:"flex-start",gap:"8px",marginBottom:"12px"}},[
+        div({style:{flex:1,minWidth:0}},[
+          div({style:{fontSize:"17px",fontWeight:700,color:"#e2e8f0",wordBreak:"break-word"}},`💼 ${nameS}`),
+          div({style:{fontSize:"11px",color:"#64748b",marginTop:"2px"}},`${dl} の勤務`)
+        ]),
+        btn({style:{flexShrink:0,padding:"6px 12px",borderRadius:"8px",border:"1px solid #a78bfa",background:"#a78bfa18",color:"#a78bfa",fontSize:"12px",fontWeight:700,cursor:"pointer"},
+          onClick:()=>{pe.editMode=true;render();}},"✏️ 編集")
+      ]));
+      const infoRowS=(label,val)=> val?div({style:{marginBottom:"11px"}},[
+        div({style:{fontSize:"10px",color:"#64748b",marginBottom:"2px"}},label),
+        div({style:{fontSize:"14px",color:"#e2e8f0",whiteSpace:"pre-wrap",wordBreak:"break-word",lineHeight:1.5}},val)
+      ]):null;
+      const addS=(l,v)=>{ const n=infoRowS(l,v); if(n)m.appendChild(n); };
+      addS("📅 日付", dl);
+      addS("🕐 時間", `${hhmm(pe.startH,pe.startM)}〜${hhmm(pe.endH,pe.endM)}`);
+      addS("📝 メモ", (dS.shiftNote||"").trim()||null);
+      m.appendChild(btn({className:"btn-ghost",style:{width:"100%",marginTop:"6px"},onClick:()=>{state.modal=null;render();}},"閉じる"));
+      bg.appendChild(m);return bg;
+    }
     m.appendChild(div({style:{fontSize:"15px",fontWeight:700,color:"#e2e8f0",marginBottom:"4px"}},"💼 シフトを変更"));
     m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"12px"}},`${dl} のシフト（この日のみ変更）`));
     const row=div({style:{display:"flex",gap:"6px",marginBottom:"10px"}});
@@ -3555,7 +3583,26 @@ function renderPatternEditModal(vd){
     m.appendChild(btn({style:{width:"100%",padding:"10px",marginBottom:"8px",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:600,cursor:"pointer"},
       onClick:()=>{setDaily(vd,{planShift:{startH:cs.startH,startM:cs.startM,endH:cs.endH,endM:cs.endM}});state.modal=null;showToast("この時間で設定しました");render();}},"✅ この時間で設定（この日のみ）"));
     m.appendChild(btn({className:"btn-ghost",style:{width:"100%",marginBottom:"8px"},onClick:()=>{setDayShift(vd,null);state.modal=null;showToast("パターンに戻しました");render();}},"↩ パターンに戻す"));
-    m.appendChild(btn({style:{width:"100%",padding:"9px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#94a3b8",cursor:"pointer",fontSize:"12px"},onClick:()=>{state.modal=null;state.tab="設定";render();}},"⚙ シフトパターン設定を編集"));
+    m.appendChild(btn({style:{width:"100%",padding:"9px",marginBottom:"8px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#94a3b8",cursor:"pointer",fontSize:"12px"},onClick:()=>{state.modal=null;state.tab="設定";render();}},"⚙ シフトパターン設定を編集"));
+    // 📝 この日だけ名前・メモを変更
+    {
+      if(pe.lblOv===undefined)pe.lblOv=dS.shiftLabel||"";
+      if(pe.noteOv===undefined)pe.noteOv=dS.shiftNote||"";
+      m.appendChild(div({style:{fontSize:"11px",color:"#64748b",margin:"8px 0 5px"}},"📝 この日だけ名前・メモを変更"));
+      const lin=document.createElement('input'); lin.type='text'; lin.placeholder=`名前（既定: ${pe.baseLabel||"勤務"}）`; lin.value=pe.lblOv;
+      lin.style.cssText="width:100%;padding:8px 10px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:14px;font-family:inherit;box-sizing:border-box;margin-bottom:6px";
+      lin.addEventListener('input',e=>{pe.lblOv=e.target.value;});
+      m.appendChild(lin);
+      const nta=document.createElement('textarea'); nta.placeholder="メモ（この日だけ・任意）"; nta.value=pe.noteOv;
+      nta.style.cssText="width:100%;min-height:44px;padding:8px 10px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit;box-sizing:border-box;margin-bottom:8px;resize:vertical;line-height:1.5";
+      nta.addEventListener('input',e=>{pe.noteOv=e.target.value;});
+      m.appendChild(nta);
+      m.appendChild(btn({style:{width:"100%",padding:"10px",marginBottom:"8px",background:"#22c55e18",border:"1px solid #22c55e",borderRadius:"8px",color:"#4ade80",fontSize:"13px",fontWeight:600,cursor:"pointer"},
+        onClick:()=>{ const lv=(pe.lblOv||"").trim(), nv=(pe.noteOv||"").trim(); setDaily(vd,{shiftLabel:lv||null,shiftNote:nv||null}); state.modal=null; showToast("この日の内容を変更しました"); render(); }},"✅ この日だけの内容を保存"));
+      if(dS.shiftLabel||dS.shiftNote)
+        m.appendChild(btn({style:{width:"100%",padding:"8px",marginBottom:"8px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#94a3b8",cursor:"pointer",fontSize:"12px"},
+          onClick:()=>{ setDaily(vd,{shiftLabel:null,shiftNote:null}); state.modal=null; showToast("内容を元に戻しました"); render(); }},"↩ 内容を元に戻す"));
+    }
   } else {
     const D=pe.date||vd;
     const Ddl=mdLabel(D);
