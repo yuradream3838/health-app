@@ -214,7 +214,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.68"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.69"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -4059,7 +4059,7 @@ function collectSearchItems(){
         srcLabel:e.fromTask?"予定（TODO由来）":"予定（直接）",icon:"📅",
         detail:`${md(dsk)}${e.allDay?" 終日":" "+hm(e.startH,e.startM)}`,
         onTap:()=>{ state.widget=false; state.viewDate=dsk; state.tab="予定"; state.scheduleSubTab="日";
-          state.modal="addEvent";state.editEventUid=e.uid;state.editEventIsRepeat=false;state.editEventDate=dsk;
+          state.modal="addEvent";state.editEventUid=e.uid;state.editEventIsRepeat=false;state.editEventDate=dsk;state.eventEditMode=false;
           state.newEvTitle=e.title;state.newEvH=e.startH;state.newEvM=e.startM;state.newEvEndH=e.endH;state.newEvEndM=e.endM;
           state.newEvRepeat="none";state.newEvColor=e.color||EV_COLORS[0];state.newEvWeekdays=[parseDS(dsk).getDay()];state.newEvDate=dsk;state.newEvEndDate=e.endDate||null;
           state.newEvFromTask=e.fromTask||null;state.newEvAllDay=!!e.allDay;state.newEvPlace=e.place||"";state.newEvNote=e.note||"";state.newEvPreDays=e.preDays||0;state.editScope="this";render(); }});
@@ -4072,7 +4072,7 @@ function collectSearchItems(){
       srcLabel:e.fromTask?"予定（TODO由来・繰り返し）":"予定（繰り返し）",icon:"🔁",
       detail:`${rl}${e.allDay?" 終日":" "+hm(e.startH,e.startM)}`,
       onTap:()=>{ state.widget=false; state.tab="予定"; state.scheduleSubTab="日"; state.viewDate=todayStr();
-        state.modal="addEvent";state.editEventUid=e.uid;state.editEventIsRepeat=true;state.editEventDate=todayStr();
+        state.modal="addEvent";state.editEventUid=e.uid;state.editEventIsRepeat=true;state.editEventDate=todayStr();state.eventEditMode=false;
         state.newEvTitle=e.title;state.newEvH=e.startH;state.newEvM=e.startM;state.newEvEndH=e.endH;state.newEvEndM=e.endM;
         state.newEvRepeat=e.repeatType||"weekly";state.newEvColor=e.color||EV_COLORS[0];
         state.newEvWeekdays=(e.weekdays&&e.weekdays.length)?[...e.weekdays]:[parseDS(e.startDate||todayStr()).getDay()];state.newEvDate=todayStr();state.newEvEndDate=null;
@@ -4343,7 +4343,7 @@ function renderDaySchedule(vd,ds,isToday){
         ]);
         chip.addEventListener('click',(()=>{const e2=ev;return()=>{
           const owner=e2._mdStart||vd;
-          state.modal="addEvent";state.editEventUid=e2.uid;state.editEventIsRepeat=!!e2.isRepeat;state.editEventDate=owner;
+          state.modal="addEvent";state.editEventUid=e2.uid;state.editEventIsRepeat=!!e2.isRepeat;state.editEventDate=owner;state.eventEditMode=false;
           state.newEvTitle=e2.title;state.newEvH=e2.startH||9;state.newEvM=e2.startM||0;state.newEvEndH=e2.endH||10;state.newEvEndM=e2.endM||0;
           state.newEvRepeat=e2.isRepeat?e2.repeatType:"none";state.newEvColor=e2.color||EV_COLORS[0];
           state.newEvWeekdays=(e2.weekdays&&e2.weekdays.length)?[...e2.weekdays]:[parseDS(e2.startDate||vd).getDay()];
@@ -4584,7 +4584,7 @@ function renderDaySchedule(vd,ds,isToday){
     if(ev._tail){ state.viewDate=addDays(vd,-1); render(); return; } // 前日の予定 → 前日へ移動して編集
     if(ev.customTodo){ state.planCustomTodo={uid:ev.ctUid,label:ev.ctLabel||ev.title,vd:ev.ctDate||vd}; state.modal="planCustomTodo"; render(); return; }
     if(ev.isPattern){ openPatternEdit(ev,vd); return; }
-    state.modal="addEvent";state.editEventUid=ev.uid;state.editEventIsRepeat=!!ev.isRepeat;state.editEventDate=vd;
+    state.modal="addEvent";state.editEventUid=ev.uid;state.editEventIsRepeat=!!ev.isRepeat;state.editEventDate=vd;state.eventEditMode=false;
     state.newEvDate=vd;state.newEvEndDate=ev.endDate||null;
     state.newEvTitle=ev.title;state.newEvH=ev.startH;state.newEvM=ev.startM;
     state.newEvEndH=ev.endH;state.newEvEndM=ev.endM;
@@ -5054,6 +5054,56 @@ function renderAddEventModal(vd){
   const m=div({className:"modal-box",style:{maxHeight:"85vh",overflowY:"auto"}});
   bg.addEventListener('click',()=>{state.modal=null;render();});
   m.addEventListener('click',e=>e.stopPropagation());
+
+  // ── 情報表示モード（既存予定を開いたら、まず情報だけ表示。右上の編集で編集へ）──
+  if(isEdit && !state.eventEditMode){
+    const c=state.newEvColor||"#38bdf8";
+    const startD=state.newEvDate||vd;
+    const dateStr=(state.newEvEndDate&&state.newEvEndDate>startD)?`${startD} 〜 ${state.newEvEndDate}`:startD;
+    const timeStr=state.newEvAllDay?"終日":`${hhmm(state.newEvH,state.newEvM)}〜${hhmm(state.newEvEndH,state.newEvEndM)}${state.newEvEndNextDay?"（翌日）":""}`;
+    // ヘッダー（タイトル＋右上に編集ボタン）
+    m.appendChild(div({style:{display:"flex",alignItems:"flex-start",gap:"8px",marginBottom:"12px"}},[
+      div({style:{flex:1,minWidth:0,display:"flex",alignItems:"center",gap:"7px"}},[
+        span({style:{width:"12px",height:"12px",borderRadius:"3px",background:c,flexShrink:0,display:"inline-block"}}),
+        div({style:{fontSize:"17px",fontWeight:700,color:"#e2e8f0",wordBreak:"break-word"}},(isRepEdit?"🔁 ":"")+(state.newEvTitle||"(無題)"))
+      ]),
+      btn({style:{flexShrink:0,padding:"6px 12px",borderRadius:"8px",border:"1px solid #38bdf8",background:"#0ea5e918",color:"#38bdf8",fontSize:"12px",fontWeight:700,cursor:"pointer"},
+        onClick:()=>{state.eventEditMode=true;render();}},"✏️ 編集")
+    ]));
+    // ✓ 実際に行った（情報画面の上部）
+    m.appendChild(btn({style:{width:"100%",padding:"11px",background:"linear-gradient(135deg,#22c55e,#0ea5e9)",border:"none",borderRadius:"8px",color:"#fff",cursor:"pointer",fontSize:"13px",fontWeight:700,marginBottom:"14px"},
+      onClick:()=>{
+        const nowH=new Date().getHours();
+        state.actEditUid=null; state.actTitle=state.newEvTitle||"";
+        state.actSH=state.newEvAllDay?nowH:state.newEvH; state.actSM=state.newEvAllDay?0:state.newEvM;
+        state.actEH=state.newEvAllDay?((nowH+1)%24):state.newEvEndH; state.actEM=state.newEvAllDay?0:state.newEvEndM;
+        state.actEndNextDay=!!state.newEvEndNextDay; state.actStartNextDay=!!state.newEvStartNextDay;
+        state.actColor=state.newEvColor||"#f472b6"; state.actUnplanned=false;
+        state.actFromEventUid=state.editEventUid; state.actDate=vd; state.modal="addActual"; render();
+      }},"✓ 実際に行った（実績に反映）"));
+    // 情報行
+    const infoRow=(label,val)=> val?div({style:{marginBottom:"11px"}},[
+      div({style:{fontSize:"10px",color:"#64748b",marginBottom:"2px"}},label),
+      div({style:{fontSize:"14px",color:"#e2e8f0",whiteSpace:"pre-wrap",wordBreak:"break-word",lineHeight:1.5}},val)
+    ]):null;
+    m.appendChild(infoRow("📅 日付", dateStr));
+    m.appendChild(infoRow("🕐 時間", timeStr));
+    if((state.newEvPlace||"").trim()){
+      const pr=div({style:{marginBottom:"11px"}});
+      pr.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"2px"}},"📍 場所"));
+      pr.appendChild(div({style:{fontSize:"14px",color:"#e2e8f0",wordBreak:"break-word",marginBottom:"5px"}},state.newEvPlace));
+      const mb=btn({style:{padding:"6px 12px",borderRadius:"8px",cursor:"pointer",fontSize:"12px",fontWeight:600,border:"1px solid #22c55e55",background:"#22c55e14",color:"#4ade80"}},"🗺️ Googleマップで開く");
+      mb.addEventListener('click',()=>{ window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(state.newEvPlace.trim())}`,'_blank','noopener'); });
+      pr.appendChild(mb);
+      m.appendChild(pr);
+    }
+    m.appendChild(infoRow("📝 詳細", (state.newEvNote||"").trim()||null));
+    if(state.newEvRepeat && state.newEvRepeat!=="none") m.appendChild(infoRow("🔁 繰り返し", repeatLabel(state.newEvRepeat, startD)));
+    if(Math.max(0,parseInt(state.newEvPreDays)||0)>0) m.appendChild(infoRow("🔔 事前表示", `${parseInt(state.newEvPreDays)}日前から予定上部に表示`));
+    m.appendChild(btn({className:"btn-ghost",style:{width:"100%",marginTop:"6px"},onClick:()=>{state.modal=null;render();}},"閉じる"));
+    bg.appendChild(m);return bg;
+  }
+
   m.appendChild(div({style:{fontSize:"15px",fontWeight:700,color:"#e2e8f0",marginBottom:"14px"}},isEdit?"📅 予定を編集":"📅 予定を追加"));
 
   const inp=document.createElement('input');
