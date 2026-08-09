@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.77"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.78"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -3766,6 +3766,20 @@ function renderPlanCustomTodoModal(){
   { const lin=document.createElement('input'); lin.type='text'; lin.placeholder=`名前（既定: ${baseLbl}）`; lin.value=pc.lblOv;
     lin.style.cssText="width:100%;padding:8px 10px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:14px;font-family:inherit;box-sizing:border-box;margin-bottom:10px";
     lin.addEventListener('input',e=>{pc.lblOv=e.target.value;}); m.appendChild(lin); }
+  // 日付（変更すると別の日に移動。保存ボタンでまとめて反映）
+  if(pc.moveTo===undefined) pc.moveTo=vd;
+  m.appendChild(uLabel("📅 日付（変更すると別の日に移動）"));
+  { const curRecM0=(state.todos[vd]||{})[pc.uid]||{};
+    const di=document.createElement('input'); di.type='date'; di.value=pc.moveTo;
+    di.style.cssText="width:100%;padding:8px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:14px;color-scheme:dark;font-family:inherit;box-sizing:border-box;margin-bottom:"+(curRecM0.movedFrom?"6px":"10px");
+    di.addEventListener('change',e=>{ if(e.target.value) pc.moveTo=e.target.value; });
+    m.appendChild(di);
+    if(curRecM0.movedFrom){
+      m.appendChild(div({style:{fontSize:"10px",color:"#a5b4fc",margin:"0 0 6px",fontWeight:600}},`↪ ${mdLabel(curRecM0.movedFrom)} から移動してきた回`));
+      m.appendChild(btn({style:{width:"100%",padding:"8px",marginBottom:"10px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#94a3b8",cursor:"pointer",fontSize:"12px"},
+        onClick:()=>{ const src=curRecM0.movedFrom; const r={...curRecM0}; delete r.moved; delete r.movedFrom; delete r.timeOverride; delete r.labelOverride; delete r.noteOverride; setTodo(vd,pc.uid,r); const sr={...((state.todos[src]||{})[pc.uid]||{})}; delete sr.excluded; delete sr.movedTo; setTodo(src,pc.uid,sr); state.modal=null; showToast(`${mdLabel(src)} に戻しました`); render(); }},"↩ 元の日に戻す"));
+    }
+  }
   // 時間
   m.appendChild(uLabel("🕐 時間"));
   if(ct){
@@ -3789,7 +3803,10 @@ function renderPlanCustomTodoModal(){
       if(nv)cur.noteOverride=nv; else delete cur.noteOverride;
       if(ct){ const timeChanged=`${pc.ov.timeH}:${pc.ov.timeM}-${pc.ov.endH}:${pc.ov.endM}`!==pc.ovInit; const hadTimeOv=!!(cur.timeOverride&&cur.timeOverride.timeH!=null);
         if(timeChanged||hadTimeOv) cur.timeOverride={timeH:pc.ov.timeH,timeM:pc.ov.timeM||0,endH:pc.ov.endH,endM:pc.ov.endM}; }
-      setTodo(vd,pc.uid,cur); state.modal=null; showToast("この日だけ保存しました"); render(); }},"✅ この日だけ保存"));
+      setTodo(vd,pc.uid,cur);
+      const moveTo=pc.moveTo;
+      if(moveTo && moveTo!==vd){ pushUndo("定期ルーティンを移動しました"); moveCustomTodoDay(pc.uid, vd, moveTo); state.modal=null; showToast(`${mdLabel(moveTo)} に移動して保存しました`); render(); }
+      else { state.modal=null; showToast("この日だけ保存しました"); render(); } }},"✅ この日だけ保存"));
   if(hasAnyOv) m.appendChild(btn({style:{width:"100%",padding:"8px",marginBottom:"12px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#94a3b8",cursor:"pointer",fontSize:"12px"},
     onClick:()=>{ const cur={...((state.todos[vd]||{})[pc.uid]||{})}; delete cur.labelOverride; delete cur.noteOverride; delete cur.timeOverride; setTodo(vd,pc.uid,cur); state.modal=null; showToast("この日の変更を元に戻しました"); render(); }},"↩ この日の変更をすべて元に戻す"));
   m.appendChild(div({style:{borderTop:"1px solid #1e293b",margin:"4px 0 10px"}}));
@@ -3805,23 +3822,6 @@ function renderPlanCustomTodoModal(){
     m.appendChild(btn({style:{width:"100%",padding:"8px",marginBottom:"12px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#94a3b8",cursor:"pointer",fontSize:"12px"},
       onClick:()=>{ const cur2={...((state.todos[vd]||{})[pc.uid]||{})}; delete cur2.time; setTodo(vd,pc.uid,{...cur2,checked:false}); state.modal=null; showToast("未完了に戻しました"); render(); }},"↩ 未完了に戻す"));
     m.appendChild(div({style:{borderTop:"1px solid #1e293b",margin:"0 0 10px"}}));
-  }
-  // 別の日に移動
-  {
-    const curRecM=(state.todos[vd]||{})[pc.uid]||{};
-    if(curRecM.movedFrom){
-      m.appendChild(div({style:{fontSize:"10px",color:"#a5b4fc",margin:"0 0 6px",fontWeight:600}},`↪ ${mdLabel(curRecM.movedFrom)} から移動してきた回`));
-      m.appendChild(btn({style:{width:"100%",padding:"9px",marginBottom:"8px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#94a3b8",cursor:"pointer",fontSize:"12px"},
-        onClick:()=>{ const src=curRecM.movedFrom; const r={...curRecM}; delete r.moved; delete r.movedFrom; delete r.timeOverride; delete r.labelOverride; delete r.noteOverride; setTodo(vd,pc.uid,r); const sr={...((state.todos[src]||{})[pc.uid]||{})}; delete sr.excluded; delete sr.movedTo; setTodo(src,pc.uid,sr); state.modal=null; showToast(`${mdLabel(src)} に戻しました`); render(); }},"↩ 元の日に戻す"));
-    }
-    if(pc.moveTo===undefined) pc.moveTo=addDays(vd,1);
-    m.appendChild(uLabel("📅 別の日に移動"));
-    const di=document.createElement('input'); di.type='date'; di.value=pc.moveTo;
-    di.style.cssText="width:100%;padding:8px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:14px;color-scheme:dark;font-family:inherit;box-sizing:border-box;margin-bottom:6px";
-    di.addEventListener('change',e=>{ if(e.target.value) pc.moveTo=e.target.value; });
-    m.appendChild(di);
-    m.appendChild(btn({style:{width:"100%",padding:"9px",marginBottom:"12px",background:"#6366f118",border:"1px solid #6366f1",borderRadius:"8px",color:"#a5b4fc",fontSize:"13px",fontWeight:600,cursor:"pointer"},
-      onClick:()=>{ if(!pc.moveTo||pc.moveTo===vd){ showToast("移動先の日を選んでください"); return; } pushUndo("定期ルーティンを移動しました"); moveCustomTodoDay(pc.uid, vd, pc.moveTo); state.modal=null; showToast(`${mdLabel(pc.moveTo)} に移動しました`); render(); }},"📅 選んだ日に移動する"));
   }
   // この日のみ削除
   m.appendChild(btn({style:{width:"100%",padding:"11px",marginBottom:"8px",background:"#7f1d1d33",border:"1px solid #ef4444",borderRadius:"8px",color:"#fca5a5",fontSize:"13px",fontWeight:700,cursor:"pointer"},
