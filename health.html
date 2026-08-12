@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.83"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.84"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -1372,7 +1372,7 @@ function renderWidgetView(vd,ds){
     c.appendChild(chipRow);
     // 🚪 踏みとどまりボタン（外に飲みに行きたくなったら）
     const tb=btn({style:{width:"100%",marginTop:"8px",padding:"10px",background:"linear-gradient(135deg,#f59e0b,#ef4444)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:800,cursor:"pointer"}},"🚪 外に飲みに行きたい…（踏みとどまる）");
-    tb.addEventListener('click',()=>{ state.tempAmount=state.tempAmount||3000; state.modal="temptation"; render(); });
+    tb.addEventListener('click',()=>{ state.tempAmount=state.tempAmount||3000; state.tempMood=null; state.modal="temptation"; render(); });
     c.appendChild(tb);
     const openInv=btn({style:{width:"100%",marginTop:"6px",padding:"7px",background:"transparent",border:"1px solid #334155",borderRadius:"7px",color:"#64748b",cursor:"pointer",fontSize:"11px"}},"未来投資をすべて見る →");
     openInv.addEventListener('click',()=>{ exitWidget(); state.tab="達成"; state.achieveSubTab="未来投資"; render(); });
@@ -1883,6 +1883,23 @@ function renderDailyPanel(vd){
         });
         sec.appendChild(list);
       }
+      return sec;
+    })(),
+
+    // 🫂 さみしさ / つながり充足度（0=満たされてる 〜 5=とても寂しい）
+    (()=>{
+      const cur=d.loneliness;
+      const sec=div({style:{marginBottom:"0",marginTop:"12px",paddingTop:"12px",borderTop:"1px solid #1e293b"}});
+      sec.appendChild(div({style:{fontSize:"12px",color:"#94a3b8",marginBottom:"6px"}},"🫂 さみしさ（今日）"));
+      const row=div({style:{display:"flex",gap:"4px"}});
+      for(let i=0;i<=5;i++){ const on=cur===i;
+        const col=i<=1?"#22c55e":i<=3?"#eab308":"#f472b6";
+        const b=btn({style:{flex:1,padding:"8px 0",borderRadius:"7px",cursor:"pointer",fontSize:"13px",fontWeight:700,border:`1px solid ${on?col:"#334155"}`,background:on?col+"22":"transparent",color:on?col:"#64748b"}},String(i));
+        b.addEventListener('click',(()=>{const v=i;return()=>{ setDaily(vd,{loneliness: cur===v?null:v}); render(); };})());
+        row.appendChild(b);
+      }
+      sec.appendChild(row);
+      sec.appendChild(div({style:{display:"flex",justifyContent:"space-between",fontSize:"9px",color:"#475569",marginTop:"3px"}},[span({},"満たされてる"),span({},"とても寂しい")]));
       return sec;
     })(),
 
@@ -5766,7 +5783,12 @@ function soberMorningCard(){
   if(sleep!=null) bits.push(`😴 睡眠 ${Math.round(sleep*10)/10}h`);
   if(score!=null) bits.push(`💗 体調 ${score.toFixed(1)}`);
   c.appendChild(div({style:{fontSize:"12px",color:"#cbd5e1",lineHeight:1.7}},bits.length?bits.join("　"):"今朝のあなたのコンディションです"));
-  c.appendChild(div({style:{fontSize:"11px",color:"#94a3b8",marginTop:"6px",lineHeight:1.6}},"飲まなかった分、体も財布も軽い。この調子でいきましょう。"));
+  const yLone=getDaily(y).loneliness;
+  if(yLone!=null && yLone>=3){
+    c.appendChild(div({style:{fontSize:"12px",color:"#f9a8d4",fontWeight:700,marginTop:"6px",lineHeight:1.6}},"🫂 昨日は寂しさを感じつつも、飲まずにいられた。それは本当にすごいこと。"));
+  } else {
+    c.appendChild(div({style:{fontSize:"11px",color:"#94a3b8",marginTop:"6px",lineHeight:1.6}},"飲まなかった分、体も財布も軽い。この調子でいきましょう。"));
+  }
   return c;
 }
 // 休肝日◯日達成のバッジ（ヴィジェット・予定用）
@@ -5853,6 +5875,11 @@ function alcoholKcalRange(vd, days){ let kcal=0; for(let i=0;i<days;i++){ const 
 // ── 純アルコール量(g)の集計＋上限設定 ──
 function pureAlcoholG(vd){ return (getDaily(vd).drinks||[]).reduce((a,dr)=>{ const dt=resolveDT(dr); return a+pureAlcohol(dr.ml, dr.pct!=null?dr.pct:dt.pct); },0); }
 function pureAlcoholRangeG(vd,days){ let g=0; for(let i=0;i<days;i++) g+=pureAlcoholG(addDays(vd,-i)); return g; }
+// ── 気持ち（外飲みの引き金）の記録と集計 ──
+const URGE_MOODS=[{k:'lonely',e:'😔',l:'寂しい'},{k:'bored',e:'😑',l:'退屈'},{k:'stress',e:'😰',l:'ストレス'},{k:'anxious',e:'😟',l:'不安'},{k:'happy',e:'🎉',l:'楽しい気分'},{k:'other',e:'🤔',l:'その他'}];
+function moodLabel(k){ const m=URGE_MOODS.find(x=>x.k===k); return m?`${m.e} ${m.l}`:""; }
+function logUrge(vd,mood,action){ const d=getDaily(vd); setDaily(vd,{urgeLogs:[...(d.urgeLogs||[]),{uid:Date.now(),t:new Date().toISOString(),mood:mood||null,action:action||null}]}); }
+function urgeMoodCounts(){ const c={},arr=[]; (state.dailies||[]).forEach(d=>(d.urgeLogs||[]).forEach(u=>{ if(u.mood)c[u.mood]=(c[u.mood]||0)+1; })); URGE_MOODS.forEach(m=>{ if(c[m.k])arr.push({k:m.k,n:c[m.k]}); }); arr.sort((a,b)=>b.n-a.n); return arr; }
 function alcLimitDay(){ const v=parseFloat(state.alcLimitDay); return (v&&v>0)?v:20; }
 function alcLimitWeek(){ const v=parseFloat(state.alcLimitWeek); return (v&&v>0)?v:100; }
 function saveAlcLimit(){ try{localStorage.setItem(STORAGE_KEY+"_alclimit",JSON.stringify({day:alcLimitDay(),week:alcLimitWeek()}));}catch{} }
@@ -6686,7 +6713,7 @@ function renderAlcohol(vd,isToday){
   // 🚪 外に飲みに行きたくなったら（踏みとどまりボタン）
   {
     const tb=btn({style:{width:"100%",padding:"13px",marginBottom:"10px",background:"linear-gradient(135deg,#f59e0b,#ef4444)",border:"none",borderRadius:"10px",color:"#fff",fontSize:"14px",fontWeight:800,cursor:"pointer"}},"🚪 外に飲みに行きたい…（踏みとどまる）");
-    tb.addEventListener('click',()=>{ state.tempAmount=state.tempAmount||3000; state.modal="temptation"; render(); });
+    tb.addEventListener('click',()=>{ state.tempAmount=state.tempAmount||3000; state.tempMood=null; state.modal="temptation"; render(); });
     wrap.appendChild(tb);
     const coc=coolOffCard(); if(coc)wrap.appendChild(coc);
   }
@@ -7209,6 +7236,29 @@ function renderInvestPanel(vd){
   sumRow.appendChild(stat("累計",`${investTotal()}回`,"投資回数","#22c55e"));
   sc.appendChild(sumRow);
   wrap.appendChild(sc);
+
+  // ── 🔎 外飲みの引き金（気持ちの集計）──
+  {
+    const counts=urgeMoodCounts();
+    const total=counts.reduce((a,c)=>a+c.n,0);
+    if(total>0){
+      const tc=div({className:"card",style:{marginBottom:"10px"}});
+      tc.appendChild(div({style:{fontSize:"11px",color:"#94a3b8",marginBottom:"6px"}},"🔎 飲みに行きたくなる引き金"));
+      const top=counts[0];
+      tc.appendChild(div({style:{fontSize:"13px",color:"#e2e8f0",marginBottom:"8px",lineHeight:1.5}},[
+        txt("いちばん多いのは "),span({style:{fontWeight:800,color:"#f9a8d4"}},moodLabel(top.k)),txt(` のとき（${Math.round(top.n/total*100)}%）`)
+      ]));
+      counts.forEach(c=>{
+        const r=div({style:{display:"flex",alignItems:"center",gap:"8px",marginBottom:"4px"}});
+        r.appendChild(span({style:{fontSize:"11px",color:"#94a3b8",width:"92px",flexShrink:0}},moodLabel(c.k)));
+        r.appendChild(div({style:{flex:1,height:"8px",background:"#0f172a",borderRadius:"4px",overflow:"hidden"}},[div({style:{height:"100%",width:`${Math.round(c.n/total*100)}%`,background:"#f472b6"}})]));
+        r.appendChild(span({style:{fontSize:"11px",color:"#64748b",width:"30px",textAlign:"right",flexShrink:0}},`${c.n}`));
+        tc.appendChild(r);
+      });
+      tc.appendChild(div({style:{fontSize:"10px",color:"#475569",marginTop:"6px",lineHeight:1.5}},"踏みとどまったときの気持ちの集計。引き金がわかると先手を打てます。"));
+      wrap.appendChild(tc);
+    }
+  }
 
   // ── 行動チップ（カテゴリ別・タップで記録）──
   const acts=getInvestActions();
@@ -8984,6 +9034,23 @@ function renderTemptationModal(vd){
 
   const card=(border,bg2,body)=>div({style:{border:`1px solid ${border}`,background:bg2,borderRadius:"10px",padding:"10px 12px",marginBottom:"9px"}},body);
 
+  // 😔 今の気持ち（引き金の記録）
+  m.appendChild(div({style:{fontSize:"12px",color:"#94a3b8",marginBottom:"6px",fontWeight:600}},"いまの気持ちは？"));
+  { const row=div({style:{display:"flex",flexWrap:"wrap",gap:"6px",marginBottom:"10px"}});
+    URGE_MOODS.forEach(mo=>{ const on=state.tempMood===mo.k;
+      const b=btn({style:{padding:"6px 11px",borderRadius:"16px",cursor:"pointer",fontSize:"12px",fontWeight:on?700:400,border:`1px solid ${on?"#f472b6":"#334155"}`,background:on?"#f472b622":"#0f172a",color:on?"#f9a8d4":"#94a3b8"}},`${mo.e} ${mo.l}`);
+      b.addEventListener('click',()=>{state.tempMood=on?null:mo.k;render();}); row.appendChild(b); });
+    m.appendChild(row);
+  }
+  // 💬 リフレーム（寂しい/つながりたい時）
+  if(state.tempMood==='lonely'||state.tempMood==='bored'||state.tempMood==='anxious'){
+    m.appendChild(card("#f472b655","#f472b60d",[
+      div({style:{fontSize:"13px",color:"#f9a8d4",fontWeight:700,lineHeight:1.6}},"本当に欲しいのは、お酒じゃなくて"),
+      div({style:{fontSize:"14px",color:"#fce7f3",fontWeight:800,lineHeight:1.5,marginTop:"2px"}},"「誰かと話したい・つながりたい」気持ちかも。"),
+      div({style:{fontSize:"11px",color:"#cbd5e1",marginTop:"5px",lineHeight:1.6}},"その気持ちは自然なもの。お酒の力を借りなくても、下の方法で満たしたり受けとめたりできます。")
+    ]));
+  }
+
   // 🏦 貯金（未来投資）
   const bal=investBalance();
   m.appendChild(card("#22c55e55","#22c55e0d",[
@@ -9042,6 +9109,20 @@ function renderTemptationModal(vd){
     }
   }
 
+  // 🫂 つながる（お酒以外でさみしさを満たす）
+  {
+    m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"6px"}},"🫂 つながる・気持ちを受けとめる"));
+    const row=div({style:{display:"flex",flexWrap:"wrap",gap:"6px",marginBottom:"8px"}});
+    [["📞 誰かに連絡する","connect"],["📝 気持ちを書き出す","write"],["🚶 少し歩く","walk"]].forEach(([lbl,k])=>{
+      const b=btn({style:{padding:"7px 10px",borderRadius:"14px",border:"1px solid #a78bfa55",background:"#a78bfa14",color:"#c4b5fd",fontSize:"12px",cursor:"pointer",fontFamily:"inherit"}},lbl);
+      b.addEventListener('click',()=>{ logInvest(vd,{label:lbl.replace(/^[^ ]+ /,""),cat:"🫂 つながり",amount:0}); showToast(`🫂 ${lbl}`); }); row.appendChild(b);
+    });
+    m.appendChild(row);
+    const planB=btn({style:{width:"100%",padding:"11px",marginBottom:"12px",background:"#a78bfa18",border:"1px solid #a78bfa",borderRadius:"10px",color:"#c4b5fd",fontSize:"13px",fontWeight:700,cursor:"pointer"}},"📅 人と会う予定を入れる");
+    planB.addEventListener('click',()=>{ logUrge(vd,state.tempMood,'plan'); state.modal=null; openAddEvent(todayStr()); state.newEvTitle="友達と会う"; render(); });
+    m.appendChild(planB);
+  }
+
   // 踏みとどまる（金額を選んで未来投資に記録）
   if(state.tempAmount==null)state.tempAmount=3000;
   m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"5px"}},"踏みとどまって節約できる額"));
@@ -9051,9 +9132,9 @@ function renderTemptationModal(vd){
     m.appendChild(amtRow);
   }
   m.appendChild(btn({style:{width:"100%",padding:"14px",marginBottom:"8px",background:"linear-gradient(135deg,#22c55e,#0ea5e9)",border:"none",borderRadius:"10px",color:"#fff",fontSize:"15px",fontWeight:800,cursor:"pointer"},
-    onClick:()=>{ const amt=state.tempAmount||3000; logInvest(vd,{label:"外飲みを我慢",cat:"🍺 飲酒",amount:amt}); state.modal=null; if(typeof showConfetti==="function")showConfetti(); showToast(`✊ よく踏みとどまった！ +¥${amt.toLocaleString()} を未来投資へ`,"#22c55e"); render(); }},"✊ 踏みとどまる（未来投資に記録）"));
+    onClick:()=>{ const amt=state.tempAmount||3000; logUrge(vd,state.tempMood,'resisted'); logInvest(vd,{label:"外飲みを我慢",cat:"🍺 飲酒",amount:amt}); state.modal=null; if(typeof showConfetti==="function")showConfetti(); showToast(`✊ よく踏みとどまった！ +¥${amt.toLocaleString()} を未来投資へ`,"#22c55e"); render(); }},"✊ 踏みとどまる（未来投資に記録）"));
   m.appendChild(btn({style:{width:"100%",padding:"11px",marginBottom:"8px",background:"transparent",border:"1px solid #38bdf8",borderRadius:"10px",color:"#38bdf8",fontSize:"13px",fontWeight:700,cursor:"pointer"},
-    onClick:()=>{ startCoolOff(15); state.modal=null; showToast("⏳ まず15分待ってみましょう","#38bdf8"); render(); }},"⏳ まず15分待つ（クーリングオフ）"));
+    onClick:()=>{ logUrge(vd,state.tempMood,'wait'); startCoolOff(15); state.modal=null; showToast("⏳ まず15分待ってみましょう","#38bdf8"); render(); }},"⏳ まず15分待つ（クーリングオフ）"));
   m.appendChild(btn({className:"btn-ghost",style:{width:"100%"},onClick:()=>{state.modal=null;render();}},"閉じる"));
   bg.appendChild(m);return bg;
 }
