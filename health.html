@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.82"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.83"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -650,6 +650,10 @@ function loadStorage(){
     if(city){const c=JSON.parse(city);state.weatherCity=c;}
     const prof=localStorage.getItem(STORAGE_KEY+"_bacprofile");
     if(prof){try{const p=JSON.parse(prof); if(p&&typeof p==="object"){ if(p.weight)state.bacWeight=p.weight; if(p.sex)state.bacSex=p.sex; }}catch{}}
+    const alcl=localStorage.getItem(STORAGE_KEY+"_alclimit");
+    if(alcl){try{const p=JSON.parse(alcl); if(p&&typeof p==="object"){ if(p.day)state.alcLimitDay=p.day; if(p.week)state.alcLimitWeek=p.week; }}catch{}}
+    const co=localStorage.getItem(STORAGE_KEY+"_cooloff");
+    if(co){const t=parseInt(co); if(t && t>Date.now()-6*3600000) state.coolOffUntil=t;} // 6h以内なら復元
     const todos=localStorage.getItem(STORAGE_KEY+"_todo");
     if(todos){state.todos=JSON.parse(todos);}
     const goals=localStorage.getItem(STORAGE_KEY+"_goals");
@@ -1278,6 +1282,8 @@ function renderWidgetView(vd,ds){
     ])
   ]));
   wrap.appendChild(head);
+  { const coc=coolOffCard(); if(coc)wrap.appendChild(coc); }
+  { const smc=soberMorningCard(); if(smc)wrap.appendChild(smc); }
 
   // ── 今日の予定 ──
   const schedCard=div({className:"card",style:{padding:"12px 14px",marginBottom:"10px"}});
@@ -5736,6 +5742,33 @@ function alcoholFreeStreak(){
   for(let i=0;i<800;i++){ if(d<earliest) break; if(!dayHasAlcohol(d)){ n++; d=addDays(d,-1); } else break; }
   return n;
 }
+// 「昨日は飲まなかった」朝の振り返りカード（飲む人向け・午前〜昼に表示）
+function anyAlcoholHistory(){ return (state.dailies||[]).some(d=>(d.drinks||[]).length>0); }
+function soberMorningCard(){
+  const today=todayStr();
+  if(state.viewDate!==today) return null;
+  if(new Date().getHours()>=15) return null;                 // 朝〜昼のみ
+  const y=addDays(today,-1);
+  if(dayHasAlcohol(y)) return null;                          // 昨日飲んでいたら出さない
+  if(!anyAlcoholHistory()) return null;                      // お酒を飲む人向け
+  if(state.soberReviewDismissed===today) return null;
+  const streak=alcoholFreeStreak();
+  const sleep=getNightSleepHours(today);
+  const scoreArr=state.logs.filter(l=>l.dateStr===today&&l.score!=null).map(l=>l.score);
+  const score=scoreArr.length?(scoreArr.reduce((a,b)=>a+b,0)/scoreArr.length):null;
+  const c=div({className:"card",style:{padding:"12px 14px",marginBottom:"10px",border:"1px solid #22c55e55",background:"#22c55e0d"}});
+  c.appendChild(div({style:{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:"8px",marginBottom:"6px"}},[
+    div({style:{fontSize:"14px",fontWeight:800,color:"#22c55e"}},"🎉 昨日は飲まなかった！"),
+    (()=>{const x=btn({style:{background:"transparent",border:"none",color:"#475569",cursor:"pointer",fontSize:"16px",padding:"0 2px",lineHeight:1}},"×"); x.addEventListener('click',()=>{state.soberReviewDismissed=today;render();}); return x;})()
+  ]));
+  const bits=[];
+  if(streak>0) bits.push(`🚱 連続休肝 ${streak}日`);
+  if(sleep!=null) bits.push(`😴 睡眠 ${Math.round(sleep*10)/10}h`);
+  if(score!=null) bits.push(`💗 体調 ${score.toFixed(1)}`);
+  c.appendChild(div({style:{fontSize:"12px",color:"#cbd5e1",lineHeight:1.7}},bits.length?bits.join("　"):"今朝のあなたのコンディションです"));
+  c.appendChild(div({style:{fontSize:"11px",color:"#94a3b8",marginTop:"6px",lineHeight:1.6}},"飲まなかった分、体も財布も軽い。この調子でいきましょう。"));
+  return c;
+}
 // 休肝日◯日達成のバッジ（ヴィジェット・予定用）
 function soberBadge(){
   const n=alcoholFreeStreak();
@@ -5817,6 +5850,39 @@ function alcoholImpactStats(){
 }
 // 直近days日の「アルコール由来カロリー」（純アルコール7.1kcal/g）
 function alcoholKcalRange(vd, days){ let kcal=0; for(let i=0;i<days;i++){ const ds=addDays(vd,-i); (getDaily(ds).drinks||[]).forEach(dr=>{ const dt=resolveDT(dr); kcal+=pureAlcohol(dr.ml, dr.pct!=null?dr.pct:dt.pct)*7.1; }); } return Math.round(kcal); }
+// ── 純アルコール量(g)の集計＋上限設定 ──
+function pureAlcoholG(vd){ return (getDaily(vd).drinks||[]).reduce((a,dr)=>{ const dt=resolveDT(dr); return a+pureAlcohol(dr.ml, dr.pct!=null?dr.pct:dt.pct); },0); }
+function pureAlcoholRangeG(vd,days){ let g=0; for(let i=0;i<days;i++) g+=pureAlcoholG(addDays(vd,-i)); return g; }
+function alcLimitDay(){ const v=parseFloat(state.alcLimitDay); return (v&&v>0)?v:20; }
+function alcLimitWeek(){ const v=parseFloat(state.alcLimitWeek); return (v&&v>0)?v:100; }
+function saveAlcLimit(){ try{localStorage.setItem(STORAGE_KEY+"_alclimit",JSON.stringify({day:alcLimitDay(),week:alcLimitWeek()}));}catch{} }
+// ── クーリングオフ・タイマー（外飲みの衝動を◯分待つ）──
+function coolOffRemainMin(){ if(!state.coolOffUntil)return 0; return Math.max(0,Math.ceil((state.coolOffUntil-Date.now())/60000)); }
+function startCoolOff(mins){ state.coolOffUntil=Date.now()+mins*60000; try{localStorage.setItem(STORAGE_KEY+"_cooloff",String(state.coolOffUntil));}catch{} setTimeout(()=>{ if(state.coolOffUntil&&Date.now()>=state.coolOffUntil) render(); }, mins*60000+500); }
+function clearCoolOff(){ state.coolOffUntil=null; try{localStorage.removeItem(STORAGE_KEY+"_cooloff");}catch{} }
+// クーリングオフ状態カード（進行中／経過後）。飲酒タブ・ヴィジェットで使用
+function coolOffCard(){
+  if(!state.coolOffUntil) return null;
+  const remain=coolOffRemainMin();
+  const c=div({className:"card",style:{marginBottom:"10px",border:`1px solid ${remain>0?"#38bdf855":"#22c55e55"}`,background:remain>0?"#38bdf80d":"#22c55e0d"}});
+  if(remain>0){
+    c.appendChild(div({style:{fontSize:"14px",fontWeight:800,color:"#38bdf8",marginBottom:"4px"}},`⏳ クーリングオフ中 あと${remain}分`));
+    c.appendChild(div({style:{fontSize:"11px",color:"#94a3b8",lineHeight:1.6,marginBottom:"8px"}},"飲みたい衝動はたいてい15〜20分で落ち着きます。水を1杯飲んで、少しだけ待ってみましょう。"));
+    const b=btn({style:{width:"100%",padding:"8px",borderRadius:"8px",border:"1px solid #334155",background:"transparent",color:"#64748b",cursor:"pointer",fontSize:"12px"}},"タイマーを解除");
+    b.addEventListener('click',()=>{clearCoolOff();render();});
+    c.appendChild(b);
+  } else {
+    c.appendChild(div({style:{fontSize:"14px",fontWeight:800,color:"#22c55e",marginBottom:"4px"}},"⏳ 時間が経ちました。どうですか？"));
+    c.appendChild(div({style:{fontSize:"11px",color:"#94a3b8",lineHeight:1.6,marginBottom:"8px"}},"衝動が少しでも落ち着いていたら、今日はこのまま踏みとどまれます。"));
+    const row=div({style:{display:"flex",gap:"6px"}});
+    const b1=btn({style:{flex:2,padding:"10px",borderRadius:"8px",border:"none",background:"linear-gradient(135deg,#22c55e,#0ea5e9)",color:"#fff",cursor:"pointer",fontSize:"13px",fontWeight:700}},"✊ 踏みとどまれた");
+    b1.addEventListener('click',()=>{ const vd=state.viewDate; logInvest(vd,{label:"外飲みを我慢",cat:"🍺 飲酒",amount:state.tempAmount||3000}); clearCoolOff(); if(typeof showConfetti==="function")showConfetti(); showToast("✊ よく我慢した！未来投資に記録","#22c55e"); render(); });
+    const b2=btn({style:{flex:1,padding:"10px",borderRadius:"8px",border:"1px solid #334155",background:"transparent",color:"#64748b",cursor:"pointer",fontSize:"12px"}},"解除");
+    b2.addEventListener('click',()=>{clearCoolOff();render();});
+    row.appendChild(b1);row.appendChild(b2); c.appendChild(row);
+  }
+  return c;
+}
 // 目標ノードが達成済みか（範囲一日目標は当日のdailyDoneで判定）
 function goalNodeDone(g, key){
   if(typeof isRangeDaily==="function" && isRangeDaily(g)){ const p=pkParse(key)||{}; return dailyGoalDone(g, p.date||(key||"").replace("daily_","")); }
@@ -6622,6 +6688,45 @@ function renderAlcohol(vd,isToday){
     const tb=btn({style:{width:"100%",padding:"13px",marginBottom:"10px",background:"linear-gradient(135deg,#f59e0b,#ef4444)",border:"none",borderRadius:"10px",color:"#fff",fontSize:"14px",fontWeight:800,cursor:"pointer"}},"🚪 外に飲みに行きたい…（踏みとどまる）");
     tb.addEventListener('click',()=>{ state.tempAmount=state.tempAmount||3000; state.modal="temptation"; render(); });
     wrap.appendChild(tb);
+    const coc=coolOffCard(); if(coc)wrap.appendChild(coc);
+  }
+
+  // 🍺 純アルコール上限ゲージ（今日／今週）
+  {
+    const dayG=Math.round(pureAlcoholG(vd)), weekG=Math.round(pureAlcoholRangeG(vd,7));
+    const dl=alcLimitDay(), wl=alcLimitWeek();
+    const gc=div({className:"card",style:{marginBottom:"10px"}});
+    gc.appendChild(div({style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"8px"}},[
+      div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0"}},"🍺 純アルコール量"),
+      btn({style:{fontSize:"11px",padding:"3px 8px",borderRadius:"7px",border:"1px solid #334155",background:"transparent",color:"#64748b",cursor:"pointer"}},state.alcLimitEdit?"✕ 閉じる":"⚙️ 上限")
+    ]));
+    gc.lastChild.lastChild.addEventListener('click',()=>{state.alcLimitEdit=!state.alcLimitEdit;render();});
+    const gauge=(label,val,lim)=>{
+      const r=lim>0?val/lim:0; const col=r>=1?"#ef4444":r>=0.7?"#eab308":"#22c55e";
+      const box=div({style:{marginBottom:"8px"}});
+      box.appendChild(div({style:{display:"flex",justifyContent:"space-between",fontSize:"11px",marginBottom:"3px"}},[
+        span({style:{color:"#94a3b8"}},label),
+        span({style:{color:col,fontWeight:700}},`${val}g / 上限${lim}g${r>=1?"　超過⚠️":""}`)
+      ]));
+      box.appendChild(div({style:{height:"8px",background:"#0f172a",borderRadius:"4px",overflow:"hidden"}},[
+        div({style:{height:"100%",width:`${Math.min(100,Math.round(r*100))}%`,background:col,transition:"width .3s"}})]));
+      return box;
+    };
+    gc.appendChild(gauge("今日",dayG,dl));
+    gc.appendChild(gauge("今週（7日）",weekG,wl));
+    if(state.alcLimitEdit){
+      const eb=div({style:{marginTop:"8px",paddingTop:"8px",borderTop:"1px solid #1e293b"}});
+      const mk=(lbl,getV,setV)=>{ const r=div({style:{display:"flex",alignItems:"center",gap:"8px",marginBottom:"6px"}});
+        r.appendChild(span({style:{fontSize:"11px",color:"#94a3b8",width:"92px",flexShrink:0}},lbl));
+        const i=document.createElement('input');i.type='number';i.min="1";i.value=String(getV());i.style.cssText="flex:1;min-width:0;padding:7px 9px;background:#0f172a;border:1px solid #334155;border-radius:7px;color:#e2e8f0;font-size:13px;font-family:inherit";
+        i.addEventListener('change',e=>{setV(Math.max(1,parseFloat(e.target.value)||1));saveAlcLimit();render();});
+        r.appendChild(i); r.appendChild(span({style:{fontSize:"11px",color:"#64748b"}},"g")); return r; };
+      eb.appendChild(mk("1日の上限",alcLimitDay,v=>{state.alcLimitDay=v;}));
+      eb.appendChild(mk("1週間の上限",alcLimitWeek,v=>{state.alcLimitWeek=v;}));
+      eb.appendChild(div({style:{fontSize:"10px",color:"#475569",lineHeight:1.5,marginTop:"2px"}},"目安：純アルコール1日20g（ビール500ml≒20g）。厚労省の生活習慣病リスクを高める量は男性40g・女性20g/日。"));
+      gc.appendChild(eb);
+    }
+    wrap.appendChild(gc);
   }
 
   // BAC計算
@@ -6960,6 +7065,10 @@ function renderAddDrinkModal(vd){
         const drink={uid:Date.now(),id:state.newDrink.typeId,drinkType:dt,ml:state.newDrink.ml,hour:state.newDrink.hour,min:state.newDrink.min};
         if(state.newDrink.startNextDay) drink.startNextDay=true;
         setDaily(vd,{drinks:[...(d.drinks||[]),drink]});
+        // 超過アラート
+        const dg=Math.round(pureAlcoholG(vd)), dl2=alcLimitDay();
+        if(dg>=dl2) showToast(`⚠️ 今日 ${dg}g（上限${dl2}g超過）。そろそろ止めどき`,"#ef4444");
+        else if(dg>=dl2*0.8) showToast(`🟡 今日 ${dg}g（上限${dl2}g）。あと少しで上限`,"#eab308");
       }
       state.modal=null;render();
     }},nd.editUid?"保存する":"追加する")
@@ -8590,6 +8699,7 @@ function exportData(){
     ifThenPlans:state.ifThenPlans,
     investSpends:state.investSpends,
     bacProfile:{weight:bacWeightKg(),sex:bacSexV()},
+    alcLimit:{day:alcLimitDay(),week:alcLimitWeek()},
     weather,
     city
   };
@@ -8652,6 +8762,7 @@ function importData(e){
       if(Array.isArray(p.ifThenPlans)){state.ifThenPlans=p.ifThenPlans;saveIfThenPlans();}
       if(Array.isArray(p.investSpends)){state.investSpends=p.investSpends;saveInvestSpends();}
       if(p.bacProfile&&typeof p.bacProfile==="object"){ if(p.bacProfile.weight)state.bacWeight=p.bacProfile.weight; if(p.bacProfile.sex)state.bacSex=p.bacProfile.sex; saveBacProfile(); }
+      if(p.alcLimit&&typeof p.alcLimit==="object"){ if(p.alcLimit.day)state.alcLimitDay=p.alcLimit.day; if(p.alcLimit.week)state.alcLimitWeek=p.alcLimit.week; saveAlcLimit(); }
       if(p.weather){try{localStorage.setItem(STORAGE_KEY+"_weather",JSON.stringify(p.weather));}catch{}}
       if(p.city){state.weatherCity=p.city;try{localStorage.setItem(STORAGE_KEY+"_city",JSON.stringify(p.city));}catch{}}
       // 旧形式（v8.3）のバックアップは新モデルへ移行して取り込む
@@ -8941,6 +9052,8 @@ function renderTemptationModal(vd){
   }
   m.appendChild(btn({style:{width:"100%",padding:"14px",marginBottom:"8px",background:"linear-gradient(135deg,#22c55e,#0ea5e9)",border:"none",borderRadius:"10px",color:"#fff",fontSize:"15px",fontWeight:800,cursor:"pointer"},
     onClick:()=>{ const amt=state.tempAmount||3000; logInvest(vd,{label:"外飲みを我慢",cat:"🍺 飲酒",amount:amt}); state.modal=null; if(typeof showConfetti==="function")showConfetti(); showToast(`✊ よく踏みとどまった！ +¥${amt.toLocaleString()} を未来投資へ`,"#22c55e"); render(); }},"✊ 踏みとどまる（未来投資に記録）"));
+  m.appendChild(btn({style:{width:"100%",padding:"11px",marginBottom:"8px",background:"transparent",border:"1px solid #38bdf8",borderRadius:"10px",color:"#38bdf8",fontSize:"13px",fontWeight:700,cursor:"pointer"},
+    onClick:()=>{ startCoolOff(15); state.modal=null; showToast("⏳ まず15分待ってみましょう","#38bdf8"); render(); }},"⏳ まず15分待つ（クーリングオフ）"));
   m.appendChild(btn({className:"btn-ghost",style:{width:"100%"},onClick:()=>{state.modal=null;render();}},"閉じる"));
   bg.appendChild(m);return bg;
 }
