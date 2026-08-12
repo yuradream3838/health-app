@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.84"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.85"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -637,6 +637,7 @@ const state = {
   newNapH:0, newNapM:0, newNapEndH:0, newNapEndM:0, newNapDur:30, editNapUid:null, todoSortMode:false,
   newAwakeH:3, newAwakeM:0, newAwakeEndH:3, newAwakeEndM:20, editAwakeUid:null,
   newMedName:"", newMedH:0, newMedM:0, editMedUid:null,
+  lifeVision:null, nightRitual:null, connectGoal:null, // 根本解決の習慣機能
   saved:false
 };
 
@@ -700,6 +701,13 @@ function loadStorage(){
       state.ifThenPlans=[{id:Date.now(),cue:"帰宅後に飲みたくなったら",action:"まず炭酸水を1杯飲む",weekdays:[5],afterH:18,active:true}];
       try{localStorage.setItem(STORAGE_KEY+"_ifthen",JSON.stringify(state.ifThenPlans));}catch{}
     }
+    // ── 根本解決の習慣機能：なりたい自分／夜のルーティン／つながり目標 ──
+    const lv=localStorage.getItem(STORAGE_KEY+"_lifevision");
+    if(lv){try{const o=JSON.parse(lv); if(o&&typeof o==="object")state.lifeVision=o;}catch{}}
+    const nr=localStorage.getItem(STORAGE_KEY+"_nightritual");
+    if(nr){try{const o=JSON.parse(nr); if(o&&typeof o==="object")state.nightRitual=o;}catch{}}
+    const cg=localStorage.getItem(STORAGE_KEY+"_connectgoal");
+    if(cg){try{const o=JSON.parse(cg); if(o&&typeof o==="object")state.connectGoal=o;}catch{}}
     // 旧形式（v8.3 events/taskList/wishList/shopList）からの一度きり移行
     if(!sc && !tk){ migrateOldSchedule(); }
   }catch{}
@@ -1284,6 +1292,7 @@ function renderWidgetView(vd,ds){
   wrap.appendChild(head);
   { const coc=coolOffCard(); if(coc)wrap.appendChild(coc); }
   { const smc=soberMorningCard(); if(smc)wrap.appendChild(smc); }
+  if(vd===todayStr() && hasLifeVision()) wrap.appendChild(visionCard(false)); // なりたい自分（常に見える動機づけ）
 
   // ── 今日の予定 ──
   const schedCard=div({className:"card",style:{padding:"12px 14px",marginBottom:"10px"}});
@@ -1378,6 +1387,12 @@ function renderWidgetView(vd,ds){
     openInv.addEventListener('click',()=>{ exitWidget(); state.tab="達成"; state.achieveSubTab="未来投資"; render(); });
     c.appendChild(openInv);
     wrap.appendChild(c);
+  }
+
+  // ── 🫂 つながり習慣（今日・今週の進捗）＋ 🌙 夜のルーティン（夕方以降） ──
+  if(vd===todayStr()){
+    wrap.appendChild(connectHabitCard(vd,false));
+    if(new Date().getHours()>=17 || ritualDoneCountOn(vd)>0) wrap.appendChild(nightRitualCard(vd,false));
   }
 
   // チェック行の共通生成
@@ -5910,6 +5925,292 @@ function coolOffCard(){
   }
   return c;
 }
+// ═══════════════════════════════════════════════════
+// ── 根本解決の習慣機能（誤魔化さず・我慢に頼らず、普段から習慣づける）──
+// ═══════════════════════════════════════════════════
+// ① なりたい自分／減酒する理由（常に見える動機づけ）
+function getLifeVision(){
+  if(!state.lifeVision||typeof state.lifeVision!=="object")state.lifeVision={vision:"",reasons:[]};
+  if(!Array.isArray(state.lifeVision.reasons))state.lifeVision.reasons=[];
+  if(typeof state.lifeVision.vision!=="string")state.lifeVision.vision="";
+  return state.lifeVision;
+}
+function saveLifeVision(){ try{localStorage.setItem(STORAGE_KEY+"_lifevision",JSON.stringify(getLifeVision()));}catch{} }
+function hasLifeVision(){ const v=getLifeVision(); return !!(v.vision.trim()||v.reasons.length); }
+// 減酒マイルストーン（休肝日連続に応じて自動達成）
+const SOBER_MILESTONES=[
+  {days:3,  label:"3日連続",  icon:"🌱", msg:"体が軽くなり始める頃"},
+  {days:7,  label:"1週間",    icon:"🌿", msg:"睡眠の質が上向くころ"},
+  {days:14, label:"2週間",    icon:"🍀", msg:"肌や朝の目覚めに変化が"},
+  {days:30, label:"1ヶ月",    icon:"🌳", msg:"習慣として根づき始める"},
+  {days:90, label:"3ヶ月",    icon:"🏆", msg:"新しい自分の土台が完成"},
+];
+// ② 飲まない夜のルーティン（飲酒という夜の習慣を別の流れに置き換える）
+const NIGHT_RITUAL_DEFAULT={steps:[
+  {id:1,label:"お風呂にゆっくり入る",icon:"🛁"},
+  {id:2,label:"炭酸水かお茶を用意する",icon:"🥤"},
+  {id:3,label:"スマホを置いて読書",icon:"📖"},
+  {id:4,label:"軽くストレッチ",icon:"🧘"},
+]};
+function getNightRitual(){
+  if(!state.nightRitual||!Array.isArray(state.nightRitual.steps)) state.nightRitual=JSON.parse(JSON.stringify(NIGHT_RITUAL_DEFAULT));
+  return state.nightRitual;
+}
+function saveNightRitual(){ try{localStorage.setItem(STORAGE_KEY+"_nightritual",JSON.stringify(getNightRitual()));}catch{} }
+function ritualDoneOn(vd){ const d=getDaily(vd); return Array.isArray(d.ritualDone)?d.ritualDone:[]; }
+function toggleRitualStep(vd,id){ const done=ritualDoneOn(vd); const has=done.includes(id); setDaily(vd,{ritualDone: has?done.filter(x=>x!==id):[...done,id]}); }
+function ritualCompleteOn(vd){ const steps=getNightRitual().steps; if(!steps.length)return false; const done=ritualDoneOn(vd); return steps.every(s=>done.includes(s.id)); }
+function ritualDoneCountOn(vd){ const steps=getNightRitual().steps; const done=ritualDoneOn(vd); return steps.filter(s=>done.includes(s.id)).length; }
+function ritualStreak(){ let n=0,d=todayStr(); if(!ritualCompleteOn(d))d=addDays(d,-1); while(ritualCompleteOn(d)){ n++; d=addDays(d,-1); } return n; }
+// ③ つながり習慣＋週次ふりかえり（孤独＝外飲みの根っこ、を人とのつながりで満たす）
+function getConnectGoal(){
+  if(!state.connectGoal||typeof state.connectGoal!=="object")state.connectGoal={weeklyTarget:2,plans:[]};
+  if(!(state.connectGoal.weeklyTarget>0))state.connectGoal.weeklyTarget=2;
+  if(!Array.isArray(state.connectGoal.plans))state.connectGoal.plans=[];
+  return state.connectGoal;
+}
+function saveConnectGoal(){ try{localStorage.setItem(STORAGE_KEY+"_connectgoal",JSON.stringify(getConnectGoal()));}catch{} }
+function isConnectInvest(r){ return !!(r&&typeof r.cat==="string"&&r.cat.indexOf("つながり")>=0); }
+function connectCountOn(vd){ return investListOn(vd).filter(isConnectInvest).length; }
+function connectCountRange(vd,days){ let n=0; for(let i=0;i<days;i++)n+=connectCountOn(addDays(vd,-i)); return n; }
+function mondayOfDS(ds){ const x=parseDS(ds); const day=x.getDay(); const diff=day===0?-6:1-day; x.setDate(x.getDate()+diff); return fmtDS(x); }
+// 今週（月曜起点）のつながり回数
+function connectCountThisWeek(){ const mon=mondayOfDS(todayStr()); let n=0,d=mon; while(d<=todayStr()){ n+=connectCountOn(d); d=addDays(d,1); } return n; }
+// つながり目標を「週◯回」達成した連続週数
+function connectWeeklyStreak(){
+  const target=getConnectGoal().weeklyTarget; let n=0; let mon=mondayOfDS(todayStr());
+  // 今週は未達でも進行中なので、まず先週以前を数える
+  if(connectCountThisWeek()>=target)n++;
+  mon=addDays(mon,-7);
+  while(true){ let c=0,d=mon,end=addDays(mon,6); while(d<=end){ c+=connectCountOn(d); d=addDays(d,1); } if(c>=target){ n++; mon=addDays(mon,-7); } else break; }
+  return n;
+}
+// 週次ふりかえり用：直近7日のさみしさ平均・引き金トップ・つながり回数
+function weeklyReviewStats(){
+  const lonV=[]; for(let i=0;i<7;i++){ const d=getDaily(addDays(todayStr(),-i)); if(typeof d.loneliness==="number")lonV.push(d.loneliness); }
+  const lonAvg=lonV.length?(lonV.reduce((a,b)=>a+b,0)/lonV.length):null;
+  // 直近7日の引き金
+  const c={}; for(let i=0;i<7;i++){ (getDaily(addDays(todayStr(),-i)).urgeLogs||[]).forEach(u=>{ if(u.mood)c[u.mood]=(c[u.mood]||0)+1; }); }
+  const trig=Object.keys(c).map(k=>({k,n:c[k]})).sort((a,b)=>b.n-a.n);
+  return { lonAvg, lonN:lonV.length, trig, connect:connectCountRange(todayStr(),7) };
+}
+// ── カード①：なりたい自分・減酒する理由（full=編集＋マイルストーン、compactは閲覧のみ）──
+function visionCard(full){
+  const v=getLifeVision();
+  const set=hasLifeVision();
+  const c=div({className:"card",style:{marginBottom:"10px",border:"1px solid #a78bfa44",background:"#a78bfa0d"}});
+  const head=div({style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"8px"}});
+  head.appendChild(div({style:{fontSize:"13px",fontWeight:800,color:"#c4b5fd"}},"🌟 なりたい自分・減酒する理由"));
+  if(full){
+    const ed=btn({style:{padding:"4px 10px",borderRadius:"7px",border:"1px solid #a78bfa55",background:"transparent",color:"#c4b5fd",fontSize:"11px",cursor:"pointer",fontFamily:"inherit"}},state.visionEdit?"✕ 閉じる":"✏️ 編集");
+    ed.addEventListener('click',()=>{state.visionEdit=!state.visionEdit;render();});
+    head.appendChild(ed);
+  }
+  c.appendChild(head);
+  if(full && state.visionEdit){
+    c.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"4px"}},"どんな自分になりたい？"));
+    const ta=document.createElement('textarea');
+    ta.value=v.vision;ta.placeholder="例：朝すっきり起きて、休日は人と出かける自分";ta.rows=2;
+    ta.style.cssText="width:100%;box-sizing:border-box;padding:8px 10px;background:#0b1220;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit;resize:vertical;margin-bottom:10px";
+    ta.addEventListener('change',e=>{ getLifeVision().vision=e.target.value; saveLifeVision(); });
+    c.appendChild(ta);
+    c.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"4px"}},"減酒したい理由（いくつでも）"));
+    v.reasons.forEach((r,i)=>{
+      const row=div({style:{display:"flex",gap:"6px",alignItems:"center",marginBottom:"5px"}});
+      const inp=document.createElement('input');inp.type='text';inp.value=r;inp.style.cssText="flex:1;min-width:0;padding:7px 9px;background:#0b1220;border:1px solid #334155;border-radius:7px;color:#e2e8f0;font-size:12px;font-family:inherit";
+      inp.addEventListener('change',e=>{ getLifeVision().reasons[i]=e.target.value; saveLifeVision(); });
+      const del=btn({style:{padding:"6px 9px",background:"transparent",border:"1px solid #7f1d1d",borderRadius:"6px",color:"#f87171",fontSize:"12px",cursor:"pointer",flexShrink:0}},"🗑");
+      del.addEventListener('click',()=>{ getLifeVision().reasons.splice(i,1); saveLifeVision(); render(); });
+      row.appendChild(inp);row.appendChild(del); c.appendChild(row);
+    });
+    const nr=div({style:{display:"flex",gap:"6px",alignItems:"center",marginTop:"4px"}});
+    const ni=document.createElement('input');ni.type='text';ni.placeholder="例：お金を貯めたい／体調を良くしたい";ni.value=state.newReason||"";ni.style.cssText="flex:1;min-width:0;padding:7px 9px;background:#0b1220;border:1px solid #334155;border-radius:7px;color:#e2e8f0;font-size:12px;font-family:inherit";
+    ni.addEventListener('input',e=>{state.newReason=e.target.value;});
+    const add=btn({style:{padding:"6px 12px",background:"#a78bfa18",border:"1px solid #a78bfa",borderRadius:"7px",color:"#c4b5fd",fontSize:"13px",fontWeight:700,cursor:"pointer",flexShrink:0}},"＋");
+    add.addEventListener('click',()=>{ const t=(state.newReason||"").trim(); if(!t)return; getLifeVision().reasons.push(t); saveLifeVision(); state.newReason=""; render(); });
+    nr.appendChild(ni);nr.appendChild(add); c.appendChild(nr);
+    return c;
+  }
+  if(!set){
+    c.appendChild(div({style:{fontSize:"12px",color:"#94a3b8",lineHeight:1.6,marginBottom:full?"0":"8px"}},"「どんな自分になりたいか」「なぜ減酒したいか」を書いておくと、飲みたくなった時に思い出せる支えになります。"));
+    if(!full){
+      const b=btn({style:{width:"100%",padding:"9px",borderRadius:"8px",border:"1px dashed #a78bfa",background:"#a78bfa0d",color:"#c4b5fd",fontSize:"12px",fontWeight:600,cursor:"pointer",fontFamily:"inherit"}},"＋ なりたい自分を書く");
+      b.addEventListener('click',()=>{ exitWidget&&exitWidget(); state.modal=null; state.tab="達成"; state.achieveSubTab="未来投資"; state.visionEdit=true; render(); });
+      c.appendChild(b);
+    }
+    return c;
+  }
+  if(v.vision.trim()) c.appendChild(div({style:{fontSize:"15px",fontWeight:700,color:"#f5f3ff",lineHeight:1.5,marginBottom:v.reasons.length?"9px":"0"}},v.vision));
+  if(v.reasons.length){
+    c.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"4px"}},"減酒したい理由"));
+    v.reasons.forEach(r=>{
+      c.appendChild(div({style:{display:"flex",gap:"7px",alignItems:"flex-start",padding:"3px 0"}},[
+        span({style:{color:"#a78bfa",flexShrink:0}},"💜"),
+        span({style:{fontSize:"13px",color:"#e2e8f0",lineHeight:1.5}},r)
+      ]));
+    });
+  }
+  // マイルストーン（休肝日連続に応じて自動達成）— fullのみ
+  if(full){
+    const streak=(typeof alcoholFreeStreak==="function")?alcoholFreeStreak():0;
+    const c2=div({style:{marginTop:"12px",paddingTop:"10px",borderTop:"1px solid #1e293b"}});
+    const next=SOBER_MILESTONES.find(m=>m.days>streak);
+    c2.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"6px"}},`🚱 休肝日マイルストーン（連続${streak}日）`));
+    const row=div({style:{display:"flex",gap:"5px"}});
+    SOBER_MILESTONES.forEach(mi=>{
+      const done=streak>=mi.days, isNext=next&&next.days===mi.days;
+      row.appendChild(div({style:{flex:1,textAlign:"center",padding:"7px 2px",borderRadius:"8px",border:`1px solid ${done?"#22c55e66":isNext?"#a78bfa66":"#1e293b"}`,background:done?"#22c55e14":isNext?"#a78bfa10":"transparent",opacity:done||isNext?1:0.55}},[
+        div({style:{fontSize:"16px"}},mi.icon),
+        div({style:{fontSize:"9px",fontWeight:700,color:done?"#22c55e":isNext?"#c4b5fd":"#64748b",marginTop:"1px"}},mi.label)
+      ]));
+    });
+    c2.appendChild(row);
+    if(next) c2.appendChild(div({style:{fontSize:"10px",color:"#94a3b8",marginTop:"6px",lineHeight:1.5,textAlign:"center"}},`次は ${next.icon} ${next.label}（あと${next.days-streak}日）… ${next.msg}`));
+    c.appendChild(c2);
+  }
+  return c;
+}
+// ── カード②：飲まない夜のルーティン（毎晩チェック。飲酒という夜の習慣を別の流れに置き換える）──
+function nightRitualCard(vd, full){
+  const r=getNightRitual();
+  const total=r.steps.length, doneCnt=ritualDoneCountOn(vd), complete=total>0&&doneCnt>=total;
+  const streak=ritualStreak();
+  const c=div({className:"card",style:{marginBottom:"10px",border:`1px solid ${complete?"#22c55e55":"#38bdf844"}`,background:complete?"#22c55e0d":"#38bdf80d"}});
+  const head=div({style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"8px"}});
+  head.appendChild(div({style:{fontSize:"13px",fontWeight:800,color:complete?"#22c55e":"#7dd3fc"}},`🌙 飲まない夜のルーティン ${doneCnt}/${total}`));
+  const rightWrap=div({style:{display:"flex",alignItems:"center",gap:"6px"}});
+  if(streak>0)rightWrap.appendChild(div({style:{fontSize:"11px",fontWeight:700,color:"#f59e0b"}},`🔥${streak}日`));
+  if(full){
+    const ed=btn({style:{padding:"4px 10px",borderRadius:"7px",border:"1px solid #38bdf855",background:"transparent",color:"#7dd3fc",fontSize:"11px",cursor:"pointer",fontFamily:"inherit"}},state.ritualEdit?"✕ 閉じる":"✏️ 編集");
+    ed.addEventListener('click',()=>{state.ritualEdit=!state.ritualEdit;render();});
+    rightWrap.appendChild(ed);
+  }
+  head.appendChild(rightWrap);
+  c.appendChild(head);
+  if(full && state.ritualEdit){
+    c.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"6px"}},"飲むかわりの「夜の流れ」を自分で決めましょう。順番も並び替えできます。"));
+    r.steps.forEach((s,i)=>{
+      const row=div({style:{display:"flex",gap:"4px",alignItems:"center",marginBottom:"5px"}});
+      const moveCol=div({style:{display:"flex",flexDirection:"column",gap:"2px",flexShrink:0}});
+      const mkMove=(sym,dir)=>{ const can=(dir<0&&i>0)||(dir>0&&i<r.steps.length-1);
+        const b=btn({style:{width:"22px",height:"15px",lineHeight:"1",padding:0,borderRadius:"4px",border:"1px solid #334155",background:can?"#0f172a":"transparent",color:can?"#94a3b8":"#334155",fontSize:"9px",cursor:can?"pointer":"default"}},sym);
+        if(can)b.addEventListener('click',()=>{ const j=i+dir,t=r.steps[i];r.steps[i]=r.steps[j];r.steps[j]=t; saveNightRitual(); render(); });
+        return b; };
+      moveCol.appendChild(mkMove("▲",-1));moveCol.appendChild(mkMove("▼",1));
+      const ei=document.createElement('input');ei.type='text';ei.value=s.icon||"";ei.maxLength=2;ei.style.cssText="width:38px;flex-shrink:0;text-align:center;padding:7px 4px;background:#0b1220;border:1px solid #334155;border-radius:7px;color:#e2e8f0;font-size:14px;font-family:inherit";
+      ei.addEventListener('change',e=>{s.icon=e.target.value;saveNightRitual();});
+      const li=document.createElement('input');li.type='text';li.value=s.label||"";li.style.cssText="flex:1;min-width:0;padding:7px 9px;background:#0b1220;border:1px solid #334155;border-radius:7px;color:#e2e8f0;font-size:12px;font-family:inherit";
+      li.addEventListener('change',e=>{s.label=e.target.value;saveNightRitual();});
+      const del=btn({style:{padding:"6px 9px",background:"transparent",border:"1px solid #7f1d1d",borderRadius:"6px",color:"#f87171",fontSize:"12px",cursor:"pointer",flexShrink:0}},"🗑");
+      del.addEventListener('click',()=>{ r.steps.splice(i,1); saveNightRitual(); render(); });
+      row.appendChild(moveCol);row.appendChild(ei);row.appendChild(li);row.appendChild(del); c.appendChild(row);
+    });
+    const add=btn({style:{width:"100%",marginTop:"4px",padding:"9px",borderRadius:"8px",border:"1px dashed #38bdf8",background:"#38bdf80d",color:"#7dd3fc",fontSize:"12px",fontWeight:600,cursor:"pointer",fontFamily:"inherit"}},"＋ ステップを追加");
+    add.addEventListener('click',()=>{ r.steps.push({id:Date.now(),icon:"✨",label:""}); saveNightRitual(); render(); });
+    c.appendChild(add);
+    return c;
+  }
+  if(!total){ c.appendChild(div({style:{fontSize:"12px",color:"#64748b"}},"ステップが未設定です。")); return c; }
+  r.steps.forEach(s=>{
+    const done=ritualDoneOn(vd).includes(s.id);
+    const row=div({style:{display:"flex",alignItems:"center",gap:"10px",padding:"7px 0",borderBottom:"1px solid #1e3a5f55"}});
+    const cb=btn({style:{width:"24px",height:"24px",borderRadius:"6px",flexShrink:0,border:`2px solid ${done?"#22c55e":"#334155"}`,background:done?"#22c55e":"transparent",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"14px",color:"#fff"}},done?"✓":"");
+    cb.addEventListener('click',()=>{ toggleRitualStep(vd,s.id); if(!done)showToast(`🌙 ${s.label}`); render(); });
+    row.appendChild(cb);
+    row.appendChild(span({style:{fontSize:"16px",flexShrink:0}},s.icon||"✨"));
+    row.appendChild(div({style:{flex:1,minWidth:0,fontSize:"13px",color:done?"#475569":"#e2e8f0",textDecoration:done?"line-through":"none"}},s.label||"(無題)"));
+    c.appendChild(row);
+  });
+  if(complete) c.appendChild(div({style:{fontSize:"12px",color:"#22c55e",fontWeight:700,marginTop:"8px",textAlign:"center"}},`🎉 今夜のルーティン達成！飲まない夜をまた1日積み上げました`));
+  return c;
+}
+// ── カード③：つながり習慣＋週次ふりかえり（孤独＝外飲みの根っこ、を人とのつながりで満たす）──
+function connectHabitCard(vd, full){
+  const g=getConnectGoal();
+  const wk=connectCountThisWeek(), target=g.weeklyTarget, streak=connectWeeklyStreak();
+  const done=wk>=target;
+  const c=div({className:"card",style:{marginBottom:"10px",border:`1px solid ${done?"#22c55e55":"#f472b644"}`,background:done?"#22c55e0d":"#f472b60d"}});
+  const head=div({style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"8px"}});
+  head.appendChild(div({style:{fontSize:"13px",fontWeight:800,color:done?"#22c55e":"#f9a8d4"}},"🫂 つながり習慣"));
+  if(streak>0)head.appendChild(div({style:{fontSize:"11px",fontWeight:700,color:"#f59e0b"}},`🔥${streak}週連続`));
+  c.appendChild(head);
+  // 進捗バー（今週 wk/target）
+  c.appendChild(div({style:{display:"flex",alignItems:"baseline",justifyContent:"space-between",marginBottom:"5px"}},[
+    div({style:{fontSize:"11px",color:"#94a3b8"}},"今週 人とつながった回数"),
+    div({style:{fontSize:"16px",fontWeight:800,color:done?"#22c55e":"#f9a8d4"}},[txt(`${wk}`),span({style:{fontSize:"11px",color:"#64748b",fontWeight:600}},` / 週${target}回`)])
+  ]));
+  c.appendChild(div({style:{height:"8px",background:"#0f172a",borderRadius:"4px",overflow:"hidden",marginBottom:"10px"}},[
+    div({style:{height:"100%",width:`${Math.min(100,Math.round(wk/Math.max(1,target)*100))}%`,background:done?"#22c55e":"linear-gradient(90deg,#f472b6,#a78bfa)"}})
+  ]));
+  // つながる（タップで記録）
+  c.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"5px"}},"つながれたら記録（少しの連絡でもOK）"));
+  { const row=div({style:{display:"flex",flexWrap:"wrap",gap:"6px",marginBottom:"8px"}});
+    [["📞 連絡した"],["💬 話した"],["🍵 会った"],["📝 書き出した"]].forEach(([lbl])=>{
+      const b=btn({style:{padding:"7px 10px",borderRadius:"14px",border:"1px solid #f472b655",background:"#f472b614",color:"#f9a8d4",fontSize:"12px",cursor:"pointer",fontFamily:"inherit"}},lbl);
+      b.addEventListener('click',()=>{ logInvest(vd,{label:lbl.replace(/^[^ ]+ /,""),cat:"🫂 つながり",amount:0}); showToast(`🫂 ${lbl}`); render(); });
+      row.appendChild(b);
+    });
+    c.appendChild(row);
+  }
+  if(!full){
+    const open=btn({style:{width:"100%",padding:"7px",background:"transparent",border:"1px solid #334155",borderRadius:"7px",color:"#64748b",cursor:"pointer",fontSize:"11px",fontFamily:"inherit"}},"週次ふりかえりを開く →");
+    open.addEventListener('click',()=>{ exitWidget&&exitWidget(); state.tab="達成"; state.achieveSubTab="未来投資"; render(); });
+    c.appendChild(open);
+    return c;
+  }
+  // ── full：目標設定・来週の予定・週次ふりかえり ──
+  // 目標回数の設定
+  const setRow=div({style:{display:"flex",alignItems:"center",gap:"8px",margin:"4px 0 12px"}});
+  setRow.appendChild(span({style:{fontSize:"11px",color:"#94a3b8"}},"週の目標："));
+  [1,2,3,4,5].forEach(n=>{ const on=target===n;
+    const b=btn({style:{width:"34px",padding:"6px 0",borderRadius:"7px",cursor:"pointer",fontSize:"12px",fontWeight:700,border:`1px solid ${on?"#f472b6":"#334155"}`,background:on?"#f472b622":"transparent",color:on?"#f9a8d4":"#64748b"}},`${n}`);
+    b.addEventListener('click',()=>{ getConnectGoal().weeklyTarget=n; saveConnectGoal(); render(); }); setRow.appendChild(b);
+  });
+  setRow.appendChild(span({style:{fontSize:"11px",color:"#64748b"}},"回"));
+  c.appendChild(setRow);
+  // 来週つながる予定
+  c.appendChild(div({style:{fontSize:"11px",color:"#94a3b8",fontWeight:600,marginBottom:"5px",paddingTop:"8px",borderTop:"1px solid #1e293b"}},"📅 これからつながる予定"));
+  c.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"6px",lineHeight:1.5}},"「誰と・いつ・何をする」を先に決めておくと、寂しさを外飲みでなく約束で埋められます。"));
+  g.plans.forEach((p,i)=>{
+    const row=div({style:{display:"flex",gap:"6px",alignItems:"center",marginBottom:"5px"}});
+    row.appendChild(span({style:{fontSize:"13px",flexShrink:0}},"🗓"));
+    row.appendChild(div({style:{flex:1,minWidth:0,fontSize:"13px",color:"#e2e8f0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},p.text||""));
+    const cal=btn({style:{padding:"5px 8px",background:"#0ea5e918",border:"1px solid #0ea5e9",borderRadius:"6px",color:"#38bdf8",fontSize:"11px",cursor:"pointer",flexShrink:0}},"📅予定へ");
+    cal.addEventListener('click',(()=>{const tx=p.text;return()=>{ state.modal=null; openAddEvent(todayStr()); state.newEvTitle=tx||"人と会う"; render(); };})());
+    const del=btn({style:{padding:"5px 8px",background:"transparent",border:"1px solid #7f1d1d",borderRadius:"6px",color:"#f87171",fontSize:"11px",cursor:"pointer",flexShrink:0}},"🗑");
+    del.addEventListener('click',()=>{ getConnectGoal().plans.splice(i,1); saveConnectGoal(); render(); });
+    row.appendChild(cal);row.appendChild(del); c.appendChild(row);
+  });
+  { const nr=div({style:{display:"flex",gap:"6px",alignItems:"center",marginTop:"4px",marginBottom:"6px"}});
+    const ni=document.createElement('input');ni.type='text';ni.placeholder="例：日曜に◯◯とランチ";ni.value=state.newConnectPlan||"";ni.style.cssText="flex:1;min-width:0;padding:7px 9px;background:#0b1220;border:1px solid #334155;border-radius:7px;color:#e2e8f0;font-size:12px;font-family:inherit";
+    ni.addEventListener('input',e=>{state.newConnectPlan=e.target.value;});
+    const add=btn({style:{padding:"6px 12px",background:"#f472b618",border:"1px solid #f472b6",borderRadius:"7px",color:"#f9a8d4",fontSize:"13px",fontWeight:700,cursor:"pointer",flexShrink:0}},"＋");
+    add.addEventListener('click',()=>{ const t=(state.newConnectPlan||"").trim(); if(!t)return; getConnectGoal().plans.push({id:Date.now(),text:t}); saveConnectGoal(); state.newConnectPlan=""; render(); });
+    nr.appendChild(ni);nr.appendChild(add); c.appendChild(nr);
+  }
+  // 週次ふりかえり
+  { const st=weeklyReviewStats();
+    const rv=div({style:{marginTop:"8px",paddingTop:"10px",borderTop:"1px solid #1e293b"}});
+    rv.appendChild(div({style:{fontSize:"11px",color:"#94a3b8",fontWeight:600,marginBottom:"7px"}},"🔎 この1週間のふりかえり"));
+    const g3=div({style:{display:"flex",gap:"6px",textAlign:"center"}});
+    const cell=(label,val,col)=>div({style:{flex:1,padding:"8px 4px",borderRadius:"8px",background:"#0f172a"}},[
+      div({style:{fontSize:"18px",fontWeight:800,color:col,lineHeight:1.1}},val),
+      div({style:{fontSize:"9px",color:"#64748b",marginTop:"2px"}},label)
+    ]);
+    g3.appendChild(cell("さみしさ平均", st.lonAvg!=null?st.lonAvg.toFixed(1):"—", st.lonAvg!=null&&st.lonAvg>=3?"#f87171":"#38bdf8"));
+    g3.appendChild(cell("つながり回数", `${st.connect}`, "#f9a8d4"));
+    g3.appendChild(cell("引き金トップ", st.trig.length?moodLabel(st.trig[0].k).split(" ")[0]:"—", "#fbbf24"));
+    rv.appendChild(g3);
+    const msgs=[];
+    if(st.lonAvg!=null&&st.lonAvg>=3) msgs.push("さみしさが高めの週。つながりを1回増やせると変わるかも。");
+    if(st.trig.length) msgs.push(`飲みたくなる引き金は「${moodLabel(st.trig[0].k)}」が最多。先手のプランを1つ決めておこう。`);
+    if(done) msgs.push("今週のつながり目標は達成！この調子で。");
+    else if(target-wk>0) msgs.push(`目標まであと${target-wk}回。上のボタンや予定で埋めていこう。`);
+    if(msgs.length) rv.appendChild(div({style:{fontSize:"11px",color:"#cbd5e1",lineHeight:1.7,marginTop:"8px"}},msgs.map(mm=>div({},`・${mm}`))));
+    c.appendChild(rv);
+  }
+  return c;
+}
 // 目標ノードが達成済みか（範囲一日目標は当日のdailyDoneで判定）
 function goalNodeDone(g, key){
   if(typeof isRangeDaily==="function" && isRangeDaily(g)){ const p=pkParse(key)||{}; return dailyGoalDone(g, p.date||(key||"").replace("daily_","")); }
@@ -6717,6 +7018,7 @@ function renderAlcohol(vd,isToday){
     wrap.appendChild(tb);
     const coc=coolOffCard(); if(coc)wrap.appendChild(coc);
   }
+  if(hasLifeVision()) wrap.appendChild(visionCard(false)); // なりたい自分・減酒する理由
 
   // 🍺 純アルコール上限ゲージ（今日／今週）
   {
@@ -7236,6 +7538,11 @@ function renderInvestPanel(vd){
   sumRow.appendChild(stat("累計",`${investTotal()}回`,"投資回数","#22c55e"));
   sc.appendChild(sumRow);
   wrap.appendChild(sc);
+
+  // ── 根本解決の習慣（なりたい自分／夜のルーティン／つながり）──
+  wrap.appendChild(visionCard(true));
+  wrap.appendChild(connectHabitCard(vd,true));
+  wrap.appendChild(nightRitualCard(vd,true));
 
   // ── 🔎 外飲みの引き金（気持ちの集計）──
   {
@@ -8750,6 +9057,9 @@ function exportData(){
     investSpends:state.investSpends,
     bacProfile:{weight:bacWeightKg(),sex:bacSexV()},
     alcLimit:{day:alcLimitDay(),week:alcLimitWeek()},
+    lifeVision:state.lifeVision,
+    nightRitual:state.nightRitual,
+    connectGoal:state.connectGoal,
     weather,
     city
   };
@@ -8813,6 +9123,9 @@ function importData(e){
       if(Array.isArray(p.investSpends)){state.investSpends=p.investSpends;saveInvestSpends();}
       if(p.bacProfile&&typeof p.bacProfile==="object"){ if(p.bacProfile.weight)state.bacWeight=p.bacProfile.weight; if(p.bacProfile.sex)state.bacSex=p.bacProfile.sex; saveBacProfile(); }
       if(p.alcLimit&&typeof p.alcLimit==="object"){ if(p.alcLimit.day)state.alcLimitDay=p.alcLimit.day; if(p.alcLimit.week)state.alcLimitWeek=p.alcLimit.week; saveAlcLimit(); }
+      if(p.lifeVision&&typeof p.lifeVision==="object"){state.lifeVision=p.lifeVision;saveLifeVision();}
+      if(p.nightRitual&&typeof p.nightRitual==="object"){state.nightRitual=p.nightRitual;saveNightRitual();}
+      if(p.connectGoal&&typeof p.connectGoal==="object"){state.connectGoal=p.connectGoal;saveConnectGoal();}
       if(p.weather){try{localStorage.setItem(STORAGE_KEY+"_weather",JSON.stringify(p.weather));}catch{}}
       if(p.city){state.weatherCity=p.city;try{localStorage.setItem(STORAGE_KEY+"_city",JSON.stringify(p.city));}catch{}}
       // 旧形式（v8.3）のバックアップは新モデルへ移行して取り込む
@@ -9049,6 +9362,15 @@ function renderTemptationModal(vd){
       div({style:{fontSize:"14px",color:"#fce7f3",fontWeight:800,lineHeight:1.5,marginTop:"2px"}},"「誰かと話したい・つながりたい」気持ちかも。"),
       div({style:{fontSize:"11px",color:"#cbd5e1",marginTop:"5px",lineHeight:1.6}},"その気持ちは自然なもの。お酒の力を借りなくても、下の方法で満たしたり受けとめたりできます。")
     ]));
+  }
+
+  // 🌟 なりたい自分・減酒する理由（動機を思い出す）
+  if(hasLifeVision()){
+    const v=getLifeVision();
+    const body=[div({style:{fontSize:"11px",color:"#a78bfa",marginBottom:"3px",fontWeight:700}},"🌟 思い出して")];
+    if(v.vision.trim())body.push(div({style:{fontSize:"14px",color:"#f5f3ff",fontWeight:800,lineHeight:1.5}},v.vision));
+    (v.reasons||[]).slice(0,3).forEach(r=>body.push(div({style:{fontSize:"12px",color:"#e2e8f0",lineHeight:1.6,marginTop:"2px"}},`💜 ${r}`)));
+    m.appendChild(card("#a78bfa66","#a78bfa10",body));
   }
 
   // 🏦 貯金（未来投資）
