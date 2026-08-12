@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.81"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.82"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -1068,6 +1068,7 @@ function render(){
   if(state.modal==="editAwake")content.appendChild(renderAddAwakeModal(vd,true));
   if(state.modal==="addMed")   content.appendChild(renderAddMedModal(vd));
   if(state.modal==="editMed")  content.appendChild(renderAddMedModal(vd,true));
+  if(state.modal==="temptation")content.appendChild(renderTemptationModal(vd));
   if(state.modal==="addEvent") content.appendChild(renderAddEventModal(vd));
   if(state.modal==="addActual") content.appendChild(renderActualModal());
   if(state.modal==="patternEdit") content.appendChild(renderPatternEditModal(vd));
@@ -1363,7 +1364,11 @@ function renderWidgetView(vd,ds){
       chipRow.appendChild(b);
     });
     c.appendChild(chipRow);
-    const openInv=btn({style:{width:"100%",marginTop:"8px",padding:"7px",background:"transparent",border:"1px solid #334155",borderRadius:"7px",color:"#64748b",cursor:"pointer",fontSize:"11px"}},"未来投資をすべて見る →");
+    // 🚪 踏みとどまりボタン（外に飲みに行きたくなったら）
+    const tb=btn({style:{width:"100%",marginTop:"8px",padding:"10px",background:"linear-gradient(135deg,#f59e0b,#ef4444)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:800,cursor:"pointer"}},"🚪 外に飲みに行きたい…（踏みとどまる）");
+    tb.addEventListener('click',()=>{ state.tempAmount=state.tempAmount||3000; state.modal="temptation"; render(); });
+    c.appendChild(tb);
+    const openInv=btn({style:{width:"100%",marginTop:"6px",padding:"7px",background:"transparent",border:"1px solid #334155",borderRadius:"7px",color:"#64748b",cursor:"pointer",fontSize:"11px"}},"未来投資をすべて見る →");
     openInv.addEventListener('click',()=>{ exitWidget(); state.tab="達成"; state.achieveSubTab="未来投資"; render(); });
     c.appendChild(openInv);
     wrap.appendChild(c);
@@ -6612,6 +6617,13 @@ function renderAlcohol(vd,isToday){
   const totalG=drinks.reduce((a,b)=>a+pureAlcohol(b.ml,b.drinkType.pct),0);
   const wrap=div({style:{maxWidth:"600px",margin:"0 auto",padding:"12px 16px 60px"}},[]);
 
+  // 🚪 外に飲みに行きたくなったら（踏みとどまりボタン）
+  {
+    const tb=btn({style:{width:"100%",padding:"13px",marginBottom:"10px",background:"linear-gradient(135deg,#f59e0b,#ef4444)",border:"none",borderRadius:"10px",color:"#fff",fontSize:"14px",fontWeight:800,cursor:"pointer"}},"🚪 外に飲みに行きたい…（踏みとどまる）");
+    tb.addEventListener('click',()=>{ state.tempAmount=state.tempAmount||3000; state.modal="temptation"; render(); });
+    wrap.appendChild(tb);
+  }
+
   // BAC計算
   let nowMin=new Date().getHours()*60+new Date().getMinutes();
   const dd=drinks.map(d=>{let startMin=d.hour*60+(d.min||0);if(d.startNextDay)startMin+=1440;let endMin=d.endHour!=null?d.endHour*60+(d.endMin||0):startMin+20;if(d.startNextDay&&d.endHour!=null)endMin+=1440;if(endMin<startMin)endMin+=1440;return{startMin,endMin,alcoholG:pureAlcohol(d.ml,d.drinkType.pct)};});
@@ -8845,6 +8857,91 @@ function renderAddMedModal(vd,isEdit){
         setDaily(vd,nd);state.modal=null;render();
       }},"記録する")
   ]));
+  bg.appendChild(m);return bg;
+}
+
+// 🚪 外に飲みに行きたくなったら押す「踏みとどまりボタン」
+function renderTemptationModal(vd){
+  const bg=div({className:"modal-center"});
+  const m=div({className:"modal-box",style:{maxHeight:"88vh",overflowY:"auto"}});
+  let downOnBg=false;
+  bg.addEventListener('pointerdown',e=>{ downOnBg=(e.target===bg); });
+  bg.addEventListener('click',e=>{ if(downOnBg && e.target===bg){ state.modal=null; render(); } downOnBg=false; });
+  m.addEventListener('click',e=>e.stopPropagation());
+  m.appendChild(div({style:{fontSize:"17px",fontWeight:800,color:"#e2e8f0",marginBottom:"2px"}},"🚪 外に飲みに行きたい…"));
+  m.appendChild(div({style:{fontSize:"12px",color:"#94a3b8",marginBottom:"14px"}},"その前に、ちょっとだけ確認してみましょう"));
+
+  const card=(border,bg2,body)=>div({style:{border:`1px solid ${border}`,background:bg2,borderRadius:"10px",padding:"10px 12px",marginBottom:"9px"}},body);
+
+  // 🏦 貯金（未来投資）
+  const bal=investBalance();
+  m.appendChild(card("#22c55e55","#22c55e0d",[
+    div({style:{fontSize:"11px",color:"#64748b",marginBottom:"2px"}},"🏦 未来投資の貯金"),
+    div({style:{fontSize:"22px",fontWeight:800,color:"#22c55e",lineHeight:1.1}},`¥${bal.toLocaleString()}`),
+    div({style:{fontSize:"11px",color:"#94a3b8",marginTop:"2px"}},"外飲みは数千円。ここで我慢すればさらに増えます")
+  ]));
+
+  // 🚱 休肝日ストリーク
+  const streak=alcoholFreeStreak();
+  if(streak>0) m.appendChild(card("#38bdf855","#38bdf80d",[
+    div({style:{fontSize:"11px",color:"#64748b",marginBottom:"2px"}},"🚱 連続休肝日"),
+    div({style:{fontSize:"20px",fontWeight:800,color:"#38bdf8",lineHeight:1.1}},`${streak}日`),
+    div({style:{fontSize:"11px",color:"#94a3b8",marginTop:"2px"}},"飲みに行くと、この連続がリセットされます")
+  ]));
+
+  // 📉 飲んだ翌日への影響
+  {
+    const st=alcoholImpactStats();
+    const rows=[];
+    if(st.drinkNextScore!=null && st.soberNextScore!=null && st.drinkN>=2 && st.soberN>=2){
+      const diff=st.soberNextScore-st.drinkNextScore;
+      if(diff>0.1) rows.push(`体調スコアが翌日 平均 −${diff.toFixed(1)}点`);
+    }
+    if(st.drinkNextSleep!=null && st.soberNextSleep!=null && st.drinkSleepN>=2 && st.soberSleepN>=2){
+      const sd=st.soberNextSleep-st.drinkNextSleep;
+      if(sd>0.1) rows.push(`睡眠が翌日 平均 −${sd.toFixed(1)}時間`);
+    }
+    if(rows.length) m.appendChild(card("#f9731655","#f973160d",[
+      div({style:{fontSize:"11px",color:"#64748b",marginBottom:"3px"}},"📉 あなたのデータ：飲んだ翌日は…"),
+      ...rows.map(r=>div({style:{fontSize:"13px",color:"#fdba74",fontWeight:600,lineHeight:1.6}},`・${r}`))
+    ]));
+  }
+
+  // 🔀 if-thenプラン
+  {
+    const plans=getIfThenPlans().filter(p=>p.active!==false);
+    if(plans.length){
+      const body=[div({style:{fontSize:"11px",color:"#64748b",marginBottom:"4px"}},"🔀 自分で決めたプラン")];
+      plans.slice(0,4).forEach(p=>body.push(div({style:{fontSize:"13px",color:"#e2e8f0",lineHeight:1.5}},[txt(p.cue||""),span({style:{color:"#f59e0b",fontWeight:700}}," → "),txt(p.action||"")])));
+      m.appendChild(card("#f59e0b55","#f59e0b0d",body));
+    }
+  }
+
+  // 代替行動（未来投資チップ）
+  {
+    const acts=getInvestActions().slice(0,6);
+    if(acts.length){
+      const wrap2=div({});
+      wrap2.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"6px"}},"かわりに、これはどう？（タップで未来投資に記録）"));
+      const row=div({style:{display:"flex",flexWrap:"wrap",gap:"6px"}});
+      acts.forEach(a=>{ const b=btn({style:{padding:"7px 10px",borderRadius:"14px",border:"1px solid #334155",background:"#0f172a",color:"#cbd5e1",fontSize:"12px",cursor:"pointer",fontFamily:"inherit"}},a.amount>0?`${a.label} +¥${a.amount}`:a.label);
+        b.addEventListener('click',()=>{ logInvest(vd,a); showToast(`💰 ${a.label}`); }); row.appendChild(b); });
+      wrap2.appendChild(row);
+      m.appendChild(div({style:{marginBottom:"12px"}},[wrap2]));
+    }
+  }
+
+  // 踏みとどまる（金額を選んで未来投資に記録）
+  if(state.tempAmount==null)state.tempAmount=3000;
+  m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"5px"}},"踏みとどまって節約できる額"));
+  { const amtRow=div({style:{display:"flex",gap:"6px",marginBottom:"10px",flexWrap:"wrap"}});
+    [2000,3000,5000,8000].forEach(a=>{ const on=state.tempAmount===a; const b=btn({style:{flex:"1 1 20%",minWidth:"64px",padding:"8px 0",borderRadius:"8px",cursor:"pointer",fontSize:"13px",fontWeight:700,border:`1px solid ${on?"#22c55e":"#334155"}`,background:on?"#22c55e22":"transparent",color:on?"#22c55e":"#64748b"}},`¥${a.toLocaleString()}`);
+      b.addEventListener('click',()=>{state.tempAmount=a;render();}); amtRow.appendChild(b); });
+    m.appendChild(amtRow);
+  }
+  m.appendChild(btn({style:{width:"100%",padding:"14px",marginBottom:"8px",background:"linear-gradient(135deg,#22c55e,#0ea5e9)",border:"none",borderRadius:"10px",color:"#fff",fontSize:"15px",fontWeight:800,cursor:"pointer"},
+    onClick:()=>{ const amt=state.tempAmount||3000; logInvest(vd,{label:"外飲みを我慢",cat:"🍺 飲酒",amount:amt}); state.modal=null; if(typeof showConfetti==="function")showConfetti(); showToast(`✊ よく踏みとどまった！ +¥${amt.toLocaleString()} を未来投資へ`,"#22c55e"); render(); }},"✊ 踏みとどまる（未来投資に記録）"));
+  m.appendChild(btn({className:"btn-ghost",style:{width:"100%"},onClick:()=>{state.modal=null;render();}},"閉じる"));
   bg.appendChild(m);return bg;
 }
 
