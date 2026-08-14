@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.85"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.86"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -638,6 +638,7 @@ const state = {
   newAwakeH:3, newAwakeM:0, newAwakeEndH:3, newAwakeEndM:20, editAwakeUid:null,
   newMedName:"", newMedH:0, newMedM:0, editMedUid:null,
   lifeVision:null, nightRitual:null, connectGoal:null, // 根本解決の習慣機能
+  ctJournal:null, ctPromptIdx:0, ctDraft:"", // 動機づけ面談：チェンジトーク・ジャーナル
   saved:false
 };
 
@@ -708,6 +709,8 @@ function loadStorage(){
     if(nr){try{const o=JSON.parse(nr); if(o&&typeof o==="object")state.nightRitual=o;}catch{}}
     const cg=localStorage.getItem(STORAGE_KEY+"_connectgoal");
     if(cg){try{const o=JSON.parse(cg); if(o&&typeof o==="object")state.connectGoal=o;}catch{}}
+    const ctj=localStorage.getItem(STORAGE_KEY+"_ctjournal");
+    if(ctj){try{const a=JSON.parse(ctj); if(Array.isArray(a))state.ctJournal=a;}catch{}}
     // 旧形式（v8.3 events/taskList/wishList/shopList）からの一度きり移行
     if(!sc && !tk){ migrateOldSchedule(); }
   }catch{}
@@ -5994,6 +5997,138 @@ function weeklyReviewStats(){
   const trig=Object.keys(c).map(k=>({k,n:c[k]})).sort((a,b)=>b.n-a.n);
   return { lonAvg, lonN:lonV.length, trig, connect:connectCountRange(todayStr(),7) };
 }
+// ═══════════════════════════════════════════════════
+// ── 動機づけ面談（MI）ベースの機能 ──
+// 「説得・我慢」でなく、本人の中の“変わりたい気持ち”を引き出して育てる
+// ═══════════════════════════════════════════════════
+// ① 動機のものさし（重要度・自信度ルーラー）— 日ごとに記録
+function getMotivation(vd){ const d=getDaily(vd); return (d.motivation&&typeof d.motivation==="object")?d.motivation:{}; }
+function setMotivation(vd,upd){ setDaily(vd,{motivation:{...getMotivation(vd),...upd}}); }
+// 直近days日で記録のある重要度・自信度の推移
+function motivationTrend(days){ const arr=[]; for(let i=days-1;i>=0;i--){ const ds=addDays(todayStr(),-i); const m=getMotivation(ds); if(typeof m.imp==="number"||typeof m.conf==="number") arr.push({ds,imp:m.imp,conf:m.conf}); } return arr; }
+function latestMotivation(){ for(let i=0;i<60;i++){ const ds=addDays(todayStr(),-i); const m=getMotivation(ds); if(typeof m.imp==="number"||typeof m.conf==="number") return {ds,...m}; } return null; }
+// ③ チェンジトーク・ジャーナル（MI式の開かれた問い。自分の言葉を貯める）
+const CHANGE_TALK_PROMPTS=[
+  {type:"理由",   q:"お酒を減らしたい理由を、思いつくだけ書いてみよう。"},
+  {type:"願望",   q:"減らせたら、どんな良いことが起きそう？どんな自分でいられる？"},
+  {type:"能力",   q:"これまで飲まずに済んだ・1杯で止められた時、どうやってできた？"},
+  {type:"必要性", q:"このまま何も変えなかったら、1年後の自分はどうなっていそう？"},
+  {type:"価値",   q:"人生で大切にしたいことは何？お酒はそれをどう邪魔してる？"},
+  {type:"つながり",q:"お酒の力を借りずに、人とつながれた・満たされたと感じた瞬間は？"},
+  {type:"一歩",   q:"今週できそうな小さな一歩を1つ挙げるなら？"},
+  {type:"承認",   q:"最近ちょっと自分を誇れたことは？（お酒と関係なくてもOK）"},
+];
+function getCTJournal(){ if(!Array.isArray(state.ctJournal))state.ctJournal=[]; return state.ctJournal; }
+function saveCTJournal(){ try{localStorage.setItem(STORAGE_KEY+"_ctjournal",JSON.stringify(getCTJournal()));}catch{} }
+function addCTEntry(promptType, prompt, text){ getCTJournal().push({id:Date.now(), t:new Date().toISOString(), type:promptType||"", prompt:prompt||"", text:(text||"").trim()}); saveCTJournal(); }
+// ── カード：動機のものさし（重要度・自信度ルーラー）──
+function motivationRulerCard(vd){
+  const m=getMotivation(vd);
+  const c=div({className:"card",style:{marginBottom:"10px",border:"1px solid #0ea5e944",background:"#0ea5e90d"}});
+  c.appendChild(div({style:{fontSize:"13px",fontWeight:800,color:"#7dd3fc",marginBottom:"3px"}},"📏 動機のものさし"));
+  c.appendChild(div({style:{fontSize:"10px",color:"#64748b",lineHeight:1.5,marginBottom:"10px"}},"今の気持ちを0〜10で。正解はありません。数字より“なぜその数字か”が大切です。"));
+  const ruler=(key,label,val,col)=>{
+    const box=div({style:{marginBottom:"10px"}});
+    box.appendChild(div({style:{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:"5px"}},[
+      span({style:{fontSize:"12px",color:"#cbd5e1",fontWeight:600}},label),
+      span({style:{fontSize:"16px",fontWeight:800,color:typeof val==="number"?col:"#475569"}},typeof val==="number"?`${val}`:"—")
+    ]));
+    const row=div({style:{display:"flex",gap:"3px"}});
+    for(let n=0;n<=10;n++){ const on=val===n;
+      const b=btn({style:{flex:1,minWidth:0,padding:"7px 0",borderRadius:"5px",cursor:"pointer",fontSize:"11px",fontWeight:on?800:500,border:`1px solid ${on?col:"#334155"}`,background:on?col+"33":"#0b1220",color:on?col:"#64748b"}},`${n}`);
+      b.addEventListener('click',()=>{ setMotivation(vd,{[key]:n}); render(); }); row.appendChild(b);
+    }
+    box.appendChild(row);
+    return box;
+  };
+  c.appendChild(ruler("imp","減酒はどれくらい大切？（重要度）",m.imp,"#f59e0b"));
+  c.appendChild(ruler("conf","減らせそうな自信は？（自信度）",m.conf,"#22c55e"));
+  // 引き出す問い（チェンジトークを促す）
+  if(typeof m.imp==="number" && m.imp>0){
+    const q=div({style:{marginTop:"4px",padding:"9px 10px",borderRadius:"8px",background:"#0b1220",border:"1px solid #1e293b"}});
+    q.appendChild(div({style:{fontSize:"11px",color:"#7dd3fc",fontWeight:600,marginBottom:"5px"}},`💬 なぜ 0 ではなく ${m.imp} なんだろう？（あなたの減酒したい気持ち）`));
+    const ta=document.createElement('textarea');ta.value=m.why||"";ta.placeholder="例：朝がつらい／お金がもったいない／人ときちんと向き合いたい";ta.rows=2;
+    ta.style.cssText="width:100%;box-sizing:border-box;padding:7px 9px;background:#0f172a;border:1px solid #334155;border-radius:7px;color:#e2e8f0;font-size:12px;font-family:inherit;resize:vertical";
+    ta.addEventListener('change',e=>{ setMotivation(vd,{why:e.target.value}); });
+    q.appendChild(ta);
+    c.appendChild(q);
+  }
+  if(typeof m.conf==="number"){
+    const q=div({style:{marginTop:"8px",padding:"9px 10px",borderRadius:"8px",background:"#0b1220",border:"1px solid #1e293b"}});
+    q.appendChild(div({style:{fontSize:"11px",color:"#22c55e",fontWeight:600,marginBottom:"5px"}},`💬 自信を 1 つ上げるには、何があれば良さそう？`));
+    const ta=document.createElement('textarea');ta.value=m.up||"";ta.placeholder="例：帰り道を変える／夜のルーティンを決める／誰かに話を聞いてもらう";ta.rows=2;
+    ta.style.cssText="width:100%;box-sizing:border-box;padding:7px 9px;background:#0f172a;border:1px solid #334155;border-radius:7px;color:#e2e8f0;font-size:12px;font-family:inherit;resize:vertical";
+    ta.addEventListener('change',e=>{ setMotivation(vd,{up:e.target.value}); });
+    q.appendChild(ta);
+    c.appendChild(q);
+  }
+  // 推移（記録が2日以上ある時）
+  const tr=motivationTrend(30);
+  if(tr.length>=2){
+    const tc=div({style:{marginTop:"10px",paddingTop:"9px",borderTop:"1px solid #1e293b"}});
+    tc.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"6px"}},"推移（重要度🟠／自信度🟢）"));
+    const barRow=div({style:{display:"flex",alignItems:"flex-end",gap:"3px",height:"46px"}});
+    tr.slice(-14).forEach(p=>{
+      const col=div({style:{flex:1,display:"flex",flexDirection:"column",justifyContent:"flex-end",gap:"1px",height:"100%"}});
+      const seg=(v,col2)=>div({style:{height:`${(typeof v==="number"?v:0)/10*100}%`,minHeight:typeof v==="number"?"2px":"0",background:col2,borderRadius:"2px"}});
+      col.appendChild(seg(p.imp,"#f59e0b"));
+      col.appendChild(seg(p.conf,"#22c55e"));
+      barRow.appendChild(col);
+    });
+    tc.appendChild(barRow);
+    c.appendChild(tc);
+  }
+  return c;
+}
+// ── カード：チェンジトーク・ジャーナル ──
+function changeTalkJournalCard(){
+  const entries=getCTJournal();
+  const prompts=CHANGE_TALK_PROMPTS;
+  if(!(state.ctPromptIdx>=0&&state.ctPromptIdx<prompts.length))state.ctPromptIdx=0;
+  const p=prompts[state.ctPromptIdx];
+  const c=div({className:"card",style:{marginBottom:"10px",border:"1px solid #a78bfa44",background:"#a78bfa0d"}});
+  const head=div({style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"3px"}});
+  head.appendChild(div({style:{fontSize:"13px",fontWeight:800,color:"#c4b5fd"}},"📝 チェンジトーク・ジャーナル"));
+  head.appendChild(div({style:{fontSize:"10px",color:"#64748b"}},`${entries.length}件`));
+  c.appendChild(head);
+  c.appendChild(div({style:{fontSize:"10px",color:"#64748b",lineHeight:1.5,marginBottom:"9px"}},"問いに“自分の言葉”で答えるほど、変わりたい気持ちは強くなります。貯めた言葉は飲みたくなった時の支えに。"));
+  // 問い
+  const qbox=div({style:{padding:"10px 12px",borderRadius:"9px",background:"#0b1220",border:"1px solid #312e81"}});
+  qbox.appendChild(div({style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"6px"}},[
+    span({style:{fontSize:"10px",fontWeight:700,color:"#a78bfa",background:"#a78bfa1a",borderRadius:"6px",padding:"2px 8px"}},p.type),
+    (()=>{ const b=btn({style:{fontSize:"10px",padding:"3px 9px",borderRadius:"6px",border:"1px solid #334155",background:"transparent",color:"#94a3b8",cursor:"pointer",fontFamily:"inherit"}},"🔀 別の問い");
+      b.addEventListener('click',()=>{ state.ctPromptIdx=(state.ctPromptIdx+1)%prompts.length; render(); }); return b; })()
+  ]));
+  qbox.appendChild(div({style:{fontSize:"14px",color:"#f5f3ff",fontWeight:700,lineHeight:1.5,marginBottom:"8px"}},p.q));
+  const ta=document.createElement('textarea');ta.value=state.ctDraft||"";ta.placeholder="ここに自分の言葉で…";ta.rows=3;
+  ta.style.cssText="width:100%;box-sizing:border-box;padding:8px 10px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit;resize:vertical";
+  ta.addEventListener('input',e=>{state.ctDraft=e.target.value;});
+  qbox.appendChild(ta);
+  const save=btn({style:{width:"100%",marginTop:"8px",padding:"10px",borderRadius:"8px",border:"none",background:"linear-gradient(135deg,#a78bfa,#6366f1)",color:"#fff",fontSize:"13px",fontWeight:700,cursor:"pointer",fontFamily:"inherit"}},"💾 この言葉を残す");
+  save.addEventListener('click',()=>{ const t=(state.ctDraft||"").trim(); if(!t){showToast("何か書いてから残しましょう");return;} addCTEntry(p.type,p.q,t); state.ctDraft=""; if(typeof showConfetti==="function")showConfetti(); showToast("📝 あなたの言葉を残しました","#a78bfa"); render(); });
+  qbox.appendChild(save);
+  c.appendChild(qbox);
+  // 貯まった言葉（自分の名言集）
+  if(entries.length){
+    c.appendChild(div({style:{fontSize:"10px",color:"#64748b",margin:"12px 0 6px"}},"🗂 あなたが残した言葉"));
+    entries.slice().reverse().slice(0,20).forEach(en=>{
+      const box=div({style:{padding:"8px 10px",borderRadius:"8px",background:"#0b1220",border:"1px solid #1e293b",marginBottom:"6px"}});
+      const top=div({style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"3px"}});
+      const tm=(()=>{try{const d=new Date(en.t);return `${mdLabel(fmtDS(d))}`;}catch{return"";}})();
+      top.appendChild(span({style:{fontSize:"9px",fontWeight:700,color:"#a78bfa"}},`${en.type||"メモ"}・${tm}`));
+      const del=btn({style:{padding:"3px 7px",background:"transparent",border:"1px solid #7f1d1d",borderRadius:"5px",color:"#f87171",fontSize:"10px",cursor:"pointer"}},"🗑");
+      del.addEventListener('click',()=>{ state.ctJournal=getCTJournal().filter(x=>x.id!==en.id); saveCTJournal(); render(); });
+      top.appendChild(del);
+      box.appendChild(top);
+      if(en.prompt)box.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"2px",lineHeight:1.4}},en.prompt));
+      box.appendChild(div({style:{fontSize:"13px",color:"#e2e8f0",lineHeight:1.6,whiteSpace:"pre-wrap"}},en.text));
+      c.appendChild(box);
+    });
+  }
+  return c;
+}
+// 飲みたくなった時に出す“自分の言葉”を数件返す（最近＋ランダム）
+function recentChangeTalk(n){ const a=getCTJournal(); if(!a.length)return []; const arr=a.slice(-8); const out=[]; for(let i=arr.length-1;i>=0&&out.length<(n||2);i--)out.push(arr[i]); return out; }
 // ── カード①：なりたい自分・減酒する理由（full=編集＋マイルストーン、compactは閲覧のみ）──
 function visionCard(full){
   const v=getLifeVision();
@@ -7543,6 +7678,9 @@ function renderInvestPanel(vd){
   wrap.appendChild(visionCard(true));
   wrap.appendChild(connectHabitCard(vd,true));
   wrap.appendChild(nightRitualCard(vd,true));
+  // ── 動機づけ面談ベース（動機のものさし／チェンジトーク・ジャーナル）──
+  wrap.appendChild(motivationRulerCard(vd));
+  wrap.appendChild(changeTalkJournalCard());
 
   // ── 🔎 外飲みの引き金（気持ちの集計）──
   {
@@ -9060,6 +9198,7 @@ function exportData(){
     lifeVision:state.lifeVision,
     nightRitual:state.nightRitual,
     connectGoal:state.connectGoal,
+    ctJournal:state.ctJournal,
     weather,
     city
   };
@@ -9126,6 +9265,7 @@ function importData(e){
       if(p.lifeVision&&typeof p.lifeVision==="object"){state.lifeVision=p.lifeVision;saveLifeVision();}
       if(p.nightRitual&&typeof p.nightRitual==="object"){state.nightRitual=p.nightRitual;saveNightRitual();}
       if(p.connectGoal&&typeof p.connectGoal==="object"){state.connectGoal=p.connectGoal;saveConnectGoal();}
+      if(Array.isArray(p.ctJournal)){state.ctJournal=p.ctJournal;saveCTJournal();}
       if(p.weather){try{localStorage.setItem(STORAGE_KEY+"_weather",JSON.stringify(p.weather));}catch{}}
       if(p.city){state.weatherCity=p.city;try{localStorage.setItem(STORAGE_KEY+"_city",JSON.stringify(p.city));}catch{}}
       // 旧形式（v8.3）のバックアップは新モデルへ移行して取り込む
@@ -9371,6 +9511,15 @@ function renderTemptationModal(vd){
     if(v.vision.trim())body.push(div({style:{fontSize:"14px",color:"#f5f3ff",fontWeight:800,lineHeight:1.5}},v.vision));
     (v.reasons||[]).slice(0,3).forEach(r=>body.push(div({style:{fontSize:"12px",color:"#e2e8f0",lineHeight:1.6,marginTop:"2px"}},`💜 ${r}`)));
     m.appendChild(card("#a78bfa66","#a78bfa10",body));
+  }
+
+  // 💬 あなた自身が残した言葉（チェンジトーク）
+  { const ct=recentChangeTalk(2);
+    if(ct.length){
+      const body=[div({style:{fontSize:"11px",color:"#c4b5fd",marginBottom:"4px",fontWeight:700}},"💬 前のあなたが書いた言葉")];
+      ct.forEach(en=>body.push(div({style:{fontSize:"13px",color:"#f5f3ff",lineHeight:1.6,marginTop:"3px",fontStyle:"italic"}},`「${en.text}」`)));
+      m.appendChild(card("#6366f166","#6366f110",body));
+    }
   }
 
   // 🏦 貯金（未来投資）
