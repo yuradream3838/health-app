@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.88"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.89"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -637,6 +637,7 @@ const state = {
   newNapH:0, newNapM:0, newNapEndH:0, newNapEndM:0, newNapDur:30, editNapUid:null, todoSortMode:false,
   newAwakeH:3, newAwakeM:0, newAwakeEndH:3, newAwakeEndM:20, editAwakeUid:null,
   newMedName:"", newMedH:0, newMedM:0, editMedUid:null,
+  routineActEdit:null, raTitle:"", raNote:"", // ルーティン実績のその日だけ編集
   lifeVision:null, nightRitual:null, connectGoal:null, // 根本解決の習慣機能
   ctJournal:null, ctPromptIdx:0, ctDraft:"", // 動機づけ面談：チェンジトーク・ジャーナル
   decisBalance:null, miValues:null, changePlan:null, // 動機づけ面談：心の天秤／価値／変化の計画書
@@ -1091,6 +1092,7 @@ function render(){
   if(state.modal==="addMed")   content.appendChild(renderAddMedModal(vd));
   if(state.modal==="editMed")  content.appendChild(renderAddMedModal(vd,true));
   if(state.modal==="temptation")content.appendChild(renderTemptationModal(vd));
+  if(state.modal==="routineActualEdit")content.appendChild(renderRoutineActualEditModal());
   if(state.modal==="addEvent") content.appendChild(renderAddEventModal(vd));
   if(state.modal==="addActual") content.appendChild(renderActualModal());
   if(state.modal==="patternEdit") content.appendChild(renderPatternEditModal(vd));
@@ -3305,6 +3307,11 @@ function goalActualsForDate(vd){
   walk(state.goalTree);
   return out;
 }
+// ルーティン実績ブロックの「その日だけの表示名・メモ」上書き（所有日DD＋グループキーで管理）
+function getRoutineOverride(dd,key){ const o=(getDaily(dd).routineOverrides||{})[key]; return (o&&typeof o==="object")?o:{}; }
+function setRoutineOverride(dd,key,upd){ const cur=getDaily(dd).routineOverrides||{}; const next={...cur,[key]:{...(cur[key]||{}),...upd}}; setDaily(dd,{routineOverrides:next}); }
+function clearRoutineOverride(dd,key){ const cur={...(getDaily(dd).routineOverrides||{})}; delete cur[key]; setDaily(dd,{routineOverrides:cur}); }
+function routineOverrideTitle(dd,key,base){ const o=getRoutineOverride(dd,key); const t=(o.title&&o.title.trim())?o.title.trim():base; const n=(o.note&&o.note.trim())?`：${o.note.trim()}`:""; return t+n; }
 function getActualActivities(vd){
   const acts=[];
   const routines=state.routines||[];
@@ -3352,7 +3359,7 @@ function getActualActivities(vd){
       });
       if(mins.length){
         const s=Math.min(...mins), e=Math.max(...mins);
-        acts.push({title:g.title, startMin:s, endMin:Math.max(e, s+16), color:g.color});
+        acts.push({title:routineOverrideTitle(DD,g.key,g.title), startMin:s, endMin:Math.max(e, s+16), color:g.color, routineKey:g.key, routineBase:g.title, ownDay:DD});
       }
     });
   });
@@ -3463,6 +3470,51 @@ function openAddEvent(vd, startH, startM){
   state.newEvWeekdays=[parseDS(vd).getDay()];
   state.newEvFromTask=null;state.newEvAllDay=false;state.newEvPlace="";state.newEvNote="";state.newEvPreDays=0;
   render();
+}
+// ルーティン実績ブロックの「その日だけ」表示名・メモを編集
+function openRoutineActualEdit(dd, key, base){
+  const o=getRoutineOverride(dd,key);
+  state.routineActEdit={dd,key,base:base||key};
+  state.raTitle=o.title||"";
+  state.raNote=o.note||"";
+  state.modal="routineActualEdit";
+  render();
+}
+function renderRoutineActualEditModal(){
+  const bg=div({className:"modal-center"});
+  const m=div({className:"modal-box"});
+  bg.addEventListener('click',()=>{state.modal=null;render();});
+  m.addEventListener('click',e=>e.stopPropagation());
+  const ra=state.routineActEdit||{};
+  m.appendChild(div({style:{fontSize:"15px",fontWeight:700,color:"#e2e8f0",marginBottom:"3px"}},"🔁 ルーティンの実績（この日だけ編集）"));
+  m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"14px",lineHeight:1.5}},`${ra.dd?mdLabel(ra.dd)+"の":""}「${ra.base||""}」の実績ブロックの表示だけを、この日限定で変更します。ルーティン自体の設定は変わりません。`));
+  // 表示名
+  m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"5px"}},"表示名（空欄なら元の名前）"));
+  const ti=document.createElement('input');ti.type='text';ti.value=state.raTitle||"";ti.placeholder=ra.base||"";
+  ti.style.cssText="width:100%;box-sizing:border-box;padding:9px 11px;margin-bottom:12px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit";
+  ti.addEventListener('input',e=>{state.raTitle=e.target.value;});
+  m.appendChild(ti);
+  // メモ
+  m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"5px"}},"メモ（任意・名前の後ろに表示）"));
+  const nt=document.createElement('textarea');nt.value=state.raNote||"";nt.placeholder="例：今日は外食だった";nt.rows=2;
+  nt.style.cssText="width:100%;box-sizing:border-box;padding:9px 11px;margin-bottom:16px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit;resize:vertical";
+  nt.addEventListener('input',e=>{state.raNote=e.target.value;});
+  m.appendChild(nt);
+  const hasOv=(()=>{ const o=getRoutineOverride(ra.dd,ra.key); return !!(o.title||o.note); })();
+  m.appendChild(div({style:{display:"flex",gap:"8px"}},[
+    btn({className:"btn-ghost",style:{flex:1},onClick:()=>{state.modal=null;render();}},"キャンセル"),
+    btn({style:{flex:2,padding:"10px",background:"linear-gradient(135deg,#a78bfa,#6366f1)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:700,cursor:"pointer"},
+      onClick:()=>{
+        const t=(state.raTitle||"").trim(), n=(state.raNote||"").trim();
+        if(!t && !n){ clearRoutineOverride(ra.dd,ra.key); } else { setRoutineOverride(ra.dd,ra.key,{title:t,note:n}); }
+        state.modal=null; showToast("🔁 この日だけ変更しました","#a78bfa"); render();
+      }},"✅ この日だけ保存")
+  ]));
+  if(hasOv){
+    m.appendChild(btn({style:{width:"100%",marginTop:"8px",padding:"9px",background:"transparent",border:"1px solid #7f1d1d",borderRadius:"8px",color:"#f87171",fontSize:"12px",cursor:"pointer"},
+      onClick:()=>{ clearRoutineOverride(ra.dd,ra.key); state.modal=null; showToast("元の名前に戻しました"); render(); }},"↩︎ この日の変更を取り消す"));
+  }
+  bg.appendChild(m);return bg;
 }
 // 実績（予定外の突発的な行動を含む）の追加・編集
 function openActualEdit(vd, uid, startH){
@@ -4891,7 +4943,7 @@ function renderDaySchedule(vd,ds,isToday){
     saveSchedule(); render();
     showToast(`⏰ ${sh}:${String(sm).padStart(2,'0')}〜 に移動`);
   });
-  blockArea(actuals,"50% + 2px","50% - 6px","#22c55e",(ev)=>{ if(ev._tail){ state.viewDate=addDays(vd,-1); render(); return; } if(ev.manualUid) openActualEdit(vd, ev.manualUid); });
+  blockArea(actuals,"50% + 2px","50% - 6px","#22c55e",(ev)=>{ if(ev._tail){ state.viewDate=addDays(vd,-1); render(); return; } if(ev.manualUid) openActualEdit(vd, ev.manualUid); else if(ev.routineKey) openRoutineActualEdit(ev.ownDay||vd, ev.routineKey, ev.routineBase); });
 
   tlCard.appendChild(tl);
   wrap.appendChild(tlCard);
