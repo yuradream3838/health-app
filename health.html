@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.87"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.88"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -639,6 +639,7 @@ const state = {
   newMedName:"", newMedH:0, newMedM:0, editMedUid:null,
   lifeVision:null, nightRitual:null, connectGoal:null, // 根本解決の習慣機能
   ctJournal:null, ctPromptIdx:0, ctDraft:"", // 動機づけ面談：チェンジトーク・ジャーナル
+  decisBalance:null, miValues:null, changePlan:null, // 動機づけ面談：心の天秤／価値／変化の計画書
   saved:false
 };
 
@@ -711,6 +712,12 @@ function loadStorage(){
     if(cg){try{const o=JSON.parse(cg); if(o&&typeof o==="object")state.connectGoal=o;}catch{}}
     const ctj=localStorage.getItem(STORAGE_KEY+"_ctjournal");
     if(ctj){try{const a=JSON.parse(ctj); if(Array.isArray(a))state.ctJournal=a;}catch{}}
+    const dcb=localStorage.getItem(STORAGE_KEY+"_decisbalance");
+    if(dcb){try{const o=JSON.parse(dcb); if(o&&typeof o==="object")state.decisBalance=o;}catch{}}
+    const mvv=localStorage.getItem(STORAGE_KEY+"_values");
+    if(mvv){try{const o=JSON.parse(mvv); if(o&&typeof o==="object")state.miValues=o;}catch{}}
+    const cpl=localStorage.getItem(STORAGE_KEY+"_changeplan");
+    if(cpl){try{const o=JSON.parse(cpl); if(o&&typeof o==="object")state.changePlan=o;}catch{}}
     // 旧形式（v8.3 events/taskList/wishList/shopList）からの一度きり移行
     if(!sc && !tk){ migrateOldSchedule(); }
   }catch{}
@@ -6017,6 +6024,16 @@ const CHANGE_TALK_PROMPTS=[
   {type:"つながり",q:"お酒の力を借りずに、人とつながれた・満たされたと感じた瞬間は？"},
   {type:"一歩",   q:"今週できそうな小さな一歩を1つ挙げるなら？"},
   {type:"承認",   q:"最近ちょっと自分を誇れたことは？（お酒と関係なくてもOK）"},
+  {type:"理由",   q:"飲みすぎた翌日、体や心はどんな感じ？それをどう変えたい？"},
+  {type:"願望",   q:"1年後、お酒との付き合い方がうまくいっていたら、毎日をどう過ごしてる？"},
+  {type:"能力",   q:"あなたが持っている強みや、これまで乗り越えてきたことは？それを減酒にどう活かせる？"},
+  {type:"必要性", q:"「そろそろ変えないと」と感じるのは、どんな時？"},
+  {type:"価値",   q:"大切な人に、どんな自分だと思われたい？今のお酒はそれと合ってる？"},
+  {type:"つながり",q:"寂しさを感じた時、お酒以外に頼れる人・場所・方法はある？"},
+  {type:"一歩",   q:"今夜、飲むかわりにできることを1つ決めるなら？"},
+  {type:"障害",   q:"減酒でいちばんつまずきやすいのはどんな場面？どう備えられそう？"},
+  {type:"承認",   q:"お酒を我慢できた自分に、かけてあげたい言葉は？"},
+  {type:"未来",   q:"10年後の自分から今の自分へ手紙を書くとしたら、何て言う？"},
 ];
 function getCTJournal(){ if(!Array.isArray(state.ctJournal))state.ctJournal=[]; return state.ctJournal; }
 function saveCTJournal(){ try{localStorage.setItem(STORAGE_KEY+"_ctjournal",JSON.stringify(getCTJournal()));}catch{} }
@@ -6129,6 +6146,123 @@ function changeTalkJournalCard(){
 }
 // 飲みたくなった時に出す“自分の言葉”を数件返す（最近＋ランダム）
 function recentChangeTalk(n){ const a=getCTJournal(); if(!a.length)return []; const arr=a.slice(-8); const out=[]; for(let i=arr.length-1;i>=0&&out.length<(n||2);i--)out.push(arr[i]); return out; }
+// ── ④ 心の天秤（両価性の整理：飲み続ける/減らす の 良い点・コスト）──
+function getDecisBalance(){ if(!state.decisBalance||typeof state.decisBalance!=="object")state.decisBalance={keepPros:[],keepCons:[],changePros:[],changeCons:[]}; ["keepPros","keepCons","changePros","changeCons"].forEach(k=>{ if(!Array.isArray(state.decisBalance[k]))state.decisBalance[k]=[]; }); return state.decisBalance; }
+function saveDecisBalance(){ try{localStorage.setItem(STORAGE_KEY+"_decisbalance",JSON.stringify(getDecisBalance()));}catch{} }
+function decisBalanceCard(){
+  const b=getDecisBalance();
+  const c=div({className:"card",style:{marginBottom:"10px",border:"1px solid #f472b644",background:"#f472b60d"}});
+  c.appendChild(div({style:{fontSize:"13px",fontWeight:800,color:"#f9a8d4",marginBottom:"3px"}},"⚖️ 心の天秤"));
+  c.appendChild(div({style:{fontSize:"10px",color:"#64748b",lineHeight:1.5,marginBottom:"10px"}},"「飲み続ける」と「減らす」、それぞれの良い点とコストを書き出すと、迷いの正体が見えてきます。飲む良い点（例：寂しさが紛れる）は、お酒以外で満たす手がかりに。"));
+  const quad=(key,title,col)=>{
+    const box=div({style:{marginBottom:"10px"}});
+    box.appendChild(div({style:{fontSize:"11px",fontWeight:700,color:col,marginBottom:"5px"}},title));
+    (b[key]||[]).forEach((item,i)=>{
+      const row=div({style:{display:"flex",gap:"5px",alignItems:"center",marginBottom:"4px"}});
+      row.appendChild(span({style:{fontSize:"11px",color:col,flexShrink:0}},"・"));
+      row.appendChild(div({style:{flex:1,minWidth:0,fontSize:"12px",color:"#e2e8f0",lineHeight:1.5}},item));
+      const del=btn({style:{padding:"2px 7px",background:"transparent",border:"1px solid #7f1d1d",borderRadius:"5px",color:"#f87171",fontSize:"10px",cursor:"pointer",flexShrink:0}},"×");
+      del.addEventListener('click',()=>{ b[key].splice(i,1); saveDecisBalance(); render(); });
+      row.appendChild(del); box.appendChild(row);
+    });
+    const nr=div({style:{display:"flex",gap:"5px",alignItems:"center",marginTop:"3px"}});
+    const dk="dbDraft_"+key;
+    const inp=document.createElement('input');inp.type='text';inp.placeholder="追加…";inp.value=state[dk]||"";inp.style.cssText="flex:1;min-width:0;padding:6px 8px;background:#0b1220;border:1px solid #334155;border-radius:6px;color:#e2e8f0;font-size:12px;font-family:inherit";
+    inp.addEventListener('input',e=>{state[dk]=e.target.value;});
+    inp.addEventListener('keydown',e=>{ if(e.key==="Enter"){ const t=(state[dk]||"").trim(); if(t){ b[key].push(t); saveDecisBalance(); state[dk]=""; render(); } } });
+    const add=btn({style:{padding:"5px 11px",background:col+"18",border:`1px solid ${col}`,borderRadius:"6px",color:col,fontSize:"13px",fontWeight:700,cursor:"pointer",flexShrink:0}},"＋");
+    add.addEventListener('click',()=>{ const t=(state[dk]||"").trim(); if(!t)return; b[key].push(t); saveDecisBalance(); state[dk]=""; render(); });
+    nr.appendChild(inp);nr.appendChild(add); box.appendChild(nr);
+    return box;
+  };
+  c.appendChild(div({style:{fontSize:"10px",color:"#94a3b8",fontWeight:700,margin:"2px 0 6px"}},"🍺 このまま飲み続けると…"));
+  c.appendChild(quad("keepPros","👍 良い点・お酒がくれるもの","#94a3b8"));
+  c.appendChild(quad("keepCons","👎 コスト・失うもの","#f87171"));
+  c.appendChild(div({style:{fontSize:"10px",color:"#22c55e",fontWeight:700,margin:"8px 0 6px",paddingTop:"8px",borderTop:"1px solid #1e293b"}},"🌱 減らす・やめると…"));
+  c.appendChild(quad("changePros","👍 良い点・手に入るもの","#22c55e"));
+  c.appendChild(quad("changeCons","👎 大変な点・手放すもの","#94a3b8"));
+  return c;
+}
+// ── ⑤ 大切にしたい価値（価値と現状のズレ＝MIの中核）──
+const MI_VALUES=["家族","健康","人とのつながり","仕事・成長","お金・自由","誠実でいること","自分らしさ","心の平穏","挑戦","楽しさ・遊び","信頼される","時間を大切に"];
+function getMIValues(){ if(!state.miValues||typeof state.miValues!=="object")state.miValues={selected:[],note:""}; if(!Array.isArray(state.miValues.selected))state.miValues.selected=[]; if(typeof state.miValues.note!=="string")state.miValues.note=""; return state.miValues; }
+function saveMIValues(){ try{localStorage.setItem(STORAGE_KEY+"_values",JSON.stringify(getMIValues()));}catch{} }
+function valuesCard(){
+  const v=getMIValues();
+  const c=div({className:"card",style:{marginBottom:"10px",border:"1px solid #22c55e44",background:"#22c55e0d"}});
+  c.appendChild(div({style:{fontSize:"13px",fontWeight:800,color:"#4ade80",marginBottom:"3px"}},"💎 大切にしたい価値"));
+  c.appendChild(div({style:{fontSize:"10px",color:"#64748b",lineHeight:1.5,marginBottom:"9px"}},"あなたが本当に大切にしたいものを選びましょう。その価値と“今のお酒”がどれくらい合っているかを見つめると、変わる力が湧いてきます。"));
+  const row=div({style:{display:"flex",flexWrap:"wrap",gap:"6px",marginBottom:"10px"}});
+  const all=[...MI_VALUES, ...v.selected.filter(s=>!MI_VALUES.includes(s))];
+  all.forEach(val=>{ const on=v.selected.includes(val);
+    const b=btn({style:{padding:"6px 11px",borderRadius:"15px",cursor:"pointer",fontSize:"12px",fontWeight:on?700:400,border:`1px solid ${on?"#22c55e":"#334155"}`,background:on?"#22c55e22":"#0f172a",color:on?"#4ade80":"#94a3b8",fontFamily:"inherit"}},val);
+    b.addEventListener('click',()=>{ if(on)v.selected=v.selected.filter(x=>x!==val); else v.selected=[...v.selected,val]; saveMIValues(); render(); });
+    row.appendChild(b);
+  });
+  c.appendChild(row);
+  // 自由追加
+  { const nr=div({style:{display:"flex",gap:"5px",alignItems:"center",marginBottom:"10px"}});
+    const inp=document.createElement('input');inp.type='text';inp.placeholder="ほかにあれば追加…";inp.value=state.valDraft||"";inp.style.cssText="flex:1;min-width:0;padding:6px 8px;background:#0b1220;border:1px solid #334155;border-radius:6px;color:#e2e8f0;font-size:12px;font-family:inherit";
+    inp.addEventListener('input',e=>{state.valDraft=e.target.value;});
+    const add=btn({style:{padding:"5px 11px",background:"#22c55e18",border:"1px solid #22c55e",borderRadius:"6px",color:"#4ade80",fontSize:"13px",fontWeight:700,cursor:"pointer",flexShrink:0}},"＋");
+    add.addEventListener('click',()=>{ const t=(state.valDraft||"").trim(); if(!t)return; if(!v.selected.includes(t))v.selected.push(t); saveMIValues(); state.valDraft=""; render(); });
+    nr.appendChild(inp);nr.appendChild(add); c.appendChild(nr);
+  }
+  if(v.selected.length){
+    const q=div({style:{padding:"9px 10px",borderRadius:"8px",background:"#0b1220",border:"1px solid #1e293b"}});
+    q.appendChild(div({style:{fontSize:"11px",color:"#4ade80",fontWeight:600,marginBottom:"5px",lineHeight:1.5}},`💬 「${v.selected.slice(0,3).join("・")}」を大切にしたいあなたにとって、今のお酒の付き合い方はどう？`));
+    const ta=document.createElement('textarea');ta.value=v.note||"";ta.placeholder="例：家族との時間を大切にしたいのに、飲むと不機嫌になって台無しにしてしまう…";ta.rows=3;
+    ta.style.cssText="width:100%;box-sizing:border-box;padding:7px 9px;background:#0f172a;border:1px solid #334155;border-radius:7px;color:#e2e8f0;font-size:12px;font-family:inherit;resize:vertical";
+    ta.addEventListener('change',e=>{ v.note=e.target.value; saveMIValues(); });
+    q.appendChild(ta);
+    c.appendChild(q);
+  }
+  return c;
+}
+// ── ⑥ 変化の計画書（Change Plan：準備が整ったら1枚に）──
+function getChangePlan(){ if(!state.changePlan||typeof state.changePlan!=="object")state.changePlan={want:"",why:"",firstStep:"",support:"",obstacle:"",cope:"",conf:null}; return state.changePlan; }
+function saveChangePlan(){ try{localStorage.setItem(STORAGE_KEY+"_changeplan",JSON.stringify(getChangePlan()));}catch{} }
+function changePlanCard(){
+  const p=getChangePlan();
+  const c=div({className:"card",style:{marginBottom:"10px",border:"1px solid #f59e0b44",background:"#f59e0b0d"}});
+  c.appendChild(div({style:{fontSize:"13px",fontWeight:800,color:"#fbbf24",marginBottom:"3px"}},"📋 変化の計画書"));
+  c.appendChild(div({style:{fontSize:"10px",color:"#64748b",lineHeight:1.5,marginBottom:"10px"}},"気持ちが固まってきたら、1枚にまとめましょう。書き換えは何度でもOK。"));
+  const field=(key,label,ph,rows)=>{
+    const box=div({style:{marginBottom:"9px"}});
+    box.appendChild(div({style:{fontSize:"11px",color:"#fbbf24",fontWeight:600,marginBottom:"4px"}},label));
+    const ta=document.createElement('textarea');ta.value=p[key]||"";ta.placeholder=ph;ta.rows=rows||2;
+    ta.style.cssText="width:100%;box-sizing:border-box;padding:7px 9px;background:#0f172a;border:1px solid #334155;border-radius:7px;color:#e2e8f0;font-size:12px;font-family:inherit;resize:vertical";
+    ta.addEventListener('change',e=>{ p[key]=e.target.value; saveChangePlan(); render(); });
+    box.appendChild(ta); return box;
+  };
+  c.appendChild(field("want","🎯 変えたいこと",  "例：外に飲みに行くのを週1回までにする"));
+  c.appendChild(field("why", "💜 いちばんの理由","例：朝すっきり起きて、人とちゃんと向き合える自分になりたい"));
+  c.appendChild(field("firstStep","👣 最初の小さな一歩","例：今週の金曜は帰り道を変えてまっすぐ帰る"));
+  c.appendChild(field("support","🤝 支えになる人・もの","例：週1回◯◯に連絡する／このアプリで記録する"));
+  c.appendChild(field("obstacle","⚠️ つまずきそうな場面","例：金曜の夜、ひとりで寂しくなった時"));
+  c.appendChild(field("cope","🛡 その時の対策（if-then）","例：炭酸水を飲んで、夜のルーティンを始める"));
+  // 自信度ルーラー
+  const rb=div({style:{marginTop:"4px"}});
+  rb.appendChild(div({style:{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:"5px"}},[
+    span({style:{fontSize:"11px",color:"#fbbf24",fontWeight:600}},"この計画を実行できる自信は？"),
+    span({style:{fontSize:"16px",fontWeight:800,color:typeof p.conf==="number"?"#22c55e":"#475569"}},typeof p.conf==="number"?`${p.conf}`:"—")
+  ]));
+  const rr=div({style:{display:"flex",gap:"3px"}});
+  for(let n=0;n<=10;n++){ const on=p.conf===n;
+    const b=btn({style:{flex:1,minWidth:0,padding:"7px 0",borderRadius:"5px",cursor:"pointer",fontSize:"11px",fontWeight:on?800:500,border:`1px solid ${on?"#22c55e":"#334155"}`,background:on?"#22c55e33":"#0b1220",color:on?"#22c55e":"#64748b"}},`${n}`);
+    b.addEventListener('click',()=>{ p.conf=n; saveChangePlan(); render(); }); rr.appendChild(b);
+  }
+  rb.appendChild(rr);
+  c.appendChild(rb);
+  // 宣言プレビュー
+  if((p.want||"").trim()&&(p.why||"").trim()){
+    c.appendChild(div({style:{marginTop:"11px",padding:"10px 12px",borderRadius:"9px",background:"#f59e0b12",border:"1px solid #f59e0b55"}},[
+      div({style:{fontSize:"10px",color:"#fbbf24",fontWeight:700,marginBottom:"4px"}},"✍️ わたしの宣言"),
+      div({style:{fontSize:"13px",color:"#fef3c7",lineHeight:1.7,fontWeight:600}},`私は「${p.want.trim()}」に取り組みます。なぜなら「${p.why.trim()}」から。まずは「${(p.firstStep||"").trim()||"小さな一歩"}」から始めます。`)
+    ]));
+  }
+  return c;
+}
 // ── カード①：なりたい自分・減酒する理由（full=編集＋マイルストーン、compactは閲覧のみ）──
 function visionCard(full){
   const v=getLifeVision();
@@ -7652,8 +7786,11 @@ function renderMotivationHub(vd){
   intro.appendChild(div({style:{fontSize:"13px",fontWeight:800,color:"#a5b4fc",marginBottom:"4px"}},"🗣 動機づけ面談"));
   intro.appendChild(div({style:{fontSize:"11px",color:"#94a3b8",lineHeight:1.6}},"説得や我慢ではなく、あなたの中にある“変わりたい気持ち”を引き出して育てる場所です。数字や答えに正解はありません。自分の言葉で書くほど力になります。"));
   wrap.appendChild(intro);
-  wrap.appendChild(motivationRulerCard(vd));
-  wrap.appendChild(changeTalkJournalCard());
+  wrap.appendChild(motivationRulerCard(vd));   // 現在地を測る
+  wrap.appendChild(decisBalanceCard());        // 両価性を整理
+  wrap.appendChild(valuesCard());              // 価値とのズレ
+  wrap.appendChild(changeTalkJournalCard());   // 自分の言葉を引き出す
+  wrap.appendChild(changePlanCard());          // 計画にまとめる
   return wrap;
 }
 
@@ -9211,6 +9348,9 @@ function exportData(){
     nightRitual:state.nightRitual,
     connectGoal:state.connectGoal,
     ctJournal:state.ctJournal,
+    decisBalance:state.decisBalance,
+    miValues:state.miValues,
+    changePlan:state.changePlan,
     weather,
     city
   };
@@ -9278,6 +9418,9 @@ function importData(e){
       if(p.nightRitual&&typeof p.nightRitual==="object"){state.nightRitual=p.nightRitual;saveNightRitual();}
       if(p.connectGoal&&typeof p.connectGoal==="object"){state.connectGoal=p.connectGoal;saveConnectGoal();}
       if(Array.isArray(p.ctJournal)){state.ctJournal=p.ctJournal;saveCTJournal();}
+      if(p.decisBalance&&typeof p.decisBalance==="object"){state.decisBalance=p.decisBalance;saveDecisBalance();}
+      if(p.miValues&&typeof p.miValues==="object"){state.miValues=p.miValues;saveMIValues();}
+      if(p.changePlan&&typeof p.changePlan==="object"){state.changePlan=p.changePlan;saveChangePlan();}
       if(p.weather){try{localStorage.setItem(STORAGE_KEY+"_weather",JSON.stringify(p.weather));}catch{}}
       if(p.city){state.weatherCity=p.city;try{localStorage.setItem(STORAGE_KEY+"_city",JSON.stringify(p.city));}catch{}}
       // 旧形式（v8.3）のバックアップは新モデルへ移行して取り込む
