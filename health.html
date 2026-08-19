@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.89"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.90"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -638,6 +638,7 @@ const state = {
   newAwakeH:3, newAwakeM:0, newAwakeEndH:3, newAwakeEndM:20, editAwakeUid:null,
   newMedName:"", newMedH:0, newMedM:0, editMedUid:null,
   routineActEdit:null, raTitle:"", raNote:"", // ルーティン実績のその日だけ編集
+  todoSchedExpanded:{}, // TODOごとの予定バッジ展開状態
   lifeVision:null, nightRitual:null, connectGoal:null, // 根本解決の習慣機能
   ctJournal:null, ctPromptIdx:0, ctDraft:"", // 動機づけ面談：チェンジトーク・ジャーナル
   decisBalance:null, miValues:null, changePlan:null, // 動機づけ面談：心の天秤／価値／変化の計画書
@@ -5252,7 +5253,18 @@ function renderTaskMatrix(){
     }
     if(prioLabel(item)&&!item.done)label.appendChild(div({style:{fontSize:"9px",color:pc,fontWeight:700}},prioLabel(item)));
     if(item.due&&!item.done)label.appendChild(dueBadge(item));
-    scheduledBadges(item).forEach(b=>label.appendChild(div({style:{fontSize:"9px",color:b.repeat?"#a78bfa":"#38bdf8",fontWeight:600,marginTop:"2px"}},b.text)));
+    // 予定バッジ：最新3件のみ表示し、残りは畳む（TODOごとに展開状態を保持）
+    { const sb=scheduledBadges(item); // 日付昇順
+      const exp=!!(state.todoSchedExpanded&&state.todoSchedExpanded[item.uid]);
+      const shown=(sb.length<=3||exp)?sb:sb.slice(-3); // 最新3件＝末尾3件
+      shown.forEach(b=>label.appendChild(div({style:{fontSize:"9px",color:b.repeat?"#a78bfa":"#38bdf8",fontWeight:600,marginTop:"2px"}},b.text)));
+      if(sb.length>3){
+        const hiddenN=sb.length-3;
+        const tg=btn({style:{fontSize:"9px",padding:"2px 8px",marginTop:"3px",borderRadius:"6px",border:"1px solid #334155",background:"transparent",color:"#64748b",cursor:"pointer",fontFamily:"inherit"}},exp?"🔼 予定を畳む":`🔽 他${hiddenN}件の予定を表示`);
+        tg.addEventListener('click',(()=>{const uid=item.uid;return()=>{ if(!state.todoSchedExpanded)state.todoSchedExpanded={}; state.todoSchedExpanded[uid]=!state.todoSchedExpanded[uid]; render(); };})());
+        label.appendChild(tg);
+      }
+    }
     row1.appendChild(label);
     const del=btn({style:{background:"transparent",border:"none",color:"#334155",cursor:"pointer",fontSize:"15px",padding:"0 2px",flexShrink:0}},"×");
     del.addEventListener('click',(()=>{const uid=item.uid;return()=>{pushUndo("TODOを削除しました");state.tasks.todo=state.tasks.todo.filter(x=>x.uid!==uid);saveTasks();render();};})());
