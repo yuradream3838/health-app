@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.92"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.93"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -298,6 +298,7 @@ const TODO_ITEMS = [
   {id:"water_am",      label:"朝飲水",                type:"check"},
   {id:"stretch_am",    label:"朝ストレッチ",          type:"check"},
   {id:"dressing",      label:"着替え",                type:"check"},
+  {id:"toothbrush_am", label:"朝歯磨き",              type:"check"},
   {id:"goal_setting",  label:"目標設定",              type:"check"},
   {id:"reading",       label:"インプット",            type:"timer", multi:true},
   {id:"side_job",      label:"アウトプット",          type:"timer", multi:true},
@@ -312,13 +313,14 @@ const TODO_ITEMS = [
   {id:"shower",        label:"シャワー・スキンケア・体重測定", type:"check"},
   {id:"kakeibo",       label:"家計簿入力",            type:"check"},
   {id:"diary",         label:"日記",                  type:"check"},
+  {id:"toothbrush_pm", label:"夜歯磨き",              type:"check"},
   {id:"stretch_pm",    label:"夜ストレッチ",          type:"check"},
   {id:"meditation_pm", label:"夜瞑想",                type:"check"},
 ];
 
 // 予定タブ「実際」列で1つにまとめて表示するルーティン群（アプリ内で編集可能・初期値）
 const DEFAULT_ROUTINES = [
-  {key:"morning",   title:"🌅モーニングルーティン", color:"#fb923c", ids:["meditation_am","bedmaking","grooming","water_am","stretch_am","dressing"]},
+  {key:"morning",   title:"🌅モーニングルーティン", color:"#fb923c", ids:["meditation_am","bedmaking","grooming","water_am","stretch_am","dressing","toothbrush_am"]},
   {key:"breakfast", title:"🍳朝食",                 color:"#fbbf24", ids:["breakfast_prep","breakfast"]},
   {key:"lunch",     title:"🍱昼食",                 color:"#84cc16", ids:["lunch_prep","lunch"]},
   {key:"dinner",    title:"🍽夕食",                 color:"#f97316", ids:["dinner_prep","dinner"]},
@@ -338,6 +340,29 @@ function migrateRoutines(){
   saveRoutines();
 }
 function saveRoutines(){ safeSet(STORAGE_KEY+"_routines",JSON.stringify(state.routines)); }
+// 既存ユーザーに「朝歯磨き（着替えの後）」「夜歯磨き（日記の後）」を一度だけ補完する移行。
+function migrateToothbrush(){
+  let done=false; try{done=localStorage.getItem(STORAGE_KEY+"_toothbrushmig")==="1";}catch{}
+  if(done)return;
+  // ルーティン群：どこにも割り当てられていなければモーニングの着替えの後へ
+  const assigned=new Set(); (state.routines||[]).forEach(r=>(r.ids||[]).forEach(id=>assigned.add(id)));
+  if(!assigned.has("toothbrush_am")){
+    const mg=(state.routines||[]).find(r=>r.key==="morning");
+    if(mg){ const di=mg.ids.indexOf("dressing"); if(di>=0)mg.ids.splice(di+1,0,"toothbrush_am"); else mg.ids.push("toothbrush_am"); saveRoutines(); }
+  }
+  // 並び順（カスタム順を保存している場合）：着替え/日記の直後へ差し込む
+  try{
+    const s=localStorage.getItem(STORAGE_KEY+"_todo_order");
+    if(s){ let order=JSON.parse(s);
+      if(Array.isArray(order)&&order.length){
+        const ins=(newId,afterId)=>{ if(order.includes(newId))return; const i=order.indexOf(afterId); if(i>=0)order.splice(i+1,0,newId); else order.push(newId); };
+        ins("toothbrush_am","dressing"); ins("toothbrush_pm","diary");
+        localStorage.setItem(STORAGE_KEY+"_todo_order",JSON.stringify(order));
+      }
+    }
+  }catch{}
+  try{localStorage.setItem(STORAGE_KEY+"_toothbrushmig","1");}catch{}
+}
 
 // ── シフトパターン（勤務の週間繰り返し）──
 const SHIFT_TYPES = {
@@ -684,6 +709,7 @@ function loadStorage(){
     const rt=localStorage.getItem(STORAGE_KEY+"_routines");
     if(rt){const r=JSON.parse(rt); if(Array.isArray(r)&&r.length)state.routines=r;}
     migrateRoutines(); // 朝食/昼食/夕食などの新ルーティン群を既存データに補完
+    migrateToothbrush(); // 朝歯磨き（着替え後）・夜歯磨き（日記後）を補完
     const shp=localStorage.getItem(STORAGE_KEY+"_shift");
     if(shp){const s2=JSON.parse(shp); if(s2&&Array.isArray(s2.grid))state.shiftPattern={...defaultShiftPattern(),...s2};}
     const pp=localStorage.getItem(STORAGE_KEY+"_planpatterns");
@@ -2082,6 +2108,22 @@ function openGoalAsEvent(node, targetDate){
   render();
 }
 function dailyRangeLabel(n){ const s=dailyGoalStart(n); if(!s||!isRangeDaily(n))return ""; return `📅 ${mdLabel(s)}〜${mdLabel(n.dailyEnd)}`; }
+// 目標を予定化する際の初期日付：期間目標はその期間内なら今日、未来の期間なら開始日
+function goalScheduleTargetDate(n, vd){
+  const today=todayStr();
+  if(!n||n.periodType==="daily"||!n.periodType) return vd||today;
+  const r=goalPeriodRange(n.periodType,n.periodKey);
+  if(!r) return vd||today;
+  if(today<r.start) return r.start;   // これからの期間 → 開始日
+  if(today>r.end)   return today;      // 過ぎた期間 → 今日
+  return today;                        // 期間内 → 今日
+}
+// 目標を「予定に追加」するボタン（日次・期間問わず）
+function goalScheduleBtn(n, vd){
+  const b=btn({style:{flexShrink:0,fontSize:"12px",padding:"3px 9px",borderRadius:"6px",cursor:"pointer",fontWeight:600,border:"1px solid #0ea5e9",background:"#0ea5e918",color:"#38bdf8"}},"📅");
+  b.addEventListener('click',(()=>{const node=n;return()=>{ openGoalAsEvent(node, goalScheduleTargetDate(node, vd)); };})());
+  return b;
+}
 // 達成済みか（葉なら done、親なら全下位が達成）
 function gtAchieved(n){ const p=gtProgress(n); return p.total>0 && p.done===p.total; }
 // periodKey → 日付範囲 {start,end}
@@ -2526,6 +2568,7 @@ function renderGoals(vd, ds){
     ]);
     tx.addEventListener('click',()=>{state.goalView="tree";state.goalTreeModal={mode:"edit",id:n.id,text:n.text||""};render();});
     head.appendChild(tx);
+    head.appendChild(goalScheduleBtn(n, vd)); // 📅 予定に追加（日次・週間・月次・四半期・年間すべて）
     box.appendChild(head);
     // 連結した習慣の期間内の実施回数
     if(n.linkedRoutines&&n.linkedRoutines.length){
@@ -2610,6 +2653,7 @@ function renderGoalPeriodModal(){
     ]);
     tx.addEventListener('click',(()=>{const id=n.id,t=n.text||"";return()=>{state.goalTreeModal={mode:"edit",id,text:t};render();};})());
     row.appendChild(tx);
+    row.appendChild(goalScheduleBtn(n, vd)); // 📅 予定に追加
     const del=btn({style:{flexShrink:0,fontSize:"11px",padding:"4px 9px",borderRadius:"6px",cursor:"pointer",fontWeight:600,border:"1px solid #7f1d1d",background:"transparent",color:"#fca5a5"}},"🗑");
     del.addEventListener('click',(()=>{const id=n.id,t=n.text||"";return()=>{ if(confirm(`「${t}」を削除しますか？`)){ gtDelete(id); render(); } };})());
     row.appendChild(del);
