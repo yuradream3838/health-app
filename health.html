@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.98"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.99"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -665,6 +665,7 @@ const state = {
   routineActEdit:null, raTitle:"", raNote:"", // ルーティン実績のその日だけ編集
   todoSchedExpanded:{}, // TODOごとの予定バッジ展開状態
   connectPickerOpen:false, // つながり予定の選択リスト展開
+  connectHistExpanded:false, // つながり履歴の全件展開
   lifeVision:null, nightRitual:null, connectGoal:null, // 根本解決の習慣機能
   ctJournal:null, ctPromptIdx:0, ctDraft:"", // 動機づけ面談：チェンジトーク・ジャーナル
   decisBalance:null, miValues:null, changePlan:null, // 動機づけ面談：心の天秤／価値／変化の計画書
@@ -6182,6 +6183,14 @@ function resolveConnectPlan(p){ if(!p||p.uid==null) return null; const ev=getEve
 function connectPlanLabel(ds,ev){ return `${mdLabel(ds)}${ev.allDay?" 終日":" "+hhmm(ev.startH,ev.startM)}　${ev.title||"(無題)"}`; }
 function connectCountOn(vd){ return investListOn(vd).filter(isConnectInvest).length; }
 function connectCountRange(vd,days){ let n=0; for(let i=0;i<days;i++)n+=connectCountOn(addDays(vd,-i)); return n; }
+// これまで記録した全つながり（新しい順）。各要素 {ds, t, label}
+function allConnectLogs(){
+  const out=[];
+  (state.dailies||[]).forEach(d=>{ (d.investments||[]).forEach(r=>{ if(isConnectInvest(r)) out.push({ds:d.dateStr, t:r.t||null, label:r.label||"つながり"}); }); });
+  out.sort((a,b)=>{ const ta=a.t?Date.parse(a.t):(a.ds?Date.parse(a.ds):0), tb=b.t?Date.parse(b.t):(b.ds?Date.parse(b.ds):0); return tb-ta; });
+  return out;
+}
+function connectTotalCount(){ return allConnectLogs().length; }
 function mondayOfDS(ds){ const x=parseDS(ds); const day=x.getDay(); const diff=day===0?-6:1-day; x.setDate(x.getDate()+diff); return fmtDS(x); }
 // 今週（月曜起点）のつながり回数
 function connectCountThisWeek(){ const mon=mondayOfDS(todayStr()); let n=0,d=mon; while(d<=todayStr()){ n+=connectCountOn(d); d=addDays(d,1); } return n; }
@@ -6730,6 +6739,34 @@ function connectHabitCard(vd, full){
     else if(target-wk>0) msgs.push(`目標まであと${target-wk}回。上のボタンや予定で埋めていこう。`);
     if(msgs.length) rv.appendChild(div({style:{fontSize:"11px",color:"#cbd5e1",lineHeight:1.7,marginTop:"8px"}},msgs.map(mm=>div({},`・${mm}`))));
     c.appendChild(rv);
+  }
+  // ── 🗂 これまで記録したつながり（履歴）──
+  { const logs=allConnectLogs();
+    const hc=div({style:{marginTop:"8px",paddingTop:"10px",borderTop:"1px solid #1e293b"}});
+    hc.appendChild(div({style:{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:"6px"}},[
+      div({style:{fontSize:"11px",color:"#94a3b8",fontWeight:600}},"🗂 これまで記録したつながり"),
+      div({style:{fontSize:"11px",fontWeight:700,color:"#f9a8d4"}},`計 ${logs.length} 回`)
+    ]));
+    if(!logs.length){
+      hc.appendChild(div({style:{fontSize:"11px",color:"#475569",padding:"2px 0"}},"まだ記録がありません。上のボタンでつながりを記録できます。"));
+    } else {
+      const exp=!!state.connectHistExpanded;
+      const shown=exp?logs.slice(0,200):logs.slice(0,5);
+      shown.forEach(l=>{
+        const tm=(()=>{ try{ if(l.t){ const d=new Date(l.t); return `${mdLabel(fmtDS(d))} ${hhmm(d.getHours(),d.getMinutes())}`; } }catch{} return l.ds?mdLabel(l.ds):""; })();
+        const row=div({style:{display:"flex",gap:"8px",alignItems:"center",padding:"5px 0",borderBottom:"1px solid #1e293b"}});
+        row.appendChild(span({style:{fontSize:"13px",flexShrink:0}},"🫂"));
+        row.appendChild(div({style:{flex:1,minWidth:0,fontSize:"13px",color:"#e2e8f0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},l.label||"つながり"));
+        row.appendChild(span({style:{fontSize:"10px",color:"#64748b",flexShrink:0}},tm));
+        hc.appendChild(row);
+      });
+      if(logs.length>5){
+        const tg=btn({style:{width:"100%",marginTop:"6px",padding:"7px",background:"transparent",border:"1px solid #334155",borderRadius:"7px",color:"#64748b",cursor:"pointer",fontSize:"11px",fontFamily:"inherit"}},exp?"🔼 閉じる":`🔽 すべて見る（他${logs.length-5}件）`);
+        tg.addEventListener('click',()=>{ state.connectHistExpanded=!state.connectHistExpanded; render(); });
+        hc.appendChild(tg);
+      }
+    }
+    c.appendChild(hc);
   }
   return c;
 }
