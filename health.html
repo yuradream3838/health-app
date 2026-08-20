@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.97"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.98"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -8024,12 +8024,23 @@ function maybeCelebrateStreak(){
 // ── 達成ハブ（達成・未来投資）──
 function renderAchieveHub(vd){
   if(!state.achieveSubTab)state.achieveSubTab="達成";
-  return renderSubHub(["達成","未来投資","つながり","動機づけ面談"],state.achieveSubTab,t=>{state.achieveSubTab=t;render();},()=>{
+  return renderSubHub(["達成","未来投資","つながり","動機づけ面談","if-then"],state.achieveSubTab,t=>{state.achieveSubTab=t;render();},()=>{
     if(state.achieveSubTab==="未来投資") return renderInvestPanel(vd);
     if(state.achieveSubTab==="つながり") return renderConnectHub(vd);
     if(state.achieveSubTab==="動機づけ面談") return renderMotivationHub(vd);
+    if(state.achieveSubTab==="if-then") return renderIfThenHub(vd);
     return renderAchievement(vd);
   });
+}
+// ── if-thenプランニングハブ（実行意図：つまずく場面の先手を決めておく）──
+function renderIfThenHub(vd){
+  const wrap=div({style:{maxWidth:"600px",margin:"0 auto",padding:"12px 16px 60px"}});
+  const intro=div({className:"card",style:{marginBottom:"10px",border:"1px solid #f59e0b44",background:"#f59e0b0d"}});
+  intro.appendChild(div({style:{fontSize:"13px",fontWeight:800,color:"#fbbf24",marginBottom:"4px"}},"🔀 if-thenプランニング"));
+  intro.appendChild(div({style:{fontSize:"11px",color:"#94a3b8",lineHeight:1.6}},"「◯◯のとき→△△する」と先に決めておく実行意図の方法です。飲みたくなる場面を予測して対処を1つ決めておくと、その瞬間に迷わず動けます。"));
+  wrap.appendChild(intro);
+  wrap.appendChild(ifThenPlanCard());
+  return wrap;
 }
 // ── つながりハブ：つながり習慣＋週次ふりかえり ──
 function renderConnectHub(vd){
@@ -8055,7 +8066,7 @@ function renderMotivationHub(vd){
   wrap.appendChild(valuesCard());              // 価値とのズレ
   wrap.appendChild(changeTalkJournalCard());   // 自分の言葉を引き出す
   wrap.appendChild(changePlanCard());          // 計画にまとめる
-  wrap.appendChild(ifThenPlanCard());          // つまずく場面の先手（実行意図）
+  // if-thenプランニングは【if-then】サブタブへ分離
   return wrap;
 }
 
