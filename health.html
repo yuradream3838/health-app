@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.91"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.92"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -6047,10 +6047,14 @@ function getConnectGoal(){
 function saveConnectGoal(){ try{localStorage.setItem(STORAGE_KEY+"_connectgoal",JSON.stringify(getConnectGoal()));}catch{} }
 function isConnectInvest(r){ return !!(r&&typeof r.cat==="string"&&r.cat.indexOf("つながり")>=0); }
 // これからの予定（今日以降days日分）を一覧化。つながり予定の選択候補に使う
+// 日をまたぐ予定は最初の1回だけ（継続表示ぶんは重複させない）
 function upcomingEvents(days){
-  const out=[]; const today=todayStr();
+  const out=[]; const today=todayStr(); const seenSpan=new Set();
   for(let i=0;i<days;i++){ const ds=addDays(today,i);
-    getEventsForDate(ds).forEach(e=>{ out.push({ds, uid:e.uid, title:e.title||"(無題)", startH:e.startH, startM:e.startM, allDay:!!e.allDay, isRepeat:!!e.isRepeat}); });
+    getEventsForDate(ds).forEach(e=>{
+      if(e._mdStart!=null){ const k=String(e.uid)+"@"+e._mdStart; if(seenSpan.has(k))return; seenSpan.add(k); }
+      out.push({ds, uid:e.uid, title:e.title||"(無題)", startH:e.startH, startM:e.startM, allDay:!!e.allDay, isRepeat:!!e.isRepeat, span:e._mdStart!=null});
+    });
   }
   return out;
 }
@@ -6550,11 +6554,11 @@ function connectHabitCard(vd, full){
     c.appendChild(pickBtn);
     if(state.connectPickerOpen){
       const box=div({style:{marginTop:"6px",padding:"8px",borderRadius:"8px",background:"#0b1220",border:"1px solid #1e293b"}});
-      const cand=upcomingEvents(30).filter(e=>!selKeys.has(e.ds+"|"+e.uid));
+      const cand=upcomingEvents(60).filter(e=>!selKeys.has(e.ds+"|"+e.uid));
       if(!cand.length){
-        box.appendChild(div({style:{fontSize:"11px",color:"#64748b",padding:"4px 2px",lineHeight:1.6}},"これから30日の予定がありません。まず予定タブで「人と会う」予定を作りましょう。"));
+        box.appendChild(div({style:{fontSize:"11px",color:"#64748b",padding:"4px 2px",lineHeight:1.6}},"これから60日の予定がありません。まず予定タブで「人と会う」予定を作りましょう。"));
       } else {
-        box.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"6px"}},"タップで「つながる予定」に追加（これから30日）"));
+        box.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"6px"}},"タップで「つながる予定」に追加（これから60日）"));
         const listWrap=div({style:{maxHeight:"210px",overflowY:"auto"}});
         cand.slice(0,60).forEach(e=>{
           const b=btn({style:{display:"block",width:"100%",textAlign:"left",padding:"7px 9px",marginBottom:"4px",borderRadius:"7px",border:"1px solid #334155",background:"#0f172a",color:"#e2e8f0",fontSize:"12px",cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},
