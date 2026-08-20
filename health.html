@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.03"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.04"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -667,6 +667,7 @@ const state = {
   connectPickerOpen:false, // つながり予定の選択リスト展開
   connectHistExpanded:false, // つながり履歴の全件展開
   connectNote:"", connectEdit:null, ceLabel:null, ceNote:null, // つながり記録の内容入力・編集
+  connectTagEdit:false, newConnectTag:"", // つながりタグの種類編集
   nextDrink:null, nextDrinkEdit:false, // 次に飲みに行く予定（計画飲酒）
   investHistExpanded:false, // 未来投資履歴の全件展開
   lifeVision:null, nightRitual:null, connectGoal:null, // 根本解決の習慣機能
@@ -6234,12 +6235,15 @@ function ritualCompleteOn(vd){ const steps=getNightRitual().steps; if(!steps.len
 function ritualDoneCountOn(vd){ const steps=getNightRitual().steps; const done=ritualDoneOn(vd); return steps.filter(s=>done.includes(s.id)).length; }
 function ritualStreak(){ let n=0,d=todayStr(); if(!ritualCompleteOn(d))d=addDays(d,-1); while(ritualCompleteOn(d)){ n++; d=addDays(d,-1); } return n; }
 // ③ つながり習慣＋週次ふりかえり（孤独＝外飲みの根っこ、を人とのつながりで満たす）
+const CONNECT_TAGS_DEFAULT=["📞 連絡した","💬 話した","🍵 会った","📝 書き出した"];
 function getConnectGoal(){
   if(!state.connectGoal||typeof state.connectGoal!=="object")state.connectGoal={weeklyTarget:2,plans:[]};
   if(!(state.connectGoal.weeklyTarget>0))state.connectGoal.weeklyTarget=2;
   if(!Array.isArray(state.connectGoal.plans))state.connectGoal.plans=[];
+  if(!Array.isArray(state.connectGoal.tags)||!state.connectGoal.tags.length)state.connectGoal.tags=[...CONNECT_TAGS_DEFAULT];
   return state.connectGoal;
 }
+function getConnectTags(){ return getConnectGoal().tags; }
 function saveConnectGoal(){ try{localStorage.setItem(STORAGE_KEY+"_connectgoal",JSON.stringify(getConnectGoal()));}catch{} }
 function isConnectInvest(r){ return !!(r&&typeof r.cat==="string"&&r.cat.indexOf("つながり")>=0); }
 // これからの予定（今日以降days日分）を一覧化。つながり予定の選択候補に使う
@@ -6712,19 +6716,49 @@ function connectHabitCard(vd, full){
     div({style:{height:"100%",width:`${Math.min(100,Math.round(wk/Math.max(1,target)*100))}%`,background:done?"#22c55e":"linear-gradient(90deg,#f472b6,#a78bfa)"}})
   ]));
   // つながる（内容を書いてタップで記録）
-  c.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"5px"}},"つながれたら記録（少しの連絡でもOK）"));
+  c.appendChild(div({style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"5px"}},[
+    div({style:{fontSize:"10px",color:"#64748b"}},"つながれたら記録（少しの連絡でもOK）"),
+    full?(()=>{ const b=btn({style:{fontSize:"10px",padding:"2px 8px",borderRadius:"6px",border:"1px solid #334155",background:"transparent",color:"#64748b",cursor:"pointer",fontFamily:"inherit"}},state.connectTagEdit?"✕ 閉じる":"⚙️ タグ編集"); b.addEventListener('click',()=>{state.connectTagEdit=!state.connectTagEdit;render();}); return b; })():null
+  ]));
   { // 内容（誰と・何を）※任意
     const ni=document.createElement('input');ni.type='text';ni.placeholder="内容（例：◯◯と電話／母にLINE）※任意";ni.value=state.connectNote||"";
     ni.style.cssText="width:100%;box-sizing:border-box;padding:8px 10px;margin-bottom:7px;background:#0b1220;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:12px;font-family:inherit";
     ni.addEventListener('input',e=>{state.connectNote=e.target.value;});
     c.appendChild(ni);
+    const tags=getConnectTags();
     const row=div({style:{display:"flex",flexWrap:"wrap",gap:"6px",marginBottom:"8px"}});
-    [["📞 連絡した"],["💬 話した"],["🍵 会った"],["📝 書き出した"]].forEach(([lbl])=>{
-      const b=btn({style:{padding:"7px 10px",borderRadius:"14px",border:"1px solid #f472b655",background:"#f472b614",color:"#f9a8d4",fontSize:"12px",cursor:"pointer",fontFamily:"inherit"}},lbl);
-      b.addEventListener('click',()=>{ logInvest(vd,{label:lbl.replace(/^[^ ]+ /,""),cat:"🫂 つながり",amount:0,note:state.connectNote||""}); state.connectNote=""; showToast(`🫂 ${lbl}`); render(); });
+    tags.forEach(tag=>{
+      const b=btn({style:{padding:"7px 10px",borderRadius:"14px",border:"1px solid #f472b655",background:"#f472b614",color:"#f9a8d4",fontSize:"12px",cursor:"pointer",fontFamily:"inherit"}},tag);
+      b.addEventListener('click',()=>{ logInvest(vd,{label:tag,cat:"🫂 つながり",amount:0,note:state.connectNote||""}); state.connectNote=""; showToast(`🫂 ${tag}`); render(); });
       row.appendChild(b);
     });
     c.appendChild(row);
+    // タグの編集（追加・変更・削除・並び替え）
+    if(full && state.connectTagEdit){
+      const eb=div({style:{marginBottom:"8px",padding:"8px",borderRadius:"8px",background:"#0b1220",border:"1px solid #1e293b"}});
+      eb.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"6px"}},"タグの種類を編集（絵文字＋名前を推奨）"));
+      tags.forEach((tag,i)=>{
+        const r=div({style:{display:"flex",gap:"4px",alignItems:"center",marginBottom:"4px"}});
+        const moveCol=div({style:{display:"flex",flexDirection:"column",gap:"2px",flexShrink:0}});
+        const mkMove=(sym,dir)=>{ const can=(dir<0&&i>0)||(dir>0&&i<tags.length-1);
+          const b=btn({style:{width:"22px",height:"15px",lineHeight:"1",padding:0,borderRadius:"4px",border:"1px solid #334155",background:can?"#0f172a":"transparent",color:can?"#94a3b8":"#334155",fontSize:"9px",cursor:can?"pointer":"default"}},sym);
+          if(can)b.addEventListener('click',()=>{ const j=i+dir,t=tags[i];tags[i]=tags[j];tags[j]=t; saveConnectGoal(); render(); });
+          return b; };
+        moveCol.appendChild(mkMove("▲",-1));moveCol.appendChild(mkMove("▼",1));
+        const inp=document.createElement('input');inp.type='text';inp.value=tag;inp.style.cssText="flex:1;min-width:0;padding:6px 8px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#e2e8f0;font-size:12px;font-family:inherit";
+        inp.addEventListener('change',e=>{ const v=e.target.value.trim(); if(v){tags[i]=v;saveConnectGoal();} else { tags.splice(i,1); saveConnectGoal(); render(); } });
+        const del=btn({style:{padding:"6px 8px",background:"transparent",border:"1px solid #7f1d1d",borderRadius:"6px",color:"#f87171",fontSize:"12px",cursor:"pointer",flexShrink:0}},"🗑");
+        del.addEventListener('click',()=>{ tags.splice(i,1); saveConnectGoal(); render(); });
+        r.appendChild(moveCol);r.appendChild(inp);r.appendChild(del); eb.appendChild(r);
+      });
+      const nr=div({style:{display:"flex",gap:"4px",alignItems:"center",marginTop:"6px"}});
+      const ni2=document.createElement('input');ni2.type='text';ni2.placeholder="新しいタグ（例：🎮 一緒に遊んだ）";ni2.value=state.newConnectTag||"";ni2.style.cssText="flex:1;min-width:0;padding:6px 8px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#e2e8f0;font-size:12px;font-family:inherit";
+      ni2.addEventListener('input',e=>{state.newConnectTag=e.target.value;});
+      const add=btn({style:{padding:"6px 12px",background:"#f472b618",border:"1px solid #f472b6",borderRadius:"6px",color:"#f9a8d4",fontSize:"13px",fontWeight:700,cursor:"pointer",flexShrink:0}},"＋");
+      add.addEventListener('click',()=>{ const t=(state.newConnectTag||"").trim(); if(!t)return; tags.push(t); saveConnectGoal(); state.newConnectTag=""; render(); });
+      nr.appendChild(ni2);nr.appendChild(add); eb.appendChild(nr);
+      c.appendChild(eb);
+    }
   }
   if(!full){
     const open=btn({style:{width:"100%",padding:"7px",background:"transparent",border:"1px solid #334155",borderRadius:"7px",color:"#64748b",cursor:"pointer",fontSize:"11px",fontFamily:"inherit"}},"週次ふりかえりを開く →");
