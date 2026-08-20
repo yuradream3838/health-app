@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.99"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.00"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -666,6 +666,7 @@ const state = {
   todoSchedExpanded:{}, // TODOごとの予定バッジ展開状態
   connectPickerOpen:false, // つながり予定の選択リスト展開
   connectHistExpanded:false, // つながり履歴の全件展開
+  nextDrink:null, nextDrinkEdit:false, // 次に飲みに行く予定（計画飲酒）
   lifeVision:null, nightRitual:null, connectGoal:null, // 根本解決の習慣機能
   ctJournal:null, ctPromptIdx:0, ctDraft:"", // 動機づけ面談：チェンジトーク・ジャーナル
   decisBalance:null, miValues:null, changePlan:null, // 動機づけ面談：心の天秤／価値／変化の計画書
@@ -742,6 +743,8 @@ function loadStorage(){
     if(cg){try{const o=JSON.parse(cg); if(o&&typeof o==="object")state.connectGoal=o;}catch{}}
     const ctj=localStorage.getItem(STORAGE_KEY+"_ctjournal");
     if(ctj){try{const a=JSON.parse(ctj); if(Array.isArray(a))state.ctJournal=a;}catch{}}
+    const ndp=localStorage.getItem(STORAGE_KEY+"_nextdrink");
+    if(ndp){try{const o=JSON.parse(ndp); if(o&&typeof o==="object"&&o.date)state.nextDrink=o;}catch{}}
     const dcb=localStorage.getItem(STORAGE_KEY+"_decisbalance");
     if(dcb){try{const o=JSON.parse(dcb); if(o&&typeof o==="object")state.decisBalance=o;}catch{}}
     const mvv=localStorage.getItem(STORAGE_KEY+"_values");
@@ -6064,6 +6067,61 @@ function alcoholKcalRange(vd, days){ let kcal=0; for(let i=0;i<days;i++){ const 
 // ── 純アルコール量(g)の集計＋上限設定 ──
 function pureAlcoholG(vd){ return (getDaily(vd).drinks||[]).reduce((a,dr)=>{ const dt=resolveDT(dr); return a+pureAlcohol(dr.ml, dr.pct!=null?dr.pct:dt.pct); },0); }
 function pureAlcoholRangeG(vd,days){ let g=0; for(let i=0;i<days;i++) g+=pureAlcoholG(addDays(vd,-i)); return g; }
+// ── 次に飲みに行く予定（計画飲酒：次の飲酒日を先に決めて、それまでの目標にする）──
+function getNextDrinkPlan(){ return (state.nextDrink&&typeof state.nextDrink==="object"&&state.nextDrink.date)?state.nextDrink:null; }
+function saveNextDrinkPlan(){ try{ if(getNextDrinkPlan())localStorage.setItem(STORAGE_KEY+"_nextdrink",JSON.stringify(state.nextDrink)); else localStorage.removeItem(STORAGE_KEY+"_nextdrink"); }catch{} }
+function nextDrinkCard(){
+  const p=getNextDrinkPlan();
+  const today=todayStr();
+  const isFuture=p && p.date>=today;
+  const c=div({className:"card",style:{marginBottom:"10px",border:`1px solid ${isFuture?"#f59e0b55":"#33415588"}`,background:isFuture?"#f59e0b0d":"transparent"}});
+  const head=div({style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"6px"}});
+  head.appendChild(div({style:{fontSize:"13px",fontWeight:800,color:"#fbbf24"}},"🍺 次に飲みに行く予定"));
+  if(p && !state.nextDrinkEdit){
+    const ed=btn({style:{padding:"4px 10px",borderRadius:"7px",border:"1px solid #f59e0b55",background:"transparent",color:"#fbbf24",fontSize:"11px",cursor:"pointer",fontFamily:"inherit"}},"✏️ 変更");
+    ed.addEventListener('click',()=>{ state.nextDrinkEdit=true; state.ndDraftDate=p.date; state.ndDraftNote=p.note||""; render(); });
+    head.appendChild(ed);
+  }
+  c.appendChild(head);
+  const showForm = state.nextDrinkEdit || !p;
+  if(!showForm){
+    // 表示（未来 or 過去）
+    const diff=Math.round((parseDS(p.date)-parseDS(today))/86400000);
+    if(p.date>=today){
+      c.appendChild(div({style:{fontSize:"18px",fontWeight:800,color:"#fef3c7",lineHeight:1.2}},[
+        txt(mdLabel(p.date)), span({style:{fontSize:"13px",color:"#fbbf24",marginLeft:"8px",fontWeight:700}}, diff===0?"今日":`あと${diff}日`)
+      ]));
+      if(p.note)c.appendChild(div({style:{fontSize:"12px",color:"#e2e8f0",marginTop:"4px",lineHeight:1.5}},p.note));
+      c.appendChild(div({style:{fontSize:"11px",color:"#94a3b8",marginTop:"7px",lineHeight:1.6}},"その日まで外飲みはお預け。今日踏みとどまれば、この日をもっと楽しめて貯金も増えます。"));
+    } else {
+      c.appendChild(div({style:{fontSize:"13px",color:"#f87171",fontWeight:700,lineHeight:1.5}},`前回の予定日（${mdLabel(p.date)}）は過ぎています。`));
+      c.appendChild(div({style:{fontSize:"11px",color:"#94a3b8",marginTop:"4px",lineHeight:1.6}},"次に飲みに行く日を決め直しましょう。"));
+      const b=btn({style:{width:"100%",marginTop:"8px",padding:"9px",borderRadius:"8px",border:"1px dashed #f59e0b",background:"#f59e0b0d",color:"#fbbf24",fontSize:"12px",fontWeight:600,cursor:"pointer",fontFamily:"inherit"}},"次の予定を決める");
+      b.addEventListener('click',()=>{ state.nextDrinkEdit=true; state.ndDraftDate=""; state.ndDraftNote=p.note||""; render(); });
+      c.appendChild(b);
+    }
+    return c;
+  }
+  // 入力フォーム
+  if(!p) c.appendChild(div({style:{fontSize:"11px",color:"#94a3b8",lineHeight:1.6,marginBottom:"8px"}},"次に飲む日を先に決めておくと、それまでは「その日まで待つ」という目標になり、衝動的な外飲みを防げます。"));
+  const de=document.createElement('input');de.type='date';de.value=state.ndDraftDate||"";de.min=today;
+  de.style.cssText="width:100%;box-sizing:border-box;padding:9px 11px;margin-bottom:8px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:14px;font-family:inherit;color-scheme:dark";
+  de.addEventListener('change',e=>{state.ndDraftDate=e.target.value;});
+  c.appendChild(de);
+  const ne=document.createElement('input');ne.type='text';ne.placeholder="メモ（例：会社の飲み会／◯◯と）";ne.value=state.ndDraftNote||"";
+  ne.style.cssText="width:100%;box-sizing:border-box;padding:8px 11px;margin-bottom:10px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit";
+  ne.addEventListener('input',e=>{state.ndDraftNote=e.target.value;});
+  c.appendChild(ne);
+  const row=div({style:{display:"flex",gap:"8px"}});
+  if(p){ const cancel=btn({className:"btn-ghost",style:{flex:1},onClick:()=>{ state.nextDrinkEdit=false; render(); }},"キャンセル"); row.appendChild(cancel); }
+  const save=btn({style:{flex:2,padding:"10px",borderRadius:"8px",border:"none",background:"linear-gradient(135deg,#f59e0b,#f97316)",color:"#fff",fontSize:"13px",fontWeight:700,cursor:"pointer"}},"✅ 予定を決める");
+  save.addEventListener('click',()=>{ const dt=state.ndDraftDate; if(!dt){showToast("日付を選んでください");return;} state.nextDrink={date:dt,note:(state.ndDraftNote||"").trim()}; saveNextDrinkPlan(); state.nextDrinkEdit=false; showToast(`🍺 次の飲み予定：${mdLabel(dt)}`,"#f59e0b"); render(); });
+  row.appendChild(save);
+  c.appendChild(row);
+  if(p){ const clr=btn({style:{width:"100%",marginTop:"8px",padding:"9px",background:"transparent",border:"1px solid #7f1d1d",borderRadius:"8px",color:"#f87171",fontSize:"12px",cursor:"pointer"}},"🗑 予定を削除");
+    clr.addEventListener('click',()=>{ state.nextDrink=null; saveNextDrinkPlan(); state.nextDrinkEdit=false; render(); }); c.appendChild(clr); }
+  return c;
+}
 // ── 気持ち（外飲みの引き金）の記録と集計 ──
 const URGE_MOODS=[{k:'lonely',e:'😔',l:'寂しい'},{k:'bored',e:'😑',l:'退屈'},{k:'stress',e:'😰',l:'ストレス'},{k:'anxious',e:'😟',l:'不安'},{k:'happy',e:'🎉',l:'楽しい気分'},{k:'other',e:'🤔',l:'その他'}];
 function moodLabel(k){ const m=URGE_MOODS.find(x=>x.k===k); return m?`${m.e} ${m.l}`:""; }
@@ -7578,6 +7636,7 @@ function renderAlcohol(vd,isToday){
     const coc=coolOffCard(); if(coc)wrap.appendChild(coc);
     const utc=urgeTriggerCard(); if(utc)wrap.appendChild(utc); // 🔎 飲みに行きたくなる引き金
   }
+  wrap.appendChild(nextDrinkCard()); // 🍺 次に飲みに行く予定（計画飲酒）
 
   // 🍺 純アルコール上限ゲージ（今日／今週）
   {
@@ -9565,6 +9624,7 @@ function exportData(){
     nightRitual:state.nightRitual,
     connectGoal:state.connectGoal,
     ctJournal:state.ctJournal,
+    nextDrink:state.nextDrink,
     decisBalance:state.decisBalance,
     miValues:state.miValues,
     changePlan:state.changePlan,
@@ -9635,6 +9695,7 @@ function importData(e){
       if(p.nightRitual&&typeof p.nightRitual==="object"){state.nightRitual=p.nightRitual;saveNightRitual();}
       if(p.connectGoal&&typeof p.connectGoal==="object"){state.connectGoal=p.connectGoal;saveConnectGoal();}
       if(Array.isArray(p.ctJournal)){state.ctJournal=p.ctJournal;saveCTJournal();}
+      if(p.nextDrink&&typeof p.nextDrink==="object"){state.nextDrink=p.nextDrink;saveNextDrinkPlan();}
       if(p.decisBalance&&typeof p.decisBalance==="object"){state.decisBalance=p.decisBalance;saveDecisBalance();}
       if(p.miValues&&typeof p.miValues==="object"){state.miValues=p.miValues;saveMIValues();}
       if(p.changePlan&&typeof p.changePlan==="object"){state.changePlan=p.changePlan;saveChangePlan();}
