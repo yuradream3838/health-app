@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.95"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.96"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -8185,50 +8185,50 @@ function renderInvestPanel(vd){
   }
   wrap.appendChild(logCard);
 
-  // ── 🎁 貯金を使う（ご褒美で使った額を残高から引く）──
-  {
-    const spends=getInvestSpends();
-    const spCard=div({className:"card",style:{marginTop:"10px"}});
-    spCard.appendChild(div({style:{fontSize:"11px",color:"#94a3b8",marginBottom:"4px"}},"🎁 貯金を使う"));
-    spCard.appendChild(div({style:{fontSize:"10px",color:"#64748b",lineHeight:1.5,marginBottom:"8px"}},`貯金でご褒美を買ったら記録すると残高から引かれます（現在の貯金 ¥${investBalance().toLocaleString()}）。`));
-    // 入力（内容＋金額）
-    const form=div({style:{display:"flex",gap:"6px",alignItems:"center",marginBottom:spends.length?"10px":"0"}});
-    const li=document.createElement('input');li.type='text';li.placeholder="ご褒美の内容（例：焼肉）";li.value=state.newSpendLabel||"";li.style.cssText="flex:1;min-width:0;padding:7px 9px;background:#0f172a;border:1px solid #334155;border-radius:7px;color:#e2e8f0;font-size:12px;font-family:inherit";
-    li.addEventListener('input',e=>{state.newSpendLabel=e.target.value;});
-    const ai=document.createElement('input');ai.type='number';ai.min="0";ai.placeholder="¥";ai.value=state.newSpendAmount!=null?String(state.newSpendAmount):"";ai.style.cssText="width:80px;flex-shrink:0;padding:7px 9px;background:#0f172a;border:1px solid #334155;border-radius:7px;color:#e2e8f0;font-size:12px;font-family:inherit";
-    ai.addEventListener('input',e=>{state.newSpendAmount=Math.max(0,parseInt(e.target.value)||0);});
-    const useBtn=btn({style:{padding:"7px 12px",background:"#f472b618",border:"1px solid #f472b6",borderRadius:"7px",color:"#f472b6",fontSize:"12px",fontWeight:700,cursor:"pointer",flexShrink:0}},"使う");
-    useBtn.addEventListener('click',()=>{
-      const amt=Math.max(0,state.newSpendAmount||0);
-      if(!amt){showToast("金額を入力してください");return;}
-      addInvestSpend(state.newSpendLabel||"ご褒美", amt);
-      state.newSpendLabel="";state.newSpendAmount=null;
-      showToast(`🎁 −¥${amt.toLocaleString()}（残高 ¥${investBalance().toLocaleString()}）`,"#f472b6");
-      render();
-    });
-    form.appendChild(li);form.appendChild(ai);form.appendChild(useBtn);
-    spCard.appendChild(form);
-    // 使用履歴（新しい順・削除可）
-    if(spends.length){
-      spCard.appendChild(div({style:{fontSize:"10px",color:"#64748b",margin:"4px 0 4px"}},`使用履歴（${spends.length}件）`));
-      spends.slice().reverse().forEach((s)=>{
-        const idx=spends.indexOf(s);
-        const tm=(()=>{try{const d=new Date(s.t);return `${mdLabel(fmtDS(d))} ${hhmm(d.getHours(),d.getMinutes())}`;}catch{return"";}})();
-        const row=div({style:{display:"flex",gap:"6px",alignItems:"center",padding:"6px 0",borderBottom:"1px solid #1e293b"}});
-        row.appendChild(span({style:{fontSize:"10px",color:"#64748b",flexShrink:0,width:"78px"}},tm));
-        row.appendChild(div({style:{flex:1,minWidth:0,fontSize:"13px",color:"#e2e8f0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},s.label||"ご褒美"));
-        row.appendChild(span({style:{fontSize:"12px",color:"#f472b6",fontWeight:700,flexShrink:0}},`−¥${(s.amount||0).toLocaleString()}`));
-        const del=btn({style:{padding:"5px 8px",background:"transparent",border:"1px solid #7f1d1d",borderRadius:"6px",color:"#f87171",fontSize:"11px",cursor:"pointer",flexShrink:0}},"🗑");
-        del.addEventListener('click',(()=>{const i=idx;return()=>{ getInvestSpends().splice(i,1); saveInvestSpends(); render(); };})());
-        row.appendChild(del);
-        spCard.appendChild(row);
-      });
-    }
-    wrap.appendChild(spCard);
-  }
-
+  // 「🎁 貯金を使う」は【達成】サブタブへ移動
   // if-thenプランは【動機づけ面談】タブへ移動
   return wrap;
+}
+// 🎁 貯金を使う（ご褒美で使った額を残高から引く）カード。達成サブタブに設置
+function investSpendCard(){
+  const spends=getInvestSpends();
+  const spCard=div({className:"card",style:{marginTop:"10px"}});
+  spCard.appendChild(div({style:{fontSize:"11px",color:"#94a3b8",marginBottom:"4px"}},"🎁 貯金を使う"));
+  spCard.appendChild(div({style:{fontSize:"10px",color:"#64748b",lineHeight:1.5,marginBottom:"8px"}},`貯金でご褒美を買ったら記録すると残高から引かれます（現在の貯金 ¥${investBalance().toLocaleString()}）。`));
+  // 入力（内容＋金額）
+  const form=div({style:{display:"flex",gap:"6px",alignItems:"center",marginBottom:spends.length?"10px":"0"}});
+  const li=document.createElement('input');li.type='text';li.placeholder="ご褒美の内容（例：焼肉）";li.value=state.newSpendLabel||"";li.style.cssText="flex:1;min-width:0;padding:7px 9px;background:#0f172a;border:1px solid #334155;border-radius:7px;color:#e2e8f0;font-size:12px;font-family:inherit";
+  li.addEventListener('input',e=>{state.newSpendLabel=e.target.value;});
+  const ai=document.createElement('input');ai.type='number';ai.min="0";ai.placeholder="¥";ai.value=state.newSpendAmount!=null?String(state.newSpendAmount):"";ai.style.cssText="width:80px;flex-shrink:0;padding:7px 9px;background:#0f172a;border:1px solid #334155;border-radius:7px;color:#e2e8f0;font-size:12px;font-family:inherit";
+  ai.addEventListener('input',e=>{state.newSpendAmount=Math.max(0,parseInt(e.target.value)||0);});
+  const useBtn=btn({style:{padding:"7px 12px",background:"#f472b618",border:"1px solid #f472b6",borderRadius:"7px",color:"#f472b6",fontSize:"12px",fontWeight:700,cursor:"pointer",flexShrink:0}},"使う");
+  useBtn.addEventListener('click',()=>{
+    const amt=Math.max(0,state.newSpendAmount||0);
+    if(!amt){showToast("金額を入力してください");return;}
+    addInvestSpend(state.newSpendLabel||"ご褒美", amt);
+    state.newSpendLabel="";state.newSpendAmount=null;
+    showToast(`🎁 −¥${amt.toLocaleString()}（残高 ¥${investBalance().toLocaleString()}）`,"#f472b6");
+    render();
+  });
+  form.appendChild(li);form.appendChild(ai);form.appendChild(useBtn);
+  spCard.appendChild(form);
+  // 使用履歴（新しい順・削除可）
+  if(spends.length){
+    spCard.appendChild(div({style:{fontSize:"10px",color:"#64748b",margin:"4px 0 4px"}},`使用履歴（${spends.length}件）`));
+    spends.slice().reverse().forEach((s)=>{
+      const idx=spends.indexOf(s);
+      const tm=(()=>{try{const d=new Date(s.t);return `${mdLabel(fmtDS(d))} ${hhmm(d.getHours(),d.getMinutes())}`;}catch{return"";}})();
+      const row=div({style:{display:"flex",gap:"6px",alignItems:"center",padding:"6px 0",borderBottom:"1px solid #1e293b"}});
+      row.appendChild(span({style:{fontSize:"10px",color:"#64748b",flexShrink:0,width:"78px"}},tm));
+      row.appendChild(div({style:{flex:1,minWidth:0,fontSize:"13px",color:"#e2e8f0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},s.label||"ご褒美"));
+      row.appendChild(span({style:{fontSize:"12px",color:"#f472b6",fontWeight:700,flexShrink:0}},`−¥${(s.amount||0).toLocaleString()}`));
+      const del=btn({style:{padding:"5px 8px",background:"transparent",border:"1px solid #7f1d1d",borderRadius:"6px",color:"#f87171",fontSize:"11px",cursor:"pointer",flexShrink:0}},"🗑");
+      del.addEventListener('click',(()=>{const i=idx;return()=>{ getInvestSpends().splice(i,1); saveInvestSpends(); render(); };})());
+      row.appendChild(del);
+      spCard.appendChild(row);
+    });
+  }
+  return spCard;
 }
 
 function renderAchievement(vd){
@@ -8442,6 +8442,8 @@ function renderAchievement(vd){
     rc.appendChild(form);
     wrap.appendChild(rc);
   }
+  // ── 🎁 貯金を使う（未来投資の貯金からご褒美を購入）──
+  wrap.appendChild(investSpendCard());
   return wrap;
 }
 
