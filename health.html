@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.94"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.95"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -1429,10 +1429,9 @@ function renderWidgetView(vd,ds){
     wrap.appendChild(c);
   }
 
-  // ── 🫂 つながり習慣（今日・今週の進捗）＋ 🌙 夜のルーティン（夕方以降） ──
+  // ── 🫂 つながり習慣（今日・今週の進捗） ──
   if(vd===todayStr()){
     wrap.appendChild(connectHabitCard(vd,false));
-    if(new Date().getHours()>=17 || ritualDoneCountOn(vd)>0) wrap.appendChild(nightRitualCard(vd,false));
   }
 
   // チェック行の共通生成
@@ -8058,10 +8057,9 @@ function renderInvestPanel(vd){
   sc.appendChild(sumRow);
   wrap.appendChild(sc);
 
-  // ── 根本解決の習慣（夜のルーティン／つながり）──
+  // ── 根本解決の習慣（つながり）──
   wrap.appendChild(connectHabitCard(vd,true));
-  wrap.appendChild(nightRitualCard(vd,true));
-  // 「なりたい自分」は廃止／「動機のものさし・チェンジトーク・宣言・if-then」は【動機づけ面談】タブへ
+  // 「飲まない夜のルーティン」「なりたい自分」は廃止／MI系は【動機づけ面談】タブへ
 
   // ── 🔎 外飲みの引き金（気持ちの集計）──
   {
