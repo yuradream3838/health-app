@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.01"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.02"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -667,6 +667,7 @@ const state = {
   connectPickerOpen:false, // つながり予定の選択リスト展開
   connectHistExpanded:false, // つながり履歴の全件展開
   nextDrink:null, nextDrinkEdit:false, // 次に飲みに行く予定（計画飲酒）
+  investHistExpanded:false, // 未来投資履歴の全件展開
   lifeVision:null, nightRitual:null, connectGoal:null, // 根本解決の習慣機能
   ctJournal:null, ctPromptIdx:0, ctDraft:"", // 動機づけ面談：チェンジトーク・ジャーナル
   decisBalance:null, miValues:null, changePlan:null, // 動機づけ面談：心の天秤／価値／変化の計画書
@@ -5943,6 +5944,19 @@ function investTotal(){ return (state.dailies||[]).reduce((a,d)=>a+((d.investmen
 function investAmountOn(vd){ return investListOn(vd).reduce((a,r)=>a+(r.amount||0),0); }
 function investAmountRange(vd, days){ let n=0; for(let i=0;i<days;i++) n+=investAmountOn(addDays(vd,-i)); return n; }
 function investAmountTotal(){ return (state.dailies||[]).reduce((a,d)=>a+((d.investments||[]).reduce((x,r)=>x+(r.amount||0),0)),0); }
+// これまでの未来投資すべて（新しい順）。各要素 {ds, t, label, cat, amount}
+function allInvestLogs(){
+  const out=[];
+  (state.dailies||[]).forEach(d=>{ (d.investments||[]).forEach(r=>{ out.push({ds:d.dateStr, t:r.t||null, label:r.label||"", cat:r.cat||"", amount:r.amount||0}); }); });
+  out.sort((a,b)=>{ const ta=a.t?Date.parse(a.t):(a.ds?Date.parse(a.ds):0), tb=b.t?Date.parse(b.t):(b.ds?Date.parse(b.ds):0); return tb-ta; });
+  return out;
+}
+// 未来投資エントリを削除（日付＋タイムスタンプで特定・最初の一致を1件）
+function removeInvestLog(ds, t){
+  const arr=(getDaily(ds).investments||[]).slice();
+  const i=arr.findIndex(r=>(r.t||null)===t);
+  if(i>=0){ arr.splice(i,1); setDaily(ds,{investments:arr}); }
+}
 // ── 未来投資の「貯金」：累計投資額 − ご褒美で使った額 ──
 function getInvestSpends(){ if(!Array.isArray(state.investSpends))state.investSpends=[]; return state.investSpends; }
 function saveInvestSpends(){ try{localStorage.setItem(STORAGE_KEY+"_investspends",JSON.stringify(state.investSpends||[]));}catch{} }
@@ -8300,6 +8314,41 @@ function renderInvestPanel(vd){
     });
   }
   wrap.appendChild(logCard);
+
+  // ── 🗂 これまでの未来投資（全期間の履歴・新しい順）──
+  { const logs=allInvestLogs();
+    const hc=div({className:"card",style:{marginTop:"10px"}});
+    hc.appendChild(div({style:{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:"6px"}},[
+      div({style:{fontSize:"11px",color:"#94a3b8",fontWeight:600}},"🗂 これまでの未来投資"),
+      div({style:{fontSize:"11px",fontWeight:700,color:"#22c55e"}},`計 ${logs.length} 回・¥${investAmountTotal().toLocaleString()}`)
+    ]));
+    if(!logs.length){
+      hc.appendChild(div({style:{fontSize:"12px",color:"#64748b",padding:"4px 0"}},"まだ記録がありません。上のチップから記録できます。"));
+    } else {
+      const exp=!!state.investHistExpanded;
+      const shown=exp?logs.slice(0,300):logs.slice(0,8);
+      shown.forEach(l=>{
+        const tm=(()=>{ try{ if(l.t){ const d=new Date(l.t); return `${mdLabel(fmtDS(d))} ${hhmm(d.getHours(),d.getMinutes())}`; } }catch{} return l.ds?mdLabel(l.ds):""; })();
+        const row=div({style:{display:"flex",gap:"6px",alignItems:"center",padding:"6px 0",borderBottom:"1px solid #1e293b"}});
+        row.appendChild(span({style:{fontSize:"10px",color:"#64748b",flexShrink:0,width:"78px"}},tm));
+        row.appendChild(div({style:{flex:1,minWidth:0}},[
+          div({style:{fontSize:"13px",color:"#e2e8f0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},l.label||"(無題)"),
+          l.cat?div({style:{fontSize:"10px",color:"#64748b"}},l.cat):null
+        ]));
+        row.appendChild(span({style:{fontSize:"12px",color:"#22c55e",fontWeight:700,flexShrink:0}},l.amount>0?`¥${l.amount.toLocaleString()}`:"—"));
+        const del=btn({style:{padding:"5px 8px",background:"transparent",border:"1px solid #7f1d1d",borderRadius:"6px",color:"#f87171",fontSize:"11px",cursor:"pointer",flexShrink:0}},"🗑");
+        del.addEventListener('click',(()=>{const ds=l.ds,t=l.t;return()=>{ removeInvestLog(ds,t); render(); };})());
+        row.appendChild(del);
+        hc.appendChild(row);
+      });
+      if(logs.length>8){
+        const tg=btn({style:{width:"100%",marginTop:"8px",padding:"7px",background:"transparent",border:"1px solid #334155",borderRadius:"7px",color:"#64748b",cursor:"pointer",fontSize:"11px",fontFamily:"inherit"}},exp?"🔼 閉じる":`🔽 すべて見る（他${logs.length-8}件）`);
+        tg.addEventListener('click',()=>{ state.investHistExpanded=!state.investHistExpanded; render(); });
+        hc.appendChild(tg);
+      }
+    }
+    wrap.appendChild(hc);
+  }
 
   // 「🎁 貯金を使う」は【達成】サブタブへ移動
   // if-thenプランは【動機づけ面談】タブへ移動
