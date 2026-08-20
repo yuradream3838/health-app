@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.04"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.05"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -668,6 +668,7 @@ const state = {
   connectHistExpanded:false, // つながり履歴の全件展開
   connectNote:"", connectEdit:null, ceLabel:null, ceNote:null, // つながり記録の内容入力・編集
   connectTagEdit:false, newConnectTag:"", // つながりタグの種類編集
+  widgetSections:null, widgetEditMode:false, // ヴィジェット表示項目のカスタマイズ
   nextDrink:null, nextDrinkEdit:false, // 次に飲みに行く予定（計画飲酒）
   investHistExpanded:false, // 未来投資履歴の全件展開
   lifeVision:null, nightRitual:null, connectGoal:null, // 根本解決の習慣機能
@@ -748,6 +749,8 @@ function loadStorage(){
     if(ctj){try{const a=JSON.parse(ctj); if(Array.isArray(a))state.ctJournal=a;}catch{}}
     const ndp=localStorage.getItem(STORAGE_KEY+"_nextdrink");
     if(ndp){try{const o=JSON.parse(ndp); if(o&&typeof o==="object"&&o.date)state.nextDrink=o;}catch{}}
+    const wsec=localStorage.getItem(STORAGE_KEY+"_widgetsections");
+    if(wsec){try{const o=JSON.parse(wsec); if(o&&typeof o==="object")state.widgetSections=o;}catch{}}
     const dcb=localStorage.getItem(STORAGE_KEY+"_decisbalance");
     if(dcb){try{const o=JSON.parse(dcb); if(o&&typeof o==="object")state.decisBalance=o;}catch{}}
     const mvv=localStorage.getItem(STORAGE_KEY+"_values");
@@ -1317,6 +1320,22 @@ function nextDate(){
   render();
 }
 
+// ── ウィジェットの表示項目（ユーザーが表示/非表示を選べる）──
+const WIDGET_SECTIONS=[
+  {k:'decl',      l:'✍️ わたしの宣言'},
+  {k:'sched',     l:'📅 今日の予定'},
+  {k:'quick',     l:'⚡ クイック記録'},
+  {k:'ifthen',    l:'🔀 今のプラン（if-then）'},
+  {k:'invest',    l:'💰 未来投資・踏みとどまる'},
+  {k:'nextdrink', l:'🍺 次に飲みに行く予定'},
+  {k:'connect',   l:'🫂 つながり習慣'},
+  {k:'rewards',   l:'🎁 ご褒美'},
+  {k:'goals',     l:'☀️ 今日の目標'},
+  {k:'routines',  l:'🔁 定期ルーティン'},
+];
+function getWidgetSections(){ if(!state.widgetSections||typeof state.widgetSections!=="object")state.widgetSections={}; return state.widgetSections; }
+function wSecOn(k){ return getWidgetSections()[k]!==false; } // 既定は表示
+function saveWidgetSections(){ try{localStorage.setItem(STORAGE_KEY+"_widgetsections",JSON.stringify(getWidgetSections()));}catch{} }
 // ── ウィジェット（今日の予定＋ルーティンをまとめて素早く確認・チェック）──
 // URLハッシュ #widget で直接起動でき、ホーム画面ショートカットから開ける。
 function renderWidgetView(vd,ds){
@@ -1333,13 +1352,30 @@ function renderWidgetView(vd,ds){
     ]),
     div({style:{display:"flex",alignItems:"center",gap:"6px",flexWrap:"wrap",justifyContent:"flex-end"}},[
       sh?div({style:{fontSize:"12px",fontWeight:700,color:sh.color,background:sh.color+"22",border:`1px solid ${sh.color}55`,borderRadius:"10px",padding:"4px 12px"}},`💼 ${sh.label}`):null,
-      soberBadge()
+      soberBadge(),
+      (()=>{ const b=btn({style:{fontSize:"13px",padding:"4px 9px",borderRadius:"9px",border:"1px solid #334155",background:state.widgetEditMode?"#334155":"transparent",color:"#94a3b8",cursor:"pointer",fontFamily:"inherit"},title:"表示する項目を選ぶ"},state.widgetEditMode?"✓ 完了":"⚙️"); b.addEventListener('click',()=>{state.widgetEditMode=!state.widgetEditMode;render();}); return b; })()
     ])
   ]));
   wrap.appendChild(head);
+  // 表示項目のカスタマイズ
+  if(state.widgetEditMode){
+    const sc=div({className:"card",style:{padding:"12px 14px",marginBottom:"10px",border:"1px solid #38bdf844",background:"#38bdf80d"}});
+    sc.appendChild(div({style:{fontSize:"12px",fontWeight:700,color:"#7dd3fc",marginBottom:"3px"}},"⚙️ ヴィジェットに表示する項目"));
+    sc.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"8px",lineHeight:1.5}},"チェックを外すと、その項目は今日ヴィジェットに表示されなくなります（データは消えません）。"));
+    WIDGET_SECTIONS.forEach(s=>{
+      const on=wSecOn(s.k);
+      const row=div({style:{display:"flex",alignItems:"center",gap:"10px",padding:"7px 0",borderBottom:"1px solid #1e3a5f55",cursor:"pointer"}});
+      const cb=div({style:{width:"22px",height:"22px",borderRadius:"6px",flexShrink:0,border:`2px solid ${on?"#22c55e":"#334155"}`,background:on?"#22c55e":"transparent",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"13px",color:"#fff"}},on?"✓":"");
+      row.appendChild(cb);
+      row.appendChild(div({style:{flex:1,fontSize:"13px",color:on?"#e2e8f0":"#64748b"}},s.l));
+      row.addEventListener('click',(()=>{const k=s.k;return()=>{ getWidgetSections()[k]=!wSecOn(k); saveWidgetSections(); render(); };})());
+      sc.appendChild(row);
+    });
+    wrap.appendChild(sc);
+  }
   { const coc=coolOffCard(); if(coc)wrap.appendChild(coc); }
   { const smc=soberMorningCard(); if(smc)wrap.appendChild(smc); }
-  if(vd===todayStr()) wrap.appendChild(declarationCard()); // 動機づけ面談「わたしの宣言」（常に見える動機づけ）
+  if(vd===todayStr() && wSecOn('decl')) wrap.appendChild(declarationCard()); // 動機づけ面談「わたしの宣言」
 
   // ── 今日の予定 ──
   const schedCard=div({className:"card",style:{padding:"12px 14px",marginBottom:"10px"}});
@@ -1375,10 +1411,10 @@ function renderWidgetView(vd,ds){
   const openSched=btn({style:{width:"100%",marginTop:"8px",padding:"7px",background:"transparent",border:"1px solid #334155",borderRadius:"7px",color:"#64748b",cursor:"pointer",fontSize:"11px"}},"予定タブを開く →");
   openSched.addEventListener('click',()=>{ exitWidget(); state.tab="予定"; state.scheduleSubTab="日"; render(); });
   schedCard.appendChild(openSched);
-  wrap.appendChild(schedCard);
+  if(wSecOn('sched')) wrap.appendChild(schedCard);
 
   // ── クイック記録（体調・アルコール・食べたもの・射精）──
-  {
+  if(wSecOn('quick')){
     const d=getDaily(vd);
     const curH=new Date().getHours();
     const nowScore=(getLog(vd,curH)||{}).score;
@@ -1395,7 +1431,7 @@ function renderWidgetView(vd,ds){
   }
 
   // ── 🔀 if-thenプラン（今の状況に該当するものだけ強調表示）──
-  if(vd===todayStr()){
+  if(vd===todayStr() && wSecOn('ifthen')){
     const active=getIfThenPlans().filter(ifThenActiveNow);
     if(active.length){
       const c=div({className:"card",style:{padding:"12px 14px",marginBottom:"10px",border:"1px solid #f59e0b66",background:"#f59e0b12"}});
@@ -1412,7 +1448,7 @@ function renderWidgetView(vd,ds){
   }
 
   // ── 💰 未来投資（回数＋節約額・チップでその場記録）──
-  {
+  if(wSecOn('invest')){
     const c=div({className:"card",style:{padding:"12px 14px",marginBottom:"10px"}});
     c.appendChild(div({style:{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:"8px"}},[
       div({style:{fontSize:"13px",fontWeight:700,color:"#22c55e"}},`💰 未来投資 今日${investCountOn(vd)}回`),
@@ -1435,10 +1471,10 @@ function renderWidgetView(vd,ds){
     c.appendChild(openInv);
     wrap.appendChild(c);
   }
-  wrap.appendChild(nextDrinkCard()); // 🍺 次に飲みに行く予定（踏みとどまるの下）
+  if(wSecOn('nextdrink')) wrap.appendChild(nextDrinkCard()); // 🍺 次に飲みに行く予定（踏みとどまるの下）
 
   // ── 🫂 つながり習慣（今日・今週の進捗） ──
-  if(vd===todayStr()){
+  if(vd===todayStr() && wSecOn('connect')){
     wrap.appendChild(connectHabitCard(vd,false));
   }
 
@@ -1456,7 +1492,7 @@ function renderWidgetView(vd,ds){
   };
 
   // ── 🎁 ご褒美（連続日数・定期ルーティン・目標でアンロック・ヴィジェットでは閲覧のみ）──
-  if((state.rewards||[]).length){
+  if(wSecOn('rewards') && (state.rewards||[]).length){
     const streak=currentOverallStreak().streak;
     const c=div({className:"card",style:{padding:"12px 14px",marginBottom:"10px"}});
     c.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#f472b6",marginBottom:"6px"}},`🎁 ご褒美（連続${streak}日）`));
@@ -1475,7 +1511,7 @@ function renderWidgetView(vd,ds){
   }
 
   // ── 今日の目標（目標ツリーで「日次」を設定した目標）──
-  {
+  if(wSecOn('goals')){
     const cur=gtCollectDaily(vd);
     const curIds=new Set(cur.map(n=>n.id));
     // 前日以前で未完了の単日目標も繰り越して表示（範囲目標は毎日出るため除外）
@@ -1517,7 +1553,7 @@ function renderWidgetView(vd,ds){
   // 繰り越し：過去に該当したが未実施のもの（予定タブと同じ判定）
   const carryCustom=_futW?[]:(state.customTodos||[]).filter(ct=>!dueIdsW.has(ct.uid)).map(ct=>({ct,occ:customTodoOccurrence(ct,vd)})).filter(x=>x.occ&&x.occ.overdue);
   const carryReal=carryCustom.filter(x=>!x.occ.snToday); // 繰越件数は開始翌日(当日扱い)を除く
-  if(dueRemain.length || carryCustom.length){
+  if(wSecOn('routines') && (dueRemain.length || carryCustom.length)){
     const c=div({className:"card",style:{padding:"12px 14px",marginBottom:"10px"}});
     c.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#a78bfa",marginBottom:"6px"}},`🔁 定期ルーティン 残り${dueRemain.length}件${carryReal.length?`　+繰越${carryReal.length}`:""}`));
     // 繰り越し／開始翌日（当日やる分）を上に
