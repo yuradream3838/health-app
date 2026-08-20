@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.02"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.03"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -666,6 +666,7 @@ const state = {
   todoSchedExpanded:{}, // TODOごとの予定バッジ展開状態
   connectPickerOpen:false, // つながり予定の選択リスト展開
   connectHistExpanded:false, // つながり履歴の全件展開
+  connectNote:"", connectEdit:null, ceLabel:null, ceNote:null, // つながり記録の内容入力・編集
   nextDrink:null, nextDrinkEdit:false, // 次に飲みに行く予定（計画飲酒）
   investHistExpanded:false, // 未来投資履歴の全件展開
   lifeVision:null, nightRitual:null, connectGoal:null, // 根本解決の習慣機能
@@ -5936,7 +5937,9 @@ const INVEST_ACTIONS_DEFAULT=[
 ];
 function getInvestActions(){ if(!Array.isArray(state.investActions)||!state.investActions.length) state.investActions=INVEST_ACTIONS_DEFAULT.map(a=>({...a})); return state.investActions; }
 function saveInvestActions(){ try{localStorage.setItem(STORAGE_KEY+"_investactions",JSON.stringify(state.investActions||[]));}catch{} }
-function logInvest(vd, act){ const d=getDaily(vd); const investments=[...(d.investments||[]), {t:new Date().toISOString(), label:(act&&act.label)||"", cat:(act&&act.cat)||"", amount:Math.max(0,(act&&act.amount)||0)}]; setDaily(vd,{investments}); }
+function logInvest(vd, act){ const d=getDaily(vd); const rec={t:new Date().toISOString(), label:(act&&act.label)||"", cat:(act&&act.cat)||"", amount:Math.max(0,(act&&act.amount)||0)}; const note=act&&act.note&&String(act.note).trim(); if(note)rec.note=note; const investments=[...(d.investments||[]), rec]; setDaily(vd,{investments}); }
+// 未来投資/つながりエントリの内容を更新（日付＋タイムスタンプで特定）
+function updateInvestLog(ds, t, upd){ const arr=(getDaily(ds).investments||[]).map(r=>((r.t||null)===t)?{...r,...upd}:r); setDaily(ds,{investments:arr}); }
 function investListOn(vd){ return ((getDaily(vd).investments)||[]); }
 function investCountOn(vd){ return investListOn(vd).length; }
 function investCountRange(vd, days){ let n=0; for(let i=0;i<days;i++) n+=investCountOn(addDays(vd,-i)); return n; }
@@ -6259,7 +6262,7 @@ function connectCountRange(vd,days){ let n=0; for(let i=0;i<days;i++)n+=connectC
 // これまで記録した全つながり（新しい順）。各要素 {ds, t, label}
 function allConnectLogs(){
   const out=[];
-  (state.dailies||[]).forEach(d=>{ (d.investments||[]).forEach(r=>{ if(isConnectInvest(r)) out.push({ds:d.dateStr, t:r.t||null, label:r.label||"つながり"}); }); });
+  (state.dailies||[]).forEach(d=>{ (d.investments||[]).forEach(r=>{ if(isConnectInvest(r)) out.push({ds:d.dateStr, t:r.t||null, label:r.label||"つながり", note:r.note||""}); }); });
   out.sort((a,b)=>{ const ta=a.t?Date.parse(a.t):(a.ds?Date.parse(a.ds):0), tb=b.t?Date.parse(b.t):(b.ds?Date.parse(b.ds):0); return tb-ta; });
   return out;
 }
@@ -6708,12 +6711,17 @@ function connectHabitCard(vd, full){
   c.appendChild(div({style:{height:"8px",background:"#0f172a",borderRadius:"4px",overflow:"hidden",marginBottom:"10px"}},[
     div({style:{height:"100%",width:`${Math.min(100,Math.round(wk/Math.max(1,target)*100))}%`,background:done?"#22c55e":"linear-gradient(90deg,#f472b6,#a78bfa)"}})
   ]));
-  // つながる（タップで記録）
+  // つながる（内容を書いてタップで記録）
   c.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"5px"}},"つながれたら記録（少しの連絡でもOK）"));
-  { const row=div({style:{display:"flex",flexWrap:"wrap",gap:"6px",marginBottom:"8px"}});
+  { // 内容（誰と・何を）※任意
+    const ni=document.createElement('input');ni.type='text';ni.placeholder="内容（例：◯◯と電話／母にLINE）※任意";ni.value=state.connectNote||"";
+    ni.style.cssText="width:100%;box-sizing:border-box;padding:8px 10px;margin-bottom:7px;background:#0b1220;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:12px;font-family:inherit";
+    ni.addEventListener('input',e=>{state.connectNote=e.target.value;});
+    c.appendChild(ni);
+    const row=div({style:{display:"flex",flexWrap:"wrap",gap:"6px",marginBottom:"8px"}});
     [["📞 連絡した"],["💬 話した"],["🍵 会った"],["📝 書き出した"]].forEach(([lbl])=>{
       const b=btn({style:{padding:"7px 10px",borderRadius:"14px",border:"1px solid #f472b655",background:"#f472b614",color:"#f9a8d4",fontSize:"12px",cursor:"pointer",fontFamily:"inherit"}},lbl);
-      b.addEventListener('click',()=>{ logInvest(vd,{label:lbl.replace(/^[^ ]+ /,""),cat:"🫂 つながり",amount:0}); showToast(`🫂 ${lbl}`); render(); });
+      b.addEventListener('click',()=>{ logInvest(vd,{label:lbl.replace(/^[^ ]+ /,""),cat:"🫂 つながり",amount:0,note:state.connectNote||""}); state.connectNote=""; showToast(`🫂 ${lbl}`); render(); });
       row.appendChild(b);
     });
     c.appendChild(row);
@@ -6827,10 +6835,37 @@ function connectHabitCard(vd, full){
       const shown=exp?logs.slice(0,200):logs.slice(0,5);
       shown.forEach(l=>{
         const tm=(()=>{ try{ if(l.t){ const d=new Date(l.t); return `${mdLabel(fmtDS(d))} ${hhmm(d.getHours(),d.getMinutes())}`; } }catch{} return l.ds?mdLabel(l.ds):""; })();
+        const editing=state.connectEdit && state.connectEdit.ds===l.ds && state.connectEdit.t===l.t;
+        if(editing){
+          const box=div({style:{padding:"7px 0",borderBottom:"1px solid #1e293b"}});
+          const li=document.createElement('input');li.type='text';li.value=state.ceLabel!=null?state.ceLabel:(l.label||"");li.placeholder="種類（例：連絡した）";
+          li.style.cssText="width:100%;box-sizing:border-box;padding:6px 8px;margin-bottom:5px;background:#0b1220;border:1px solid #334155;border-radius:6px;color:#e2e8f0;font-size:12px;font-family:inherit";
+          li.addEventListener('input',e=>{state.ceLabel=e.target.value;});
+          const ne=document.createElement('input');ne.type='text';ne.value=state.ceNote!=null?state.ceNote:(l.note||"");ne.placeholder="内容（誰と・何を）※任意";
+          ne.style.cssText="width:100%;box-sizing:border-box;padding:6px 8px;margin-bottom:6px;background:#0b1220;border:1px solid #334155;border-radius:6px;color:#e2e8f0;font-size:12px;font-family:inherit";
+          ne.addEventListener('input',e=>{state.ceNote=e.target.value;});
+          const btnRow=div({style:{display:"flex",gap:"6px"}});
+          const ok=btn({style:{flex:1,padding:"7px",background:"#22c55e18",border:"1px solid #22c55e",borderRadius:"6px",color:"#22c55e",fontSize:"12px",fontWeight:700,cursor:"pointer"}},"✓ 保存");
+          ok.addEventListener('click',(()=>{const ds=l.ds,t=l.t;return()=>{ const lb=(state.ceLabel!=null?state.ceLabel:l.label||"").trim()||"つながり"; const nt=(state.ceNote!=null?state.ceNote:l.note||"").trim(); updateInvestLog(ds,t,{label:lb,note:nt}); state.connectEdit=null;state.ceLabel=null;state.ceNote=null; render(); };})());
+          const cancel=btn({style:{padding:"7px 10px",background:"transparent",border:"1px solid #334155",borderRadius:"6px",color:"#64748b",fontSize:"12px",cursor:"pointer"}},"取消");
+          cancel.addEventListener('click',()=>{ state.connectEdit=null;state.ceLabel=null;state.ceNote=null; render(); });
+          btnRow.appendChild(ok);btnRow.appendChild(cancel);
+          box.appendChild(li);box.appendChild(ne);box.appendChild(btnRow);
+          hc.appendChild(box);
+          return;
+        }
         const row=div({style:{display:"flex",gap:"8px",alignItems:"center",padding:"5px 0",borderBottom:"1px solid #1e293b"}});
         row.appendChild(span({style:{fontSize:"13px",flexShrink:0}},"🫂"));
-        row.appendChild(div({style:{flex:1,minWidth:0,fontSize:"13px",color:"#e2e8f0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},l.label||"つながり"));
+        row.appendChild(div({style:{flex:1,minWidth:0}},[
+          div({style:{fontSize:"13px",color:"#e2e8f0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},l.label||"つながり"),
+          l.note?div({style:{fontSize:"11px",color:"#94a3b8",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},l.note):null
+        ]));
         row.appendChild(span({style:{fontSize:"10px",color:"#64748b",flexShrink:0}},tm));
+        const ed=btn({style:{padding:"5px 7px",background:"transparent",border:"1px solid #334155",borderRadius:"6px",color:"#94a3b8",fontSize:"11px",cursor:"pointer",flexShrink:0}},"✏️");
+        ed.addEventListener('click',(()=>{const ds=l.ds,t=l.t;return()=>{ state.connectEdit={ds,t}; state.ceLabel=l.label||""; state.ceNote=l.note||""; render(); };})());
+        const del=btn({style:{padding:"5px 7px",background:"transparent",border:"1px solid #7f1d1d",borderRadius:"6px",color:"#f87171",fontSize:"11px",cursor:"pointer",flexShrink:0}},"🗑");
+        del.addEventListener('click',(()=>{const ds=l.ds,t=l.t;return()=>{ removeInvestLog(ds,t); render(); };})());
+        row.appendChild(ed);row.appendChild(del);
         hc.appendChild(row);
       });
       if(logs.length>5){
