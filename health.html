@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "12.90"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "12.91"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -639,6 +639,7 @@ const state = {
   newMedName:"", newMedH:0, newMedM:0, editMedUid:null,
   routineActEdit:null, raTitle:"", raNote:"", // ルーティン実績のその日だけ編集
   todoSchedExpanded:{}, // TODOごとの予定バッジ展開状態
+  connectPickerOpen:false, // つながり予定の選択リスト展開
   lifeVision:null, nightRitual:null, connectGoal:null, // 根本解決の習慣機能
   ctJournal:null, ctPromptIdx:0, ctDraft:"", // 動機づけ面談：チェンジトーク・ジャーナル
   decisBalance:null, miValues:null, changePlan:null, // 動機づけ面談：心の天秤／価値／変化の計画書
@@ -6045,6 +6046,17 @@ function getConnectGoal(){
 }
 function saveConnectGoal(){ try{localStorage.setItem(STORAGE_KEY+"_connectgoal",JSON.stringify(getConnectGoal()));}catch{} }
 function isConnectInvest(r){ return !!(r&&typeof r.cat==="string"&&r.cat.indexOf("つながり")>=0); }
+// これからの予定（今日以降days日分）を一覧化。つながり予定の選択候補に使う
+function upcomingEvents(days){
+  const out=[]; const today=todayStr();
+  for(let i=0;i<days;i++){ const ds=addDays(today,i);
+    getEventsForDate(ds).forEach(e=>{ out.push({ds, uid:e.uid, title:e.title||"(無題)", startH:e.startH, startM:e.startM, allDay:!!e.allDay, isRepeat:!!e.isRepeat}); });
+  }
+  return out;
+}
+// 保存済みつながり予定の参照 {ds,uid} から実際の予定を解決（削除済みならnull）。旧形式(text)はそのまま
+function resolveConnectPlan(p){ if(!p||p.uid==null) return null; const ev=getEventsForDate(p.ds).find(e=>String(e.uid)===String(p.uid)); return ev||null; }
+function connectPlanLabel(ds,ev){ return `${mdLabel(ds)}${ev.allDay?" 終日":" "+hhmm(ev.startH,ev.startM)}　${ev.title||"(無題)"}`; }
 function connectCountOn(vd){ return investListOn(vd).filter(isConnectInvest).length; }
 function connectCountRange(vd,days){ let n=0; for(let i=0;i<days;i++)n+=connectCountOn(addDays(vd,-i)); return n; }
 function mondayOfDS(ds){ const x=parseDS(ds); const day=x.getDay(); const diff=day===0?-6:1-day; x.setDate(x.getDate()+diff); return fmtDS(x); }
@@ -6501,25 +6513,63 @@ function connectHabitCard(vd, full){
   });
   setRow.appendChild(span({style:{fontSize:"11px",color:"#64748b"}},"回"));
   c.appendChild(setRow);
-  // 来週つながる予定
+  // これからつながる予定（既存の予定から選ぶ）
   c.appendChild(div({style:{fontSize:"11px",color:"#94a3b8",fontWeight:600,marginBottom:"5px",paddingTop:"8px",borderTop:"1px solid #1e293b"}},"📅 これからつながる予定"));
-  c.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"6px",lineHeight:1.5}},"「誰と・いつ・何をする」を先に決めておくと、寂しさを外飲みでなく約束で埋められます。"));
-  g.plans.forEach((p,i)=>{
+  c.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"6px",lineHeight:1.5}},"予定タブに入れた「人と会う約束」を選んでおくと、寂しさを外飲みでなく約束で埋められます。"));
+  // 過ぎた日付の参照は自動で片付ける（旧形式のテキストは残す）
+  { const before=g.plans.length; g.plans=g.plans.filter(p=>p.uid==null||p.ds>=todayStr()); if(g.plans.length!==before)saveConnectGoal(); }
+  // 選択済みの表示
+  const selected=g.plans.filter(p=>p.uid!=null).map(p=>({p,ev:resolveConnectPlan(p)})).filter(x=>x.ev)
+    .sort((a,b)=>a.p.ds<b.p.ds?-1:a.p.ds>b.p.ds?1:((a.ev.startH||0)*60+(a.ev.startM||0))-((b.ev.startH||0)*60+(b.ev.startM||0)));
+  const legacy=g.plans.filter(p=>p.uid==null); // 旧・自由入力
+  if(!selected.length && !legacy.length){
+    c.appendChild(div({style:{fontSize:"11px",color:"#475569",padding:"4px 0 8px"}},"まだありません。下のボタンから予定を選べます。"));
+  }
+  selected.forEach(({p,ev})=>{
     const row=div({style:{display:"flex",gap:"6px",alignItems:"center",marginBottom:"5px"}});
     row.appendChild(span({style:{fontSize:"13px",flexShrink:0}},"🗓"));
-    row.appendChild(div({style:{flex:1,minWidth:0,fontSize:"13px",color:"#e2e8f0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},p.text||""));
-    const cal=btn({style:{padding:"5px 8px",background:"#0ea5e918",border:"1px solid #0ea5e9",borderRadius:"6px",color:"#38bdf8",fontSize:"11px",cursor:"pointer",flexShrink:0}},"📅予定へ");
-    cal.addEventListener('click',(()=>{const tx=p.text;return()=>{ state.modal=null; openAddEvent(todayStr()); state.newEvTitle=tx||"人と会う"; render(); };})());
+    row.appendChild(div({style:{flex:1,minWidth:0,fontSize:"12px",color:"#e2e8f0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},connectPlanLabel(p.ds,ev)));
+    const cal=btn({style:{padding:"5px 8px",background:"#0ea5e918",border:"1px solid #0ea5e9",borderRadius:"6px",color:"#38bdf8",fontSize:"11px",cursor:"pointer",flexShrink:0}},"📅開く");
+    cal.addEventListener('click',(()=>{const dsk=p.ds;return()=>{ exitWidget&&exitWidget(); state.modal=null; state.tab="予定"; state.scheduleSubTab="日"; state.viewDate=dsk; render(); };})());
     const del=btn({style:{padding:"5px 8px",background:"transparent",border:"1px solid #7f1d1d",borderRadius:"6px",color:"#f87171",fontSize:"11px",cursor:"pointer",flexShrink:0}},"🗑");
-    del.addEventListener('click',()=>{ getConnectGoal().plans.splice(i,1); saveConnectGoal(); render(); });
+    del.addEventListener('click',(()=>{const ref=p;return()=>{ getConnectGoal().plans=getConnectGoal().plans.filter(x=>x!==ref); saveConnectGoal(); render(); };})());
     row.appendChild(cal);row.appendChild(del); c.appendChild(row);
   });
-  { const nr=div({style:{display:"flex",gap:"6px",alignItems:"center",marginTop:"4px",marginBottom:"6px"}});
-    const ni=document.createElement('input');ni.type='text';ni.placeholder="例：日曜に◯◯とランチ";ni.value=state.newConnectPlan||"";ni.style.cssText="flex:1;min-width:0;padding:7px 9px;background:#0b1220;border:1px solid #334155;border-radius:7px;color:#e2e8f0;font-size:12px;font-family:inherit";
-    ni.addEventListener('input',e=>{state.newConnectPlan=e.target.value;});
-    const add=btn({style:{padding:"6px 12px",background:"#f472b618",border:"1px solid #f472b6",borderRadius:"7px",color:"#f9a8d4",fontSize:"13px",fontWeight:700,cursor:"pointer",flexShrink:0}},"＋");
-    add.addEventListener('click',()=>{ const t=(state.newConnectPlan||"").trim(); if(!t)return; getConnectGoal().plans.push({id:Date.now(),text:t}); saveConnectGoal(); state.newConnectPlan=""; render(); });
-    nr.appendChild(ni);nr.appendChild(add); c.appendChild(nr);
+  legacy.forEach((p)=>{
+    const row=div({style:{display:"flex",gap:"6px",alignItems:"center",marginBottom:"5px"}});
+    row.appendChild(span({style:{fontSize:"13px",flexShrink:0}},"📝"));
+    row.appendChild(div({style:{flex:1,minWidth:0,fontSize:"12px",color:"#94a3b8",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},p.text||""));
+    const del=btn({style:{padding:"5px 8px",background:"transparent",border:"1px solid #7f1d1d",borderRadius:"6px",color:"#f87171",fontSize:"11px",cursor:"pointer",flexShrink:0}},"🗑");
+    del.addEventListener('click',(()=>{const ref=p;return()=>{ getConnectGoal().plans=getConnectGoal().plans.filter(x=>x!==ref); saveConnectGoal(); render(); };})());
+    row.appendChild(del); c.appendChild(row);
+  });
+  // 予定から選ぶ（トグルで候補一覧を表示）
+  { const selKeys=new Set(g.plans.filter(p=>p.uid!=null).map(p=>p.ds+"|"+p.uid));
+    const pickBtn=btn({style:{width:"100%",marginTop:"4px",padding:"8px",borderRadius:"8px",border:"1px dashed #f472b6",background:"#f472b60d",color:"#f9a8d4",fontSize:"12px",fontWeight:600,cursor:"pointer",fontFamily:"inherit"}},state.connectPickerOpen?"✕ 閉じる":"＋ 予定から選ぶ");
+    pickBtn.addEventListener('click',()=>{ state.connectPickerOpen=!state.connectPickerOpen; render(); });
+    c.appendChild(pickBtn);
+    if(state.connectPickerOpen){
+      const box=div({style:{marginTop:"6px",padding:"8px",borderRadius:"8px",background:"#0b1220",border:"1px solid #1e293b"}});
+      const cand=upcomingEvents(30).filter(e=>!selKeys.has(e.ds+"|"+e.uid));
+      if(!cand.length){
+        box.appendChild(div({style:{fontSize:"11px",color:"#64748b",padding:"4px 2px",lineHeight:1.6}},"これから30日の予定がありません。まず予定タブで「人と会う」予定を作りましょう。"));
+      } else {
+        box.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"6px"}},"タップで「つながる予定」に追加（これから30日）"));
+        const listWrap=div({style:{maxHeight:"210px",overflowY:"auto"}});
+        cand.slice(0,60).forEach(e=>{
+          const b=btn({style:{display:"block",width:"100%",textAlign:"left",padding:"7px 9px",marginBottom:"4px",borderRadius:"7px",border:"1px solid #334155",background:"#0f172a",color:"#e2e8f0",fontSize:"12px",cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},
+            `${e.isRepeat?"🔁 ":""}${connectPlanLabel(e.ds,e)}`);
+          b.addEventListener('click',(()=>{const it=e;return()=>{ getConnectGoal().plans.push({id:Date.now(),ds:it.ds,uid:it.uid}); saveConnectGoal(); showToast("🗓 つながる予定に追加","#f472b6"); render(); };})());
+          listWrap.appendChild(b);
+        });
+        box.appendChild(listWrap);
+      }
+      c.appendChild(box);
+    }
+    // 新しい予定を作る
+    const mk=btn({style:{width:"100%",marginTop:"6px",padding:"8px",borderRadius:"8px",border:"1px solid #0ea5e9",background:"#0ea5e918",color:"#38bdf8",fontSize:"12px",fontWeight:600,cursor:"pointer",fontFamily:"inherit"}},"📅 新しく予定を作る");
+    mk.addEventListener('click',()=>{ exitWidget&&exitWidget(); state.modal=null; openAddEvent(todayStr()); state.newEvTitle="人と会う"; render(); });
+    c.appendChild(mk);
   }
   // 週次ふりかえり
   { const st=weeklyReviewStats();
