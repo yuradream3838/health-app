@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.10"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.11"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -669,6 +669,7 @@ const state = {
   connectNote:"", connectEdit:null, ceLabel:null, ceNote:null, // つながり記録の内容入力・編集
   connectTagEdit:false, newConnectTag:"", // つながりタグの種類編集
   widgetSections:null, widgetEditMode:false, widgetSecOrder:null, // ヴィジェット表示項目・順序のカスタマイズ
+  shopAddCat:"food", shopAddText:"", editingShopUid:null, shopEditText:"", shopEditCat:"food", // 買物リストのタグ・編集
   nextDrink:null, nextDrinkEdit:false, // 次に飲みに行く予定（計画飲酒）
   investHistExpanded:false, // 未来投資履歴の全件展開
   lifeVision:null, nightRitual:null, connectGoal:null, // 根本解決の習慣機能
@@ -5481,50 +5482,93 @@ function renderTaskMatrix(){
   return wrap;
 }
 
-// ── 汎用リスト（買物） ──
+// ── 買物リスト（食品／消耗品／欲しい物 でタグ分け・内容編集可）──
+const SHOP_CATS=[{k:'food',l:'🍎 食品'},{k:'daily',l:'🧴 消耗品'},{k:'want',l:'✨ 欲しい物'}];
+function shopCatOf(item){ const c=item&&item.cat; return SHOP_CATS.some(s=>s.k===c)?c:'food'; }
+function shopCatLabel(k){ const s=SHOP_CATS.find(x=>x.k===k); return s?s.l:k; }
 function renderTaskList(key,title,subtitle){
   const wrap=div({});
   const list=state.tasks[key]||[];
   const card=div({className:"card"});
   card.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0",marginBottom:"2px"}},title));
   card.appendChild(div({style:{fontSize:"10px",color:"#475569",marginBottom:"10px"}},subtitle));
+  // 追加：タグを選んでから入力
+  if(!SHOP_CATS.some(s=>s.k===state.shopAddCat))state.shopAddCat='food';
+  const catRow=div({style:{display:"flex",gap:"6px",marginBottom:"6px"}});
+  SHOP_CATS.forEach(s=>{ const on=state.shopAddCat===s.k;
+    const b=btn({style:{flex:1,padding:"6px 0",borderRadius:"7px",cursor:"pointer",fontSize:"12px",fontWeight:on?700:500,border:`1px solid ${on?"#0ea5e9":"#334155"}`,background:on?"#0ea5e922":"transparent",color:on?"#38bdf8":"#64748b"}},s.l);
+    b.addEventListener('click',()=>{state.shopAddCat=s.k;render();}); catRow.appendChild(b);
+  });
+  card.appendChild(catRow);
   const inputRow=div({style:{display:"flex",gap:"6px",marginBottom:"10px"}});
   const inp=document.createElement('input');
-  inp.type='text';inp.placeholder="追加...";
+  inp.type='text';inp.placeholder=`${shopCatLabel(state.shopAddCat)}に追加...`;inp.value=state.shopAddText||"";
   inp.style.cssText="flex:1;padding:8px 12px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit";
+  inp.addEventListener('input',e=>{state.shopAddText=e.target.value;});
   const addFn=()=>{
-    const v=inp.value.trim();if(!v)return;
-    state.tasks[key]=[...(state.tasks[key]||[]),{uid:Date.now(),text:v,done:false}];
-    saveTasks();inp.value="";render();
+    const v=(state.shopAddText||"").trim();if(!v)return;
+    state.tasks[key]=[...(state.tasks[key]||[]),{uid:Date.now(),text:v,done:false,cat:state.shopAddCat}];
+    saveTasks();state.shopAddText="";render();
   };
   inp.addEventListener('keydown',e=>{if(e.key==="Enter")addFn();});
   const addBtn=btn({style:{padding:"8px 16px",background:"#0ea5e918",border:"1px solid #0ea5e9",borderRadius:"8px",color:"#38bdf8",fontSize:"13px",fontWeight:600,cursor:"pointer"}},"＋");
   addBtn.addEventListener('click',addFn);
   inputRow.appendChild(inp);inputRow.appendChild(addBtn);
   card.appendChild(inputRow);
-  const sorted=[...list].sort((a,b)=>(a.done?1:0)-(b.done?1:0));
-  if(sorted.length===0){
+  if(list.length===0){
     card.appendChild(div({style:{textAlign:"center",fontSize:"11px",color:"#475569",padding:"12px 0"}},"まだありません"));
   }
-  sorted.forEach(item=>{
-    const row=div({style:{display:"flex",alignItems:"center",gap:"10px",padding:"8px 10px",background:"#0f172a",borderRadius:"8px",marginBottom:"4px",opacity:item.done?"0.5":"1"}});
-    const cb=btn({style:{width:"22px",height:"22px",borderRadius:"6px",flexShrink:0,
-      border:`2px solid ${item.done?"#22c55e":"#334155"}`,background:item.done?"#22c55e":"transparent",
-      cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"12px"}},item.done?"✓":"");
-    cb.addEventListener('click',(()=>{const uid=item.uid;return()=>{
-      state.tasks[key]=state.tasks[key].map(x=>x.uid===uid?{...x,done:!x.done}:x);
-      saveTasks();render();
-    };})());
-    row.appendChild(cb);
-    row.appendChild(div({style:{flex:1,fontSize:"13px",color:item.done?"#64748b":"#e2e8f0",textDecoration:item.done?"line-through":"none"}},item.text));
-    const del=btn({style:{background:"transparent",border:"none",color:"#334155",cursor:"pointer",fontSize:"15px",padding:"0 4px"}},"×");
-    del.addEventListener('click',(()=>{const uid=item.uid;return()=>{
-      pushUndo("項目を削除しました");
-      state.tasks[key]=state.tasks[key].filter(x=>x.uid!==uid);
-      saveTasks();render();
-    };})());
-    row.appendChild(del);
-    card.appendChild(row);
+  // タグごとにグループ表示
+  SHOP_CATS.forEach(cat=>{
+    const items=list.filter(x=>shopCatOf(x)===cat.k).sort((a,b)=>(a.done?1:0)-(b.done?1:0));
+    if(!items.length)return;
+    card.appendChild(div({style:{fontSize:"11px",fontWeight:700,color:"#94a3b8",margin:"8px 0 5px"}},`${cat.l}（${items.length}）`));
+    items.forEach(item=>{
+      const editing=state.editingShopUid===item.uid;
+      if(editing){
+        const box=div({style:{padding:"8px 10px",background:"#0b1220",borderRadius:"8px",marginBottom:"4px",border:"1px solid #38bdf855"}});
+        const ei=document.createElement('input');ei.type='text';ei.value=state.shopEditText;
+        ei.style.cssText="width:100%;box-sizing:border-box;padding:7px 9px;margin-bottom:7px;background:#0f172a;border:1px solid #334155;border-radius:7px;color:#e2e8f0;font-size:13px;font-family:inherit";
+        ei.addEventListener('input',e=>{state.shopEditText=e.target.value;});
+        const ecRow=div({style:{display:"flex",gap:"6px",marginBottom:"8px"}});
+        SHOP_CATS.forEach(s=>{ const on=state.shopEditCat===s.k;
+          const b=btn({style:{flex:1,padding:"6px 0",borderRadius:"7px",cursor:"pointer",fontSize:"12px",fontWeight:on?700:500,border:`1px solid ${on?"#0ea5e9":"#334155"}`,background:on?"#0ea5e922":"transparent",color:on?"#38bdf8":"#64748b"}},s.l);
+          b.addEventListener('click',()=>{state.shopEditCat=s.k;render();}); ecRow.appendChild(b);
+        });
+        const btnRow=div({style:{display:"flex",gap:"6px"}});
+        const ok=btn({style:{flex:1,padding:"8px",background:"#22c55e18",border:"1px solid #22c55e",borderRadius:"7px",color:"#22c55e",fontSize:"12px",fontWeight:700,cursor:"pointer"}},"✓ 保存");
+        ok.addEventListener('click',(()=>{const uid=item.uid;return()=>{ const t=(state.shopEditText||"").trim()||item.text; state.tasks[key]=state.tasks[key].map(x=>x.uid===uid?{...x,text:t,cat:state.shopEditCat}:x); saveTasks(); state.editingShopUid=null; render(); };})());
+        const cancel=btn({style:{padding:"8px 12px",background:"transparent",border:"1px solid #334155",borderRadius:"7px",color:"#64748b",fontSize:"12px",cursor:"pointer"}},"取消");
+        cancel.addEventListener('click',()=>{ state.editingShopUid=null; render(); });
+        btnRow.appendChild(ok);btnRow.appendChild(cancel);
+        box.appendChild(ei);box.appendChild(ecRow);box.appendChild(btnRow);
+        card.appendChild(box);
+        return;
+      }
+      const row=div({style:{display:"flex",alignItems:"center",gap:"10px",padding:"8px 10px",background:"#0f172a",borderRadius:"8px",marginBottom:"4px",opacity:item.done?"0.5":"1"}});
+      const cb=btn({style:{width:"22px",height:"22px",borderRadius:"6px",flexShrink:0,
+        border:`2px solid ${item.done?"#22c55e":"#334155"}`,background:item.done?"#22c55e":"transparent",
+        cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"12px"}},item.done?"✓":"");
+      cb.addEventListener('click',(()=>{const uid=item.uid;return()=>{
+        state.tasks[key]=state.tasks[key].map(x=>x.uid===uid?{...x,done:!x.done}:x);
+        saveTasks();render();
+      };})());
+      row.appendChild(cb);
+      const tx=div({style:{flex:1,fontSize:"13px",color:item.done?"#64748b":"#e2e8f0",textDecoration:item.done?"line-through":"none",cursor:"text",wordBreak:"break-word"}},item.text);
+      tx.addEventListener('click',(()=>{const it=item;return()=>{ state.editingShopUid=it.uid; state.shopEditText=it.text||""; state.shopEditCat=shopCatOf(it); render(); };})());
+      row.appendChild(tx);
+      const ed=btn({style:{background:"transparent",border:"1px solid #334155",borderRadius:"6px",color:"#94a3b8",cursor:"pointer",fontSize:"11px",padding:"3px 7px",flexShrink:0}},"✏️");
+      ed.addEventListener('click',(()=>{const it=item;return()=>{ state.editingShopUid=it.uid; state.shopEditText=it.text||""; state.shopEditCat=shopCatOf(it); render(); };})());
+      row.appendChild(ed);
+      const del=btn({style:{background:"transparent",border:"none",color:"#334155",cursor:"pointer",fontSize:"15px",padding:"0 4px",flexShrink:0}},"×");
+      del.addEventListener('click',(()=>{const uid=item.uid;return()=>{
+        pushUndo("項目を削除しました");
+        state.tasks[key]=state.tasks[key].filter(x=>x.uid!==uid);
+        saveTasks();render();
+      };})());
+      row.appendChild(del);
+      card.appendChild(row);
+    });
   });
   if(list.some(x=>x.done)){
     const clearBtn=btn({style:{width:"100%",marginTop:"6px",padding:"6px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#475569",fontSize:"11px",cursor:"pointer"}},"完了済みをまとめて削除");
