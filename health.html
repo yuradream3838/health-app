@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.06"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.07"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -1596,8 +1596,22 @@ function renderWidgetView(vd,ds){
       const rec=(state.todos[vd]||{})[ct.uid]||{};
       const lbl=rec.labelOverride||ct.label;
       const tt=customTodoTimeFor(ct,vd);
-      const sub=`${tt?`${hhmm(tt.h,tt.m)}${tt.eh!=null?`〜${hhmm(tt.eh,tt.em)}`:""}`:""}${rec.noteOverride?`　📝${rec.noteOverride}`:""}`;
-      const rrow=checkRow(false,lbl,sub,()=>{ setTodo(vd,ct.uid,{...rec,checked:true,time:new Date().toISOString()}); showToast(`✅ ${lbl}`); });
+      let sub=`${tt?`${hhmm(tt.h,tt.m)}${tt.eh!=null?`〜${hhmm(tt.eh,tt.em)}`:""}`:""}${rec.noteOverride?`　📝${rec.noteOverride}`:""}`;
+      let rrow;
+      if(ct.mode==='timer'){
+        const running=rec.startTime && !rec.endTime;
+        if(running){ const d0=new Date(rec.startTime); sub=`⏱ 計測中（経過 ${fmtDur(Date.now()-Date.parse(rec.startTime))}）`; }
+        rrow=div({style:{display:"flex",alignItems:"center",gap:"10px",padding:"7px 0",borderBottom:"1px solid #1e3a5f55"}});
+        const tb=btn({style:{padding:"4px 10px",flexShrink:0,borderRadius:"6px",fontSize:"12px",fontWeight:700,cursor:"pointer",border:`1px solid ${running?"#f97316":"#0ea5e9"}`,background:(running?"#f97316":"#0ea5e9")+"22",color:running?"#f97316":"#38bdf8"}},running?"⏹":"▶");
+        tb.addEventListener('click',(()=>{const c2={...ct},l=lbl,run=running;return()=>{ if(run){ stopCustomTodoTimer(vd,c2); showToast(`✅ ${l}`); } else { startCustomTodoTimer(vd,c2); } };})());
+        rrow.appendChild(tb);
+        rrow.appendChild(div({style:{flex:1,minWidth:0}},[
+          div({style:{fontSize:"13px",color:"#e2e8f0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},lbl),
+          sub?div({style:{fontSize:"10px",color:running?"#f97316":"#64748b"}},sub):null
+        ]));
+      } else {
+        rrow=checkRow(false,lbl,sub,()=>{ setTodo(vd,ct.uid,{...rec,checked:true,time:new Date().toISOString()}); showToast(`✅ ${lbl}`); });
+      }
       // ✏️ この日だけの変更（この日のみ削除／時刻変更／内容変更）をヴィジェットからも開ける
       const edit=btn({style:{flexShrink:0,fontSize:"12px",padding:"3px 9px",borderRadius:"6px",cursor:"pointer",fontWeight:600,border:"1px solid #334155",background:"transparent",color:"#94a3b8"}},"✏️");
       edit.addEventListener('click',(()=>{const uid=ct.uid,l=lbl;return()=>{ state.planCustomTodo={uid,label:l,vd,editMode:true}; state.modal="planCustomTodo"; render(); };})());
@@ -3539,7 +3553,13 @@ function getActualActivities(vd){
   [addDays(vd,-1), vd].forEach(DD=>{
     (state.customTodos||[]).forEach(ct=>{
       const rec=(state.todos[DD]||{})[ct.uid];
-      if(rec&&rec.checked&&rec.time&&onVd(rec.time)){
+      // 時間計測式：開始〜終了のスパンで表示（開始時刻の日付がvdのもの）
+      if(rec&&ct.mode==='timer'&&rec.startTime&&rec.endTime&&onVd(rec.startTime)){
+        const s2=new Date(rec.startTime), e2=new Date(rec.endTime);
+        const sMin=s2.getHours()*60+s2.getMinutes();
+        let eMin=e2.getHours()*60+e2.getMinutes(); if(eMin<=sMin)eMin=sMin+1;
+        acts.push({title:"✓"+ct.label,startMin:sMin,endMin:Math.min(1440,Math.max(sMin+12,eMin)),color:ct.color||"#22c55e"});
+      } else if(rec&&rec.checked&&rec.time&&onVd(rec.time)){
         const t2=new Date(rec.time); const mins=t2.getHours()*60+t2.getMinutes();
         acts.push({title:"✓"+ct.label,startMin:mins,endMin:mins+12,isPoint:true,color:ct.color||"#22c55e"});
       }
@@ -5937,6 +5957,11 @@ async function runAICoach(kind){
 function saveRewards(){ try{localStorage.setItem(STORAGE_KEY+"_rewards",JSON.stringify(state.rewards));}catch{} }
 // 定期ルーティンの累計達成回数（全日でチェックされた回数）
 function customTodoDoneCount(uid){ let n=0; for(const d in state.todos){ const r=state.todos[d]&&state.todos[d][uid]; if(r&&r.checked)n++; } return n; }
+// 所要時間の表示（ミリ秒 → 「1時間5分」等）
+function fmtDur(ms){ if(!(ms>0))return "0分"; const mins=Math.round(ms/60000); if(mins<60)return `${mins}分`; const h=Math.floor(mins/60),m=mins%60; return m?`${h}時間${m}分`:`${h}時間`; }
+// 定期ルーティン（時間計測式）の記録を開始/終了。dはチェックを記録する日付
+function startCustomTodoTimer(vd,ct){ const cur=(state.todos[vd]||{})[ct.uid]||{}; setTodo(vd,ct.uid,{...cur,startTime:new Date().toISOString(),endTime:null,checked:false}); }
+function stopCustomTodoTimer(vd,ct){ const cur=(state.todos[vd]||{})[ct.uid]||{}; dismissPastUnchecked(ct,vd); const now=new Date().toISOString(); setTodo(vd,ct.uid,{...cur,startTime:cur.startTime||now,endTime:now,checked:true,time:now}); }
 // その日にアルコールを摂取したか（翌日開始の飲酒は翌日側にカウント）
 function dayHasAlcohol(ds){
   const onDay=(getDaily(ds).drinks||[]).some(dr=>!dr.startNextDay);
@@ -7708,7 +7733,23 @@ function renderOccasional(vd){
     const overdue = occ && occ.overdue;
     const excludedToday = occ && occ.excluded;   // 当日該当だが除外中
     const row=div({style:{display:"flex",alignItems:"center",gap:"10px",padding:"8px 2px",borderBottom:"1px solid #1e3a5f33",opacity:active?1:0.55}});
-    if(active){
+    const isTimer=ct.mode==='timer';
+    if(active && isTimer){
+      // 時間計測式：▶開始 / ⏹終了
+      const rec=(state.todos[vd]||{})[ct.uid]||{};
+      const running=rec.startTime && !rec.endTime && !done;
+      if(done){
+        row.appendChild(div({style:{width:"22px",height:"22px",borderRadius:"6px",flexShrink:0,border:"2px solid #22c55e",background:"#22c55e",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"13px",color:"#fff"}},"✓"));
+      } else if(running){
+        const b=btn({style:{padding:"5px 11px",flexShrink:0,borderRadius:"7px",border:"1px solid #f97316",background:"#f9731622",color:"#f97316",fontSize:"12px",fontWeight:700,cursor:"pointer"}},"⏹ 終了");
+        b.addEventListener('click',(()=>{const c2={...ct},label=ct.label;return()=>{ stopCustomTodoTimer(vd,c2); showToast(`✅ ${label}`); };})());
+        row.appendChild(b);
+      } else {
+        const b=btn({style:{padding:"5px 11px",flexShrink:0,borderRadius:"7px",border:"1px solid #0ea5e9",background:"#0ea5e922",color:"#38bdf8",fontSize:"12px",fontWeight:700,cursor:"pointer"}},"▶ 開始");
+        b.addEventListener('click',(()=>{const c2={...ct};return()=>{ startCustomTodoTimer(vd,c2); };})());
+        row.appendChild(b);
+      }
+    } else if(active){
       const cb=btn({style:{width:"22px",height:"22px",borderRadius:"6px",flexShrink:0,border:`2px solid ${done?"#22c55e":(occ&&occ.snToday)?"#a78bfa":overdue?"#f97316":"#334155"}`,background:done?"#22c55e":"transparent",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"13px",color:"#fff"}},done?"✓":"");
       cb.addEventListener('click',(()=>{const o=occ,id=ct.uid,c2={...ct},label=ct.label,wasDone=done;return()=>{
         if(wasDone){ merge(vd,id,{checked:false,time:null}); }
@@ -7735,6 +7776,11 @@ function renderOccasional(vd){
     else if(occ) statusStr="今日";
     else statusStr="次:"+mdc(nextCustomTodoDate(ct));
     lab.appendChild(div({style:{fontSize:"9px",color:_snToday?"#a78bfa":(overdue?"#f97316":"#64748b")}},`${customTodoIntervalLabel(ct)}${_timeStr}　${statusStr}`));
+    if(isTimer){
+      const rec=(state.todos[vd]||{})[ct.uid]||{};
+      if(rec.startTime && rec.endTime){ lab.appendChild(div({style:{fontSize:"10px",color:"#4ade80",fontWeight:700,marginTop:"1px"}},`⏱ 所要 ${fmtDur(Date.parse(rec.endTime)-Date.parse(rec.startTime))}`)); }
+      else if(rec.startTime){ const d0=new Date(rec.startTime); lab.appendChild(div({style:{fontSize:"10px",color:"#f97316",fontWeight:700,marginTop:"1px"}},`⏱ 計測中（開始 ${d0.getHours()}:${String(d0.getMinutes()).padStart(2,'0')}・経過 ${fmtDur(Date.now()-Date.parse(rec.startTime))}）`)); }
+    }
     row.appendChild(lab);
     // 完了時刻（タップで編集：planCustomTodo の「完了時刻を編集」を開く）
     if(done){
@@ -10331,6 +10377,16 @@ function renderCustomTodoModal(){
   ti.style.cssText="width:100%;padding:9px 12px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:14px;font-family:inherit;box-sizing:border-box;margin-bottom:12px";
   ti.addEventListener('input',e=>{m0.label=e.target.value;});
   m.appendChild(ti);
+  // 記録の種類（チェック式／時間計測式）
+  m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"6px"}},"記録の種類"));
+  { const mrow=div({style:{display:"flex",gap:"8px",marginBottom:"12px"}});
+    const isTimer=m0.mode==='timer';
+    const mk=(on,lbl,onClick)=>{const b=btn({style:{flex:1,padding:"9px",borderRadius:"8px",cursor:"pointer",fontWeight:600,fontSize:"12px",border:`1px solid ${on?"#38bdf8":"#334155"}`,background:on?"#0ea5e922":"transparent",color:on?"#38bdf8":"#64748b"}},lbl);b.addEventListener('click',onClick);return b;};
+    mrow.appendChild(mk(!isTimer,"✓ チェック式",()=>{m0.mode='check';render();}));
+    mrow.appendChild(mk(isTimer,"⏱ 時間計測式",()=>{m0.mode='timer';render();}));
+    m.appendChild(mrow);
+    m.appendChild(div({style:{fontSize:"10px",color:"#475569",marginTop:"-6px",marginBottom:"12px",lineHeight:1.5}},isTimer?"▶開始／⏹終了で所要時間を計測します。":"タップで完了チェックします。"));
+  }
   // 間隔
   m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"6px"}},"間隔"));
   const iRow=div({style:{display:"flex",gap:"8px",alignItems:"center",marginBottom:"12px"}});
@@ -10604,7 +10660,7 @@ function renderCustomTodoModal(){
     btn({style:{flex:2,padding:"10px",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:600,cursor:"pointer"},
       onClick:()=>{
         if(!(m0.label||"").trim()){alert("名前を入力してください");return;}
-        const data={uid:m0.uid||Date.now(),label:m0.label.trim(),itype:m0.itype||"week",n:Math.max(1,m0.n||1),startDate:m0.startDate||todayStr(),timeH:m0.timeH!=null?m0.timeH:null,timeM:m0.timeH!=null?(m0.timeM||0):0,endH:m0.timeH!=null&&m0.endH!=null?m0.endH:null,endM:m0.timeH!=null&&m0.endH!=null?(m0.endM||0):null,endNextDay:!!(m0.timeH!=null&&m0.endH!=null&&m0.endNextDay),startNextDay:!!(m0.timeH!=null&&m0.startNextDay),color:m0.color||"#38bdf8",weekdays:(m0.itype==="week"&&m0.weekdays)?[...m0.weekdays]:[],shifts:m0.shifts?[...m0.shifts]:[],weekdayTimes:(m0.weekdayTimes&&Object.keys(m0.weekdayTimes).length)?JSON.parse(JSON.stringify(m0.weekdayTimes)):undefined,byShiftSchedule:!!m0.byShiftSchedule,shiftSchedule:(m0.byShiftSchedule&&m0.shiftSchedule)?JSON.parse(JSON.stringify(m0.shiftSchedule)):undefined,reschedules:(Array.isArray(m0.reschedules)&&m0.reschedules.length)?JSON.parse(JSON.stringify(m0.reschedules)):undefined};
+        const data={uid:m0.uid||Date.now(),label:m0.label.trim(),mode:m0.mode==='timer'?'timer':'check',itype:m0.itype||"week",n:Math.max(1,m0.n||1),startDate:m0.startDate||todayStr(),timeH:m0.timeH!=null?m0.timeH:null,timeM:m0.timeH!=null?(m0.timeM||0):0,endH:m0.timeH!=null&&m0.endH!=null?m0.endH:null,endM:m0.timeH!=null&&m0.endH!=null?(m0.endM||0):null,endNextDay:!!(m0.timeH!=null&&m0.endH!=null&&m0.endNextDay),startNextDay:!!(m0.timeH!=null&&m0.startNextDay),color:m0.color||"#38bdf8",weekdays:(m0.itype==="week"&&m0.weekdays)?[...m0.weekdays]:[],shifts:m0.shifts?[...m0.shifts]:[],weekdayTimes:(m0.weekdayTimes&&Object.keys(m0.weekdayTimes).length)?JSON.parse(JSON.stringify(m0.weekdayTimes)):undefined,byShiftSchedule:!!m0.byShiftSchedule,shiftSchedule:(m0.byShiftSchedule&&m0.shiftSchedule)?JSON.parse(JSON.stringify(m0.shiftSchedule)):undefined,reschedules:(Array.isArray(m0.reschedules)&&m0.reschedules.length)?JSON.parse(JSON.stringify(m0.reschedules)):undefined};
         if(m0.uid) state.customTodos=(state.customTodos||[]).map(x=>x.uid===m0.uid?data:x);
         else state.customTodos=[...(state.customTodos||[]),data];
         saveCustomTodos();state.customTodoModal=null;render();
