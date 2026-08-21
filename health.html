@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.09"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.10"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -4297,8 +4297,13 @@ function renderPlanPatternPanel(){
   const mkSel2=(cur,arr,fmt,on)=>{const s=document.createElement('select');s.className='sel';s.style.cssText="padding:4px 2px;font-size:12px";arr.forEach(v=>{const o=document.createElement('option');o.value=v;o.textContent=fmt(v);if(v===cur)o.selected=true;s.appendChild(o);});s.addEventListener('change',e=>on(Number(e.target.value)));return s;};
   const MIN=[0,5,10,15,20,25,30,35,40,45,50,55];
   (state.planPatterns||[]).forEach(p=>{
+    const collapsed=!!p.collapsed;
     const box=div({style:{background:"#0f172a",borderRadius:"8px",padding:"8px 10px",marginBottom:"8px",borderLeft:`3px solid ${p.color||"#38bdf8"}`,opacity:p.enabled===false?0.6:1}});
-    const l1=div({style:{display:"flex",gap:"6px",alignItems:"center",marginBottom:"6px"}});
+    const l1=div({style:{display:"flex",gap:"6px",alignItems:"center",marginBottom:collapsed?"0":"6px"}});
+    // たたむ／開く
+    const chev=btn({style:{fontSize:"11px",padding:"3px 7px",borderRadius:"6px",cursor:"pointer",flexShrink:0,border:"1px solid #334155",background:"transparent",color:"#94a3b8"},title:collapsed?"開く":"たたむ"},collapsed?"▶":"▼");
+    chev.addEventListener('click',()=>upd(p.uid,{collapsed:!collapsed}));
+    l1.appendChild(chev);
     const en=btn({style:{fontSize:"10px",padding:"3px 8px",borderRadius:"6px",cursor:"pointer",fontWeight:600,flexShrink:0,
       border:`1px solid ${p.enabled!==false?"#22c55e":"#334155"}`,background:p.enabled!==false?"#22c55e22":"transparent",color:p.enabled!==false?"#22c55e":"#64748b"}},p.enabled!==false?"ON":"OFF");
     en.addEventListener('click',()=>upd(p.uid,{enabled:p.enabled===false}));
@@ -4311,6 +4316,8 @@ function renderPlanPatternPanel(){
     del.addEventListener('click',()=>{if(confirm("このパターンを削除しますか？")){pushUndo("パターンを削除しました");state.planPatterns=state.planPatterns.filter(x=>x.uid!==p.uid);savePlanPatterns();render();}});
     l1.appendChild(del);
     box.appendChild(l1);
+    // たたんでいる時は詳細を捨てる（body を box の代わりに使う）
+    const body = collapsed ? div() : box;
     // シフト連動トグル
     const linkRow=div({style:{display:"flex",alignItems:"center",gap:"8px",marginBottom:"6px"}});
     const lb=btn({style:{fontSize:"10px",padding:"3px 8px",borderRadius:"6px",cursor:"pointer",fontWeight:600,
@@ -4322,7 +4329,7 @@ function renderPlanPatternPanel(){
     });
     linkRow.appendChild(lb);
     linkRow.appendChild(span({style:{fontSize:"10px",color:"#475569"}},p.byShift?"1直/2直/休みで時間が変わります":""));
-    box.appendChild(linkRow);
+    body.appendChild(linkRow);
     // 時刻
     const timeRow=(getH1,getM1,getH2,getM2,set)=>{
       const r=div({style:{display:"flex",gap:"6px",alignItems:"center",marginBottom:"5px",fontSize:"11px",color:"#64748b"}});
@@ -4353,14 +4360,14 @@ function renderPlanPatternPanel(){
         if(st.on!==false){
           wrapR.appendChild(timeRow(()=>st.startH,()=>st.startM||0,()=>st.endH,()=>st.endM||0,ch=>{const cur=p.shiftTimes||{};upd(p.uid,{shiftTimes:{...cur,[k]:{...st,...ch}}});}));
         }
-        box.appendChild(wrapR);
+        body.appendChild(wrapR);
       });
     } else {
-      box.appendChild(timeRow(()=>p.startH,()=>p.startM||0,()=>p.endH,()=>p.endM||0,ch=>upd(p.uid,ch)));
+      body.appendChild(timeRow(()=>p.startH,()=>p.startM||0,()=>p.endH,()=>p.endM||0,ch=>upd(p.uid,ch)));
       const ndB=btn({style:{fontSize:"10px",padding:"3px 10px",borderRadius:"6px",cursor:"pointer",fontWeight:600,marginBottom:"6px",
         border:`1px solid ${p.nextDay?"#38bdf8":"#334155"}`,background:p.nextDay?"#0ea5e922":"transparent",color:p.nextDay?"#38bdf8":"#475569"}},p.nextDay?"🌙 翌日にずらす: ON":"🌙 翌日にずらす: OFF");
       ndB.addEventListener('click',()=>upd(p.uid,{nextDay:!p.nextDay}));
-      box.appendChild(ndB);
+      body.appendChild(ndB);
     }
     // 曜日
     const l3=div({style:{display:"flex",gap:"4px",marginBottom:"6px"}});
@@ -4371,7 +4378,7 @@ function renderPlanPatternPanel(){
       wb.addEventListener('click',()=>{const set=new Set(p.weekdays||[0,1,2,3,4,5,6]);if(set.has(idx))set.delete(idx);else set.add(idx);upd(p.uid,{weekdays:[...set].sort((a,b)=>a-b)});});
       l3.appendChild(wb);
     });
-    box.appendChild(l3);
+    body.appendChild(l3);
     // 曜日別の時間（特定曜日だけ基本時刻を上書き。シフト連動でも有効）
     const wtMap=p.weekdayTimes||{};
     const wtWrap=div({style:{marginBottom:"6px",padding:"6px 8px",background:"#0b1220",borderRadius:"6px"}});
@@ -4444,11 +4451,11 @@ function renderPlanPatternPanel(){
       }
       wtWrap.appendChild(sub);
     });
-    box.appendChild(wtWrap);
+    body.appendChild(wtWrap);
     // 色
     const l4=div({style:{display:"flex",gap:"6px"}});
     [...EV_COLORS,"#60a5fa"].forEach(c=>{const on=p.color===c;const cb=btn({style:{width:"24px",height:"24px",borderRadius:"6px",cursor:"pointer",background:c+(on?"":"55"),border:`2px solid ${on?c:"transparent"}`}},"");cb.addEventListener('click',()=>upd(p.uid,{color:c}));l4.appendChild(cb);});
-    box.appendChild(l4);
+    body.appendChild(l4);
     // 連動ルーティン（セット/単体）：完了すると予定タブでこのパターンがグレーアウトする
     const lkRow=div({style:{marginTop:"8px",display:"flex",alignItems:"center",gap:"6px",flexWrap:"wrap"}});
     lkRow.appendChild(span({style:{fontSize:"10px",color:"#64748b",flexShrink:0}},"🔗 連動ルーティン"));
@@ -4464,8 +4471,8 @@ function renderPlanPatternPanel(){
     TODO_ITEMS.forEach(it=>addOpt("item:"+it.id,"単体: "+it.label));
     lkSel.addEventListener('change',e=>{ const v=e.target.value; let lk=null; if(v==="wake"||v==="bed"||v==="work")lk={t:v}; else if(v.indexOf("set:")===0)lk={t:"set",key:v.slice(4)}; else if(v.indexOf("item:")===0)lk={t:"item",id:v.slice(5)}; upd(p.uid,{linkRoutine:lk}); });
     lkRow.appendChild(lkSel);
-    box.appendChild(lkRow);
-    box.appendChild(div({style:{fontSize:"9px",color:"#475569",marginTop:"3px"}},"連動先が完了すると、予定タブでこの予定がグレーアウトします"));
+    body.appendChild(lkRow);
+    body.appendChild(div({style:{fontSize:"9px",color:"#475569",marginTop:"3px"}},"連動先が完了すると、予定タブでこの予定がグレーアウトします"));
     card.appendChild(box);
   });
   const templates=[{t:"😴 睡眠",c:"#60a5fa",s:[23,0],e:[7,0]},{t:"🏋️ 運動",c:"#22c55e",s:[19,0],e:[20,0]},{t:"🍽️ 食事",c:"#fb923c",s:[12,0],e:[13,0]}];
