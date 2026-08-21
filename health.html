@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.07"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.08"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -286,7 +286,7 @@ const SYMPTOMS = [
   "吐き気","胃もたれ",
   "めまい","目の疲れ","鼻づまり",
   "眠気","倦怠感","集中力低下",
-  "不安感",
+  "不安感","さみしい",
   "気分良好","やる気充実","頭が冴えている","よく眠れた"
 ];
 
@@ -4157,10 +4157,12 @@ function padBody(body){return div({style:{maxWidth:"600px",margin:"0 auto",paddi
 function renderSubHub(SUB,active,onSel,renderBody){
   const wrap=div({style:{maxWidth:"600px",margin:"0 auto"}});
   const subBar=div({style:{display:"flex",borderBottom:"1px solid #1e3a5f",background:"#1e293b",position:"sticky",top:"var(--hdr-h, 150px)",zIndex:50}});
+  // 表示だけ改行する（識別子tはそのまま）。長いタブ名を2行に。
+  const SUB_DISP={"動機づけ面談":"動機づけ\n面談"};
   SUB.forEach(t=>{
-    const b=btn({style:{flex:1,padding:"10px 2px",border:"none",cursor:"pointer",fontSize:"12px",fontWeight:600,
+    const b=btn({style:{flex:1,padding:"10px 2px",border:"none",cursor:"pointer",fontSize:"12px",fontWeight:600,whiteSpace:"pre-line",lineHeight:1.2,textAlign:"center",
       background:"transparent",color:active===t?"#38bdf8":"#475569",
-      borderBottom:`2px solid ${active===t?"#38bdf8":"transparent"}`}},t);
+      borderBottom:`2px solid ${active===t?"#38bdf8":"transparent"}`}},SUB_DISP[t]||t);
     b.addEventListener('click',()=>onSel(t));
     subBar.appendChild(b);
   });
