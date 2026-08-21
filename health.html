@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.08"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.09"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -1334,9 +1334,15 @@ const WIDGET_SECTIONS=[
   {k:'rewards',   l:'🎁 ご褒美'},
   {k:'goals',     l:'☀️ 今日の目標'},
   {k:'routines',  l:'🔁 定期ルーティン'},
+  {k:'droutine',  l:'📋 ルーティン（デイリー）'},
+  {k:'todo',      l:'✅ TODO'},
+  {k:'urge',      l:'🔎 飲みに行きたくなる引き金', defOff:true},
+  {k:'alcgauge',  l:'🍺 純アルコール量', defOff:true},
+  {k:'ruler',     l:'📏 動機のものさし', defOff:true},
 ];
+const WIDGET_DEFAULT_OFF=new Set(WIDGET_SECTIONS.filter(s=>s.defOff).map(s=>s.k));
 function getWidgetSections(){ if(!state.widgetSections||typeof state.widgetSections!=="object")state.widgetSections={}; return state.widgetSections; }
-function wSecOn(k){ return getWidgetSections()[k]!==false; } // 既定は表示
+function wSecOn(k){ const m=getWidgetSections(); if(m[k]!==undefined)return m[k]!==false; return !WIDGET_DEFAULT_OFF.has(k); } // 既定：多くは表示、一部は非表示
 function saveWidgetSections(){ try{localStorage.setItem(STORAGE_KEY+"_widgetsections",JSON.stringify(getWidgetSections()));}catch{} }
 // 表示順（保存済みの順＋未登録の新項目は末尾）
 function widgetOrder(){
@@ -1620,11 +1626,9 @@ function renderWidgetView(vd,ds){
     });
     secNodes.routines=c;
   }
-  // 指定順で表示項目を並べる（ここまでに組み立てたノードのみ）
-  widgetOrder().forEach(k=>{ if(secNodes[k]) wrap.appendChild(secNodes[k]); });
 
   // ── ルーティン（デイリー・完了済みは非表示）──
-  {
+  if(wSecOn('droutine')){
     const todo=getTodo(vd);
     const rItems=getOrderedTodoItems().filter(it=>!(todo[it.id]||{}).excluded);
     // 未完了、または実行中セッションがあるマルチ項目（内容を記入・停止できるよう表示を継続）
@@ -1668,12 +1672,12 @@ function renderWidgetView(vd,ds){
         }
       }
     });
-    wrap.appendChild(c);
+    secNodes.droutine=c;
     }
   }
 
   // ── TODO（未完了のみ）──
-  {
+  if(wSecOn('todo')){
     const open=(state.tasks&&state.tasks.todo||[]).filter(t=>!t.done);
     if(open.length){
       const prio=t=>(t.imp&&t.urg)?0:t.urg?1:t.imp?2:3;
@@ -1685,9 +1689,17 @@ function renderWidgetView(vd,ds){
         const sub=t.due?(()=>{const days=Math.round((parseDS(t.due)-parseDS(todayStr()))/86400000);return days<0?`期日超過${-days}日`:days===0?"今日が期日":`あと${days}日`;})():null;
         c.appendChild(checkRow(false,t.text,sub,()=>{ state.tasks.todo=state.tasks.todo.map(x=>x.uid===t.uid?{...x,done:true}:x); saveTasks(); showToast(`✅ ${t.text}`); render(); }));
       });
-      wrap.appendChild(c);
+      secNodes.todo=c;
     }
   }
+
+  // ── 追加オプション（既定は非表示・⚙️で選べる）──
+  if(wSecOn('urge')){ const u=urgeTriggerCard(); if(u)secNodes.urge=u; } // 🔎 飲みに行きたくなる引き金
+  if(wSecOn('alcgauge')){ const g=alcGaugeMiniCard(vd); if(g)secNodes.alcgauge=g; } // 🍺 純アルコール量
+  if(wSecOn('ruler')) secNodes.ruler=motivationRulerCard(vd); // 📏 動機のものさし
+
+  // 指定順で表示項目を並べる（組み立てたノードのみ）
+  widgetOrder().forEach(k=>{ if(secNodes[k]) wrap.appendChild(secNodes[k]); });
 
   wrap.appendChild(btn({style:{width:"100%",padding:"11px",marginTop:"4px",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:700,cursor:"pointer"},
     onClick:()=>{ exitWidget(); render(); }},"アプリを開く"));
@@ -6174,6 +6186,27 @@ function alcoholKcalRange(vd, days){ let kcal=0; for(let i=0;i<days;i++){ const 
 // ── 純アルコール量(g)の集計＋上限設定 ──
 function pureAlcoholG(vd){ return (getDaily(vd).drinks||[]).reduce((a,dr)=>{ const dt=resolveDT(dr); return a+pureAlcohol(dr.ml, dr.pct!=null?dr.pct:dt.pct); },0); }
 function pureAlcoholRangeG(vd,days){ let g=0; for(let i=0;i<days;i++) g+=pureAlcoholG(addDays(vd,-i)); return g; }
+// 純アルコール量の簡易ゲージ（ウィジェット用・閲覧のみ）
+function alcGaugeMiniCard(vd){
+  const dayG=Math.round(pureAlcoholG(vd)), weekG=Math.round(pureAlcoholRangeG(vd,7));
+  const dl=alcLimitDay(), wl=alcLimitWeek();
+  const c=div({className:"card",style:{padding:"12px 14px",marginBottom:"10px"}});
+  c.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0",marginBottom:"8px"}},"🍺 純アルコール量"));
+  const gauge=(label,val,lim)=>{
+    const r=lim>0?val/lim:0; const col=r>=1?"#ef4444":r>=0.7?"#eab308":"#22c55e";
+    const box=div({style:{marginBottom:"6px"}});
+    box.appendChild(div({style:{display:"flex",justifyContent:"space-between",fontSize:"11px",marginBottom:"3px"}},[
+      span({style:{color:"#94a3b8"}},label),
+      span({style:{color:col,fontWeight:700}},`${val}g / 上限${lim}g${r>=1?"　超過⚠️":""}`)
+    ]));
+    box.appendChild(div({style:{height:"8px",background:"#0f172a",borderRadius:"4px",overflow:"hidden"}},[
+      div({style:{height:"100%",width:`${Math.min(100,Math.round(r*100))}%`,background:col}})]));
+    return box;
+  };
+  c.appendChild(gauge("今日",dayG,dl));
+  c.appendChild(gauge("今週(7日)",weekG,wl));
+  return c;
+}
 // ── 次に飲みに行く予定（計画飲酒：次の飲酒日を先に決めて、それまでの目標にする）──
 function getNextDrinkPlan(){ return (state.nextDrink&&typeof state.nextDrink==="object"&&state.nextDrink.date)?state.nextDrink:null; }
 function saveNextDrinkPlan(){ try{ if(getNextDrinkPlan())localStorage.setItem(STORAGE_KEY+"_nextdrink",JSON.stringify(state.nextDrink)); else localStorage.removeItem(STORAGE_KEY+"_nextdrink"); }catch{} }
