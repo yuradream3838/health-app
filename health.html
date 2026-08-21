@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.05"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.06"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -668,7 +668,7 @@ const state = {
   connectHistExpanded:false, // つながり履歴の全件展開
   connectNote:"", connectEdit:null, ceLabel:null, ceNote:null, // つながり記録の内容入力・編集
   connectTagEdit:false, newConnectTag:"", // つながりタグの種類編集
-  widgetSections:null, widgetEditMode:false, // ヴィジェット表示項目のカスタマイズ
+  widgetSections:null, widgetEditMode:false, widgetSecOrder:null, // ヴィジェット表示項目・順序のカスタマイズ
   nextDrink:null, nextDrinkEdit:false, // 次に飲みに行く予定（計画飲酒）
   investHistExpanded:false, // 未来投資履歴の全件展開
   lifeVision:null, nightRitual:null, connectGoal:null, // 根本解決の習慣機能
@@ -751,6 +751,8 @@ function loadStorage(){
     if(ndp){try{const o=JSON.parse(ndp); if(o&&typeof o==="object"&&o.date)state.nextDrink=o;}catch{}}
     const wsec=localStorage.getItem(STORAGE_KEY+"_widgetsections");
     if(wsec){try{const o=JSON.parse(wsec); if(o&&typeof o==="object")state.widgetSections=o;}catch{}}
+    const word=localStorage.getItem(STORAGE_KEY+"_widgetorder");
+    if(word){try{const a=JSON.parse(word); if(Array.isArray(a))state.widgetSecOrder=a;}catch{}}
     const dcb=localStorage.getItem(STORAGE_KEY+"_decisbalance");
     if(dcb){try{const o=JSON.parse(dcb); if(o&&typeof o==="object")state.decisBalance=o;}catch{}}
     const mvv=localStorage.getItem(STORAGE_KEY+"_values");
@@ -1336,6 +1338,16 @@ const WIDGET_SECTIONS=[
 function getWidgetSections(){ if(!state.widgetSections||typeof state.widgetSections!=="object")state.widgetSections={}; return state.widgetSections; }
 function wSecOn(k){ return getWidgetSections()[k]!==false; } // 既定は表示
 function saveWidgetSections(){ try{localStorage.setItem(STORAGE_KEY+"_widgetsections",JSON.stringify(getWidgetSections()));}catch{} }
+// 表示順（保存済みの順＋未登録の新項目は末尾）
+function widgetOrder(){
+  const def=WIDGET_SECTIONS.map(s=>s.k);
+  let ord=Array.isArray(state.widgetSecOrder)?state.widgetSecOrder.filter(k=>def.includes(k)):[];
+  def.forEach(k=>{ if(!ord.includes(k))ord.push(k); });
+  return ord;
+}
+function saveWidgetOrder(){ try{localStorage.setItem(STORAGE_KEY+"_widgetorder",JSON.stringify(widgetOrder()));}catch{} }
+function moveWidgetSection(k,dir){ const ord=widgetOrder(); const i=ord.indexOf(k); const j=i+dir; if(i<0||j<0||j>=ord.length)return; const t=ord[i];ord[i]=ord[j];ord[j]=t; state.widgetSecOrder=ord; saveWidgetOrder(); }
+function widgetSectionLabel(k){ const s=WIDGET_SECTIONS.find(x=>x.k===k); return s?s.l:k; }
 // ── ウィジェット（今日の予定＋ルーティンをまとめて素早く確認・チェック）──
 // URLハッシュ #widget で直接起動でき、ホーム画面ショートカットから開ける。
 function renderWidgetView(vd,ds){
@@ -1361,21 +1373,32 @@ function renderWidgetView(vd,ds){
   if(state.widgetEditMode){
     const sc=div({className:"card",style:{padding:"12px 14px",marginBottom:"10px",border:"1px solid #38bdf844",background:"#38bdf80d"}});
     sc.appendChild(div({style:{fontSize:"12px",fontWeight:700,color:"#7dd3fc",marginBottom:"3px"}},"⚙️ ヴィジェットに表示する項目"));
-    sc.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"8px",lineHeight:1.5}},"チェックを外すと、その項目は今日ヴィジェットに表示されなくなります（データは消えません）。"));
-    WIDGET_SECTIONS.forEach(s=>{
-      const on=wSecOn(s.k);
-      const row=div({style:{display:"flex",alignItems:"center",gap:"10px",padding:"7px 0",borderBottom:"1px solid #1e3a5f55",cursor:"pointer"}});
-      const cb=div({style:{width:"22px",height:"22px",borderRadius:"6px",flexShrink:0,border:`2px solid ${on?"#22c55e":"#334155"}`,background:on?"#22c55e":"transparent",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"13px",color:"#fff"}},on?"✓":"");
+    sc.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"8px",lineHeight:1.5}},"チェックで表示/非表示、▲▼で並び替え（データは消えません）。"));
+    const order=widgetOrder();
+    order.forEach((k,i)=>{
+      const on=wSecOn(k);
+      const row=div({style:{display:"flex",alignItems:"center",gap:"8px",padding:"6px 0",borderBottom:"1px solid #1e3a5f55"}});
+      // 並び替え（▲▼）
+      const moveCol=div({style:{display:"flex",flexDirection:"column",gap:"2px",flexShrink:0}});
+      const mkMove=(sym,dir)=>{ const can=(dir<0&&i>0)||(dir>0&&i<order.length-1);
+        const b=btn({style:{width:"24px",height:"15px",lineHeight:"1",padding:0,borderRadius:"4px",border:"1px solid #334155",background:can?"#0f172a":"transparent",color:can?"#94a3b8":"#334155",fontSize:"9px",cursor:can?"pointer":"default"}},sym);
+        if(can)b.addEventListener('click',(()=>{const kk=k,dd=dir;return()=>{ moveWidgetSection(kk,dd); render(); };})());
+        return b; };
+      moveCol.appendChild(mkMove("▲",-1));moveCol.appendChild(mkMove("▼",1));
+      row.appendChild(moveCol);
+      // 表示トグル
+      const cb=btn({style:{width:"22px",height:"22px",borderRadius:"6px",flexShrink:0,border:`2px solid ${on?"#22c55e":"#334155"}`,background:on?"#22c55e":"transparent",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"13px",color:"#fff",cursor:"pointer"}},on?"✓":"");
+      cb.addEventListener('click',(()=>{const kk=k;return()=>{ getWidgetSections()[kk]=!wSecOn(kk); saveWidgetSections(); render(); };})());
       row.appendChild(cb);
-      row.appendChild(div({style:{flex:1,fontSize:"13px",color:on?"#e2e8f0":"#64748b"}},s.l));
-      row.addEventListener('click',(()=>{const k=s.k;return()=>{ getWidgetSections()[k]=!wSecOn(k); saveWidgetSections(); render(); };})());
+      row.appendChild(div({style:{flex:1,fontSize:"13px",color:on?"#e2e8f0":"#64748b"}},widgetSectionLabel(k)));
       sc.appendChild(row);
     });
     wrap.appendChild(sc);
   }
   { const coc=coolOffCard(); if(coc)wrap.appendChild(coc); }
   { const smc=soberMorningCard(); if(smc)wrap.appendChild(smc); }
-  if(vd===todayStr() && wSecOn('decl')) wrap.appendChild(declarationCard()); // 動機づけ面談「わたしの宣言」
+  const secNodes={}; // 各表示項目のノードを組み立ててから、指定順に並べる
+  if(vd===todayStr() && wSecOn('decl')) secNodes.decl=declarationCard(); // 動機づけ面談「わたしの宣言」
 
   // ── 今日の予定 ──
   const schedCard=div({className:"card",style:{padding:"12px 14px",marginBottom:"10px"}});
@@ -1411,7 +1434,7 @@ function renderWidgetView(vd,ds){
   const openSched=btn({style:{width:"100%",marginTop:"8px",padding:"7px",background:"transparent",border:"1px solid #334155",borderRadius:"7px",color:"#64748b",cursor:"pointer",fontSize:"11px"}},"予定タブを開く →");
   openSched.addEventListener('click',()=>{ exitWidget(); state.tab="予定"; state.scheduleSubTab="日"; render(); });
   schedCard.appendChild(openSched);
-  if(wSecOn('sched')) wrap.appendChild(schedCard);
+  if(wSecOn('sched')) secNodes.sched=schedCard;
 
   // ── クイック記録（体調・アルコール・食べたもの・射精）──
   if(wSecOn('quick')){
@@ -1427,7 +1450,7 @@ function renderWidgetView(vd,ds){
     grid.appendChild(qbtn(`🍽️ 食べたもの${foodN?`（${foodN}）`:""}`,"#0ea5e9","#0ea5e918","#38bdf8",()=>{ state.modal="food"; state.foodSelected=[...(d.foods||[])]; state.foodOpenCat=null; render(); }));
     grid.appendChild(qbtn(`💧 射精${ejN?`（${ejN}）`:""}`,"#6366f1","#6366f118","#a5b4fc",()=>{ state.modal="addEjac"; state.newEjacH=new Date().getHours(); state.newEjacM=new Date().getMinutes(); state.newEjacTag=null; state.newEjacNextDay=false; render(); }));
     c.appendChild(grid);
-    wrap.appendChild(c);
+    secNodes.quick=c;
   }
 
   // ── 🔀 if-thenプラン（今の状況に該当するものだけ強調表示）──
@@ -1443,7 +1466,7 @@ function renderWidgetView(vd,ds){
           span({style:{fontWeight:700}},p.action||"")
         ]));
       });
-      wrap.appendChild(c);
+      secNodes.ifthen=c;
     }
   }
 
@@ -1469,13 +1492,13 @@ function renderWidgetView(vd,ds){
     const openInv=btn({style:{width:"100%",marginTop:"6px",padding:"7px",background:"transparent",border:"1px solid #334155",borderRadius:"7px",color:"#64748b",cursor:"pointer",fontSize:"11px"}},"未来投資をすべて見る →");
     openInv.addEventListener('click',()=>{ exitWidget(); state.tab="達成"; state.achieveSubTab="未来投資"; render(); });
     c.appendChild(openInv);
-    wrap.appendChild(c);
+    secNodes.invest=c;
   }
-  if(wSecOn('nextdrink')) wrap.appendChild(nextDrinkCard()); // 🍺 次に飲みに行く予定（踏みとどまるの下）
+  if(wSecOn('nextdrink')) secNodes.nextdrink=nextDrinkCard(); // 🍺 次に飲みに行く予定（踏みとどまるの下）
 
   // ── 🫂 つながり習慣（今日・今週の進捗） ──
   if(vd===todayStr() && wSecOn('connect')){
-    wrap.appendChild(connectHabitCard(vd,false));
+    secNodes.connect=connectHabitCard(vd,false);
   }
 
   // チェック行の共通生成
@@ -1507,7 +1530,7 @@ function renderWidgetView(vd,ds){
       row.appendChild(div({style:{fontSize:"10px",fontWeight:700,flexShrink:0,color:st.unlocked?"#22c55e":"#64748b"}},st.unlocked?"🎉達成":st.progress));
       c.appendChild(row);
     });
-    wrap.appendChild(c);
+    secNodes.rewards=c;
   }
 
   // ── 今日の目標（目標ツリーで「日次」を設定した目標）──
@@ -1541,7 +1564,7 @@ function renderWidgetView(vd,ds){
         rrow.appendChild(goalPlanBtn(n));
         c.appendChild(rrow);
       });
-      wrap.appendChild(c);
+      secNodes.goals=c;
     }
   }
 
@@ -1581,8 +1604,10 @@ function renderWidgetView(vd,ds){
       rrow.appendChild(edit);
       c.appendChild(rrow);
     });
-    wrap.appendChild(c);
+    secNodes.routines=c;
   }
+  // 指定順で表示項目を並べる（ここまでに組み立てたノードのみ）
+  widgetOrder().forEach(k=>{ if(secNodes[k]) wrap.appendChild(secNodes[k]); });
 
   // ── ルーティン（デイリー・完了済みは非表示）──
   {
