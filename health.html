@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.11"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.12"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -5078,16 +5078,22 @@ function renderDaySchedule(vd,ds,isToday){
     state.editScope="this";
     render();
   },(ev,newStartMin,durMin)=>{
-    // ドラッグで時間移動：該当日の単発予定の開始/終了を更新（duration維持・5分刻み）
+    // ドラッグで時間移動：確定前に確認（誤操作防止）。単発の直接予定のみ・duration維持・5分刻み
     const arr=state.schedule[vd]||[];
     const idx=arr.findIndex(x=>x.uid===ev.uid);
     if(idx<0)return;
     const endTotal=newStartMin+durMin;
     const sh=Math.floor(newStartMin/60), sm=newStartMin%60;
     const eh=Math.floor(endTotal/60), em=endTotal%60;
+    const title=arr[idx].title||"予定";
+    const oldS=`${hhmm(arr[idx].startH,arr[idx].startM||0)}`;
+    const newS=`${hhmm(sh,sm)}〜${hhmm(eh,em)}`;
+    // 変化が無ければ何もしない
+    if((arr[idx].startH*60+(arr[idx].startM||0))===newStartMin){ render(); return; }
+    if(!confirm(`「${title}」を\n${oldS} → ${newS}\nに移動しますか？`)){ render(); return; } // キャンセルで元に戻す
     arr[idx]={...arr[idx],startH:sh,startM:sm,endH:eh,endM:em,endNextDay:false};
     saveSchedule(); render();
-    showToast(`⏰ ${sh}:${String(sm).padStart(2,'0')}〜 に移動`);
+    showToast(`⏰ ${hhmm(sh,sm)}〜 に移動`);
   });
   blockArea(actuals,"50% + 2px","50% - 6px","#22c55e",(ev)=>{ if(ev._tail){ state.viewDate=addDays(vd,-1); render(); return; } if(ev.manualUid) openActualEdit(vd, ev.manualUid); else if(ev.routineKey) openRoutineActualEdit(ev.ownDay||vd, ev.routineKey, ev.routineBase); });
 
