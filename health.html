@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.14"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.15"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -644,6 +644,7 @@ const state = {
   goalView:"period", goalTree:[], goalTreeModal:null,
   aiCoach:null, aiCoachLoading:null, rewards:[], newRewardDays:7, newRewardText:"",
   actEditUid:null, actTitle:"", actNote:"", actSH:9, actSM:0, actEH:10, actEM:0, actStartNextDay:false, actEndNextDay:false, actColor:"#f472b6", actUnplanned:true, actDate:null,
+  actMemoKey:null, actMemoLabel:"", actMemoVd:null, actMemoText:"", // 実績（睡眠・飲酒等）へのメモ
   analysisSubTab:"日次ログ", diarySubTab:"生活記録", taskSubTab:"ルーティン",
   storageAlert:false, storageExportYear:null,
   weather:[], weatherCity:null, weatherLoading:false, weatherError:null,
@@ -1136,6 +1137,7 @@ function render(){
   if(state.modal==="routineActualEdit")content.appendChild(renderRoutineActualEditModal());
   if(state.modal==="addEvent") content.appendChild(renderAddEventModal(vd));
   if(state.modal==="addActual") content.appendChild(renderActualModal());
+  if(state.modal==="actualMemo") content.appendChild(renderActualMemoModal());
   if(state.modal==="patternEdit") content.appendChild(renderPatternEditModal(vd));
   if(state.modal==="planCustomTodo") content.appendChild(renderPlanCustomTodoModal());
   if(state.modal==="editNap")  content.appendChild(renderAddNapModal(vd,true));
@@ -3443,11 +3445,34 @@ function getRoutineOverride(dd,key){ const o=(getDaily(dd).routineOverrides||{})
 function setRoutineOverride(dd,key,upd){ const cur=getDaily(dd).routineOverrides||{}; const next={...cur,[key]:{...(cur[key]||{}),...upd}}; setDaily(dd,{routineOverrides:next}); }
 function clearRoutineOverride(dd,key){ const cur={...(getDaily(dd).routineOverrides||{})}; delete cur[key]; setDaily(dd,{routineOverrides:cur}); }
 function routineOverrideTitle(dd,key,base){ const o=getRoutineOverride(dd,key); const t=(o.title&&o.title.trim())?o.title.trim():base; const n=(o.note&&o.note.trim())?`：${o.note.trim()}`:""; return t+n; }
+// 実績（睡眠・飲酒など、専用の編集を持たないブロック）へのメモ。日付＋キーで管理
+function actualNoteOf(vd,key){ return ((getDaily(vd).actualNotes||{})[key])||""; }
+function setActualNote(vd,key,val){ const d=getDaily(vd); const m={...(d.actualNotes||{})}; const v=(val||"").trim(); if(v)m[key]=v; else delete m[key]; setDaily(vd,{actualNotes:m}); }
+function openActualMemo(vd,key,label){ state.actMemoVd=vd; state.actMemoKey=key; state.actMemoLabel=label||"実績"; state.actMemoText=actualNoteOf(vd,key); state.modal="actualMemo"; render(); }
+function renderActualMemoModal(){
+  const bg=div({className:"modal-center"});
+  const m=div({className:"modal-box"});
+  bg.addEventListener('click',()=>{state.modal=null;render();});
+  m.addEventListener('click',e=>e.stopPropagation());
+  m.appendChild(div({style:{fontSize:"15px",fontWeight:700,color:"#e2e8f0",marginBottom:"3px"}},"📝 実績メモ"));
+  m.appendChild(div({style:{fontSize:"12px",color:"#94a3b8",marginBottom:"12px",wordBreak:"break-word"}},String(state.actMemoLabel||"").replace(/：.*$/,"")));
+  const ta=document.createElement('textarea');ta.value=state.actMemoText||"";ta.placeholder="この実績のメモ（内容・感想など）";ta.rows=3;
+  ta.style.cssText="width:100%;box-sizing:border-box;padding:9px 11px;margin-bottom:14px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit;resize:vertical";
+  ta.addEventListener('input',e=>{state.actMemoText=e.target.value;});
+  m.appendChild(ta);
+  m.appendChild(div({style:{display:"flex",gap:"8px"}},[
+    btn({className:"btn-ghost",style:{flex:1},onClick:()=>{state.modal=null;render();}},"キャンセル"),
+    btn({style:{flex:2,padding:"10px",background:"linear-gradient(135deg,#22c55e,#0ea5e9)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:700,cursor:"pointer"},
+      onClick:()=>{ setActualNote(state.actMemoVd,state.actMemoKey,state.actMemoText); state.modal=null; showToast("📝 メモを保存しました","#22c55e"); render(); }},"✅ 保存")
+  ]));
+  bg.appendChild(m);return bg;
+}
 function getActualActivities(vd){
   const acts=[];
   const routines=state.routines||[];
   const routineIds=new Set(routines.flatMap(g=>g.ids));
   const mm=dt=>{const x=new Date(dt);return x.getHours()*60+x.getMinutes();};
+  const aNote=k=>{ const n=actualNoteOf(vd,k); return n?`：${n}`:""; }; // 実績メモをタイトルに付す
   // 完了時刻の「日付」が vd のものを vd に表示する（当日分でも、日付をまたいで
   // 翌日に完了したものはその翌日側に反映される）。前日・当日のtodosを走査。
   const onVd=iso=>{try{return fmtDS(new Date(iso))===vd;}catch{return false;}};
@@ -3503,7 +3528,8 @@ function getActualActivities(vd){
       if(off + (dr.startNextDay?1:0) !== 0) return; // この飲酒の実消費日がvdでなければ除外
       const dt=resolveDT(dr);
       const sMin=(dr.hour||0)*60+(dr.min||0);
-      acts.push({title:`${dt.emoji}${dt.label}`,startMin:sMin,endMin:sMin+12,isPoint:true,color:"#f59e0b"});
+      const k=`drink:${dr.hour}:${dr.min}:${dt.label}`;
+      acts.push({title:`${dt.emoji}${dt.label}`+aNote(k),startMin:sMin,endMin:sMin+12,isPoint:true,color:"#f59e0b",noteKey:k});
     });
   }
   // 睡眠：就寝日(D)を1つの夜として bed(D)→wake(D+1) を span&clip で反映
@@ -3526,7 +3552,8 @@ function getActualActivities(vd){
         const a0=awBase*1440+aw.hour*60+(aw.min||0), a1=a0+(aw.mins||0);
         segs=segs.reduce((acc,[s0,s1])=>{ if(a1<=s0||a0>=s1){acc.push([s0,s1]);} else { if(a0>s0)acc.push([s0,a0]); if(a1<s1)acc.push([a1,s1]); } return acc; },[]);
       });
-      segs.forEach(([s0,s1])=>{ const s=Math.max(0,Math.round(s0)), e=Math.min(1440,Math.round(s1)); if(e>s) acts.push({title:"😴 睡眠",startMin:s,endMin:e,color:SC}); });
+      const kSleep=`sleep:${D}`; let _si=0;
+      segs.forEach(([s0,s1])=>{ const s=Math.max(0,Math.round(s0)), e=Math.min(1440,Math.round(s1)); if(e>s){ acts.push({title:"😴 睡眠"+(_si===0?aNote(kSleep):""),startMin:s,endMin:e,color:SC,noteKey:kSleep}); _si++; } });
     }
   }
   // 昼寝も反映
@@ -3534,19 +3561,22 @@ function getActualActivities(vd){
     const s=(n.hour||0)*60+(n.min||0);
     let e=n.endHour!=null?(n.endHour*60+(n.endMin||0)):s+(n.mins||30);
     if(e<=s)e=s+(n.mins||30);
-    acts.push({title:"💤 昼寝",startMin:s,endMin:e,color:"#93c5fd"});
+    const k=`nap:${n.uid||s}`;
+    acts.push({title:"💤 昼寝"+aNote(k),startMin:s,endMin:e,color:"#93c5fd",noteKey:k});
   });
   // 射精も実際の行動として反映（ピンクで区別・点イベント）。タグは略記表示（自慰→ON / セックス→SE）
   (daily.ejaculations||[]).forEach(ej=>{
     if(ej.startNextDay) return; // 翌日ぶんは翌日側のタイムラインで表示
     const s=(ej.hour||0)*60+(ej.min||0);
     const tagAbbr = ej.tag==="自慰"?"ON":ej.tag==="セックス"?"SE":(ej.tag||"");
-    acts.push({title:`💧${tagAbbr?" "+tagAbbr:""}`,startMin:s,endMin:s+12,isPoint:true,color:"#ec4899"});
+    const k=`ej:${ej.uid||s}`;
+    acts.push({title:`💧${tagAbbr?" "+tagAbbr:""}`+aNote(k),startMin:s,endMin:s+12,isPoint:true,color:"#ec4899",noteKey:k});
   });
   // 服薬（点イベント）
   (daily.meds||[]).forEach(md0=>{
     const s=(md0.hour||0)*60+(md0.min||0);
-    acts.push({title:`💊 ${md0.name||""}`.trim(),startMin:s,endMin:s+12,isPoint:true,color:"#14b8a6"});
+    const k=`med:${md0.uid||(md0.hour+':'+md0.min+':'+(md0.name||''))}`;
+    acts.push({title:`💊 ${md0.name||""}`.trim()+aNote(k),startMin:s,endMin:s+12,isPoint:true,color:"#14b8a6",noteKey:k});
   });
   // 日記で記録した実際の勤務は実際(右)列に反映（予定シフトとは独立）。
   // 残業込みで0時を跨ぐ場合は、その勤務を所有する日(D)を基準に絶対分で計算し、
@@ -3558,7 +3588,8 @@ function getActualActivities(vd){
     const wsAbs=off*1440+Math.round(dd.workStart*60);
     const weAbs=off*1440+Math.round((dd.workEnd+(dd.overtime||0))*60);
     const s=Math.max(0,wsAbs), e=Math.min(1440,weAbs);
-    if(e>s) acts.push({title:"💼 仕事",startMin:s,endMin:e,color:"#2dd4bf"});
+    const k=`work:${D}`;
+    if(e>s) acts.push({title:"💼 仕事"+aNote(k),startMin:s,endMin:e,color:"#2dd4bf",noteKey:k});
   }
   // 定期ルーティン：チェック済みを実際列へ。
   //  完了時刻(rec.time)がある場合は「その時刻の日付」がvdのものだけ表示する（前日キーに記録されていても
@@ -4000,7 +4031,10 @@ function renderPatternEditModal(vd){
       addP("📅 日付", Ddl);
       addP("🕐 時間", `${hhmm(pe.startH,pe.startM)}〜${hhmm(pe.endH,pe.endM)}${pe.nextDay?"（翌日にずらす）":""}`);
       addP("📝 メモ", (ovI.noteOverride||"").trim()||null);
-      m.appendChild(btn({className:"btn-ghost",style:{width:"100%",marginTop:"6px"},onClick:()=>{state.modal=null;render();}},"閉じる"));
+      // 実際に行った（実績へ反映）：その日だけ変更した名前で実績化
+      m.appendChild(btn({style:{width:"100%",padding:"11px",marginTop:"4px",marginBottom:"8px",background:"linear-gradient(135deg,#22c55e,#0ea5e9)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:700,cursor:"pointer"},
+        onClick:()=>{ const nt=(ovI.noteOverride||"").trim(); state.modal=null; openActualEdit(D); state.actTitle=nameI; state.actNote=nt; state.actSH=pe.startH; state.actSM=pe.startM||0; state.actEH=pe.endH; state.actEM=pe.endM||0; state.actEndNextDay=!!pe.nextDay; state.actStartNextDay=false; state.actColor=(p&&p.color)||"#f472b6"; state.actUnplanned=false; render(); }},"✓ 実際に行った（実績に反映）"));
+      m.appendChild(btn({className:"btn-ghost",style:{width:"100%",marginTop:"2px"},onClick:()=>{state.modal=null;render();}},"閉じる"));
       bg.appendChild(m);return bg;
     }
     m.appendChild(div({style:{fontSize:"15px",fontWeight:700,color:"#e2e8f0",marginBottom:"2px"}},`✏️ ${ovI.labelOverride||(p?p.title:"パターン予定")}`));
@@ -5104,7 +5138,7 @@ function renderDaySchedule(vd,ds,isToday){
     saveSchedule(); render();
     showToast(`⏰ ${hhmm(sh,sm)}〜 に移動`);
   });
-  blockArea(actuals,"50% + 2px","50% - 6px","#22c55e",(ev)=>{ if(ev._tail){ state.viewDate=addDays(vd,-1); render(); return; } if(ev.manualUid) openActualEdit(vd, ev.manualUid); else if(ev.ctUid){ const ctx=(state.customTodos||[]).find(c=>c.uid===ev.ctUid); state.planCustomTodo={uid:ev.ctUid,label:(ctx&&ctx.label)||"定期ルーティン",vd:ev.ownDay||vd,editMode:true}; state.modal="planCustomTodo"; render(); } else if(ev.routineKey) openRoutineActualEdit(ev.ownDay||vd, ev.routineKey, ev.routineBase); });
+  blockArea(actuals,"50% + 2px","50% - 6px","#22c55e",(ev)=>{ if(ev._tail){ state.viewDate=addDays(vd,-1); render(); return; } if(ev.manualUid) openActualEdit(vd, ev.manualUid); else if(ev.ctUid){ const ctx=(state.customTodos||[]).find(c=>c.uid===ev.ctUid); state.planCustomTodo={uid:ev.ctUid,label:(ctx&&ctx.label)||"定期ルーティン",vd:ev.ownDay||vd,editMode:true}; state.modal="planCustomTodo"; render(); } else if(ev.routineKey) openRoutineActualEdit(ev.ownDay||vd, ev.routineKey, ev.routineBase); else if(ev.noteKey) openActualMemo(vd, ev.noteKey, ev.title); });
 
   tlCard.appendChild(tl);
   wrap.appendChild(tlCard);
