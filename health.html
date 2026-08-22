@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.13"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.14"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -643,7 +643,7 @@ const state = {
   goalEditType:null, goalEditText:"", goalEditProgress:"", goalEditDone:false, goalEditPeriodStr:"",
   goalView:"period", goalTree:[], goalTreeModal:null,
   aiCoach:null, aiCoachLoading:null, rewards:[], newRewardDays:7, newRewardText:"",
-  actEditUid:null, actTitle:"", actSH:9, actSM:0, actEH:10, actEM:0, actStartNextDay:false, actEndNextDay:false, actColor:"#f472b6", actUnplanned:true, actDate:null,
+  actEditUid:null, actTitle:"", actNote:"", actSH:9, actSM:0, actEH:10, actEM:0, actStartNextDay:false, actEndNextDay:false, actColor:"#f472b6", actUnplanned:true, actDate:null,
   analysisSubTab:"日次ログ", diarySubTab:"生活記録", taskSubTab:"ルーティン",
   storageAlert:false, storageExportYear:null,
   weather:[], weatherCity:null, weatherLoading:false, weatherError:null,
@@ -3567,28 +3567,29 @@ function getActualActivities(vd){
     (state.customTodos||[]).forEach(ct=>{
       const rec=(state.todos[DD]||{})[ct.uid];
       const ctLbl=(rec&&rec.labelOverride)||ct.label; // その日だけ名前変更を実績にも反映
+      const ctNote=(rec&&rec.noteOverride)?`：${rec.noteOverride}`:"";
       // 時間計測式：開始〜終了のスパンで表示（開始時刻の日付がvdのもの）
       if(rec&&ct.mode==='timer'&&rec.startTime&&rec.endTime&&onVd(rec.startTime)){
         const s2=new Date(rec.startTime), e2=new Date(rec.endTime);
         const sMin=s2.getHours()*60+s2.getMinutes();
         let eMin=e2.getHours()*60+e2.getMinutes(); if(eMin<=sMin)eMin=sMin+1;
-        acts.push({title:"✓"+ctLbl,startMin:sMin,endMin:Math.min(1440,Math.max(sMin+12,eMin)),color:ct.color||"#22c55e"});
+        acts.push({title:"✓"+ctLbl+ctNote,startMin:sMin,endMin:Math.min(1440,Math.max(sMin+12,eMin)),color:ct.color||"#22c55e",ctUid:ct.uid,ownDay:DD});
       } else if(rec&&rec.checked&&rec.time&&onVd(rec.time)){
         const t2=new Date(rec.time); const mins=t2.getHours()*60+t2.getMinutes();
-        acts.push({title:"✓"+ctLbl,startMin:mins,endMin:mins+12,isPoint:true,color:ct.color||"#22c55e"});
+        acts.push({title:"✓"+ctLbl+ctNote,startMin:mins,endMin:mins+12,isPoint:true,color:ct.color||"#22c55e",ctUid:ct.uid,ownDay:DD});
       }
     });
   });
   //  完了時刻の記録がない（チェックのみ）当日該当分は、予定時刻の位置に表示
   (state.customTodos||[]).forEach(ct=>{
     const rec=(state.todos[vd]||{})[ct.uid];
-    if(rec&&rec.checked&&!rec.time){ const ctLbl=rec.labelOverride||ct.label; const tt=customTodoTimeFor(ct,vd); if(tt){ const sp=customTodoSpan(tt); if(sp.s<1440) acts.push({title:"✓"+ctLbl,startMin:sp.s,endMin:Math.min(1440,sp.e),isPoint:(sp.e-sp.s)<=12,color:ct.color||"#22c55e"}); } }
+    if(rec&&rec.checked&&!rec.time){ const ctLbl=rec.labelOverride||ct.label; const ctNote=rec.noteOverride?`：${rec.noteOverride}`:""; const tt=customTodoTimeFor(ct,vd); if(tt){ const sp=customTodoSpan(tt); if(sp.s<1440) acts.push({title:"✓"+ctLbl+ctNote,startMin:sp.s,endMin:Math.min(1440,sp.e),isPoint:(sp.e-sp.s)<=12,color:ct.color||"#22c55e",ctUid:ct.uid,ownDay:vd}); } }
   });
   // 手動登録した実績（予定外・突発的な行動を含む）。日跨ぎは当日側を末尾までクリップ
   (daily.actuals||[]).forEach(a=>{
     const {s,e}=itemAbsSpan(a);
     if(s>=1440)return;
-    acts.push({title:(a.unplanned?"⚡ ":"")+a.title,startMin:s,endMin:Math.min(1440,e),color:a.color||"#f472b6",manualUid:a.uid,unplanned:!!a.unplanned});
+    acts.push({title:(a.unplanned?"⚡ ":"")+a.title+(a.note?`：${a.note}`:""),startMin:s,endMin:Math.min(1440,e),color:a.color||"#f472b6",manualUid:a.uid,unplanned:!!a.unplanned});
   });
   // 達成した目標を実績に反映（達成時刻がvdのもの）。紫の点マーカーで表示。
   goalActualsForDate(vd).forEach(g=>acts.push(g));
@@ -3662,6 +3663,7 @@ function openActualEdit(vd, uid, startH){
   const sh = startH!=null?startH:now.getHours();
   state.actEditUid=uid||null;
   state.actTitle=ex?ex.title:"";
+  state.actNote=ex?(ex.note||""):"";
   state.actSH=ex?ex.startH:sh;
   state.actSM=ex?(ex.startM||0):0;
   state.actEH=ex&&ex.endH!=null?ex.endH:((sh+1)%24);
@@ -3687,6 +3689,12 @@ function renderActualModal(){
   ti.style.cssText="width:100%;padding:9px 12px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:14px;font-family:inherit;box-sizing:border-box;margin-bottom:12px";
   ti.addEventListener('input',e=>{state.actTitle=e.target.value;});
   m.appendChild(ti);
+  // メモ（任意）
+  m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"4px"}},"📝 メモ（任意）"));
+  const na=document.createElement('textarea');na.value=state.actNote||"";na.placeholder="やった内容・感想など";na.rows=2;
+  na.style.cssText="width:100%;box-sizing:border-box;padding:8px 10px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit;resize:vertical;margin-bottom:12px";
+  na.addEventListener('input',e=>{state.actNote=e.target.value;});
+  m.appendChild(na);
   const timeInput=(h,mm,set)=>{const i=document.createElement('input');i.type='time';i.value=`${String(h??0).padStart(2,'0')}:${String(mm||0).padStart(2,'0')}`;i.style.cssText="flex:1;min-width:0;padding:8px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:15px;color-scheme:dark;font-family:inherit";i.addEventListener('change',e=>{const q=(e.target.value||'').split(':');const H=Number(q[0]),M=Number(q[1]);if(!isNaN(H)&&!isNaN(M))set(H,M);});return i;};
   m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"4px"}},"時刻"));
   m.appendChild(div({style:{display:"flex",gap:"8px",alignItems:"center",marginBottom:"6px"}},[
@@ -3724,7 +3732,7 @@ function renderActualModal(){
       const title=(state.actTitle||"").trim();
       if(!title){alert("内容を入力してください");return;}
       const d=getDaily(state.actDate);
-      const rec={uid:state.actEditUid||Date.now(),title,startH:state.actSH,startM:state.actSM,endH:state.actEH,endM:state.actEM,startNextDay:!!state.actStartNextDay,endNextDay:!!state.actEndNextDay,color:state.actColor,unplanned:!!state.actUnplanned,...(state.actFromEventUid?{fromEventUid:state.actFromEventUid}:{})};
+      const rec={uid:state.actEditUid||Date.now(),title,note:(state.actNote||"").trim(),startH:state.actSH,startM:state.actSM,endH:state.actEH,endM:state.actEM,startNextDay:!!state.actStartNextDay,endNextDay:!!state.actEndNextDay,color:state.actColor,unplanned:!!state.actUnplanned,...(state.actFromEventUid?{fromEventUid:state.actFromEventUid}:{})};
       const list=(d.actuals||[]).filter(a=>a.uid!==rec.uid); list.push(rec);
       const fromTask=state.actFromTask;
       state.modal=null;
@@ -5096,7 +5104,7 @@ function renderDaySchedule(vd,ds,isToday){
     saveSchedule(); render();
     showToast(`⏰ ${hhmm(sh,sm)}〜 に移動`);
   });
-  blockArea(actuals,"50% + 2px","50% - 6px","#22c55e",(ev)=>{ if(ev._tail){ state.viewDate=addDays(vd,-1); render(); return; } if(ev.manualUid) openActualEdit(vd, ev.manualUid); else if(ev.routineKey) openRoutineActualEdit(ev.ownDay||vd, ev.routineKey, ev.routineBase); });
+  blockArea(actuals,"50% + 2px","50% - 6px","#22c55e",(ev)=>{ if(ev._tail){ state.viewDate=addDays(vd,-1); render(); return; } if(ev.manualUid) openActualEdit(vd, ev.manualUid); else if(ev.ctUid){ const ctx=(state.customTodos||[]).find(c=>c.uid===ev.ctUid); state.planCustomTodo={uid:ev.ctUid,label:(ctx&&ctx.label)||"定期ルーティン",vd:ev.ownDay||vd,editMode:true}; state.modal="planCustomTodo"; render(); } else if(ev.routineKey) openRoutineActualEdit(ev.ownDay||vd, ev.routineKey, ev.routineBase); });
 
   tlCard.appendChild(tl);
   wrap.appendChild(tlCard);
