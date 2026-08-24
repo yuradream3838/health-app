@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.15"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.16"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -3599,12 +3599,14 @@ function getActualActivities(vd){
       const rec=(state.todos[DD]||{})[ct.uid];
       const ctLbl=(rec&&rec.labelOverride)||ct.label; // その日だけ名前変更を実績にも反映
       const ctNote=(rec&&rec.noteOverride)?`：${rec.noteOverride}`:"";
-      // 時間計測式：開始〜終了のスパンで表示（開始時刻の日付がvdのもの）
-      if(rec&&ct.mode==='timer'&&rec.startTime&&rec.endTime&&onVd(rec.startTime)){
-        const s2=new Date(rec.startTime), e2=new Date(rec.endTime);
+      // 時間計測式：開始時刻から実績へ反映（終了があれば開始〜終了、計測中は開始〜現在）
+      if(rec&&ct.mode==='timer'&&rec.startTime&&onVd(rec.startTime)){
+        const s2=new Date(rec.startTime);
         const sMin=s2.getHours()*60+s2.getMinutes();
-        let eMin=e2.getHours()*60+e2.getMinutes(); if(eMin<=sMin)eMin=sMin+1;
-        acts.push({title:"✓"+ctLbl+ctNote,startMin:sMin,endMin:Math.min(1440,Math.max(sMin+12,eMin)),color:ct.color||"#22c55e",ctUid:ct.uid,ownDay:DD});
+        let eMin, running=!rec.endTime;
+        if(rec.endTime){ const e2=new Date(rec.endTime); eMin=e2.getHours()*60+e2.getMinutes(); if(eMin<=sMin)eMin=sMin+1; }
+        else { const now=new Date(); eMin=(fmtDS(now)===fmtDS(s2))?(now.getHours()*60+now.getMinutes()):1440; if(eMin<=sMin)eMin=sMin+1; }
+        acts.push({title:"✓"+ctLbl+ctNote+(running?"（計測中）":""),startMin:sMin,endMin:Math.min(1440,Math.max(sMin+12,eMin)),color:ct.color||"#22c55e",ctUid:ct.uid,ownDay:DD});
       } else if(rec&&rec.checked&&rec.time&&onVd(rec.time)){
         const t2=new Date(rec.time); const mins=t2.getHours()*60+t2.getMinutes();
         acts.push({title:"✓"+ctLbl+ctNote,startMin:mins,endMin:mins+12,isPoint:true,color:ct.color||"#22c55e",ctUid:ct.uid,ownDay:DD});
@@ -4185,8 +4187,32 @@ function renderPlanCustomTodoModal(){
   if(hasAnyOv) m.appendChild(btn({style:{width:"100%",padding:"8px",marginBottom:"12px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#94a3b8",cursor:"pointer",fontSize:"12px"},
     onClick:()=>{ const cur={...((state.todos[vd]||{})[pc.uid]||{})}; delete cur.labelOverride; delete cur.noteOverride; delete cur.timeOverride; setTodo(vd,pc.uid,cur); state.modal=null; showToast("この日の変更を元に戻しました"); render(); }},"↩ この日の変更をすべて元に戻す"));
   m.appendChild(div({style:{borderTop:"1px solid #1e293b",margin:"4px 0 10px"}}));
-  // 完了時刻（チェック済みのとき）
-  if(rec.checked){
+  // 時間計測式：開始・終了時刻を編集（実績は開始時刻から反映される）
+  if(ct && ct.mode==='timer' && (rec.startTime||rec.endTime)){
+    const sD=rec.startTime?new Date(rec.startTime):new Date();
+    const eD=rec.endTime?new Date(rec.endTime):null;
+    if(pc.tsH===undefined){ pc.tsH=sD.getHours(); pc.tsM=sD.getMinutes(); pc.hasEnd=!!eD; pc.teH=eD?eD.getHours():sD.getHours(); pc.teM=eD?eD.getMinutes():((sD.getMinutes()+30)%60); }
+    m.appendChild(div({style:{fontSize:"11px",color:"#38bdf8",margin:"0 0 5px",fontWeight:600}},"⏱ 計測時刻を編集"));
+    const df=(getH,getM,set,col)=>{const i=document.createElement('input');i.type='time';i.value=`${String(getH()).padStart(2,'0')}:${String(getM()).padStart(2,'0')}`;i.style.cssText=`flex:1;min-width:0;padding:8px;background:#0f172a;border:1px solid ${col};border-radius:8px;color:#e2e8f0;font-size:15px;color-scheme:dark;font-family:inherit`;i.addEventListener('change',e=>{const q=(e.target.value||'').split(':');const H=Number(q[0]),M=Number(q[1]);if(!isNaN(H)&&!isNaN(M))set(H,M);});return i;};
+    const trow2=div({style:{display:"flex",gap:"8px",alignItems:"center",marginBottom:"8px"}});
+    trow2.appendChild(span({style:{fontSize:"11px",color:"#64748b",flexShrink:0}},"開始"));
+    trow2.appendChild(df(()=>pc.tsH,()=>pc.tsM,(H,M)=>{pc.tsH=H;pc.tsM=M;},"#38bdf855"));
+    trow2.appendChild(span({style:{fontSize:"11px",color:"#64748b",flexShrink:0}},"終了"));
+    if(pc.hasEnd) trow2.appendChild(df(()=>pc.teH,()=>pc.teM,(H,M)=>{pc.teH=H;pc.teM=M;},"#22c55e55"));
+    else trow2.appendChild(span({style:{flex:1,fontSize:"11px",color:"#f97316"}},"計測中"));
+    m.appendChild(trow2);
+    m.appendChild(btn({style:{width:"100%",padding:"9px",marginBottom:"6px",background:"#0ea5e918",border:"1px solid #0ea5e9",borderRadius:"8px",color:"#38bdf8",fontSize:"13px",fontWeight:600,cursor:"pointer"},
+      onClick:()=>{ const p=(vd||"").split('-'); const st=new Date(+p[0],+p[1]-1,+p[2],pc.tsH,pc.tsM,0,0); const cur2={...((state.todos[vd]||{})[pc.uid]||{})}; cur2.startTime=st.toISOString();
+        if(pc.hasEnd){ let et=new Date(+p[0],+p[1]-1,+p[2],pc.teH,pc.teM,0,0); if(et.getTime()<=st.getTime())et=new Date(et.getTime()+86400000); cur2.endTime=et.toISOString(); cur2.checked=true; cur2.time=et.toISOString(); }
+        setTodo(vd,pc.uid,cur2); state.modal=null; showToast("計測時刻を保存しました","#38bdf8"); render(); }},"✅ 計測時刻を保存"));
+    if(!pc.hasEnd) m.appendChild(btn({style:{width:"100%",padding:"8px",marginBottom:"6px",background:"#22c55e18",border:"1px solid #22c55e",borderRadius:"8px",color:"#4ade80",fontSize:"12px",fontWeight:600,cursor:"pointer"},
+      onClick:()=>{ pc.hasEnd=true; render(); }},"⏹ 終了時刻を入れて完了にする"));
+    m.appendChild(btn({style:{width:"100%",padding:"8px",marginBottom:"12px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#94a3b8",cursor:"pointer",fontSize:"12px"},
+      onClick:()=>{ const cur2={...((state.todos[vd]||{})[pc.uid]||{})}; delete cur2.startTime; delete cur2.endTime; delete cur2.time; setTodo(vd,pc.uid,{...cur2,checked:false}); state.modal=null; showToast("計測をリセットしました"); render(); }},"↩ 計測をリセット"));
+    m.appendChild(div({style:{borderTop:"1px solid #1e293b",margin:"0 0 10px"}}));
+  }
+  // 完了時刻（チェック済みのとき・チェック式）
+  else if(rec.checked){
     const cur = rec.time?new Date(rec.time):new Date();
     if(pc.doneH===undefined){ pc.doneH=cur.getHours(); pc.doneM=cur.getMinutes(); }
     m.appendChild(div({style:{fontSize:"11px",color:"#4ade80",margin:"0 0 5px",fontWeight:600}},"✅ 完了時刻を編集"));
