@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.16"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.17"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -4110,11 +4110,29 @@ function renderPlanCustomTodoModal(){
       btn({style:{flexShrink:0,padding:"6px 12px",borderRadius:"8px",border:"1px solid #a78bfa",background:"#a78bfa18",color:"#a78bfa",fontSize:"12px",fontWeight:700,cursor:"pointer"},
         onClick:()=>{pc.editMode=true;render();}},"✏️ 編集")
     ]));
-    // ✓ 完了/未完了トグル（情報画面の上部）
-    m.appendChild(btn({style:{width:"100%",padding:"11px",border:"none",borderRadius:"8px",color:"#fff",cursor:"pointer",fontSize:"13px",fontWeight:700,marginBottom:"14px",
-      background:doneI?"#334155":"linear-gradient(135deg,#22c55e,#0ea5e9)"},
-      onClick:()=>{ const cur={...((state.todos[vd]||{})[pc.uid]||{})}; if(doneI){ delete cur.time; setTodo(vd,pc.uid,{...cur,checked:false}); showToast("未完了に戻しました"); } else { setTodo(vd,pc.uid,{...cur,checked:true,time:new Date().toISOString()}); showToast(`✅ ${lblI}`); } render(); }},
-      doneI?"↩ 未完了に戻す":"✓ 完了にする"));
+    // 完了トグル（情報画面の上部）。時間計測式は▶開始／⏹終了
+    if(ctI && ctI.mode==='timer'){
+      const running=recI.startTime && !recI.endTime && !recI.checked;
+      const doneT=!!(recI.checked || recI.endTime);
+      if(doneT){
+        if(recI.startTime&&recI.endTime){ try{ m.appendChild(div({style:{fontSize:"12px",color:"#4ade80",fontWeight:700,marginBottom:"6px"}},`⏱ 所要 ${fmtDur(Date.parse(recI.endTime)-Date.parse(recI.startTime))}`)); }catch{} }
+        m.appendChild(btn({style:{width:"100%",padding:"11px",border:"none",borderRadius:"8px",color:"#fff",cursor:"pointer",fontSize:"13px",fontWeight:700,marginBottom:"14px",background:"#334155"},
+          onClick:()=>{ const cur={...((state.todos[vd]||{})[pc.uid]||{})}; delete cur.startTime; delete cur.endTime; delete cur.time; setTodo(vd,pc.uid,{...cur,checked:false}); showToast("未完了に戻しました"); render(); }},"↩ 未完了に戻す"));
+      } else if(running){
+        const d0=new Date(recI.startTime);
+        m.appendChild(div({style:{fontSize:"11px",color:"#f97316",fontWeight:700,marginBottom:"6px"}},`⏱ 計測中（開始 ${hhmm(d0.getHours(),d0.getMinutes())}・経過 ${fmtDur(Date.now()-Date.parse(recI.startTime))}）`));
+        m.appendChild(btn({style:{width:"100%",padding:"11px",border:"1px solid #f97316",borderRadius:"8px",color:"#f97316",cursor:"pointer",fontSize:"13px",fontWeight:700,marginBottom:"14px",background:"#f9731622"},
+          onClick:()=>{ stopCustomTodoTimer(vd,ctI); showToast(`✅ ${lblI}`); render(); }},"⏹ 終了する"));
+      } else {
+        m.appendChild(btn({style:{width:"100%",padding:"11px",border:"none",borderRadius:"8px",color:"#fff",cursor:"pointer",fontSize:"13px",fontWeight:700,marginBottom:"14px",background:"linear-gradient(135deg,#0ea5e9,#6366f1)"},
+          onClick:()=>{ startCustomTodoTimer(vd,ctI); showToast(`▶ ${lblI} 計測開始`); render(); }},"▶ 開始する"));
+      }
+    } else {
+      m.appendChild(btn({style:{width:"100%",padding:"11px",border:"none",borderRadius:"8px",color:"#fff",cursor:"pointer",fontSize:"13px",fontWeight:700,marginBottom:"14px",
+        background:doneI?"#334155":"linear-gradient(135deg,#22c55e,#0ea5e9)"},
+        onClick:()=>{ const cur={...((state.todos[vd]||{})[pc.uid]||{})}; if(doneI){ delete cur.time; setTodo(vd,pc.uid,{...cur,checked:false}); showToast("未完了に戻しました"); } else { setTodo(vd,pc.uid,{...cur,checked:true,time:new Date().toISOString()}); showToast(`✅ ${lblI}`); } render(); }},
+        doneI?"↩ 未完了に戻す":"✓ 完了にする"));
+    }
     const infoRow=(label,val)=> val?div({style:{marginBottom:"11px"}},[
       div({style:{fontSize:"10px",color:"#64748b",marginBottom:"2px"}},label),
       div({style:{fontSize:"14px",color:"#e2e8f0",whiteSpace:"pre-wrap",wordBreak:"break-word",lineHeight:1.5}},val)
