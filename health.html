@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.18"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.19"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -3492,7 +3492,7 @@ function getActualActivities(vd){
       } else if(item.type==="timer"&&d.startTime&&d.endTime){
         if(onVd(d.startTime)) acts.push({title:item.label,startMin:mm(d.startTime),endMin:mm(d.endTime)});
       } else if(item.type==="check"&&d.checked&&d.time){
-        if(onVd(d.time)) acts.push({title:"✓"+item.label,startMin:mm(d.time),endMin:mm(d.time)+12,isPoint:true,showDoneTime:true});
+        if(onVd(d.time)) acts.push({title:"✓"+item.label,startMin:mm(d.time),endMin:mm(d.time)+12,isPoint:true});
       }
     });
   });
@@ -3609,7 +3609,7 @@ function getActualActivities(vd){
         acts.push({title:"✓"+ctLbl+ctNote+(running?"（計測中）":""),startMin:sMin,endMin:Math.min(1440,Math.max(sMin+12,eMin)),color:ct.color||"#22c55e",ctUid:ct.uid,ownDay:DD});
       } else if(rec&&rec.checked&&rec.time&&onVd(rec.time)){
         const t2=new Date(rec.time); const mins=t2.getHours()*60+t2.getMinutes();
-        acts.push({title:"✓"+ctLbl+ctNote,startMin:mins,endMin:mins+12,isPoint:true,color:ct.color||"#22c55e",ctUid:ct.uid,ownDay:DD,showDoneTime:true});
+        acts.push({title:"✓"+ctLbl+ctNote,startMin:mins,endMin:mins+12,isPoint:true,color:ct.color||"#22c55e",ctUid:ct.uid,ownDay:DD});
       }
     });
   });
@@ -5084,9 +5084,9 @@ function renderDaySchedule(vd,ds,isToday){
   const blockArea=(items,leftBase,widthArea,defaultColor,onTap,onMove)=>{
     layoutLanes(items).forEach(({ev,s:sMin,e:eMin,lane,lanes})=>{
       const color=ev.color||defaultColor;
-      const top=((sMin/60)-START_H)*HOUR_H;
-      const showDoneTime=!!(ev.isPoint && ev.showDoneTime); // チェック実績：完了時刻を名前の下に表示
-      const height=ev.isPoint?(showDoneTime?28:14):Math.max(16,((eMin-sMin)/60)*HOUR_H-2);
+      const height=ev.isPoint?14:Math.max(16,((eMin-sMin)/60)*HOUR_H-2);
+      // 点イベント（実績）は「完了時刻」を下端にして上（前）へ伸ばす＝完了時刻より下に出さない
+      const top=((sMin/60)-START_H)*HOUR_H - (ev.isPoint?height:0);
       if(top+height<0||top>(END_H-START_H)*HOUR_H)return;
       // レーン位置（横分割）。widthArea/leftBase は calc 用の生の式
       const left=`calc((${leftBase}) + (${widthArea}) * ${(lane/lanes).toFixed(4)})`;
@@ -5115,11 +5115,9 @@ function renderDaySchedule(vd,ds,isToday){
       const lineH = tFont*1.16;
       const availH = height - 2 - (timeShown ? (tFont+3) : 0);
       const clampLines = Math.max(1, Math.floor(availH/lineH));
-      block.appendChild(div({style:{fontSize:(showDoneTime?9:tFont)+"px",fontWeight:700,color:tcol,lineHeight:"1.16",wordBreak:"break-word",overflowWrap:"anywhere",overflow:"hidden",
-        display:"-webkit-box",WebkitBoxOrient:"vertical",WebkitLineClamp:String(showDoneTime?1:clampLines)}},titleText));
+      block.appendChild(div({style:{fontSize:tFont+"px",fontWeight:700,color:tcol,lineHeight:"1.16",wordBreak:"break-word",overflowWrap:"anywhere",overflow:"hidden",
+        display:"-webkit-box",WebkitBoxOrient:"vertical",WebkitLineClamp:String(clampLines)}},titleText));
       if(timeShown)block.appendChild(div({style:{fontSize:"10px",color:tcol==="#ffffff"?"#ffffffcc":"#0a1120aa",lineHeight:1.2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},`${Math.floor(sMin/60)}:${String(sMin%60).padStart(2,'0')}〜${Math.floor(eMin/60)}:${String(eMin%60).padStart(2,'0')}`));
-      // チェック実績：完了時刻を名前の下に表示
-      if(showDoneTime)block.appendChild(div({style:{fontSize:"9px",fontWeight:600,color:tcol==="#ffffff"?"#ffffffcc":"#0a1120aa",lineHeight:1.2,whiteSpace:"nowrap"}},`${Math.floor(sMin/60)}:${String(sMin%60).padStart(2,'0')}`));
       // ドラッグで時間移動（単発の直接予定のみ・0時またぎ以外）
       const movable = onMove && ev.uid!=null && !ev.isRepeat && !ev.isPattern && !ev.customTodo && !ev._tail && !ev.allDay && !ev.endNextDay;
       if(movable){
