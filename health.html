@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.19"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.20"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -4153,7 +4153,7 @@ function renderPlanCustomTodoModal(){
   m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"12px"}},`${dl} ・ この日だけ変更`));
   if(pc.lblOv===undefined)pc.lblOv=rec.labelOverride||"";
   if(pc.noteOv===undefined)pc.noteOv=rec.noteOverride||"";
-  if(!pc.ov){ const eff=ct?customTodoTimeFor(ct,vd):null; const now=new Date(); pc.ov=eff?{timeH:eff.h,timeM:eff.m,endH:eff.eh,endM:eff.em}:{timeH:now.getHours(),timeM:0,endH:(now.getHours()+1)%24,endM:0}; pc.ovInit=`${pc.ov.timeH}:${pc.ov.timeM}-${pc.ov.endH}:${pc.ov.endM}`; }
+  if(!pc.ov){ const eff=ct?customTodoTimeFor(ct,vd):null; const now=new Date(); pc.ov=eff?{timeH:eff.h,timeM:eff.m,endH:eff.eh,endM:eff.em,startNextDay:!!eff.sn,endNextDay:!!eff.en}:{timeH:now.getHours(),timeM:0,endH:(now.getHours()+1)%24,endM:0,startNextDay:false,endNextDay:false}; pc.ovInit=`${pc.ov.timeH}:${pc.ov.timeM}-${pc.ov.endH}:${pc.ov.endM}-${pc.ov.startNextDay?1:0}${pc.ov.endNextDay?1:0}`; }
   const hasAnyOv=!!(rec.labelOverride||rec.noteOverride||(rec.timeOverride&&rec.timeOverride.timeH!=null));
   const uLabel=(txt)=>div({style:{fontSize:"11px",color:"#64748b",margin:"0 0 4px"}},txt);
   // 名前
@@ -4179,11 +4179,17 @@ function renderPlanCustomTodoModal(){
   m.appendChild(uLabel("🕐 時間"));
   if(ct){
     const tf=(getH,getM,set)=>{const i=document.createElement('input');i.type='time';i.value=`${String(getH()??0).padStart(2,'0')}:${String(getM()||0).padStart(2,'0')}`;i.style.cssText="flex:1;min-width:0;padding:8px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:15px;color-scheme:dark;font-family:inherit";i.addEventListener('change',e=>{const q=(e.target.value||'').split(':');const H=Number(q[0]),M=Number(q[1]);if(!isNaN(H)&&!isNaN(M))set(H,M);});return i;};
-    const trow=div({style:{display:"flex",gap:"8px",alignItems:"center",marginBottom:"10px"}});
+    const trow=div({style:{display:"flex",gap:"8px",alignItems:"center",marginBottom:"6px"}});
     trow.appendChild(tf(()=>pc.ov.timeH,()=>pc.ov.timeM,(H,M)=>{pc.ov.timeH=H;pc.ov.timeM=M;}));
     trow.appendChild(span({style:{color:"#64748b"}},"〜"));
     trow.appendChild(tf(()=>pc.ov.endH!=null?pc.ov.endH:(pc.ov.timeH+1)%24,()=>pc.ov.endH!=null?pc.ov.endM:pc.ov.timeM,(H,M)=>{pc.ov.endH=H;pc.ov.endM=M;}));
     m.appendChild(trow);
+    // 翌日トグル（0時をまたぐ場合）
+    const ndBtn=(label,on,onClick)=>{const b=btn({style:{flex:1,padding:"7px",borderRadius:"7px",cursor:"pointer",fontSize:"11px",fontWeight:600,border:`1px solid ${on?"#38bdf8":"#334155"}`,background:on?"#0ea5e922":"transparent",color:on?"#38bdf8":"#64748b"},title:`${label}時刻を翌日にする`},`${label} ${on?"🌙翌日":"当日"}`);b.addEventListener('click',onClick);return b;};
+    m.appendChild(div({style:{display:"flex",gap:"6px",marginBottom:"10px"}},[
+      ndBtn("開始",!!pc.ov.startNextDay,()=>{pc.ov.startNextDay=!pc.ov.startNextDay;render();}),
+      ndBtn("終了",!!pc.ov.endNextDay,()=>{pc.ov.endNextDay=!pc.ov.endNextDay;render();})
+    ]));
   } else { m.appendChild(div({style:{fontSize:"12px",color:"#475569",marginBottom:"10px"}},"（このルーティンは時刻を持ちません）")); }
   // メモ
   m.appendChild(uLabel("📝 メモ"));
@@ -4196,8 +4202,8 @@ function renderPlanCustomTodoModal(){
       const lv=(pc.lblOv||"").trim(), nv=(pc.noteOv||"").trim();
       if(lv)cur.labelOverride=lv; else delete cur.labelOverride;
       if(nv)cur.noteOverride=nv; else delete cur.noteOverride;
-      if(ct){ const timeChanged=`${pc.ov.timeH}:${pc.ov.timeM}-${pc.ov.endH}:${pc.ov.endM}`!==pc.ovInit; const hadTimeOv=!!(cur.timeOverride&&cur.timeOverride.timeH!=null);
-        if(timeChanged||hadTimeOv) cur.timeOverride={timeH:pc.ov.timeH,timeM:pc.ov.timeM||0,endH:pc.ov.endH,endM:pc.ov.endM}; }
+      if(ct){ const timeChanged=`${pc.ov.timeH}:${pc.ov.timeM}-${pc.ov.endH}:${pc.ov.endM}-${pc.ov.startNextDay?1:0}${pc.ov.endNextDay?1:0}`!==pc.ovInit; const hadTimeOv=!!(cur.timeOverride&&cur.timeOverride.timeH!=null);
+        if(timeChanged||hadTimeOv) cur.timeOverride={timeH:pc.ov.timeH,timeM:pc.ov.timeM||0,endH:pc.ov.endH,endM:pc.ov.endM,startNextDay:!!pc.ov.startNextDay,endNextDay:!!pc.ov.endNextDay}; }
       setTodo(vd,pc.uid,cur);
       const moveTo=pc.moveTo;
       if(moveTo && moveTo!==vd){ pushUndo("定期ルーティンを移動しました"); moveCustomTodoDay(pc.uid, vd, moveTo); state.modal=null; showToast(`${mdLabel(moveTo)} に移動して保存しました`); render(); }
