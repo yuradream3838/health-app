@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.20"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.21"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -4225,9 +4225,15 @@ function renderPlanCustomTodoModal(){
     if(pc.hasEnd) trow2.appendChild(df(()=>pc.teH,()=>pc.teM,(H,M)=>{pc.teH=H;pc.teM=M;},"#22c55e55"));
     else trow2.appendChild(span({style:{flex:1,fontSize:"11px",color:"#f97316"}},"計測中"));
     m.appendChild(trow2);
+    // 翌日トグル（0時をまたぐ計測）
+    { const ndt=(label,on,onClick)=>{const b=btn({style:{flex:1,padding:"7px",borderRadius:"7px",cursor:"pointer",fontSize:"11px",fontWeight:600,border:`1px solid ${on?"#38bdf8":"#334155"}`,background:on?"#0ea5e922":"transparent",color:on?"#38bdf8":"#64748b"}},`${label} ${on?"🌙翌日":"当日"}`);b.addEventListener('click',onClick);return b;};
+      m.appendChild(div({style:{display:"flex",gap:"6px",marginBottom:"8px"}},[
+        ndt("開始",!!pc.tsNextDay,()=>{pc.tsNextDay=!pc.tsNextDay;render();}),
+        pc.hasEnd?ndt("終了",!!pc.teNextDay,()=>{pc.teNextDay=!pc.teNextDay;render();}):null
+      ])); }
     m.appendChild(btn({style:{width:"100%",padding:"9px",marginBottom:"6px",background:"#0ea5e918",border:"1px solid #0ea5e9",borderRadius:"8px",color:"#38bdf8",fontSize:"13px",fontWeight:600,cursor:"pointer"},
-      onClick:()=>{ const p=(vd||"").split('-'); const st=new Date(+p[0],+p[1]-1,+p[2],pc.tsH,pc.tsM,0,0); const cur2={...((state.todos[vd]||{})[pc.uid]||{})}; cur2.startTime=st.toISOString();
-        if(pc.hasEnd){ let et=new Date(+p[0],+p[1]-1,+p[2],pc.teH,pc.teM,0,0); if(et.getTime()<=st.getTime())et=new Date(et.getTime()+86400000); cur2.endTime=et.toISOString(); cur2.checked=true; cur2.time=et.toISOString(); }
+      onClick:()=>{ const p=(vd||"").split('-'); const st=new Date(+p[0],+p[1]-1,+p[2],pc.tsH,pc.tsM,0,0); if(pc.tsNextDay)st.setDate(st.getDate()+1); const cur2={...((state.todos[vd]||{})[pc.uid]||{})}; cur2.startTime=st.toISOString();
+        if(pc.hasEnd){ let et=new Date(+p[0],+p[1]-1,+p[2],pc.teH,pc.teM,0,0); if(pc.teNextDay)et.setDate(et.getDate()+1); if(et.getTime()<=st.getTime())et=new Date(et.getTime()+86400000); cur2.endTime=et.toISOString(); cur2.checked=true; cur2.time=et.toISOString(); }
         setTodo(vd,pc.uid,cur2); state.modal=null; showToast("計測時刻を保存しました","#38bdf8"); render(); }},"✅ 計測時刻を保存"));
     if(!pc.hasEnd) m.appendChild(btn({style:{width:"100%",padding:"8px",marginBottom:"6px",background:"#22c55e18",border:"1px solid #22c55e",borderRadius:"8px",color:"#4ade80",fontSize:"12px",fontWeight:600,cursor:"pointer"},
       onClick:()=>{ pc.hasEnd=true; render(); }},"⏹ 終了時刻を入れて完了にする"));
@@ -4240,10 +4246,13 @@ function renderPlanCustomTodoModal(){
     const cur = rec.time?new Date(rec.time):new Date();
     if(pc.doneH===undefined){ pc.doneH=cur.getHours(); pc.doneM=cur.getMinutes(); }
     m.appendChild(div({style:{fontSize:"11px",color:"#4ade80",margin:"0 0 5px",fontWeight:600}},"✅ 完了時刻を編集"));
+    if(pc.doneNextDay===undefined) pc.doneNextDay=false;
     const df=(getH,getM,set)=>{const i=document.createElement('input');i.type='time';i.value=`${String(getH()).padStart(2,'0')}:${String(getM()).padStart(2,'0')}`;i.style.cssText="flex:1;min-width:0;padding:8px;background:#0f172a;border:1px solid #22c55e55;border-radius:8px;color:#e2e8f0;font-size:15px;color-scheme:dark;font-family:inherit";i.addEventListener('change',e=>{const q=(e.target.value||'').split(':');const H=Number(q[0]),M=Number(q[1]);if(!isNaN(H)&&!isNaN(M))set(H,M);});return i;};
     m.appendChild(div({style:{display:"flex",gap:"8px",alignItems:"center",marginBottom:"8px"}},[df(()=>pc.doneH,()=>pc.doneM,(H,M)=>{pc.doneH=H;pc.doneM=M;})]));
+    { const on=!!pc.doneNextDay; const nb=btn({style:{width:"100%",padding:"8px",marginBottom:"8px",borderRadius:"8px",cursor:"pointer",fontSize:"12px",fontWeight:600,border:`1px solid ${on?"#38bdf8":"#334155"}`,background:on?"#0ea5e922":"transparent",color:on?"#38bdf8":"#64748b"}},on?"🌙 翌日に完了（翌日の実績へ）":"☀️ 当日に完了");
+      nb.addEventListener('click',()=>{pc.doneNextDay=!pc.doneNextDay;render();}); m.appendChild(nb); }
     m.appendChild(btn({style:{width:"100%",padding:"9px",marginBottom:"6px",background:"#22c55e18",border:"1px solid #22c55e",borderRadius:"8px",color:"#4ade80",fontSize:"13px",fontWeight:600,cursor:"pointer"},
-      onClick:()=>{ const p=(vd||"").split('-'); const dt=new Date(+p[0],+p[1]-1,+p[2],pc.doneH,pc.doneM,0,0); const cur2={...((state.todos[vd]||{})[pc.uid]||{})}; setTodo(vd,pc.uid,{...cur2,checked:true,time:dt.toISOString()}); state.modal=null; showToast("完了時刻を変更しました"); render(); }},"✅ 完了時刻を保存"));
+      onClick:()=>{ const p=(vd||"").split('-'); const dt=new Date(+p[0],+p[1]-1,+p[2],pc.doneH,pc.doneM,0,0); if(pc.doneNextDay)dt.setDate(dt.getDate()+1); const cur2={...((state.todos[vd]||{})[pc.uid]||{})}; setTodo(vd,pc.uid,{...cur2,checked:true,time:dt.toISOString()}); state.modal=null; showToast("完了時刻を変更しました"); render(); }},"✅ 完了時刻を保存"));
     m.appendChild(btn({style:{width:"100%",padding:"8px",marginBottom:"12px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#94a3b8",cursor:"pointer",fontSize:"12px"},
       onClick:()=>{ const cur2={...((state.todos[vd]||{})[pc.uid]||{})}; delete cur2.time; setTodo(vd,pc.uid,{...cur2,checked:false}); state.modal=null; showToast("未完了に戻しました"); render(); }},"↩ 未完了に戻す"));
     m.appendChild(div({style:{borderTop:"1px solid #1e293b",margin:"0 0 10px"}}));
