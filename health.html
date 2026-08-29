@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.29"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.30"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -672,6 +672,7 @@ const state = {
   widgetSections:null, widgetEditMode:false, widgetSecOrder:null, // ヴィジェット表示項目・順序のカスタマイズ
   shopAddCat:"food", shopAddText:"", editingShopUid:null, shopEditText:"", shopEditCat:"food", // 買物リストのタグ・編集
   sleepGoal:null, sleepGoalEdit:false, sgDraft:null, // 就寝リズム（就寝ドリフト対策）
+  bodyComps:null, bcForm:null, bcPhotoLoading:false, bcPhotoError:null, bcTrendMetric:"weight", bcHistExpanded:false, // トレーニング：体組成記録
   windEditOpen:false, windEditH:22, windEditM:0, // 寝支度スイッチの開始時刻編集
   nextDrink:null, nextDrinkEdit:false, // 次に飲みに行く予定（計画飲酒）
   investHistExpanded:false, // 未来投資履歴の全件展開
@@ -757,6 +758,8 @@ function loadStorage(){
     if(wsec){try{const o=JSON.parse(wsec); if(o&&typeof o==="object")state.widgetSections=o;}catch{}}
     const slg=localStorage.getItem(STORAGE_KEY+"_sleepgoal");
     if(slg){try{const o=JSON.parse(slg); if(o&&typeof o==="object"&&o.bedH!=null)state.sleepGoal=o;}catch{}}
+    const bcp=localStorage.getItem(STORAGE_KEY+"_bodycomp");
+    if(bcp){try{const a=JSON.parse(bcp); if(Array.isArray(a))state.bodyComps=a;}catch{}}
     const word=localStorage.getItem(STORAGE_KEY+"_widgetorder");
     if(word){try{const a=JSON.parse(word); if(Array.isArray(a))state.widgetSecOrder=a;}catch{}}
     const dcb=localStorage.getItem(STORAGE_KEY+"_decisbalance");
@@ -1142,6 +1145,7 @@ function render(){
   if(state.modal==="addEvent") content.appendChild(renderAddEventModal(vd));
   if(state.modal==="addActual") content.appendChild(renderActualModal());
   if(state.modal==="actualMemo") content.appendChild(renderActualMemoModal());
+  if(state.modal==="bodyComp") content.appendChild(renderBodyCompModal());
   if(state.modal==="patternEdit") content.appendChild(renderPatternEditModal(vd));
   if(state.modal==="planCustomTodo") content.appendChild(renderPlanCustomTodoModal());
   if(state.modal==="editNap")  content.appendChild(renderAddNapModal(vd,true));
@@ -4557,14 +4561,192 @@ function renderSubHub(SUB,active,onSel,renderBody){
 }
 
 // ── 日記ハブ（生活記録・体調記録・アルコール）──
+// ═══════════════════════════════════════════════════
+// ── トレーニング：体組成記録（写真から自動入力・推移）＋ ルーティン連動 ──
+// ═══════════════════════════════════════════════════
+const BODYCOMP_FIELDS=[
+  {k:'weight',l:'体重',unit:'kg'},{k:'bodyFat',l:'体脂肪率',unit:'%'},{k:'bmi',l:'BMI',unit:''},
+  {k:'bmr',l:'基礎代謝量',unit:'kcal'},{k:'visceralFat',l:'内臓脂肪',unit:'Lv'},{k:'muscleTotal',l:'総筋肉量',unit:'kg'},
+  {k:'armL',l:'左腕',unit:'kg'},{k:'armR',l:'右腕',unit:'kg'},{k:'trunk',l:'胴体',unit:'kg'},
+  {k:'legL',l:'左脚',unit:'kg'},{k:'legR',l:'右脚',unit:'kg'},
+  {k:'bpHigh',l:'最高血圧',unit:'mmHg'},{k:'bpLow',l:'最低血圧',unit:'mmHg'},{k:'pulse',l:'脈拍',unit:'拍/分'},
+];
+function getBodyComps(){ if(!Array.isArray(state.bodyComps))state.bodyComps=[]; return state.bodyComps; }
+function saveBodyComps(){ try{localStorage.setItem(STORAGE_KEY+"_bodycomp",JSON.stringify(getBodyComps()));}catch{} }
+function bodyCompsSorted(){ return getBodyComps().slice().sort((a,b)=>a.date<b.date?-1:a.date>b.date?1:0); }
+function latestBodyComp(){ const a=bodyCompsSorted(); return a.length?a[a.length-1]:null; }
+function prevBodyComp(){ const a=bodyCompsSorted(); return a.length>=2?a[a.length-2]:null; }
+function upsertBodyComp(rec){ const arr=getBodyComps(); const i=arr.findIndex(x=>x.id===rec.id); if(i>=0)arr[i]=rec; else arr.push(rec); saveBodyComps(); }
+function removeBodyComp(id){ state.bodyComps=getBodyComps().filter(x=>x.id!==id); saveBodyComps(); }
+// ゆるくJSONを取り出す
+function parseJSONLoose(t){ if(!t)return null; try{return JSON.parse(t);}catch{} const m=t.match(/\{[\s\S]*\}/); if(m){try{return JSON.parse(m[0]);}catch{}} return null; }
+function bcNum(v){ if(v==null||v==="")return null; const n=parseFloat(String(v).replace(/[^0-9.\-]/g,"")); return isNaN(n)?null:n; }
+// 画像を縮小してbase64（data:接頭辞なし）に
+function fileToDownscaledBase64(file,maxPx,quality){ return new Promise((resolve,reject)=>{ const fr=new FileReader(); fr.onload=()=>{ const img=new Image(); img.onload=()=>{ let w=img.width,h=img.height; const sc=Math.min(1,maxPx/Math.max(w,h)); w=Math.round(w*sc);h=Math.round(h*sc); const cv=document.createElement('canvas');cv.width=w;cv.height=h; cv.getContext('2d').drawImage(img,0,0,w,h); const durl=cv.toDataURL('image/jpeg',quality||0.7); resolve({base64:durl.split(',')[1],mime:'image/jpeg'}); }; img.onerror=reject; img.src=fr.result; }; fr.onerror=reject; fr.readAsDataURL(file); }); }
+// 写真から体組成をAIで読み取り→確認フォームへ
+async function extractBodyCompFromPhoto(file){
+  state.bcPhotoLoading=true; state.bcPhotoError=null; render();
+  try{
+    const {base64,mime}=await fileToDownscaledBase64(file,1100,0.7);
+    const sys="あなたは体組成計・血圧計の測定結果画面から数値を読み取るアシスタントです。";
+    const prompt="この画像は体組成・血圧の測定結果です。次のキーだけを持つJSONのみを返してください（読み取れない項目はnull、単位や記号は含めず数値のみ）。キー: weight,bodyFat,bmi,bmr,visceralFat,muscleTotal,armL,armR,trunk,legL,legR,bpHigh,bpLow,pulse 。JSON以外は一切出力しないこと。";
+    const text=await callAIVision(sys,prompt,base64,mime);
+    const obj=parseJSONLoose(text);
+    state.bcPhotoLoading=false;
+    if(!obj){ state.bcPhotoError="読み取れませんでした。手入力してください。"; render(); return; }
+    const pre={date:todayStr()}; BODYCOMP_FIELDS.forEach(f=>{ pre[f.k]=bcNum(obj[f.k]); });
+    openBodyCompForm(pre,true);
+  }catch(e){ state.bcPhotoLoading=false; state.bcPhotoError="AI読み取りに失敗しました（"+e.message+"）。手入力できます。"; render(); }
+}
+function openBodyCompForm(pre,fromPhoto){ state.bcForm={id:(pre&&pre.id)||("bc"+Date.now()), date:(pre&&pre.date)||todayStr(), _new:!(pre&&pre.id), _fromPhoto:!!fromPhoto}; BODYCOMP_FIELDS.forEach(f=>{ state.bcForm[f.k]=(pre&&pre[f.k]!=null)?pre[f.k]:null; }); state.modal="bodyComp"; render(); }
+function renderBodyCompModal(){
+  const f=state.bcForm; if(!f)return div({});
+  const bg=div({className:"modal-center"}); const m=div({className:"modal-box",style:{maxHeight:"88vh",overflowY:"auto"}});
+  bg.addEventListener('click',()=>{state.modal=null;render();}); m.addEventListener('click',e=>e.stopPropagation());
+  m.appendChild(div({style:{fontSize:"15px",fontWeight:700,color:"#e2e8f0",marginBottom:"3px"}},f._new?"📊 体組成を記録":"📊 体組成を編集"));
+  if(f._fromPhoto)m.appendChild(div({style:{fontSize:"11px",color:"#fbbf24",marginBottom:"8px",lineHeight:1.5}},"📷 写真から読み取りました。数値を確認・修正して保存してください。"));
+  m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"4px"}},"測定日"));
+  const di=document.createElement('input');di.type='date';di.value=f.date;di.style.cssText="width:100%;box-sizing:border-box;padding:8px;margin-bottom:12px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:14px;color-scheme:dark;font-family:inherit";
+  di.addEventListener('change',e=>{if(e.target.value)f.date=e.target.value;}); m.appendChild(di);
+  const grid=div({style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"8px",marginBottom:"14px"}});
+  BODYCOMP_FIELDS.forEach(fd=>{ const box=div({}); box.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"2px"}},`${fd.l}${fd.unit?`(${fd.unit})`:""}`));
+    const inp=document.createElement('input');inp.type='number';inp.step='0.1';inp.value=f[fd.k]!=null?String(f[fd.k]):"";inp.style.cssText="width:100%;box-sizing:border-box;padding:8px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:14px;font-family:inherit";
+    inp.addEventListener('input',e=>{ const v=e.target.value; f[fd.k]=v===""?null:parseFloat(v); }); box.appendChild(inp); grid.appendChild(box); });
+  m.appendChild(grid);
+  const btns=[];
+  if(!f._new) btns.push(btn({style:{padding:"10px 12px",background:"transparent",border:"1px solid #7f1d1d",borderRadius:"8px",color:"#f87171",fontSize:"12px",cursor:"pointer"},onClick:()=>{ removeBodyComp(f.id); state.modal=null; state.bcForm=null; render(); }},"🗑 削除"));
+  btns.push(btn({className:"btn-ghost",style:{flex:1},onClick:()=>{state.modal=null;state.bcForm=null;render();}},"キャンセル"));
+  btns.push(btn({style:{flex:2,padding:"10px",background:"linear-gradient(135deg,#22c55e,#0ea5e9)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:700,cursor:"pointer"},onClick:()=>{
+    const rec={id:f.id,date:f.date}; let any=false; BODYCOMP_FIELDS.forEach(fd=>{ if(f[fd.k]!=null&&!isNaN(f[fd.k])){rec[fd.k]=f[fd.k];any=true;} });
+    if(!any){showToast("数値を入力してください");return;}
+    upsertBodyComp(rec); state.modal=null; state.bcForm=null; showToast("📊 体組成を保存しました","#22c55e"); render();
+  }},"✅ 保存"));
+  m.appendChild(div({style:{display:"flex",gap:"8px",alignItems:"center"}},btns));
+  bg.appendChild(m);return bg;
+}
+// ── ルーティンのトレーニング（timer/multi）連動 ──
+function trainingRec(vd){ return (state.todos[vd]||{}).training||{}; }
+function trainingSessions(vd){ return (trainingRec(vd).sessions)||[]; }
+function trainingMinutes(vd){ return trainingSessions(vd).reduce((a,s)=>{ if(s.startTime&&s.endTime){ return a+Math.max(0,(Date.parse(s.endTime)-Date.parse(s.startTime))/60000); } return a; },0); }
+function gymVisited(vd){ return trainingSessions(vd).some(s=>s.startTime); }
+function gymCountRange(vd,days){ let n=0; for(let i=0;i<days;i++){ if(gymVisited(addDays(vd,-i)))n++; } return n; }
+function gymCountThisWeek(){ const mon=mondayOfDS(todayStr()); let n=0,d=mon; while(d<=todayStr()){ if(gymVisited(d))n++; d=addDays(d,1); } return n; }
+function gymCountThisMonth(){ const mk=todayStr().slice(0,7); let n=0; for(let i=0;i<62;i++){ const ds=addDays(todayStr(),-i); if(ds.slice(0,7)!==mk)break; if(gymVisited(ds))n++; } return n; }
+// 体組成の推移ミニ折れ線（metric）
+function bcTrendChart(metric){
+  const arr=bodyCompsSorted().filter(r=>r[metric]!=null).slice(-12);
+  const wrap=div({});
+  if(arr.length<2){ wrap.appendChild(div({style:{fontSize:"11px",color:"#475569",padding:"4px 0"}},"記録が2件以上たまると推移が出ます。")); return wrap; }
+  const vals=arr.map(r=>r[metric]); const mn=Math.min(...vals),mx=Math.max(...vals),rng=(mx-mn)||1;
+  const H=54;
+  const barRow=div({style:{display:"flex",alignItems:"flex-end",gap:"3px",height:H+"px"}});
+  arr.forEach(r=>{ const v=r[metric]; const h=Math.round(((v-mn)/rng)*(H-10))+10; const col=metric==="bodyFat"?"#f472b6":metric==="muscleTotal"?"#22c55e":"#38bdf8";
+    const coln=div({style:{flex:1,display:"flex",flexDirection:"column",justifyContent:"flex-end",alignItems:"center",gap:"2px"}});
+    coln.appendChild(div({style:{fontSize:"8px",color:"#64748b"}},String(v)));
+    coln.appendChild(div({style:{width:"70%",height:h+"px",background:col,borderRadius:"3px"}}));
+    barRow.appendChild(coln);
+  });
+  wrap.appendChild(barRow);
+  wrap.appendChild(div({style:{display:"flex",justifyContent:"space-between",fontSize:"8px",color:"#475569",marginTop:"2px"}},[span({},mdLabel(arr[0].date)),span({},mdLabel(arr[arr.length-1].date))]));
+  return wrap;
+}
+function renderTrainingPanel(vd,ds,isToday){
+  const wrap=div({style:{maxWidth:"600px",margin:"0 auto",padding:"10px 16px 60px"}});
+  if(!isToday){ const isFuture=vd>ds; wrap.appendChild(div({style:{background:"#1e3a5f22",border:"1px solid #1e3a5f",borderRadius:"10px",padding:"8px 12px",marginBottom:"8px",fontSize:"12px",color:"#64748b"}},isFuture?"📅 未来の日付を表示中":"📅 過去の記録を表示中 — 編集可能です")); }
+  // ── 💪 トレーニング（ルーティン連動）──
+  { const c=div({className:"card",style:{marginBottom:"10px"}});
+    c.appendChild(div({style:{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:"6px"}},[
+      div({style:{fontSize:"13px",fontWeight:700,color:"#22c55e"}},"💪 トレーニング"),
+      div({style:{fontSize:"11px",color:"#64748b"}},`今週${gymCountThisWeek()}回・今月${gymCountThisMonth()}回`)
+    ]));
+    const sess=trainingSessions(vd); const running=sess.find(s=>s.startTime&&!s.endTime);
+    const mins=Math.round(trainingMinutes(vd));
+    c.appendChild(div({style:{fontSize:"11px",color:"#94a3b8",marginBottom:"8px"}},sess.length?`${isToday?"今日":mdLabel(vd)}：${sess.length}セッション・計${mins>=60?`${Math.floor(mins/60)}時間${mins%60}分`:`${mins}分`}`:"まだ記録がありません（▶で計測開始・ルーティンと共通）"));
+    const b=btn({style:{width:"100%",padding:"11px",borderRadius:"8px",border:"none",color:"#fff",fontSize:"13px",fontWeight:800,cursor:"pointer",background:running?"linear-gradient(135deg,#f97316,#ef4444)":"linear-gradient(135deg,#22c55e,#0ea5e9)"}},running?"⏹ 終了":"▶ トレーニング開始");
+    b.addEventListener('click',()=>{ const rec={...trainingRec(vd)}; const ss=[...(rec.sessions||[])]; if(running){ const i=ss.findIndex(s=>s.startTime&&!s.endTime); if(i>=0)ss[i]={...ss[i],endTime:new Date().toISOString()}; showToast("✅ おつかれさま！"); } else { ss.push({uid:Date.now(),startTime:new Date().toISOString()}); } setTodo(vd,"training",{...rec,sessions:ss}); render(); });
+    c.appendChild(b);
+    // セッション一覧（内容メモ・削除）
+    sess.slice().reverse().forEach(s=>{
+      const row=div({style:{display:"flex",gap:"6px",alignItems:"center",marginTop:"6px"}});
+      const st=s.startTime?new Date(s.startTime):null, en=s.endTime?new Date(s.endTime):null;
+      const tl=st?`${hhmm(st.getHours(),st.getMinutes())}${en?`〜${hhmm(en.getHours(),en.getMinutes())}`:"〜(計測中)"}`:"";
+      row.appendChild(span({style:{fontSize:"10px",color:"#64748b",flexShrink:0,width:"96px"}},tl));
+      const ni=document.createElement('input');ni.type='text';ni.placeholder="内容（種目・重量など）";ni.value=s.note||"";ni.style.cssText="flex:1;min-width:0;padding:6px 8px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#e2e8f0;font-size:12px;font-family:inherit";
+      ni.addEventListener('change',(()=>{const uid=s.uid;return e=>{ const rec={...trainingRec(vd)}; rec.sessions=(rec.sessions||[]).map(x=>x.uid===uid?{...x,note:e.target.value.trim()}:x); setTodo(vd,"training",rec); };})());
+      const del=btn({style:{padding:"5px 8px",background:"transparent",border:"1px solid #7f1d1d",borderRadius:"6px",color:"#f87171",fontSize:"11px",cursor:"pointer",flexShrink:0}},"🗑");
+      del.addEventListener('click',(()=>{const uid=s.uid;return()=>{ const rec={...trainingRec(vd)}; rec.sessions=(rec.sessions||[]).filter(x=>x.uid!==uid); setTodo(vd,"training",rec); render(); };})());
+      row.appendChild(ni);row.appendChild(del); c.appendChild(row);
+    });
+    wrap.appendChild(c);
+  }
+  // ── 📊 体組成 ──
+  { const c=div({className:"card",style:{marginBottom:"10px"}});
+    c.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#38bdf8",marginBottom:"6px"}},"📊 体組成（InBody等）"));
+    const latest=latestBodyComp(), prev=prevBodyComp();
+    if(latest){
+      c.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"6px"}},`最新：${mdLabel(latest.date)}`));
+      const g=div({style:{display:"flex",gap:"6px",textAlign:"center",marginBottom:"8px"}});
+      const cell=(fd,col)=>{ const v=latest[fd.k]; if(v==null)return null; const pv=prev?prev[fd.k]:null; const diff=(pv!=null)?Math.round((v-pv)*10)/10:null;
+        return div({style:{flex:1,padding:"8px 4px",borderRadius:"8px",background:"#0f172a"}},[
+          div({style:{fontSize:"16px",fontWeight:800,color:col,lineHeight:1.1}},String(v)),
+          div({style:{fontSize:"9px",color:"#64748b",marginTop:"1px"}},`${fd.l}${fd.unit?fd.unit:""}`),
+          diff!=null?div({style:{fontSize:"9px",fontWeight:700,color:diff===0?"#64748b":(fd.k==="bodyFat"?(diff<0?"#22c55e":"#fb923c"):(diff>0?"#22c55e":"#fb923c"))}},`${diff>0?"+":""}${diff}`):null
+        ]); };
+      [["weight","#38bdf8"],["bodyFat","#f472b6"],["muscleTotal","#22c55e"]].forEach(([k,col])=>{ const fd=BODYCOMP_FIELDS.find(x=>x.k===k); const el=cell(fd,col); if(el)g.appendChild(el); });
+      c.appendChild(g);
+    } else {
+      c.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"8px",lineHeight:1.5}},"ジムの測定結果を記録すると、推移が見られます。写真からの自動入力もできます。"));
+    }
+    // 入力ボタン
+    const btnRow=div({style:{display:"flex",gap:"8px",marginBottom:"8px"}});
+    const photoLbl=document.createElement('label'); photoLbl.style.cssText="flex:2;text-align:center;padding:10px;border-radius:8px;background:#f59e0b18;border:1px solid #f59e0b;color:#fbbf24;font-size:12px;font-weight:700;cursor:pointer;box-sizing:border-box";
+    const photoInp=document.createElement('input'); photoInp.type='file'; photoInp.accept='image/*'; photoInp.setAttribute('capture','environment'); photoInp.style.display='none';
+    photoInp.addEventListener('change',e=>{ const file=e.target.files&&e.target.files[0]; if(file)extractBodyCompFromPhoto(file); e.target.value=""; });
+    photoLbl.appendChild(photoInp); photoLbl.appendChild(document.createTextNode(state.bcPhotoLoading?"📷 読み取り中...":"📷 写真から入力"));
+    btnRow.appendChild(photoLbl);
+    const manB=btn({style:{flex:1,padding:"10px",borderRadius:"8px",background:"#0ea5e918",border:"1px solid #0ea5e9",color:"#38bdf8",fontSize:"12px",fontWeight:700,cursor:"pointer"}},"✏️ 手入力");
+    manB.addEventListener('click',()=>openBodyCompForm({date:todayStr()},false));
+    btnRow.appendChild(manB);
+    c.appendChild(btnRow);
+    if(state.bcPhotoError)c.appendChild(div({style:{fontSize:"11px",color:"#f87171",marginBottom:"8px",lineHeight:1.5}},state.bcPhotoError));
+    c.appendChild(div({style:{fontSize:"9px",color:"#475569",marginBottom:"6px",lineHeight:1.5}},"※ 写真はアプリに保存されません（数値のみ保存）。AI読み取りは確認のうえ保存してください。"));
+    // 推移グラフ
+    if(bodyCompsSorted().length>=2){
+      c.appendChild(div({style:{borderTop:"1px solid #1e293b",paddingTop:"8px",marginTop:"2px"}}));
+      const metrics=[["weight","体重"],["bodyFat","体脂肪率"],["muscleTotal","総筋肉量"],["bmr","基礎代謝"],["visceralFat","内臓脂肪"]];
+      const mrow=div({style:{display:"flex",flexWrap:"wrap",gap:"5px",marginBottom:"8px"}});
+      metrics.forEach(([k,l])=>{ const on=state.bcTrendMetric===k; const b=btn({style:{padding:"5px 10px",borderRadius:"14px",cursor:"pointer",fontSize:"11px",fontWeight:on?700:400,border:`1px solid ${on?"#38bdf8":"#334155"}`,background:on?"#0ea5e922":"transparent",color:on?"#38bdf8":"#94a3b8",fontFamily:"inherit"}},l); b.addEventListener('click',()=>{state.bcTrendMetric=k;render();}); mrow.appendChild(b); });
+      c.appendChild(mrow);
+      c.appendChild(bcTrendChart(state.bcTrendMetric||"weight"));
+    }
+    // 履歴
+    const hist=bodyCompsSorted().slice().reverse();
+    if(hist.length){
+      c.appendChild(div({style:{fontSize:"10px",color:"#64748b",margin:"10px 0 4px"}},`🗂 記録（${hist.length}件）`));
+      const exp=!!state.bcHistExpanded; (exp?hist:hist.slice(0,4)).forEach(r=>{
+        const row=div({style:{display:"flex",gap:"8px",alignItems:"center",padding:"6px 0",borderBottom:"1px solid #1e293b",cursor:"pointer"}});
+        row.appendChild(span({style:{fontSize:"11px",color:"#94a3b8",width:"52px",flexShrink:0}},mdLabel(r.date)));
+        const parts=[]; if(r.weight!=null)parts.push(`${r.weight}kg`); if(r.bodyFat!=null)parts.push(`体脂${r.bodyFat}%`); if(r.muscleTotal!=null)parts.push(`筋${r.muscleTotal}`);
+        row.appendChild(div({style:{flex:1,minWidth:0,fontSize:"12px",color:"#e2e8f0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},parts.join("・")||"—"));
+        row.appendChild(span({style:{fontSize:"11px",color:"#475569",flexShrink:0}},"✏️"));
+        row.addEventListener('click',(()=>{const rr=r;return()=>{ openBodyCompForm({...rr},false); };})());
+        c.appendChild(row);
+      });
+      if(hist.length>4){ const tg=btn({style:{width:"100%",marginTop:"6px",padding:"7px",background:"transparent",border:"1px solid #334155",borderRadius:"7px",color:"#64748b",cursor:"pointer",fontSize:"11px",fontFamily:"inherit"}},exp?"🔼 閉じる":`🔽 すべて見る（他${hist.length-4}件）`); tg.addEventListener('click',()=>{state.bcHistExpanded=!state.bcHistExpanded;render();}); c.appendChild(tg); }
+    }
+    wrap.appendChild(c);
+  }
+  return wrap;
+}
 function renderDiaryHub(vd,ds,curH,isToday){
-  return renderSubHub(["生活記録","睡眠","体調記録","アルコール"],state.diarySubTab,t=>{
+  return renderSubHub(["生活記録","睡眠","トレーニング","体調記録","アルコール"],state.diarySubTab,t=>{
     state.diarySubTab=t;
     if(t==="体調記録"&&!state.viewingBackup&&state.viewDate===todayStr()&&state.weatherCity&&state.weather.length===0&&!state.weatherLoading){doFetchWeather(state.weatherCity);}
     else render();
   },()=>{
     if(state.diarySubTab==="生活記録") return renderToday(vd,ds,curH,isToday);
     if(state.diarySubTab==="睡眠") return renderSleepPanel(vd,ds,isToday);
+    if(state.diarySubTab==="トレーニング") return renderTrainingPanel(vd,ds,isToday);
     if(state.diarySubTab==="体調記録") return renderKondo(vd,ds,curH,isToday);
     if(state.diarySubTab==="アルコール") return renderAlcohol(vd,isToday);
   });
@@ -6350,6 +6532,21 @@ async function callAIText(system,prompt){
   const res=await fetch("https://nuts024.com/health/api.php",{
     method:"POST",headers:{"Content-Type":"application/json","X-Secret-Key":"songof3838"},
     body:JSON.stringify({system,prompt})
+  });
+  const data=await res.json();
+  if(data.error){
+    if(data.error==="__DAILY_LIMIT__")throw new Error(data.message||"本日の利用上限に達しました");
+    if(data.error==="__GEMINI_RATE__")throw new Error(data.message||"混雑中です。少し待ってください");
+    throw new Error(data.error);
+  }
+  if(data.remaining!=null)state.aiAnalysisRemaining=data.remaining;
+  return (data.text||"").trim();
+}
+// ── AI呼び出し（画像つき・api.phpへimage/base64を送る）──
+async function callAIVision(system,prompt,imageBase64,mimeType){
+  const res=await fetch("https://nuts024.com/health/api.php",{
+    method:"POST",headers:{"Content-Type":"application/json","X-Secret-Key":"songof3838"},
+    body:JSON.stringify({system,prompt,image:imageBase64,mimeType:mimeType||"image/jpeg"})
   });
   const data=await res.json();
   if(data.error){
@@ -10318,6 +10515,7 @@ function exportData(){
     ctJournal:state.ctJournal,
     nextDrink:state.nextDrink,
     sleepGoal:state.sleepGoal,
+    bodyComps:state.bodyComps,
     decisBalance:state.decisBalance,
     miValues:state.miValues,
     changePlan:state.changePlan,
@@ -10390,6 +10588,7 @@ function importData(e){
       if(Array.isArray(p.ctJournal)){state.ctJournal=p.ctJournal;saveCTJournal();}
       if(p.nextDrink&&typeof p.nextDrink==="object"){state.nextDrink=p.nextDrink;saveNextDrinkPlan();}
       if(p.sleepGoal&&typeof p.sleepGoal==="object"&&p.sleepGoal.bedH!=null){state.sleepGoal=p.sleepGoal;saveSleepGoal();}
+      if(Array.isArray(p.bodyComps)){state.bodyComps=p.bodyComps;saveBodyComps();}
       if(p.decisBalance&&typeof p.decisBalance==="object"){state.decisBalance=p.decisBalance;saveDecisBalance();}
       if(p.miValues&&typeof p.miValues==="object"){state.miValues=p.miValues;saveMIValues();}
       if(p.changePlan&&typeof p.changePlan==="object"){state.changePlan=p.changePlan;saveChangePlan();}
