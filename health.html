@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.28"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.29"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -1953,8 +1953,11 @@ function renderWidgetView(vd,ds){
   if(wSecOn('alcgauge')){ const g=alcGaugeMiniCard(vd); if(g)secNodes.alcgauge=g; } // 🍺 純アルコール量
   if(wSecOn('ruler')) secNodes.ruler=motivationRulerCard(vd); // 📏 動機のものさし
 
+  // 就寝カウントダウン中（寝支度を押すまで）は就寝リズムを一番上に固定
+  const pinSleep = vd===todayStr() && secNodes.sleep && getSleepGoal() && !windDownAt() && (()=>{ const cd=bedCountdownMin(); return cd!=null && cd<=cdLeadMin() && cd>-240; })();
+  if(pinSleep) wrap.appendChild(secNodes.sleep);
   // 指定順で表示項目を並べる（組み立てたノードのみ）
-  widgetOrder().forEach(k=>{ if(secNodes[k]) wrap.appendChild(secNodes[k]); });
+  widgetOrder().forEach(k=>{ if(k==='sleep' && pinSleep)return; if(secNodes[k]) wrap.appendChild(secNodes[k]); });
 
   wrap.appendChild(btn({style:{width:"100%",padding:"11px",marginTop:"4px",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:700,cursor:"pointer"},
     onClick:()=>{ exitWidget(); render(); }},"アプリを開く"));
