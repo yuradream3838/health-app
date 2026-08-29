@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.26"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.27"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -1370,6 +1370,33 @@ function getSleepGoal(){ return (state.sleepGoal&&state.sleepGoal.bedH!=null)?st
 function saveSleepGoal(){ try{ if(getSleepGoal())localStorage.setItem(STORAGE_KEY+"_sleepgoal",JSON.stringify(state.sleepGoal)); else localStorage.removeItem(STORAGE_KEY+"_sleepgoal"); }catch{} }
 function sleepTol(){ const g=getSleepGoal(); return (g&&g.tol>0)?g.tol:30; }
 function cdLeadMin(){ const g=getSleepGoal(); return ((g&&g.cdLeadH>0)?g.cdLeadH:3)*60; } // カウントダウン開始（目標の何時間前から）
+function windLeadMin(){ const g=getSleepGoal(); return (g&&g.windLeadMin>0)?g.windLeadMin:60; } // 寝支度は就寝の何分前
+// 睡眠目標が直別か（byShift または 連動先の睡眠パターンがbyShift）
+function sleepGoalByShift(){ const g=getSleepGoal(); if(!g)return false; if(g.byShift)return true; if(g.linkPatternUid){ const sp=(state.planPatterns||[]).find(x=>x.uid===g.linkPatternUid); if(sp&&sp.byShift)return true; } return false; }
+// 各直の就寝時刻 {H,M}（連動パターン→byShift設定→共通の順）
+function bedTimeForShiftKey(k){ const g=getSleepGoal(); if(!g)return null;
+  if(g.linkPatternUid){ const sp=(state.planPatterns||[]).find(x=>x.uid===g.linkPatternUid); if(sp){ if(sp.byShift){ const st=(sp.shiftTimes||{})[k]; if(st&&st.on!==false&&st.startH!=null)return {H:st.startH,M:st.startM||0}; } if(sp.startH!=null)return {H:sp.startH,M:sp.startM||0}; } }
+  if(g.byShift){ const s=(g.shifts||{})[k]; if(s&&s.bedH!=null)return {H:s.bedH,M:s.bedM||0}; }
+  return {H:g.bedH,M:g.bedM||0};
+}
+function bedTimeCommon(){ const g=getSleepGoal(); if(!g)return null; if(g.linkPatternUid){ const sp=(state.planPatterns||[]).find(x=>x.uid===g.linkPatternUid); if(sp&&sp.startH!=null)return {H:sp.startH,M:sp.startM||0}; } return {H:g.bedH,M:g.bedM||0}; }
+// 寝支度パターンの時刻を「就寝目標−リード」へ自動同期（直別なら各直で）
+function syncWindPattern(){
+  const g=getSleepGoal(); if(!g||!g.windPatternUid)return;
+  const p=(state.planPatterns||[]).find(x=>x.uid===g.windPatternUid); if(!p)return;
+  const lead=windLeadMin();
+  const mk=(bedH,bedM)=>{ const bedTot=(bedH*60+(bedM||0)); const startTot=((bedTot-lead)%1440+1440)%1440; return {startH:Math.floor(startTot/60),startM:startTot%60,endH:bedH,endM:bedM||0}; };
+  if(sleepGoalByShift()){
+    p.byShift=true; p.shiftTimes=p.shiftTimes||{};
+    SHIFT_OPTS.forEach(([k])=>{ const bt=bedTimeForShiftKey(k); if(bt){ const w=mk(bt.H,bt.M); p.shiftTimes[k]={on:true,startH:w.startH,startM:w.startM,endH:w.endH,endM:w.endM,nextDay:false}; } });
+  } else {
+    p.byShift=false; const bt=bedTimeCommon(); if(bt){ const w=mk(bt.H,bt.M); p.startH=w.startH;p.startM=w.startM;p.endH=w.endH;p.endM=w.endM;p.nextDay=false; }
+  }
+  p.enabled=true; savePlanPatterns();
+}
+// 今夜の寝支度目安時刻（夜基準分）＝就寝目標−リード
+function windTargetNightMin(ds){ const t=bedTargetNightMin(ds||todayStr()); if(t==null)return null; return t-windLeadMin(); }
+function windCountdownMin(){ const t=windTargetNightMin(todayStr()); if(t==null)return null; const now=new Date(); const nowN=toNightMin(now.getHours()*60+now.getMinutes()); return t-nowN; }
 function toNightMin(mins){ return mins<720?mins+1440:mins; } // 正午より前は翌日扱い（夜基準）
 function bedFloatToNightMin(bedFloat){ return toNightMin(Math.round(bedFloat*60)); }
 function fmtHM(mins){ const m=((Math.round(mins)%1440)+1440)%1440; return `${Math.floor(m/60)}:${String(m%60).padStart(2,'0')}`; }
@@ -1401,7 +1428,7 @@ function sleepRhythmSettingsCard(){
   const c=div({className:"card"}); c.id="sleep-settings";
   c.appendChild(div({style:{fontSize:"14px",fontWeight:700,color:"#a5b4fc",marginBottom:"4px"}},"🌙 就寝リズム"));
   c.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"10px",lineHeight:1.6}},"就寝が後ろにずれる「ドリフト」を防ぐための目標を設定します（今日ウィジェット・生活記録に反映）。起床時刻を一定に保つのが要です。"));
-  if(!state.sgDraft)state.sgDraft={bedH:(g?g.bedH:23),bedM:(g?g.bedM||0:30),wakeH:(g?g.wakeH:6),wakeM:(g?g.wakeM||0:30),tol:(g?g.tol||30:30),cdLeadH:(g&&g.cdLeadH)||3,byShift:!!(g&&g.byShift),shifts:(g&&g.shifts)?JSON.parse(JSON.stringify(g.shifts)):{},linkPatternUid:(g&&g.linkPatternUid)||null};
+  if(!state.sgDraft)state.sgDraft={bedH:(g?g.bedH:23),bedM:(g?g.bedM||0:30),wakeH:(g?g.wakeH:6),wakeM:(g?g.wakeM||0:30),tol:(g?g.tol||30:30),cdLeadH:(g&&g.cdLeadH)||3,byShift:!!(g&&g.byShift),shifts:(g&&g.shifts)?JSON.parse(JSON.stringify(g.shifts)):{},linkPatternUid:(g&&g.linkPatternUid)||null,windPatternUid:(g&&g.windPatternUid)||null,windLeadMin:(g&&g.windLeadMin)||60};
   const d=state.sgDraft; if(!d.shifts)d.shifts={};
   const tf=(label,getH,getM,set)=>{ const box=div({style:{flex:1}}); box.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"3px"}},label)); const i=document.createElement('input');i.type='time';i.value=`${String(getH()??0).padStart(2,'0')}:${String(getM()||0).padStart(2,'0')}`;i.style.cssText="width:100%;box-sizing:border-box;padding:8px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:15px;color-scheme:dark;font-family:inherit";i.addEventListener('change',e=>{const q=(e.target.value||'').split(':');const H=Number(q[0]),M=Number(q[1]);if(!isNaN(H)&&!isNaN(M))set(H,M);}); box.appendChild(i); return box; };
   // パターン予定の睡眠と連動
@@ -1444,9 +1471,27 @@ function sleepRhythmSettingsCard(){
   c.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"4px"}},"達成とみなす許容（目標±）"));
   { const row=div({style:{display:"flex",gap:"6px",marginBottom:"10px"}}); [15,30,45,60].forEach(v=>{ const on=d.tol===v; const b=btn({style:{flex:1,padding:"7px 0",borderRadius:"7px",cursor:"pointer",fontSize:"12px",fontWeight:on?700:500,border:`1px solid ${on?"#6366f1":"#334155"}`,background:on?"#6366f122":"transparent",color:on?"#a5b4fc":"#64748b"}},`±${v}分`); b.addEventListener('click',()=>{d.tol=v;render();}); row.appendChild(b); }); c.appendChild(row); }
   c.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"4px"}},"今夜のカウントダウンを表示（目標の何時間前から）"));
-  { const row=div({style:{display:"flex",gap:"6px",marginBottom:"10px"}}); [1,2,3,4,6].forEach(v=>{ const on=(d.cdLeadH||3)===v; const b=btn({style:{flex:1,padding:"7px 0",borderRadius:"7px",cursor:"pointer",fontSize:"12px",fontWeight:on?700:500,border:`1px solid ${on?"#38bdf8":"#334155"}`,background:on?"#0ea5e922":"transparent",color:on?"#38bdf8":"#64748b"}},`${v}時間前`); b.addEventListener('click',()=>{d.cdLeadH=v;render();}); row.appendChild(b); }); c.appendChild(row); }
+  { const row=div({style:{display:"flex",gap:"6px",marginBottom:"12px"}}); [1,2,3,4,6].forEach(v=>{ const on=(d.cdLeadH||3)===v; const b=btn({style:{flex:1,padding:"7px 0",borderRadius:"7px",cursor:"pointer",fontSize:"12px",fontWeight:on?700:500,border:`1px solid ${on?"#38bdf8":"#334155"}`,background:on?"#0ea5e922":"transparent",color:on?"#38bdf8":"#64748b"}},`${v}時間前`); b.addEventListener('click',()=>{d.cdLeadH=v;render();}); row.appendChild(b); }); c.appendChild(row); }
+  // 🛏 寝支度（ナイトルーティン）のパターン予定と連動＋時刻自動同期
+  c.appendChild(div({style:{borderTop:"1px solid #1e293b",paddingTop:"10px",fontSize:"12px",fontWeight:700,color:"#a5b4fc",marginBottom:"6px"}},"🛏 寝支度（ナイトルーティン）"));
+  { const pats=(state.planPatterns||[]).filter(p=>p.uid!==d.linkPatternUid);
+    const on=!!d.windPatternUid;
+    const b=btn({style:{width:"100%",padding:"9px",borderRadius:"8px",cursor:"pointer",fontWeight:600,fontSize:"12px",marginBottom:on?"6px":"10px",border:`1px solid ${on?"#f59e0b":"#334155"}`,background:on?"#f59e0b22":"transparent",color:on?"#fbbf24":"#64748b"}},on?"🔗 パターン予定と連動: ON":"🔗 パターン予定と連動: OFF");
+    b.addEventListener('click',()=>{ if(d.windPatternUid){ d.windPatternUid=null; } else { const auto=pats.find(p=>/ナイト|夜|寝|night|寝支度/i.test(p.title||"")); d.windPatternUid=(auto||pats[0]||{}).uid||null; } render(); });
+    c.appendChild(b);
+    if(on){
+      if(!pats.length) c.appendChild(div({style:{fontSize:"10px",color:"#f87171",marginBottom:"10px",lineHeight:1.5}},"連動できるパターン予定がありません。パターン予定でナイトルーティンを登録してください。"));
+      else { const sel=document.createElement('select');sel.className='sel';sel.style.cssText="width:100%;margin-bottom:6px";
+        pats.forEach(p=>{const o=document.createElement('option');o.value=p.uid;o.textContent=p.title||"（無題）";if(String(p.uid)===String(d.windPatternUid))o.selected=true;sel.appendChild(o);});
+        sel.addEventListener('change',e=>{ d.windPatternUid=isNaN(+e.target.value)?e.target.value:+e.target.value; render(); }); c.appendChild(sel);
+        c.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"8px",lineHeight:1.5}},"このパターンの時刻を「就寝目標の◯分前〜就寝目標」に自動同期します（直別・パターン連動にも追従）。予定タブにも反映されます。"));
+        c.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"4px"}},"寝支度は就寝目標の何分前から"));
+        { const row=div({style:{display:"flex",gap:"6px",marginBottom:"10px"}}); [30,45,60,90].forEach(v=>{ const onv=(d.windLeadMin||60)===v; const bb=btn({style:{flex:1,padding:"7px 0",borderRadius:"7px",cursor:"pointer",fontSize:"12px",fontWeight:onv?700:500,border:`1px solid ${onv?"#f59e0b":"#334155"}`,background:onv?"#f59e0b22":"transparent",color:onv?"#fbbf24":"#64748b"}},`${v}分前`); bb.addEventListener('click',()=>{d.windLeadMin=v;render();}); row.appendChild(bb); }); c.appendChild(row); }
+      }
+    }
+  }
   const save=btn({style:{width:"100%",padding:"11px",borderRadius:"8px",border:"none",background:"linear-gradient(135deg,#6366f1,#a855f7)",color:"#fff",fontSize:"13px",fontWeight:700,cursor:"pointer"}},"✅ 保存");
-  save.addEventListener('click',()=>{ const linked=d.linkPatternUid||undefined; state.sleepGoal={bedH:d.bedH,bedM:d.bedM||0,wakeH:d.wakeH,wakeM:d.wakeM||0,tol:d.tol||30,cdLeadH:d.cdLeadH||3,byShift:linked?false:!!d.byShift,shifts:(!linked&&d.byShift)?JSON.parse(JSON.stringify(d.shifts||{})):undefined,linkPatternUid:linked}; saveSleepGoal(); state.sgDraft=null; showToast("🌙 就寝リズムを保存しました","#a5b4fc"); render(); });
+  save.addEventListener('click',()=>{ const linked=d.linkPatternUid||undefined; state.sleepGoal={bedH:d.bedH,bedM:d.bedM||0,wakeH:d.wakeH,wakeM:d.wakeM||0,tol:d.tol||30,cdLeadH:d.cdLeadH||3,byShift:linked?false:!!d.byShift,shifts:(!linked&&d.byShift)?JSON.parse(JSON.stringify(d.shifts||{})):undefined,linkPatternUid:linked,windPatternUid:d.windPatternUid||undefined,windLeadMin:d.windLeadMin||60}; saveSleepGoal(); syncWindPattern(); state.sgDraft=null; showToast("🌙 就寝リズムを保存しました","#a5b4fc"); render(); });
   c.appendChild(save);
   if(g){ c.appendChild(btn({style:{width:"100%",padding:"8px",marginTop:"8px",background:"transparent",border:"1px solid #7f1d1d",borderRadius:"8px",color:"#f87171",fontSize:"12px",cursor:"pointer"},onClick:()=>{ if(confirm("就寝リズムの目標を削除しますか？")){ state.sleepGoal=null; saveSleepGoal(); state.sgDraft=null; render(); } }},"🗑 就寝リズムを削除")); }
   return c;
@@ -1482,6 +1527,16 @@ function sleepRhythmCard(full){
       div({style:{fontSize:"11px",color:"#94a3b8"}},`就寝目標 ${fmtHM(tt.bedH*60+(tt.bedM||0))}${shLbl}`),
       div({style:{fontSize:"18px",fontWeight:800,color:over?"#fb923c":"#7dd3fc",lineHeight:1.2}},remain)
     ]));
+  }
+  // 🛏 寝支度（ナイトルーティン）までのカウントダウン
+  if(getSleepGoal().windPatternUid){ const wt=windTargetNightMin(todayStr()); const wc=windCountdownMin();
+    if(wt!=null && wc!=null && wc<=cdLeadMin() && wc>-120){
+      const wover=wc<0; const p=(state.planPatterns||[]).find(x=>x.uid===getSleepGoal().windPatternUid);
+      c.appendChild(div({style:{padding:"8px 11px",borderRadius:"9px",marginBottom:"9px",border:`1px solid ${wover?"#f59e0b66":"#a78bfa55"}`,background:wover?"#f59e0b10":"#a78bfa0d"}},[
+        div({style:{fontSize:"11px",color:"#94a3b8"}},`🛏 ${(p&&p.title)||"寝支度"} ${fmtHM(wt)}`),
+        div({style:{fontSize:"15px",fontWeight:800,color:wover?"#fbbf24":"#c4b5fd",lineHeight:1.2}},wover?`⏰ 寝支度が ${-wc}分 遅れ`:(wc>=60?`あと ${Math.floor(wc/60)}時間${wc%60?`${wc%60}分`:""}`:`あと ${wc}分`))
+      ]));
+    }
   }
   // ③ 寝支度スイッチ（開始時刻は編集可）
   { const w=windDownAt();
