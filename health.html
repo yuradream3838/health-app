@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.30"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.31"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -673,6 +673,7 @@ const state = {
   shopAddCat:"food", shopAddText:"", editingShopUid:null, shopEditText:"", shopEditCat:"food", // 買物リストのタグ・編集
   sleepGoal:null, sleepGoalEdit:false, sgDraft:null, // 就寝リズム（就寝ドリフト対策）
   bodyComps:null, bcForm:null, bcPhotoLoading:false, bcPhotoError:null, bcTrendMetric:"weight", bcHistExpanded:false, // トレーニング：体組成記録
+  woName:"", woWeight:"", woReps:"", woSets:1, woEditUid:null, // ワークアウト（種目・負荷・回数）
   windEditOpen:false, windEditH:22, windEditM:0, // 寝支度スイッチの開始時刻編集
   nextDrink:null, nextDrinkEdit:false, // 次に飲みに行く予定（計画飲酒）
   investHistExpanded:false, // 未来投資履歴の全件展開
@@ -4650,6 +4651,17 @@ function bcTrendChart(metric){
   wrap.appendChild(div({style:{display:"flex",justifyContent:"space-between",fontSize:"8px",color:"#475569",marginTop:"2px"}},[span({},mdLabel(arr[0].date)),span({},mdLabel(arr[arr.length-1].date))]));
   return wrap;
 }
+// ── ワークアウト（種目/マシン・重量・回数・セット）。日次に保存 ──
+function workoutsOn(vd){ const w=getDaily(vd).workouts; return Array.isArray(w)?w:[]; }
+function setWorkouts(vd,arr){ setDaily(vd,{workouts:arr}); }
+function addWorkout(vd,e){ setWorkouts(vd,[...workoutsOn(vd),{uid:Date.now(),t:new Date().toISOString(),name:e.name,weight:e.weight,reps:e.reps,sets:e.sets}]); }
+// 全履歴（日付つき・新しい順）
+function allWorkouts(){ const out=[]; (state.dailies||[]).forEach(d=>{ (d.workouts||[]).forEach(w=>out.push({...w,date:d.dateStr})); }); out.sort((a,b)=>{ const ta=a.date+(a.t||""),tb=b.date+(b.t||""); return ta<tb?1:ta>tb?-1:0; }); return out; }
+// 種目名の一覧（最近使った順）
+function workoutNames(){ const seen=new Set(),arr=[]; allWorkouts().forEach(w=>{ const n=(w.name||"").trim(); if(n&&!seen.has(n)){seen.add(n);arr.push(n);} }); return arr; }
+// その種目の直近記録（今日vd以外の最新、無ければ全体の最新）
+function lastWorkout(name,vd){ const n=(name||"").trim().toLowerCase(); const all=allWorkouts().filter(w=>(w.name||"").trim().toLowerCase()===n); const notToday=all.filter(w=>w.date!==vd); return (notToday[0]||all[0])||null; }
+function bestWorkout(name){ const n=(name||"").trim().toLowerCase(); const all=allWorkouts().filter(w=>(w.name||"").trim().toLowerCase()===n&&w.weight!=null); if(!all.length)return null; return all.reduce((m,w)=>w.weight>m.weight?w:m,all[0]); }
 function renderTrainingPanel(vd,ds,isToday){
   const wrap=div({style:{maxWidth:"600px",margin:"0 auto",padding:"10px 16px 60px"}});
   if(!isToday){ const isFuture=vd>ds; wrap.appendChild(div({style:{background:"#1e3a5f22",border:"1px solid #1e3a5f",borderRadius:"10px",padding:"8px 12px",marginBottom:"8px",fontSize:"12px",color:"#64748b"}},isFuture?"📅 未来の日付を表示中":"📅 過去の記録を表示中 — 編集可能です")); }
@@ -4677,6 +4689,58 @@ function renderTrainingPanel(vd,ds,isToday){
       del.addEventListener('click',(()=>{const uid=s.uid;return()=>{ const rec={...trainingRec(vd)}; rec.sessions=(rec.sessions||[]).filter(x=>x.uid!==uid); setTodo(vd,"training",rec); render(); };})());
       row.appendChild(ni);row.appendChild(del); c.appendChild(row);
     });
+    wrap.appendChild(c);
+  }
+  // ── 🏋️ 種目・負荷・回数（ワークアウト記録）──
+  { const c=div({className:"card",style:{marginBottom:"10px"}});
+    c.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#f59e0b",marginBottom:"6px"}},"🏋️ 種目・負荷・回数"));
+    // 入力
+    const dlId="wo-names";
+    const dl=document.createElement('datalist'); dl.id=dlId; workoutNames().forEach(n=>{const o=document.createElement('option');o.value=n;dl.appendChild(o);}); c.appendChild(dl);
+    const r1=div({style:{display:"flex",gap:"6px",marginBottom:"6px"}});
+    const nameI=document.createElement('input');nameI.type='text';nameI.placeholder="種目・マシン名";nameI.value=state.woName||"";nameI.setAttribute('list',dlId);nameI.style.cssText="flex:1;min-width:0;padding:8px 10px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit";
+    nameI.addEventListener('input',e=>{state.woName=e.target.value;});
+    nameI.addEventListener('change',()=>render());
+    r1.appendChild(nameI); c.appendChild(r1);
+    // 直近記録の表示
+    if((state.woName||"").trim()){ const lw=lastWorkout(state.woName,vd), bw=bestWorkout(state.woName);
+      if(lw||bw) c.appendChild(div({style:{fontSize:"10px",color:"#94a3b8",marginBottom:"6px"}},[
+        lw?span({},`前回 ${lw.weight!=null?`${lw.weight}kg`:""}${lw.reps!=null?`×${lw.reps}`:""}${lw.sets?`×${lw.sets}set`:""}（${mdLabel(lw.date)}）`):null,
+        bw?span({style:{color:"#fbbf24",marginLeft:lw?"8px":"0"}},`自己ベスト ${bw.weight}kg`):null
+      ]));
+    }
+    const numF=(ph,val,set,step)=>{const i=document.createElement('input');i.type='number';i.placeholder=ph;i.step=step||"1";i.min="0";i.value=val!==""&&val!=null?String(val):"";i.style.cssText="width:100%;box-sizing:border-box;padding:8px 6px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:14px;font-family:inherit;text-align:center";i.addEventListener('input',e=>set(e.target.value));return i;};
+    const r2=div({style:{display:"grid",gridTemplateColumns:"1fr 1fr 1fr auto",gap:"6px",alignItems:"end",marginBottom:"8px"}});
+    const lbl=(t,el)=>div({},[div({style:{fontSize:"9px",color:"#64748b",marginBottom:"2px",textAlign:"center"}},t),el]);
+    r2.appendChild(lbl("重量(kg)",numF("kg",state.woWeight,v=>{state.woWeight=v;},"0.5")));
+    r2.appendChild(lbl("回数",numF("回",state.woReps,v=>{state.woReps=v;})));
+    r2.appendChild(lbl("セット",numF("set",state.woSets,v=>{state.woSets=v;})));
+    const addB=btn({style:{padding:"9px 14px",background:"#f59e0b18",border:"1px solid #f59e0b",borderRadius:"8px",color:"#fbbf24",fontSize:"14px",fontWeight:700,cursor:"pointer"}},state.woEditUid?"✓":"＋");
+    addB.addEventListener('click',()=>{
+      const nm=(state.woName||"").trim(); if(!nm){showToast("種目名を入力してください");return;}
+      const w=state.woWeight===""||state.woWeight==null?null:parseFloat(state.woWeight);
+      const reps=state.woReps===""||state.woReps==null?null:parseInt(state.woReps);
+      const sets=state.woSets===""||state.woSets==null?1:parseInt(state.woSets);
+      if(state.woEditUid){ setWorkouts(vd, workoutsOn(vd).map(x=>x.uid===state.woEditUid?{...x,name:nm,weight:w,reps:reps,sets:sets}:x)); state.woEditUid=null; }
+      else { addWorkout(vd,{name:nm,weight:w,reps:reps,sets:sets}); }
+      state.woWeight="";state.woReps="";state.woSets=1; showToast(`🏋️ ${nm}`); render();
+    });
+    r2.appendChild(addB); c.appendChild(r2);
+    // 今日の一覧
+    const list=workoutsOn(vd);
+    if(!list.length){ c.appendChild(div({style:{fontSize:"11px",color:"#475569",padding:"2px 0"}},"種目名・重量・回数を入れて＋で記録。名前は履歴から候補が出ます。")); }
+    else { list.forEach(w=>{
+      const row=div({style:{display:"flex",gap:"8px",alignItems:"center",padding:"6px 0",borderBottom:"1px solid #1e293b"}});
+      row.appendChild(div({style:{flex:1,minWidth:0}},[
+        div({style:{fontSize:"13px",color:"#e2e8f0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},w.name||"(無題)"),
+        div({style:{fontSize:"11px",color:"#94a3b8"}},`${w.weight!=null?`${w.weight}kg`:"—"}${w.reps!=null?` × ${w.reps}回`:""}${w.sets?` × ${w.sets}セット`:""}`)
+      ]));
+      const ed=btn({style:{padding:"5px 8px",background:"transparent",border:"1px solid #334155",borderRadius:"6px",color:"#94a3b8",fontSize:"11px",cursor:"pointer",flexShrink:0}},"✏️");
+      ed.addEventListener('click',(()=>{const ww=w;return()=>{ state.woName=ww.name||""; state.woWeight=ww.weight!=null?ww.weight:""; state.woReps=ww.reps!=null?ww.reps:""; state.woSets=ww.sets||1; state.woEditUid=ww.uid; render(); };})());
+      const del=btn({style:{padding:"5px 8px",background:"transparent",border:"1px solid #7f1d1d",borderRadius:"6px",color:"#f87171",fontSize:"11px",cursor:"pointer",flexShrink:0}},"🗑");
+      del.addEventListener('click',(()=>{const uid=w.uid;return()=>{ setWorkouts(vd,workoutsOn(vd).filter(x=>x.uid!==uid)); if(state.woEditUid===uid)state.woEditUid=null; render(); };})());
+      row.appendChild(ed);row.appendChild(del); c.appendChild(row);
+    }); }
     wrap.appendChild(c);
   }
   // ── 📊 体組成 ──
