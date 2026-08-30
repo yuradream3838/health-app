@@ -220,8 +220,13 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.39"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.40"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
+// ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
+//    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
+const AI_ENDPOINT = "https://nuts024.com/health/api.php";
+const AI_SECRET = "songof3838";
+function aiHeaders(){ return {"Content-Type":"application/json","X-Secret-Key":AI_SECRET}; }
 
 // ── 取り消し（Undo）機構 ──────────────────────────
 // 削除など取り返しのつかない操作の前に pushUndo() でデータ全体のスナップショットを
@@ -1622,6 +1627,37 @@ function sleepRhythmCard(full){
   }
   return c;
 }
+// 最終バックアップからの経過日数（未実施は null）
+function backupDaysAgo(){
+  let last=0;
+  try{const v=localStorage.getItem(STORAGE_KEY+"_lastbackup");if(v)last=parseInt(v)||0;}catch{}
+  if(!last)return null;
+  return Math.floor((Date.now()-last)/86400000);
+}
+// バックアップ促しバナー（データ量が十分＋14日以上未実施のとき、ウィジェット先頭に常設）
+function backupBanner(){
+  if((state.logs.length + state.dailies.length) < 10) return null;
+  if(state.backupBannerDismissed) return null;
+  const d=backupDaysAgo();
+  if(d!==null && d<14) return null; // 最近バックアップ済みなら出さない
+  const msg = d===null ? "まだ一度もバックアップしていません" : `前回のバックアップから${d}日経過`;
+  const c=div({className:"card",style:{padding:"11px 13px",marginBottom:"10px",border:"1px solid #f59e0b66",background:"#f59e0b12"}});
+  c.appendChild(div({style:{display:"flex",alignItems:"center",gap:"8px",marginBottom:"8px"}},[
+    span({style:{fontSize:"16px",flexShrink:0}},"💾"),
+    div({style:{flex:1,minWidth:0}},[
+      div({style:{fontSize:"12px",fontWeight:700,color:"#fbbf24"}},"データのバックアップをおすすめします"),
+      div({style:{fontSize:"10px",color:"#94a3b8",marginTop:"2px",lineHeight:1.5}},`${msg}。この端末のデータはブラウザ内のみ保存で、キャッシュ削除や機種変更で消えることがあります。`)
+    ])
+  ]));
+  const row=div({style:{display:"flex",gap:"7px"}});
+  const exp=btn({style:{flex:1,padding:"9px",background:"#f59e0b22",border:"1px solid #f59e0b",borderRadius:"8px",color:"#fbbf24",fontSize:"12px",fontWeight:700,cursor:"pointer"}},"⬇ 今すぐ出力");
+  exp.addEventListener('click',()=>{ exportData(); });
+  const dis=btn({style:{flexShrink:0,padding:"9px 14px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#64748b",fontSize:"12px",cursor:"pointer"}},"後で");
+  dis.addEventListener('click',()=>{ state.backupBannerDismissed=true; render(); });
+  row.appendChild(exp);row.appendChild(dis);
+  c.appendChild(row);
+  return c;
+}
 // ── ウィジェット（今日の予定＋ルーティンをまとめて素早く確認・チェック）──
 // URLハッシュ #widget で直接起動でき、ホーム画面ショートカットから開ける。
 function renderWidgetView(vd,ds){
@@ -1643,6 +1679,7 @@ function renderWidgetView(vd,ds){
     ])
   ]));
   wrap.appendChild(head);
+  { const bb=backupBanner(); if(bb && vd===todayStr()) wrap.appendChild(bb); }
   // 表示項目のカスタマイズ
   if(state.widgetEditMode){
     const sc=div({className:"card",style:{padding:"12px 14px",marginBottom:"10px",border:"1px solid #38bdf844",background:"#38bdf80d"}});
@@ -2138,14 +2175,6 @@ function renderDailyPanel(vd){
 
   const hOpts=[{value:"",label:"—"},...Array.from({length:48},(_,i)=>{const hv=Math.floor(i/2);const mv=(i%2)*30;return{value:hv+mv/60,label:`${String(hv).padStart(2,"0")}:${String(mv).padStart(2,"0")}`};})];
 
-  function mkSel(field,value,opts){
-    const s=document.createElement('select');
-    s.className='sel';
-    opts.forEach(({value:v,label:l})=>{const o=document.createElement('option');o.value=v;o.textContent=l;if(String(v)===String(value))o.selected=true;s.appendChild(o);});
-    s.addEventListener('change',e=>{setDaily(vd,{[field]:e.target.value===""?null:Number(e.target.value)});render();});
-    return s;
-  }
-
   const card=div({className:"card"},[
     div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0",marginBottom:"12px"}},"📋 今日の生活記録"),
     // 睡眠関係（睡眠・就寝リズム・中途覚醒・昼寝）は【睡眠】サブタブへ移動
@@ -2381,13 +2410,6 @@ function getGoalKey(type, dateStr){
 
 function getGoal(type, dateStr){
   return state.goals[getGoalKey(type,dateStr)]||{text:"",done:false,progress:""};
-}
-
-function setGoal(type, dateStr, data){
-  const key=getGoalKey(type,dateStr);
-  state.goals[key]={...getGoal(type,dateStr),...data};
-  safeSet(STORAGE_KEY+"_goals",JSON.stringify(state.goals));
-  render();
 }
 
 function goalPeriodLabel(type, dateStr){
@@ -4640,7 +4662,6 @@ function trainingRec(vd){ return (state.todos[vd]||{}).training||{}; }
 function trainingSessions(vd){ return (trainingRec(vd).sessions)||[]; }
 function trainingMinutes(vd){ return trainingSessions(vd).reduce((a,s)=>{ if(s.startTime&&s.endTime){ return a+Math.max(0,(Date.parse(s.endTime)-Date.parse(s.startTime))/60000); } return a; },0); }
 function gymVisited(vd){ return trainingSessions(vd).some(s=>s.startTime); }
-function gymCountRange(vd,days){ let n=0; for(let i=0;i<days;i++){ if(gymVisited(addDays(vd,-i)))n++; } return n; }
 function gymCountThisWeek(){ const mon=mondayOfDS(todayStr()); let n=0,d=mon; while(d<=todayStr()){ if(gymVisited(d))n++; d=addDays(d,1); } return n; }
 function gymCountThisMonth(){ const mk=todayStr().slice(0,7); let n=0; for(let i=0;i<62;i++){ const ds=addDays(todayStr(),-i); if(ds.slice(0,7)!==mk)break; if(gymVisited(ds))n++; } return n; }
 // 体組成の推移ミニ折れ線（metric）
@@ -5203,8 +5224,29 @@ function renderPlanPatternPanel(){
   return card;
 }
 
+// ── 表示（文字サイズ）───────────────────────────────
+// インラインpx指定が多いため、アプリ全体を一律ズームして拡大する方式。
+function getFontScale(){ let v=1; try{const s=localStorage.getItem(STORAGE_KEY+"_fontscale"); if(s){const n=parseFloat(s); if(n>=0.8&&n<=1.6)v=n;}}catch{} return v; }
+function applyFontScale(){ try{ document.body.style.zoom=String(getFontScale()); }catch(_){}}
+function setFontScale(v){ try{localStorage.setItem(STORAGE_KEY+"_fontscale",String(v));}catch(_){} applyFontScale(); }
+function renderDisplayPanel(){
+  const card=div({className:"card"});
+  card.appendChild(div({style:{fontSize:"14px",fontWeight:700,color:"#e2e8f0",marginBottom:"4px"}},"🔡 文字サイズ"));
+  card.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"12px",lineHeight:1.6}},"画面全体の表示倍率を変えられます。小さな文字が読みづらい場合に大きくしてください。"));
+  const cur=getFontScale();
+  const row=div({style:{display:"flex",gap:"7px"}});
+  [["標準",1],["大きめ",1.15],["特大",1.3]].forEach(([l,v])=>{
+    const on=Math.abs(cur-v)<0.01;
+    const b=btn({style:{flex:1,padding:"11px 4px",borderRadius:"9px",cursor:"pointer",fontWeight:700,fontSize:"13px",border:`1px solid ${on?"#38bdf8":"#334155"}`,background:on?"#0ea5e922":"transparent",color:on?"#38bdf8":"#94a3b8"}},l);
+    b.addEventListener('click',()=>{ setFontScale(v); render(); });
+    row.appendChild(b);
+  });
+  card.appendChild(row);
+  return card;
+}
 function renderSettingsHub(){
   const wrap=div({style:{maxWidth:"600px",margin:"0 auto",padding:"12px 16px 60px"}});
+  wrap.appendChild(renderDisplayPanel());
   wrap.appendChild(renderShiftPanel());
   wrap.appendChild(renderPlanPatternPanel());
   wrap.appendChild(sleepRhythmSettingsCard());
@@ -5213,7 +5255,10 @@ function renderSettingsHub(){
   dataCard.appendChild(div({style:{fontSize:"14px",fontWeight:700,color:"#e2e8f0",marginBottom:"4px"}},"💾 データ管理"));
   dataCard.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"10px",lineHeight:1.6}},"全データをJSONで出力・読込できます（機種変更やバックアップに）。"));
   const pct=(getStorageUsage()||{}).pct;
-  if(pct!=null)dataCard.appendChild(div({style:{fontSize:"11px",color:"#94a3b8",marginBottom:"12px"}},`保存容量の使用状況: 約${pct}%`));
+  if(pct!=null)dataCard.appendChild(div({style:{fontSize:"11px",color:"#94a3b8",marginBottom:"4px"}},`保存容量の使用状況: 約${pct}%`));
+  { const d=backupDaysAgo(); const stale=(d===null||d>=14);
+    dataCard.appendChild(div({style:{fontSize:"11px",color:stale?"#fbbf24":"#94a3b8",marginBottom:"12px"}},
+      `最終バックアップ: ${d===null?"未実施":d===0?"今日":`${d}日前`}${stale?"　⚠ 出力をおすすめします":""}`)); }
   dataCard.appendChild(btn({style:{width:"100%",padding:"11px",marginBottom:"8px",background:"#0ea5e918",border:"1px solid #0ea5e9",borderRadius:"8px",color:"#38bdf8",fontSize:"13px",fontWeight:600,cursor:"pointer"},
     onClick:exportData},"💾 データを出力（バックアップ）"));
   const importLbl=document.createElement('label');
@@ -6714,8 +6759,8 @@ function parseAIJson(text){
 // ── AIスケジュール提案 ──
 // ── AI呼び出し共通（api.php・テキスト応答）──
 async function callAIText(system,prompt){
-  const res=await fetch("https://nuts024.com/health/api.php",{
-    method:"POST",headers:{"Content-Type":"application/json","X-Secret-Key":"songof3838"},
+  const res=await fetch(AI_ENDPOINT,{
+    method:"POST",headers:aiHeaders(),
     body:JSON.stringify({system,prompt})
   });
   const data=await res.json();
@@ -6729,8 +6774,8 @@ async function callAIText(system,prompt){
 }
 // ── AI呼び出し（画像つき・api.phpへimage/base64を送る）──
 async function callAIVision(system,prompt,imageBase64,mimeType){
-  const res=await fetch("https://nuts024.com/health/api.php",{
-    method:"POST",headers:{"Content-Type":"application/json","X-Secret-Key":"songof3838"},
+  const res=await fetch(AI_ENDPOINT,{
+    method:"POST",headers:aiHeaders(),
     body:JSON.stringify({system,prompt,image:imageBase64,mimeType:mimeType||"image/jpeg"})
   });
   const data=await res.json();
@@ -7204,7 +7249,6 @@ function allConnectLogs(){
   out.sort((a,b)=>{ const ta=a.t?Date.parse(a.t):(a.ds?Date.parse(a.ds):0), tb=b.t?Date.parse(b.t):(b.ds?Date.parse(b.ds):0); return tb-ta; });
   return out;
 }
-function connectTotalCount(){ return allConnectLogs().length; }
 function mondayOfDS(ds){ const x=parseDS(ds); const day=x.getDay(); const diff=day===0?-6:1-day; x.setDate(x.getDate()+diff); return fmtDS(x); }
 // 今週（月曜起点）のつながり回数
 function connectCountThisWeek(){ const mon=mondayOfDS(todayStr()); let n=0,d=mon; while(d<=todayStr()){ n+=connectCountOn(d); d=addDays(d,1); } return n; }
@@ -7235,7 +7279,6 @@ function getMotivation(vd){ const d=getDaily(vd); return (d.motivation&&typeof d
 function setMotivation(vd,upd){ setDaily(vd,{motivation:{...getMotivation(vd),...upd}}); }
 // 直近days日で記録のある重要度・自信度の推移
 function motivationTrend(days){ const arr=[]; for(let i=days-1;i>=0;i--){ const ds=addDays(todayStr(),-i); const m=getMotivation(ds); if(typeof m.imp==="number"||typeof m.conf==="number") arr.push({ds,imp:m.imp,conf:m.conf}); } return arr; }
-function latestMotivation(){ for(let i=0;i<60;i++){ const ds=addDays(todayStr(),-i); const m=getMotivation(ds); if(typeof m.imp==="number"||typeof m.conf==="number") return {ds,...m}; } return null; }
 // ③ チェンジトーク・ジャーナル（MI式の開かれた問い。自分の言葉を貯める）
 const CHANGE_TALK_PROMPTS=[
   {type:"理由",   q:"お酒を減らしたい理由を、思いつくだけ書いてみよう。"},
@@ -7502,6 +7545,8 @@ function changePlanCard(){
   return c;
 }
 // ── カード①：なりたい自分・減酒する理由（full=編集＋マイルストーン、compactは閲覧のみ）──
+// ※現在は未使用（「私の宣言」「定期ルーティン」と重複するためUIから外している）。
+//   データ層・バックアップは維持しており、再表示したくなった時のために意図的に残す。
 function visionCard(full){
   const v=getLifeVision();
   const set=hasLifeVision();
@@ -10594,9 +10639,9 @@ async function runAI(scored,dailies){
   if(state.aiAnalysisLoading)return;
   state.aiAnalysisLoading=true;state.aiAnalysisError=null;state.aiAnalysisChat=[];render();
   try{
-    const res=await fetch("https://nuts024.com/health/api.php",{
+    const res=await fetch(AI_ENDPOINT,{
       method:"POST",
-      headers:{"Content-Type":"application/json","X-Secret-Key":"songof3838"},
+      headers:aiHeaders(),
       body:JSON.stringify({
         system:`あなたは健康データアナリストです。ユーザーはシフト勤務者（1直/2直/休み）です。体調・睡眠・飲酒・飲水・食事に加え、仕事シフトやその日の実際の行動（スケジュール）、今後の予定も踏まえて総合的に分析してください。以下のJSON形式のみで返答してください。前後に説明文やMarkdownの装飾は不要です:
 {"summary":"全体傾向の要約2〜3文","topFactors":[{"factor":"要因名","impact":"positive または negative","detail":"具体的な説明","score":1から5の整数}],"worstCondition":"体調が悪くなる条件","bestCondition":"体調が良くなる条件","advice":["具体的で実行可能なアドバイスを、睡眠・栄養・運動・生活リズム・シフト勤務・メンタルなど毎回できるだけ異なる観点から3〜4個"],"newPerspective":"表面的な相関ではなく、データから読み取れる本人が気づきにくい別の観点・仮説を1〜2文で"}`,
@@ -11632,6 +11677,7 @@ migrateResistsToInvest(); // 旧「我慢」ログを未来投資へ一度だけ
 window.addEventListener('pagehide',()=>{try{flushStorage();}catch(_){}});
 document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='hidden'){ try{flushStorage();}catch(_){}} });
 render();
+applyFontScale(); // 保存済みの文字サイズを適用
 document.title="体調管理 v"+APP_VERSION;
 if(state._goalsMigratedCount){ setTimeout(()=>{ showToast(`過去の目標 ${state._goalsMigratedCount}件を目標ツリーに移動しました`,"#22c55e"); state._goalsMigratedCount=0; },900); }
 checkStorageAndAlert();
