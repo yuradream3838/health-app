@@ -1,0 +1,14 @@
+{
+  "name": "health-app",
+  "version": "1.0.0",
+  "private": true,
+  "description": "体調管理 PWA（単一ファイル health.html）の回帰テスト",
+  "scripts": {
+    "test:syntax": "node test/syntax-check.js",
+    "test:smoke": "node test/smoke.js",
+    "test": "npm run test:syntax && npm run test:smoke"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.40.0"
+  }
+}

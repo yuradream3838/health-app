@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.40"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.41"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -5244,8 +5244,77 @@ function renderDisplayPanel(){
   card.appendChild(row);
   return card;
 }
+// ── 機能一覧（目次）───────────────────────────────
+// 機能が多く埋もれやすいため、主な機能を一覧してタップで各画面へ移動できる。
+const FEATURE_INDEX=[
+  {group:"📌 ホーム",items:[
+    {label:"今日のウィジェット",desc:"予定・ルーティン・目標を素早く確認/チェック",go:()=>{state.widget=true;state.viewDate=todayStr();}},
+  ]},
+  {group:"📅 予定",items:[
+    {label:"日／週／月カレンダー",desc:"予定と実績のタイムライン",go:()=>{state.tab="予定";state.scheduleSubTab="日";}},
+    {label:"横断検索",desc:"予定・ルーティン・目標・TODOを名前で探す",go:()=>{state.tab="予定";state.scheduleSubTab="🔍検索";}},
+  ]},
+  {group:"📔 日記",items:[
+    {label:"生活記録",desc:"体調・飲水・食事などの記録",go:()=>{state.tab="日記";state.diarySubTab="生活記録";}},
+    {label:"睡眠",desc:"就寝リズム・中途覚醒・昼寝",go:()=>{state.tab="日記";state.diarySubTab="睡眠";}},
+    {label:"トレーニング",desc:"体組成(写真取込)・ワークアウト・有酸素",go:()=>{state.tab="日記";state.diarySubTab="トレーニング";}},
+    {label:"体調記録",desc:"症状・服薬などの記録",go:()=>{state.tab="日記";state.diarySubTab="体調記録";}},
+    {label:"アルコール",desc:"飲酒記録・減酒サポート・飲まない夜の習慣",go:()=>{state.tab="日記";state.diarySubTab="アルコール";}},
+  ]},
+  {group:"✅ タスク",items:[
+    {label:"ルーティン",desc:"毎日の固定項目(設定で編集可)",go:()=>{state.tab="タスク";state.taskSubTab="ルーティン";}},
+    {label:"定期ルーティン",desc:"曜日/間隔で繰り返す予定(タイマー対応)",go:()=>{state.tab="タスク";state.taskSubTab="定期ルーティン";}},
+    {label:"目標",desc:"目標ツリー(年間〜日次)",go:()=>{state.tab="タスク";state.taskSubTab="目標";}},
+    {label:"TODO",desc:"重要度/緊急度マトリクス",go:()=>{state.tab="タスク";state.taskSubTab="TODO";}},
+    {label:"買物リスト",desc:"買うものメモ",go:()=>{state.tab="タスク";state.taskSubTab="買物";}},
+  ]},
+  {group:"🏆 達成",items:[
+    {label:"達成",desc:"連続記録・ご褒美",go:()=>{state.tab="達成";state.achieveSubTab="達成";}},
+    {label:"未来投資",desc:"我慢/前向き行動を回数・金額で貯金",go:()=>{state.tab="達成";state.achieveSubTab="未来投資";}},
+    {label:"つながり",desc:"人とのつながり習慣",go:()=>{state.tab="達成";state.achieveSubTab="つながり";}},
+    {label:"動機づけ面談",desc:"動機のものさし・両価性・価値・計画",go:()=>{state.tab="達成";state.achieveSubTab="動機づけ面談";}},
+    {label:"if-then",desc:"「もし〇〇なら〇〇する」プラン",go:()=>{state.tab="達成";state.achieveSubTab="if-then";}},
+  ]},
+  {group:"📊 分析",items:[
+    {label:"日次ログ／週次／総合分析",desc:"AI分析を含む振り返り",go:()=>{state.tab="分析";state.analysisSubTab="日次ログ";}},
+  ]},
+  {group:"⚙ 設定",items:[
+    {label:"シフト・パターン予定",desc:"勤務シフトと定型スケジュール",go:()=>{state.tab="設定";}},
+    {label:"就寝リズム",desc:"目標就寝時刻・寝支度・カウントダウン",go:()=>{state.tab="設定";}},
+    {label:"文字サイズ／データ管理",desc:"表示倍率・バックアップ出力/読込",go:()=>{state.tab="設定";}},
+  ]},
+];
+function renderFeatureIndexPanel(){
+  const card=div({className:"card"});
+  const open=!!state.featIndexOpen;
+  const head=btn({style:{width:"100%",display:"flex",justifyContent:"space-between",alignItems:"center",background:"transparent",border:"none",cursor:"pointer",padding:0,fontFamily:"inherit"}},[
+    div({style:{fontSize:"14px",fontWeight:700,color:"#e2e8f0"}},"🧭 機能一覧（目次）"),
+    span({style:{fontSize:"13px",color:"#64748b"}},open?"▲":"▼")
+  ]);
+  head.addEventListener('click',()=>{state.featIndexOpen=!open;render();});
+  card.appendChild(head);
+  if(!open){
+    card.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginTop:"6px",lineHeight:1.6}},"アプリの主な機能とその場所を一覧できます。タップで移動。"));
+    return card;
+  }
+  FEATURE_INDEX.forEach(g=>{
+    card.appendChild(div({style:{fontSize:"11px",fontWeight:700,color:"#94a3b8",margin:"12px 0 4px"}},g.group));
+    g.items.forEach(it=>{
+      const row=div({style:{display:"flex",alignItems:"center",gap:"8px",padding:"8px 8px",borderRadius:"8px",cursor:"pointer",border:"1px solid #1e3a5f33",marginBottom:"4px",background:"#0f172a"}});
+      row.appendChild(div({style:{flex:1,minWidth:0}},[
+        div({style:{fontSize:"13px",fontWeight:600,color:"#e2e8f0"}},it.label),
+        div({style:{fontSize:"10px",color:"#64748b",marginTop:"1px",lineHeight:1.4}},it.desc)
+      ]));
+      row.appendChild(span({style:{flexShrink:0,fontSize:"14px",color:"#38bdf8"}},"→"));
+      row.addEventListener('click',()=>{ state.widget=false; it.go(); render(); });
+      card.appendChild(row);
+    });
+  });
+  return card;
+}
 function renderSettingsHub(){
   const wrap=div({style:{maxWidth:"600px",margin:"0 auto",padding:"12px 16px 60px"}});
+  wrap.appendChild(renderFeatureIndexPanel());
   wrap.appendChild(renderDisplayPanel());
   wrap.appendChild(renderShiftPanel());
   wrap.appendChild(renderPlanPatternPanel());
