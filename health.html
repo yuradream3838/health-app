@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.38"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.39"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -1357,7 +1357,6 @@ const WIDGET_SECTIONS=[
   {k:'urge',      l:'🔎 飲みに行きたくなる引き金', defOff:true},
   {k:'alcgauge',  l:'🍺 純アルコール量', defOff:true},
   {k:'ruler',     l:'📏 動機のものさし', defOff:true},
-  {k:'vision',    l:'🌟 なりたい自分・減酒する理由', defOff:true},
   {k:'nightritual', l:'🌙 飲まない夜のルーティン', defOff:true},
   {k:'sleep',     l:'🌙 就寝リズム'},
 ];
@@ -1770,7 +1769,6 @@ function renderWidgetView(vd,ds){
     secNodes.invest=c;
   }
   if(wSecOn('nextdrink')) secNodes.nextdrink=nextDrinkCard(); // 🍺 次に飲みに行く予定（踏みとどまるの下）
-  if(vd===todayStr() && wSecOn('vision')) secNodes.vision=visionCard(false); // 🌟 なりたい自分・減酒する理由
   if(vd===todayStr() && wSecOn('nightritual')) secNodes.nightritual=nightRitualCard(vd,false); // 🌙 飲まない夜のルーティン
 
   // ── 🫂 つながり習慣（今日・今週の進捗） ──
@@ -7544,7 +7542,7 @@ function visionCard(full){
     c.appendChild(div({style:{fontSize:"12px",color:"#94a3b8",lineHeight:1.6,marginBottom:full?"0":"8px"}},"「どんな自分になりたいか」「なぜ減酒したいか」を書いておくと、飲みたくなった時に思い出せる支えになります。"));
     if(!full){
       const b=btn({style:{width:"100%",padding:"9px",borderRadius:"8px",border:"1px dashed #a78bfa",background:"#a78bfa0d",color:"#c4b5fd",fontSize:"12px",fontWeight:600,cursor:"pointer",fontFamily:"inherit"}},"＋ なりたい自分を書く");
-      b.addEventListener('click',()=>{ exitWidget&&exitWidget(); state.modal=null; state.tab="達成"; state.achieveSubTab="動機づけ面談"; state.visionEdit=true; render(); });
+      b.addEventListener('click',()=>{ exitWidget&&exitWidget(); state.modal=null; state.tab="達成"; state.achieveSubTab="未来投資"; state.visionEdit=true; render(); });
       c.appendChild(b);
     }
     return c;
@@ -9199,7 +9197,6 @@ function renderMotivationHub(vd){
   intro.appendChild(div({style:{fontSize:"13px",fontWeight:800,color:"#a5b4fc",marginBottom:"4px"}},"🗣 動機づけ面談"));
   intro.appendChild(div({style:{fontSize:"11px",color:"#94a3b8",lineHeight:1.6}},"説得や我慢ではなく、あなたの中にある“変わりたい気持ち”を引き出して育てる場所です。数字や答えに正解はありません。自分の言葉で書くほど力になります。"));
   wrap.appendChild(intro);
-  wrap.appendChild(visionCard(true));          // なりたい自分・減酒する理由（動機の土台）
   wrap.appendChild(motivationRulerCard(vd));   // 現在地を測る
   wrap.appendChild(decisBalanceCard());        // 両価性を整理
   wrap.appendChild(valuesCard());              // 価値とのズレ
