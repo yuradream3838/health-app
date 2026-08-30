@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.36"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.37"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 
 // ── 取り消し（Undo）機構 ──────────────────────────
@@ -5550,28 +5550,48 @@ function renderDaySchedule(vd,ds,isToday){
       });
       dueCustom.forEach(({ct,tt})=>{
         const rec=(state.todos[vd]||{})[ct.uid]||{};const done=!!rec.checked;
+        const isTimer=ct.mode==='timer';
+        const running=isTimer && rec.startTime && !rec.endTime;
         const lbl=rec.labelOverride||ct.label;
         const timeStr=tt?`${tt.sn?"翌":""}${String(tt.h).padStart(2,'0')}:${String(tt.m||0).padStart(2,'0')}`:"";
         const row=div({style:{display:"flex",alignItems:"center",gap:"8px",padding:"4px 2px"}});
-        const cb=btn({style:{width:"20px",height:"20px",borderRadius:"5px",flexShrink:0,border:`2px solid ${done?"#22c55e":"#334155"}`,background:done?"#22c55e":"transparent",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"12px",color:"#fff"}},done?"✓":"");
-        cb.addEventListener('click',(()=>{const id=ct.uid,c2={...ct},label=lbl,wasDone=done,r=rec;return()=>{
-          if(c2.mode==='timer'){ if(wasDone){ const cur={...((state.todos[vd]||{})[id]||{})}; delete cur.startTime; delete cur.endTime; delete cur.time; setTodo(vd,id,{...cur,checked:false}); } else { stopCustomTodoTimer(vd,c2); showToast(`✅ ${label}`); } }
-          else { setTodo(vd,id,{...r,checked:!wasDone,time:!wasDone?new Date().toISOString():null}); if(!wasDone)showToast(`✅ ${label}`); }
-        };})());
+        let cb;
+        if(isTimer && !done){
+          // タイマー式：▶開始 / ⏹終了（ヴィジェットと同じUI）
+          cb=btn({style:{width:"24px",height:"20px",borderRadius:"5px",flexShrink:0,border:`1px solid ${running?"#f97316":"#0ea5e9"}`,background:(running?"#f97316":"#0ea5e9")+"22",color:running?"#f97316":"#38bdf8",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"11px",fontWeight:700}},running?"⏹":"▶");
+          cb.addEventListener('click',(()=>{const c2={...ct},label=lbl,run=running;return()=>{ if(run){ stopCustomTodoTimer(vd,c2); showToast(`✅ ${label}`); } else { startCustomTodoTimer(vd,c2); } };})());
+        } else {
+          cb=btn({style:{width:"20px",height:"20px",borderRadius:"5px",flexShrink:0,border:`2px solid ${done?"#22c55e":"#334155"}`,background:done?"#22c55e":"transparent",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"12px",color:"#fff"}},done?"✓":"");
+          cb.addEventListener('click',(()=>{const id=ct.uid,c2={...ct},label=lbl,wasDone=done,r=rec;return()=>{
+            if(c2.mode==='timer'){ if(wasDone){ const cur={...((state.todos[vd]||{})[id]||{})}; delete cur.startTime; delete cur.endTime; delete cur.time; setTodo(vd,id,{...cur,checked:false}); } else { stopCustomTodoTimer(vd,c2); showToast(`✅ ${label}`); } }
+            else { setTodo(vd,id,{...r,checked:!wasDone,time:!wasDone?new Date().toISOString():null}); if(!wasDone)showToast(`✅ ${label}`); }
+          };})());
+        }
         row.appendChild(cb);
         if(timeStr)row.appendChild(span({style:{flexShrink:0,fontSize:"11px",fontWeight:600,color:done?"#475569":"#94a3b8",minWidth:"42px"}},timeStr));
-        const lab=div({style:{flex:1,fontSize:"12px",color:done?"#475569":"#e2e8f0",textDecoration:done?"line-through":"none",cursor:"pointer"}},`🔁 ${lbl}${rec.noteOverride?" 📝":""}`);
-        lab.addEventListener('click',(()=>{const uid=ct.uid,l=lbl;return()=>{state.planCustomTodo={uid,label:l,vd};state.modal="planCustomTodo";render();};})());
-        row.appendChild(lab);
+        const labWrap=div({style:{flex:1,minWidth:0,cursor:"pointer"}});
+        labWrap.appendChild(div({style:{fontSize:"12px",color:done?"#475569":"#e2e8f0",textDecoration:done?"line-through":"none",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},`🔁 ${lbl}${rec.noteOverride?" 📝":""}`));
+        if(running){ labWrap.appendChild(div({style:{fontSize:"10px",color:"#f97316"}},`⏱ 計測中（経過 ${fmtDur(Date.now()-Date.parse(rec.startTime))}）`)); }
+        labWrap.addEventListener('click',(()=>{const uid=ct.uid,l=lbl;return()=>{state.planCustomTodo={uid,label:l,vd};state.modal="planCustomTodo";render();};})());
+        row.appendChild(labWrap);
         ad.appendChild(row);
       });
       // 繰り越しになった定期ルーティン
       carryCustom.forEach(({ct,occ})=>{
         const lbl=((state.todos[occ.dueDate]||{})[ct.uid]||{}).labelOverride||ct.label||"定期ルーティン";
+        const rec=(state.todos[vd]||{})[ct.uid]||{};
+        const isTimer=ct.mode==='timer';
+        const running=isTimer && rec.startTime && !rec.endTime;
         const row=div({style:{display:"flex",alignItems:"center",gap:"8px",padding:"4px 2px"}});
         const _snCol=occ.snToday?"#a78bfa":"#f97316";
-        const cb=btn({style:{width:"20px",height:"20px",borderRadius:"5px",flexShrink:0,border:`2px solid ${_snCol}`,background:"transparent",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"12px",color:"#fff"}},"");
-        cb.addEventListener('click',(()=>{const id=ct.uid,c2={...ct},label=lbl;return()=>{ dismissPastUnchecked(c2,vd); if(c2.mode==='timer'){ stopCustomTodoTimer(vd,c2); } else { const cur=(state.todos[vd]||{})[id]||{}; setTodo(vd,id,{...cur,checked:true,time:new Date().toISOString()}); } showToast(`✅ ${label}`); };})());
+        let cb;
+        if(isTimer){
+          cb=btn({style:{width:"24px",height:"20px",borderRadius:"5px",flexShrink:0,border:`1px solid ${running?"#f97316":"#0ea5e9"}`,background:(running?"#f97316":"#0ea5e9")+"22",color:running?"#f97316":"#38bdf8",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"11px",fontWeight:700}},running?"⏹":"▶");
+          cb.addEventListener('click',(()=>{const c2={...ct},label=lbl,run=running;return()=>{ if(run){ stopCustomTodoTimer(vd,c2); showToast(`✅ ${label}`); } else { dismissPastUnchecked(c2,vd); startCustomTodoTimer(vd,c2); } };})());
+        } else {
+          cb=btn({style:{width:"20px",height:"20px",borderRadius:"5px",flexShrink:0,border:`2px solid ${_snCol}`,background:"transparent",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"12px",color:"#fff"}},"");
+          cb.addEventListener('click',(()=>{const id=ct.uid,c2={...ct},label=lbl;return()=>{ dismissPastUnchecked(c2,vd); const cur=(state.todos[vd]||{})[id]||{}; setTodo(vd,id,{...cur,checked:true,time:new Date().toISOString()}); showToast(`✅ ${label}`); };})());
+        }
         row.appendChild(cb);
         const _snt=occ.snToday?customTodoTimeFor(ct,occ.dueDate):null;
         row.appendChild(span({style:{flexShrink:0,fontSize:"10px",fontWeight:700,padding:"1px 6px",borderRadius:"8px",color:_snCol,background:_snCol+"1f",border:`1px solid ${_snCol}55`}},
