@@ -155,6 +155,8 @@ package.json     … テスト実行スクリプト
 
 ## 7. AI連携とセキュリティモデル
 
+> **APIの正確な契約（リクエスト/レスポンス/エラーコード/制限）は [API.md](./API.md) を参照。**
+
 ### 呼び出し経路
 アプリ（クライアント）→ `https://nuts024.com/health/api.php`（プロキシ）→ Google Gemini
 
