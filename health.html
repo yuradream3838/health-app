@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.41"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.42"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -684,6 +684,7 @@ const state = {
   woName:"", woWeight:"", woReps:"", woSets:1, woEditUid:null, // ワークアウト（種目・負荷・回数）
   caName:"", caSpeed:"", caTime:"", caDist:"", caEditUid:null, // 有酸素（ランニングマシン等：速度・時間・距離）
   windEditOpen:false, windEditH:22, windEditM:0, // 寝支度スイッチの開始時刻編集
+  sleepMode:false, // 🌙 睡眠前モード（寝支度を始めると全画面で起動）
   nextDrink:null, nextDrinkEdit:false, // 次に飲みに行く予定（計画飲酒）
   investHistExpanded:false, // 未来投資履歴の全件展開
   lifeVision:null, nightRitual:null, connectGoal:null, // 根本解決の習慣機能
@@ -1126,6 +1127,9 @@ function render(){
     root.appendChild(content);
   }
   content.innerHTML = '';
+
+  // 🌙 睡眠前モード：起動中は全画面で専用画面に切り替える（他は描画しない）
+  if(state.sleepMode){ content.appendChild(renderSleepMode()); return; }
 
   const ds=todayStr(), vd=state.viewDate, curH=new Date().getHours();
   const isToday=vd===ds;
@@ -1582,9 +1586,13 @@ function sleepRhythmCard(full){
       const clr=btn({style:{padding:"5px 9px",background:"transparent",border:"1px solid #7f1d1d",borderRadius:"7px",color:"#f87171",fontSize:"11px",cursor:"pointer",flexShrink:0}},"取消");
       clr.addEventListener('click',()=>{ setDaily(sleepNightDay(),{windDownAt:null}); render(); });
       row.appendChild(ed);row.appendChild(clr); c.appendChild(row);
+      // 睡眠前モードを再度開く
+      const openB=btn({style:{width:"100%",padding:"10px",marginBottom:"9px",borderRadius:"8px",border:"none",color:"#fff",fontSize:"13px",fontWeight:800,cursor:"pointer",background:"linear-gradient(135deg,#4338ca,#7c3aed)"}},"🌙 睡眠前モードを開く");
+      openB.addEventListener('click',()=>{ state.sleepMode=true; render(); });
+      c.appendChild(openB);
     } else {
       const near=cd!=null && cd<=45 && cd>-60; const b=btn({style:{width:"100%",padding:"11px",marginBottom:"9px",borderRadius:"8px",border:"none",color:"#fff",fontSize:"13px",fontWeight:800,cursor:"pointer",background:near?"linear-gradient(135deg,#f59e0b,#a855f7)":"#4338ca"}},"🛏 寝支度を始める");
-      b.addEventListener('click',()=>{ const n=new Date(); state.windEditH=n.getHours(); state.windEditM=n.getMinutes(); setDaily(sleepNightDay(),{windDownAt:new Date().toISOString()}); showToast("🛏 おやすみモード開始","#a5b4fc"); render(); }); c.appendChild(b);
+      b.addEventListener('click',()=>{ const n=new Date(); state.windEditH=n.getHours(); state.windEditM=n.getMinutes(); setDaily(sleepNightDay(),{windDownAt:new Date().toISOString()}); state.sleepMode=true; showToast("🌙 睡眠前モード開始","#a5b4fc"); render(); }); c.appendChild(b);
     }
   }
   // ⑤ ストリーク ＋ ④ドリフト（サマリー）
@@ -1658,6 +1666,137 @@ function backupBanner(){
   c.appendChild(row);
   return c;
 }
+// ════════════════════════════════════════════════════
+// 🌙 睡眠前モード（寝支度を始めると全画面で起動する専用画面）
+//   ① 減光＋暖色の静かな画面  ② 夜のルーティンに集中  ③「就寝した」で睡眠記録に直結
+// ════════════════════════════════════════════════════
+// 夜の寝支度チェックリスト対象：ナイトルーティン群＋夜(_pm/夜/寝)の項目
+function windDownChecklistItems(){
+  const items=getTodoItems();
+  const ng=(state.routines||[]).find(r=>r.key==="night");
+  const gids=new Set(ng?(ng.ids||[]):[]);
+  return items.filter(it=> gids.has(it.id) || /_pm$/.test(it.id) || /夜|就寝|寝支度/.test(it.label||"") );
+}
+// 汎用の「完了/未完了」トグル（チェック式・タイマー式の両対応。睡眠前モード用の簡易版）
+function toggleTodoQuick(vd,it){
+  const t=(state.todos[vd]||{})[it.id]||{};
+  const done=isTodoDone(vd,it);
+  if(it.type==="timer"){
+    if(it.multi){
+      if(done){ // 直近の完了セッションを取り消し
+        const ss=[...(t.sessions||[])]; for(let i=ss.length-1;i>=0;i--){ if(ss[i].startTime&&ss[i].endTime){ ss.splice(i,1); break; } }
+        setTodo(vd,it.id,{...t,sessions:ss});
+      } else { const now=new Date().toISOString(); setTodo(vd,it.id,{...t,sessions:[...(t.sessions||[]),{uid:Date.now(),startTime:now,endTime:now}]}); }
+    } else {
+      if(done){ const c={...t}; delete c.startTime; delete c.endTime; delete c.time; setTodo(vd,it.id,{...c,checked:false}); }
+      else { const now=new Date().toISOString(); setTodo(vd,it.id,{...t,startTime:t.startTime||now,endTime:now,checked:true,time:now}); }
+    }
+  } else {
+    setTodo(vd,it.id,{...t,checked:!t.checked,time:!t.checked?new Date().toISOString():null});
+  }
+}
+// 時計を1分ごとに更新（睡眠前モード起動中のみ）
+function sleepModeTick(){
+  const el=document.getElementById('sleepmode-clock');
+  if(!el || !state.sleepMode){ if(window._sleepTick){clearInterval(window._sleepTick);window._sleepTick=null;} return; }
+  const n=new Date(); el.textContent=`${String(n.getHours()).padStart(2,'0')}:${String(n.getMinutes()).padStart(2,'0')}`;
+}
+function exitSleepMode(){ state.sleepMode=false; if(window._sleepTick){clearInterval(window._sleepTick);window._sleepTick=null;} }
+function renderSleepMode(){
+  const nd=sleepNightDay();
+  const now=new Date();
+  const w=windDownAt();
+  const wrap=div({style:{position:"fixed",inset:"0",zIndex:"9999",overflowY:"auto",
+    background:"radial-gradient(130% 90% at 50% -10%, #2b2140 0%, #1a1430 42%, #0b0912 100%)",
+    color:"#ecd9c0",display:"flex",flexDirection:"column",alignItems:"center",
+    padding:"calc(env(safe-area-inset-top,0px) + 30px) 20px calc(env(safe-area-inset-bottom,0px) + 36px)",
+    WebkitTapHighlightColor:"transparent"}});
+  const inner=div({style:{width:"100%",maxWidth:"440px"}});
+
+  // ヘッダー（モード名＋アプリに戻る）
+  const top=div({style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"18px"}});
+  top.appendChild(div({style:{fontSize:"12px",fontWeight:700,letterSpacing:"0.08em",color:"#b6a3d9"}},"🌙 睡眠前モード"));
+  const back=btn({style:{padding:"6px 12px",borderRadius:"8px",border:"1px solid #ffffff22",background:"transparent",color:"#c9bce0",fontSize:"11px",cursor:"pointer",fontFamily:"inherit"}},"アプリに戻る");
+  back.addEventListener('click',()=>{ exitSleepMode(); render(); });
+  top.appendChild(back);
+  inner.appendChild(top);
+
+  // ① 大きな時計＋日付
+  inner.appendChild(div({id:"sleepmode-clock",style:{textAlign:"center",fontSize:"64px",fontWeight:200,letterSpacing:"0.02em",lineHeight:1.05,color:"#f4e9d6"}},
+    `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`));
+  inner.appendChild(div({style:{textAlign:"center",fontSize:"12px",color:"#9c8fb8",marginTop:"4px",marginBottom:"18px"}},
+    parseDS(nd).toLocaleDateString("ja-JP",{month:"long",day:"numeric",weekday:"short"})+"の夜"));
+
+  // 就寝目標／カウントダウン（あれば）
+  { const cd=(typeof bedCountdownMin==="function")?bedCountdownMin():null;
+    const tgt=(typeof bedTargetNightMin==="function")?bedTargetNightMin(nd):null;
+    if(tgt!=null){
+      const th=Math.floor((tgt%1440)/60), tm=tgt%60;
+      let sub;
+      if(cd==null) sub="";
+      else if(cd>=0) sub=cd>=60?`あと ${Math.floor(cd/60)}時間${cd%60?`${cd%60}分`:""}`:`あと ${cd}分`;
+      else sub=`${-cd}分 過ぎています`;
+      inner.appendChild(div({style:{textAlign:"center",marginBottom:"18px",padding:"10px",borderRadius:"12px",background:"#ffffff0a",border:"1px solid #ffffff14"}},[
+        div({style:{fontSize:"11px",color:"#b6a3d9"}},`🎯 就寝目標 ${String(th).padStart(2,'0')}:${String(tm).padStart(2,'0')}`),
+        sub?div({style:{fontSize:"15px",fontWeight:700,color:cd!=null&&cd<0?"#f0a868":"#e6d3b6",marginTop:"2px"}},sub):null
+      ]));
+    }
+  }
+  if(w){ const wd=new Date(w); inner.appendChild(div({style:{textAlign:"center",fontSize:"11px",color:"#8f83ab",marginTop:"-8px",marginBottom:"16px"}},`🛏 寝支度スタート ${hhmm(wd.getHours(),wd.getMinutes())}`)); }
+
+  // ② 夜のルーティンに集中（チェックリスト）
+  const items=windDownChecklistItems();
+  const doneN=items.filter(it=>isTodoDone(nd,it)).length;
+  const card=div({style:{background:"#ffffff0d",border:"1px solid #ffffff1a",borderRadius:"14px",padding:"14px 16px",marginBottom:"20px"}});
+  card.appendChild(div({style:{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:"10px"}},[
+    div({style:{fontSize:"13px",fontWeight:700,color:"#e6d3b6"}},"🛁 寝る前にやること"),
+    div({style:{fontSize:"12px",color:doneN>=items.length&&items.length?"#86efac":"#9c8fb8"}},items.length?`${doneN}/${items.length}`:"")
+  ]));
+  if(!items.length){
+    card.appendChild(div({style:{fontSize:"11px",color:"#9c8fb8",lineHeight:1.6}},"夜のルーティンが未設定です。設定→ルーティン で「夜歯磨き」などを追加すると、ここに表示されます。"));
+  } else {
+    items.forEach(it=>{
+      const done=isTodoDone(nd,it);
+      const row=div({style:{display:"flex",alignItems:"center",gap:"12px",padding:"11px 2px",borderBottom:"1px solid #ffffff10",cursor:"pointer"}});
+      const cb=div({style:{width:"26px",height:"26px",borderRadius:"7px",flexShrink:0,border:`2px solid ${done?"#86efac":"#6b5f86"}`,background:done?"#86efac":"transparent",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"15px",color:"#1a1430"}},done?"✓":"");
+      row.appendChild(cb);
+      row.appendChild(div({style:{flex:1,fontSize:"15px",color:done?"#8f83ab":"#f0e6d6",textDecoration:done?"line-through":"none"}},it.label));
+      row.addEventListener('click',(()=>{const item=it;return()=>{ toggleTodoQuick(nd,item); render(); };})());
+      card.appendChild(row);
+    });
+  }
+  inner.appendChild(card);
+
+  // やさしい導線メッセージ
+  inner.appendChild(div({style:{textAlign:"center",fontSize:"12px",color:"#9c8fb8",lineHeight:1.7,marginBottom:"20px"}},
+    "スマホを置いて、照明を落として、ゆっくり休む準備をしましょう。"));
+
+  // ③「就寝した」→ 睡眠記録に直結
+  const bedBtn=btn({style:{width:"100%",padding:"16px",borderRadius:"14px",border:"none",color:"#fff",fontSize:"16px",fontWeight:800,cursor:"pointer",background:"linear-gradient(135deg,#6d5ae0,#a855f7)",boxShadow:"0 6px 20px #7c3aed44"}},"😴 就寝した（記録する）");
+  bedBtn.addEventListener('click',()=>{
+    const n=new Date();
+    setDaily(nd,{bedTime:n.getHours()+n.getMinutes()/60});
+    exitSleepMode();
+    showToast(`😴 就寝 ${hhmm(n.getHours(),n.getMinutes())} を記録。おやすみなさい`,"#a5b4fc");
+    render();
+  });
+  inner.appendChild(bedBtn);
+
+  // 補助アクション
+  const sub=div({style:{display:"flex",gap:"10px",marginTop:"12px"}});
+  const backB=btn({style:{flex:1,padding:"11px",borderRadius:"10px",border:"1px solid #ffffff22",background:"transparent",color:"#c9bce0",fontSize:"12px",cursor:"pointer",fontFamily:"inherit"}},"アプリに戻る");
+  backB.addEventListener('click',()=>{ exitSleepMode(); render(); });
+  const cancelB=btn({style:{flex:1,padding:"11px",borderRadius:"10px",border:"1px solid #7f1d1d55",background:"transparent",color:"#e59a9a",fontSize:"12px",cursor:"pointer",fontFamily:"inherit"}},"寝支度を取り消す");
+  cancelB.addEventListener('click',()=>{ setDaily(sleepNightDay(),{windDownAt:null}); exitSleepMode(); render(); });
+  sub.appendChild(backB); sub.appendChild(cancelB);
+  inner.appendChild(sub);
+
+  wrap.appendChild(inner);
+  // 時計を1分ごとに更新
+  if(!window._sleepTick) window._sleepTick=setInterval(sleepModeTick,15000);
+  return wrap;
+}
+
 // ── ウィジェット（今日の予定＋ルーティンをまとめて素早く確認・チェック）──
 // URLハッシュ #widget で直接起動でき、ホーム画面ショートカットから開ける。
 function renderWidgetView(vd,ds){
