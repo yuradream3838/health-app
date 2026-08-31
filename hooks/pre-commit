@@ -1,0 +1,28 @@
+#!/bin/sh
+# ドキュメント同期リマインダー（非ブロッキング）
+# health.html を変更したのに SPEC.md / API.md を更新していない場合に警告する。
+# 仕様変更でなければそのままコミットしてよい（このフックは止めない）。
+#
+# 有効化: git config core.hooksPath hooks
+
+staged=$(git diff --cached --name-only)
+
+echo "$staged" | grep -q '^health\.html$' || exit 0          # health.html未変更なら何もしない
+echo "$staged" | grep -qE '^(SPEC|API|CLAUDE)\.md$' && exit 0 # docsも更新済みならOK
+
+# api.php をうっかりステージしていたら強めに警告（コミットはブロックしない）
+if echo "$staged" | grep -q 'api\.php'; then
+  echo "⛔ 警告: api.php がステージされています。api.php はコミットしない方針です（Gemini APIキーを含む）。" 1>&2
+fi
+
+cat 1>&2 <<'MSG'
+────────────────────────────────────────────────────────────
+📝 リマインダー: health.html を変更していますが、SPEC.md / API.md は
+   更新されていません。
+   仕様（画面・機能・データ・APIの契約・エラーコード・制限値など）を
+   変えた場合は、対応ドキュメントも更新してください（CLAUDE.md 参照）。
+   ・仕様変更でない（バグ修正等）なら、このままで問題ありません。
+────────────────────────────────────────────────────────────
+MSG
+
+exit 0
