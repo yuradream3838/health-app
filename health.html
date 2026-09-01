@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.43"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.44"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -4309,11 +4309,24 @@ function dayOccupancy(D, excludeUid){
   return {allDay, timed, free};
 }
 // パターンpの指定日dsでの時刻 {sH,sM,eH,eM,nextDay}。非表示/対象外は null
+// 「この日以降で時間を変更」（過去はそのまま）: p.reschedules の中で from<=ds の最新セグメントを適用
+function effectivePattern(p, ds){
+  const rs=p&&p.reschedules;
+  if(!Array.isArray(rs)||!rs.length) return p;
+  let best=null;
+  for(const r of rs){ if(r&&r.from&&ds>=r.from){ if(!best||r.from>best.from)best=r; } }
+  if(!best) return p;
+  const np={...p};
+  if(best.byShift){ np.byShift=true; np.shiftTimes=best.shiftTimes||p.shiftTimes; np.weekdayTimes=undefined; }
+  else if(best.sH!=null){ np.byShift=false; np.startH=best.sH; np.startM=best.sM||0; np.endH=best.eH; np.endM=best.eM||0; np.nextDay=!!best.nextDay; np.weekdayTimes=undefined; }
+  return np;
+}
 function patternTimesFor(p,ds){
   if(!p||p.enabled===false)return null;
   const ov=(getDaily(ds).patternOv||{})[p.uid];
   if(ov&&ov.hidden)return null;
   if(ov&&ov.startH!=null) return {sH:ov.startH,sM:ov.startM||0,eH:ov.endH,eM:ov.endM||0,nextDay:!!ov.nextDay};
+  p=effectivePattern(p,ds); // 「この日以降で時間を変更」を反映（その日だけ変更 patternOv の次に優先）
   const dow=parseDS(ds).getDay();
   if(Array.isArray(p.weekdays)&&p.weekdays.length&&!p.weekdays.includes(dow))return null;
   // 曜日別の時間上書き：設定された曜日はシフト連動/固定の基本時刻より優先。
@@ -5350,6 +5363,61 @@ function renderPlanPatternPanel(){
     lkRow.appendChild(lkSel);
     body.appendChild(lkRow);
     body.appendChild(div({style:{fontSize:"9px",color:"#475569",marginTop:"3px"}},"連動先が完了すると、予定タブでこの予定がグレーアウトします"));
+    // 📅 この日以降で時間を変更（過去はそのまま）
+    {
+      body.appendChild(div({style:{borderTop:"1px solid #1e293b",margin:"9px 0 5px",paddingTop:"8px",fontSize:"11px",fontWeight:700,color:"#a5b4fc"}},"📅 この日以降で時間を変更"));
+      body.appendChild(div({style:{fontSize:"9px",color:"#64748b",marginBottom:"6px",lineHeight:1.5}},"指定日以降だけ時間を切り替えます。それ以前の日はこれまでの時間のまま表示されます。"));
+      const rsegs=(p.reschedules||[]).slice().sort((a,b)=>(a.from<b.from?-1:1));
+      rsegs.forEach(seg=>{
+        const lbl = seg.byShift ? "直別に変更" : `${hhmm(seg.sH,seg.sM||0)}〜${seg.eH!=null?hhmm(seg.eH,seg.eM||0):""}`;
+        const row=div({style:{display:"flex",alignItems:"center",gap:"6px",padding:"5px 8px",background:"#1e293b",borderRadius:"6px",marginBottom:"4px"}});
+        row.appendChild(div({style:{flex:1,fontSize:"11px",color:"#e2e8f0"}},[span({style:{color:"#a5b4fc",fontWeight:700}},(seg.from||"").replace(/-/g,"/")+"〜 "),span({},lbl)]));
+        const del=btn({style:{flexShrink:0,fontSize:"11px",padding:"3px 9px",borderRadius:"6px",cursor:"pointer",fontWeight:600,border:"1px solid #7f1d1d",background:"transparent",color:"#fca5a5"}},"削除");
+        del.addEventListener('click',(()=>{const f=seg.from;return()=>{ upd(p.uid,{reschedules:(p.reschedules||[]).filter(x=>x.from!==f)}); };})());
+        row.appendChild(del); body.appendChild(row);
+      });
+      state.patSegDraft=state.patSegDraft||{};
+      const ns=state.patSegDraft[p.uid]||(state.patSegDraft[p.uid]={from:todayStr()});
+      const nbox=div({style:{padding:"8px 9px",background:"#1e293b",borderRadius:"7px",border:"1px dashed #334155",marginBottom:"6px"}});
+      nbox.appendChild(div({style:{fontSize:"9px",color:"#64748b",marginBottom:"3px"}},"この日以降"));
+      const df=document.createElement('input');df.type='date';df.value=ns.from||todayStr();df.style.cssText="width:100%;padding:7px 9px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#e2e8f0;font-size:13px;font-family:inherit;box-sizing:border-box;margin-bottom:7px;color-scheme:dark";
+      df.addEventListener('change',e=>{if(e.target.value)ns.from=e.target.value;});
+      nbox.appendChild(df);
+      if(p.byShift){
+        nbox.appendChild(div({style:{fontSize:"9px",color:"#64748b",marginBottom:"3px"}},"新しい時間（直別）"));
+        if(!ns.shiftTimes)ns.shiftTimes=JSON.parse(JSON.stringify(p.shiftTimes||{}));
+        SHIFT_OPTS.forEach(([k,slbl])=>{
+          const st=ns.shiftTimes[k]||(ns.shiftTimes[k]={on:true,startH:1,startM:0,endH:9,endM:0,nextDay:false});
+          const rr=div({style:{display:"flex",gap:"5px",alignItems:"center",marginBottom:"5px"}});
+          rr.appendChild(span({style:{width:"28px",fontSize:"10px",color:SHIFT_TYPES[k].color,flexShrink:0,fontWeight:700}},slbl));
+          rr.appendChild(timeField(()=>st.startH!=null?st.startH:1,()=>st.startM||0,(h,mm)=>{st.startH=h;st.startM=mm;}));
+          rr.appendChild(span({style:{color:"#475569"}},"〜"));
+          rr.appendChild(timeField(()=>st.endH!=null?st.endH:9,()=>st.endM||0,(h,mm)=>{st.endH=h;st.endM=mm;st.nextDay=(st.endH*60+st.endM)<=(st.startH*60+(st.startM||0));}));
+          nbox.appendChild(rr);
+        });
+      } else {
+        nbox.appendChild(div({style:{fontSize:"9px",color:"#64748b",marginBottom:"3px"}},"新しい時間"));
+        if(ns.sH==null){ns.sH=p.startH!=null?p.startH:22;ns.sM=p.startM||0;ns.eH=p.endH!=null?p.endH:6;ns.eM=p.endM||0;}
+        const rr=div({style:{display:"flex",gap:"6px",alignItems:"center",marginBottom:"6px"}});
+        rr.appendChild(timeField(()=>ns.sH,()=>ns.sM||0,(h,mm)=>{ns.sH=h;ns.sM=mm;}));
+        rr.appendChild(span({style:{color:"#475569"}},"〜"));
+        rr.appendChild(timeField(()=>ns.eH,()=>ns.eM||0,(h,mm)=>{ns.eH=h;ns.eM=mm;}));
+        nbox.appendChild(rr);
+      }
+      const addB=btn({style:{width:"100%",padding:"8px",borderRadius:"7px",cursor:"pointer",fontWeight:700,fontSize:"11px",border:"none",background:"linear-gradient(135deg,#6366f1,#a855f7)",color:"#fff"}},"＋ この日以降の時間を追加");
+      addB.addEventListener('click',()=>{
+        if(!ns.from){alert("日付を選んでください");return;}
+        let seg;
+        if(p.byShift){ seg={from:ns.from,byShift:true,shiftTimes:JSON.parse(JSON.stringify(ns.shiftTimes||{}))}; }
+        else { const nextDay=(ns.eH*60+(ns.eM||0))<=(ns.sH*60+(ns.sM||0)); seg={from:ns.from,sH:ns.sH,sM:ns.sM||0,eH:ns.eH,eM:ns.eM||0,nextDay}; }
+        const newRs=[...((p.reschedules||[]).filter(x=>x.from!==seg.from)),seg];
+        if(state.patSegDraft)delete state.patSegDraft[p.uid];
+        upd(p.uid,{reschedules:newRs});
+        showToast("この日以降の時間を追加しました");
+      });
+      nbox.appendChild(addB);
+      body.appendChild(nbox);
+    }
     card.appendChild(box);
   });
   const templates=[{t:"😴 睡眠",c:"#60a5fa",s:[23,0],e:[7,0]},{t:"🏋️ 運動",c:"#22c55e",s:[19,0],e:[20,0]},{t:"🍽️ 食事",c:"#fb923c",s:[12,0],e:[13,0]}];
@@ -8300,11 +8368,19 @@ function customTodoCfgFor(ct, ds){
   let best=null;
   for(const r of rs){ if(r&&r.from&&ds>=r.from){ if(!best||r.from>best.from)best=r; } }
   if(!best)return ct;
-  return {...ct, startDate:best.from,
+  const cfg={...ct, startDate:best.from,
     itype:best.itype||ct.itype,
     n:Math.max(1,best.n||ct.n||1),
     weekdays:Array.isArray(best.weekdays)?best.weekdays:ct.weekdays,
     shifts:Array.isArray(best.shifts)?best.shifts:ct.shifts};
+  // 時刻も「この日以降」で変えている場合は固定時刻へ切り替え（曜日別/直別の時刻設定より優先）
+  if(best.timeH!=null){
+    cfg.timeH=best.timeH; cfg.timeM=best.timeM||0;
+    cfg.endH=(best.endH!=null?best.endH:null); cfg.endM=(best.endH!=null?(best.endM||0):null);
+    cfg.endNextDay=!!best.endNextDay; cfg.startNextDay=!!best.startNextDay;
+    cfg.weekdayTimes=undefined; cfg.shiftSchedule=undefined;
+  }
+  return cfg;
 }
 function customTodoDue(ct, ds){
   if(!ct||!ct.startDate)return false;
@@ -8413,6 +8489,7 @@ function customTodoTimeFor(ct, ds){
   // その日だけの時刻上書き（最優先）
   const _r=(state.todos[ds]||{})[ct.uid];
   if(_r&&_r.timeOverride&&_r.timeOverride.timeH!=null){ const o=_r.timeOverride; return {h:o.timeH,m:o.timeM||0,eh:o.endH,em:o.endM,en:!!o.endNextDay,sn:!!o.startNextDay}; }
+  ct=customTodoCfgFor(ct,ds); // 「この日以降」で変えた周期・時刻を反映（過去はそのまま）
   // 直ごとモード：当日のシフトの時刻（その直の中で曜日別の上書きがあれば優先）
   if(ct.shiftSchedule){
     const k=getPlanShiftKey(ds)||"off";
@@ -11730,9 +11807,10 @@ function renderCustomTodoModal(){
     const segs=(m0.reschedules||[]).slice().sort((a,b)=>(a.from<b.from?-1:1));
     segs.forEach(seg=>{
       const row=div({style:{display:"flex",alignItems:"center",gap:"8px",padding:"6px 9px",background:"#0f172a",borderRadius:"7px",marginBottom:"5px"}});
+      const segTimeLbl = seg.timeH!=null ? `　🕐${hhmm(seg.timeH,seg.timeM||0)}${seg.endH!=null?`〜${hhmm(seg.endH,seg.endM||0)}`:""}` : "";
       row.appendChild(div({style:{flex:1,fontSize:"11px",color:"#e2e8f0",lineHeight:1.4}},[
         span({style:{color:"#a5b4fc",fontWeight:700}},(seg.from||"").replace(/-/g,"/")+"〜 "),
-        span({},customTodoIntervalLabel(seg))
+        span({},customTodoIntervalLabel(seg)+segTimeLbl)
       ]));
       const del=btn({style:{flexShrink:0,fontSize:"11px",padding:"4px 10px",borderRadius:"6px",cursor:"pointer",fontWeight:600,border:"1px solid #7f1d1d",background:"transparent",color:"#fca5a5"}},"削除");
       del.addEventListener('click',(()=>{const f=seg.from;return()=>{m0.reschedules=(m0.reschedules||[]).filter(x=>x.from!==f);render();};})());
@@ -11776,10 +11854,27 @@ function renderCustomTodoModal(){
       sr.appendChild(sb);
     });
     box.appendChild(sr);
+    // 🕐 時刻も「この日以降」で変更（任意）
+    { const tgl=btn({style:{width:"100%",padding:"7px",borderRadius:"7px",cursor:"pointer",fontSize:"11px",fontWeight:600,marginBottom:"8px",border:`1px solid ${ns._setTime?"#38bdf8":"#334155"}`,background:ns._setTime?"#0ea5e918":"transparent",color:ns._setTime?"#38bdf8":"#64748b"}},ns._setTime?"🕐 時刻も変更する（ON）":"🕐 時刻も変更する（任意）");
+      tgl.addEventListener('click',()=>{ ns._setTime=!ns._setTime; if(ns._setTime&&ns.timeH==null){ ns.timeH=(m0.timeH!=null?m0.timeH:9); ns.timeM=(m0.timeM||0); ns.endH=(m0.endH!=null?m0.endH:null); ns.endM=(m0.endM||0);} render(); });
+      box.appendChild(tgl);
+      if(ns._setTime){
+        const trow=div({style:{display:"flex",gap:"8px",alignItems:"center",marginBottom:"8px"}});
+        trow.appendChild(timeField(()=>ns.timeH!=null?ns.timeH:9,()=>ns.timeM||0,(h,mm)=>{ns.timeH=h;ns.timeM=mm;}));
+        trow.appendChild(span({style:{color:"#475569"}},"〜"));
+        trow.appendChild(timeField(()=>ns.endH!=null?ns.endH:(ns.timeH!=null?ns.timeH:9),()=>ns.endM||0,(h,mm)=>{ns.endH=h;ns.endM=mm;}));
+        box.appendChild(trow);
+        box.appendChild(div({style:{fontSize:"10px",color:"#475569",marginBottom:"8px"}},"タイマー式はこの開始時刻から実績に入ります。終了が開始より前なら翌日扱い。"));
+      }
+    }
     const addB=btn({style:{width:"100%",padding:"9px",borderRadius:"8px",cursor:"pointer",fontWeight:700,fontSize:"12px",border:"none",background:"linear-gradient(135deg,#6366f1,#a855f7)",color:"#fff"}},"＋ この日以降の変更を追加");
     addB.addEventListener('click',()=>{
       if(!ns.from){alert("日付を選んでください");return;}
       const seg={from:ns.from,itype:ns.itype||"week",n:Math.max(1,ns.n||1),weekdays:ns.itype==="week"?[...(ns.weekdays||[])]:[],shifts:[...(ns.shifts||[])]};
+      if(ns._setTime && ns.timeH!=null){
+        seg.timeH=ns.timeH; seg.timeM=ns.timeM||0;
+        if(ns.endH!=null){ seg.endH=ns.endH; seg.endM=ns.endM||0; const startTot=seg.timeH*60+seg.timeM, endTot=seg.endH*60+seg.endM; seg.endNextDay=endTot<=startTot; }
+      }
       m0.reschedules=[...((m0.reschedules||[]).filter(x=>x.from!==seg.from)),seg];
       m0._newSeg=null;
       showToast("この日以降の変更を追加しました");
