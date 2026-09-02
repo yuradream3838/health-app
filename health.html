@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.44"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.45"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -4042,19 +4042,20 @@ function getActualActivities(vd){
   [addDays(vd,-1), vd].forEach(DD=>{
     (state.customTodos||[]).forEach(ct=>{
       const rec=(state.todos[DD]||{})[ct.uid];
-      const ctLbl=(rec&&rec.labelOverride)||ct.label; // その日だけ名前変更を実績にも反映
+      const cE=customTodoCfgFor(ct,DD); // その日の有効な定義（過去は変更前のまま）
+      const ctLbl=(rec&&rec.labelOverride)||cE.label; // その日だけ名前変更を実績にも反映
       const ctNote=(rec&&rec.noteOverride)?`：${rec.noteOverride}`:"";
       // 時間計測式：開始時刻から実績へ反映（終了があれば開始〜終了、計測中は開始〜現在）
-      if(rec&&ct.mode==='timer'&&rec.startTime&&onVd(rec.startTime)){
+      if(rec&&cE.mode==='timer'&&rec.startTime&&onVd(rec.startTime)){
         const s2=new Date(rec.startTime);
         const sMin=s2.getHours()*60+s2.getMinutes();
         let eMin, running=!rec.endTime;
         if(rec.endTime){ const e2=new Date(rec.endTime); eMin=e2.getHours()*60+e2.getMinutes(); if(eMin<=sMin)eMin=sMin+1; }
         else { const now=new Date(); eMin=(fmtDS(now)===fmtDS(s2))?(now.getHours()*60+now.getMinutes()):1440; if(eMin<=sMin)eMin=sMin+1; }
-        acts.push({title:"✓"+ctLbl+ctNote+(running?"（計測中）":""),startMin:sMin,endMin:Math.min(1440,Math.max(sMin+12,eMin)),color:ct.color||"#22c55e",ctUid:ct.uid,ownDay:DD});
+        acts.push({title:"✓"+ctLbl+ctNote+(running?"（計測中）":""),startMin:sMin,endMin:Math.min(1440,Math.max(sMin+12,eMin)),color:cE.color||"#22c55e",ctUid:ct.uid,ownDay:DD});
       } else if(rec&&rec.checked&&rec.time&&onVd(rec.time)){
         const t2=new Date(rec.time); const mins=t2.getHours()*60+t2.getMinutes();
-        acts.push({title:"✓"+ctLbl+ctNote,startMin:mins,endMin:mins+12,isPoint:true,color:ct.color||"#22c55e",ctUid:ct.uid,ownDay:DD});
+        acts.push({title:"✓"+ctLbl+ctNote,startMin:mins,endMin:mins+12,isPoint:true,color:cE.color||"#22c55e",ctUid:ct.uid,ownDay:DD});
       }
     });
   });
@@ -4255,12 +4256,13 @@ function getPlannedExtras(vd){
       const s=Math.max(0,startAbs), e=Math.min(1440,endAbs);
       if(e<=s)continue;                                // vd に掛からない
       const ovObj=(getDaily(D).patternOv||{})[p.uid];
-      const dispTitle=(ovObj&&ovObj.labelOverride)||p.title;
+      const pE=effectivePattern(p,D); // その日の有効な定義（過去は変更前のまま）
+      const dispTitle=(ovObj&&ovObj.labelOverride)||pE.title;
       const noteOv=(ovObj&&ovObj.noteOverride)||"";
       // このパターンが「終わる日」（＝起床する日）。0時をまたぐ睡眠は所有日の翌日に起床する。
       const endMin=t.eH*60+(t.eM||0), startMin=t.sH*60+(t.sM||0);
       const wakeDate=addD(D, (t.nextDay?1:0)+(endMin<=startMin?1:0));
-      out.push({title:dispTitle+(noteOv?" 📝":""),color:p.color||"#38bdf8",startH:Math.floor(s/60),startM:s%60,endH:Math.floor(e/60),endM:e%60,
+      out.push({title:dispTitle+(noteOv?" 📝":""),color:pE.color||"#38bdf8",startH:Math.floor(s/60),startM:s%60,endH:Math.floor(e/60),endM:e%60,
         isPattern:true,patternUid:p.uid,oSH:t.sH,oSM:t.sM,oEH:t.eH,oEM:t.eM,oNext:!!t.nextDay,ovDate:D,wakeDate,ovDay:!!(ovObj&&ovObj.startH!=null),patternNote:noteOv});
     }
   });
@@ -4276,8 +4278,9 @@ function getPlannedExtras(vd){
       const cs=Math.max(0,startAbs), ce=Math.min(1440,endAbs);
       if(ce<=cs)return; // vd に掛からない
       const rec=(state.todos[D]||{})[ct.uid]||{};
-      const lbl=rec.labelOverride||ct.label;
-      out.push({title:`☑️ ${lbl}${rec.noteOverride?" 📝":""}`,color:ct.color||"#38bdf8",startH:Math.floor(cs/60),startM:cs%60,endH:Math.floor(ce/60),endM:ce%60,customTodo:true,ctUid:ct.uid,ctLabel:lbl,ctDate:D});
+      const cE=customTodoCfgFor(ct,D);
+      const lbl=rec.labelOverride||cE.label;
+      out.push({title:`☑️ ${lbl}${rec.noteOverride?" 📝":""}`,color:cE.color||"#38bdf8",startH:Math.floor(cs/60),startM:cs%60,endH:Math.floor(ce/60),endM:ce%60,customTodo:true,ctUid:ct.uid,ctLabel:lbl,ctDate:D});
     });
   }
   return out;
@@ -4311,6 +4314,9 @@ function dayOccupancy(D, excludeUid){
 // パターンpの指定日dsでの時刻 {sH,sM,eH,eM,nextDay}。非表示/対象外は null
 // 「この日以降で時間を変更」（過去はそのまま）: p.reschedules の中で from<=ds の最新セグメントを適用
 function effectivePattern(p, ds){
+  // 過去バージョン（変更前の定義）を最優先で適用（時間・名前・色すべて）
+  const psnap=pastVerFor(p,ds);
+  if(psnap) return {...p, ...psnap, uid:p.uid, pastVer:p.pastVer, reschedules:undefined};
   const rs=p&&p.reschedules;
   if(!Array.isArray(rs)||!rs.length) return p;
   let best=null;
@@ -5183,7 +5189,20 @@ function renderPlanPatternPanel(){
   const card=div({className:"card"});
   card.appendChild(div({style:{fontSize:"14px",fontWeight:700,color:"#e2e8f0",marginBottom:"4px"}},"🔁 パターン予定"));
   card.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"10px",lineHeight:1.6}},"睡眠など毎週の予定を登録すると、予定タブ「日」の左（予定）列に自動表示されます。"));
-  const upd=(uid,ch)=>{state.planPatterns=state.planPatterns.map(x=>x.uid===uid?{...x,...ch}:x);savePlanPatterns();render();};
+  card.appendChild(div({style:{fontSize:"10px",color:"#a5b4fc",marginBottom:"10px",lineHeight:1.6,background:"#6366f114",border:"1px solid #6366f133",borderRadius:"7px",padding:"7px 9px"}},"✏️ 変更は「今日以降」だけに反映されます（過去の表示は変わりません）。"));
+  // 定義に関わる変更（時間・名前・色・曜日など）は「今日以降のみ」反映：
+  //   最初の変更時に変更前の定義を昨日までの過去バージョンとして自動凍結する。
+  const PAT_VERSIONED=new Set(['startH','startM','endH','endM','nextDay','byShift','shiftTimes','weekdays','weekdayTimes','title','color']);
+  const upd=(uid,ch)=>{
+    const touches=Object.keys(ch).some(k=>PAT_VERSIONED.has(k));
+    state.planPatterns=state.planPatterns.map(x=>{
+      if(x.uid!==uid) return x;
+      let nx={...x};
+      if(touches) nx.pastVer=freezePastVersion(x); // 変更前(x)を凍結
+      return {...nx,...ch};
+    });
+    savePlanPatterns();render();
+  };
   const mkSel2=(cur,arr,fmt,on)=>{const s=document.createElement('select');s.className='sel';s.style.cssText="padding:4px 2px;font-size:12px";arr.forEach(v=>{const o=document.createElement('option');o.value=v;o.textContent=fmt(v);if(v===cur)o.selected=true;s.appendChild(o);});s.addEventListener('change',e=>on(Number(e.target.value)));return s;};
   const MIN=[0,5,10,15,20,25,30,35,40,45,50,55];
   (state.planPatterns||[]).forEach(p=>{
@@ -5200,7 +5219,7 @@ function renderPlanPatternPanel(){
     l1.appendChild(en);
     const ti=document.createElement('input');ti.type='text';ti.value=p.title||"";ti.placeholder="名前";
     ti.style.cssText="flex:1;min-width:0;padding:5px 8px;background:#1e293b;border:1px solid #334155;border-radius:6px;color:#e2e8f0;font-size:13px;font-family:inherit";
-    ti.addEventListener('input',e=>{const x=state.planPatterns.find(z=>z.uid===p.uid);if(x){x.title=e.target.value;savePlanPatterns();}});
+    ti.addEventListener('input',e=>{const x=state.planPatterns.find(z=>z.uid===p.uid);if(x){ if(!(Array.isArray(x.pastVer)&&x.pastVer.some(v=>v.until===addDays(todayStr(),-1)))) x.pastVer=freezePastVersion(x); x.title=e.target.value;savePlanPatterns();}});
     l1.appendChild(ti);
     const del=btn({style:{background:"transparent",border:"none",color:"#334155",cursor:"pointer",fontSize:"16px",flexShrink:0}},"×");
     del.addEventListener('click',()=>{if(confirm("このパターンを削除しますか？")){pushUndo("パターンを削除しました");state.planPatterns=state.planPatterns.filter(x=>x.uid!==p.uid);savePlanPatterns();render();}});
@@ -5363,8 +5382,8 @@ function renderPlanPatternPanel(){
     lkRow.appendChild(lkSel);
     body.appendChild(lkRow);
     body.appendChild(div({style:{fontSize:"9px",color:"#475569",marginTop:"3px"}},"連動先が完了すると、予定タブでこの予定がグレーアウトします"));
-    // 📅 この日以降で時間を変更（過去はそのまま）
-    {
+    // 手動の「この日以降で時間を変更」ボックスは非表示（編集は自動で「今日以降のみ」反映）
+    if(false){
       body.appendChild(div({style:{borderTop:"1px solid #1e293b",margin:"9px 0 5px",paddingTop:"8px",fontSize:"11px",fontWeight:700,color:"#a5b4fc"}},"📅 この日以降で時間を変更"));
       body.appendChild(div({style:{fontSize:"9px",color:"#64748b",marginBottom:"6px",lineHeight:1.5}},"指定日以降だけ時間を切り替えます。それ以前の日はこれまでの時間のまま表示されます。"));
       const rsegs=(p.reschedules||[]).slice().sort((a,b)=>(a.from<b.from?-1:1));
@@ -8362,7 +8381,29 @@ function moveTodoItem(id, dir){
 function saveCustomTodos(){ safeSet(STORAGE_KEY+"_customtodos",JSON.stringify(state.customTodos)); }
 // 途中変更（reschedules）：指定日(from)以降は、そのセグメントの周期に切り替える。
 // fromを新しい起点として数え直すため、それ以前の記録・周期はそのまま保たれる。
+// pastVer: 定義を変更した際に「変更前の定義」を過去用に凍結したもの。
+//   各要素 {until:'YYYY-MM-DD', snap:{...変更前の全フィールド}}。ds<=until の最も内側(=until最小)を採用。
+function pastVerFor(obj, ds){
+  const pv=obj&&obj.pastVer;
+  if(!Array.isArray(pv)||!pv.length)return null;
+  let cover=null;
+  for(const v of pv){ if(v&&v.until&&ds<=v.until){ if(!cover||v.until<cover.until)cover=v; } }
+  return (cover&&cover.snap)?cover.snap:null;
+}
+// 変更前の定義(prev)を「昨日まで」の過去バージョンとして凍結し、pastVer配列を返す。
+// 本日すでに凍結済みなら何もしない（過去は最初の変更前を保つ）。
+function freezePastVersion(prev){
+  const yb=addDays(todayStr(),-1);
+  const pv=Array.isArray(prev&&prev.pastVer)?[...prev.pastVer]:[];
+  if(pv.some(v=>v.until===yb)) return pv;
+  const snap={...prev}; delete snap.uid; delete snap.pastVer; delete snap._newSeg; delete snap.collapsed;
+  pv.push({until:yb, snap});
+  return pv;
+}
 function customTodoCfgFor(ct, ds){
+  // 過去バージョン（変更前の定義）を最優先で適用
+  const psnap=pastVerFor(ct,ds);
+  if(psnap) return {...ct, ...psnap, uid:ct.uid, pastVer:ct.pastVer, reschedules:undefined};
   const rs=ct&&ct.reschedules;
   if(!Array.isArray(rs)||!rs.length)return ct;
   let best=null;
@@ -8415,7 +8456,7 @@ function customTodoDue(ct, ds){
   if(ct.shifts&&ct.shifts.length){ const k=getPlanShiftKey(ds)||"off"; if(!ct.shifts.includes(k))return false; }
   return true;
 }
-function dueCustomTodos(ds){ return (state.customTodos||[]).filter(ct=>customTodoDue(ct,ds)); }
+function dueCustomTodos(ds){ return (state.customTodos||[]).filter(ct=>customTodoDue(ct,ds)).map(ct=>customTodoCfgFor(ct,ds)); }
 // 特定日の定期ルーティンを別の日(toDs)へ移動する。元の日は除外し、移動先に臨時オカレンス(moved)を作る。
 // 内容の上書き（時刻・名前・メモ）は引き継ぐ。完了状態は引き継がない（未実施で移動）。
 function moveCustomTodoDay(uid, fromDs, toDs){
@@ -11800,8 +11841,8 @@ function renderCustomTodoModal(){
   });
   m.appendChild(cwWrap);
   } // end !byShiftSchedule
-  // 途中でスケジュールを変更（この日以降、周期・曜日・直を切り替える。過去はそのまま）
-  {
+  // 手動の「途中でスケジュールを変更」ボックスは非表示（編集は自動で「今日以降のみ」反映されるため）
+  if(false){
     m.appendChild(div({style:{borderTop:"1px solid #1e293b",margin:"2px 0 10px",paddingTop:"12px",fontSize:"12px",fontWeight:700,color:"#a5b4fc"}},"📅 途中でスケジュールを変更"));
     m.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"8px",lineHeight:1.5}},"指定した日以降だけ周期を切り替えられます（その日を新しい起点に数え直し・それ以前はそのまま）。例：直が変わって一週ずらしてまた2週ごとに。"));
     const segs=(m0.reschedules||[]).slice().sort((a,b)=>(a.from<b.from?-1:1));
@@ -11887,13 +11928,24 @@ function renderCustomTodoModal(){
     m.appendChild(btn({style:{width:"100%",padding:"7px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#475569",cursor:"pointer",fontSize:"12px",marginBottom:"8px"},
       onClick:()=>{ if(confirm("この項目を削除しますか？")){pushUndo("定期ルーティンを削除しました");state.customTodos=(state.customTodos||[]).filter(x=>x.uid!==m0.uid);saveCustomTodos();state.customTodoModal=null;render();} }},"この項目を削除"));
   }
+  if(m0.uid) m.appendChild(div({style:{fontSize:"10px",color:"#a5b4fc",marginBottom:"8px",lineHeight:1.6,background:"#6366f114",border:"1px solid #6366f133",borderRadius:"7px",padding:"7px 9px"}},"✏️ 変更は「今日以降」だけに反映されます（過去の予定・実績は変わりません）。"));
   m.appendChild(div({style:{display:"flex",gap:"8px"}},[
     btn({className:"btn-ghost",style:{flex:1},onClick:()=>{state.customTodoModal=null;render();}},"キャンセル"),
     btn({style:{flex:2,padding:"10px",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:600,cursor:"pointer"},
       onClick:()=>{
         if(!(m0.label||"").trim()){alert("名前を入力してください");return;}
         const data={uid:m0.uid||Date.now(),label:m0.label.trim(),mode:m0.mode==='timer'?'timer':'check',itype:m0.itype||"week",n:Math.max(1,m0.n||1),startDate:m0.startDate||todayStr(),timeH:m0.timeH!=null?m0.timeH:null,timeM:m0.timeH!=null?(m0.timeM||0):0,endH:m0.timeH!=null&&m0.endH!=null?m0.endH:null,endM:m0.timeH!=null&&m0.endH!=null?(m0.endM||0):null,endNextDay:!!(m0.timeH!=null&&m0.endH!=null&&m0.endNextDay),startNextDay:!!(m0.timeH!=null&&m0.startNextDay),color:m0.color||"#38bdf8",weekdays:(m0.itype==="week"&&m0.weekdays)?[...m0.weekdays]:[],shifts:m0.shifts?[...m0.shifts]:[],weekdayTimes:(m0.weekdayTimes&&Object.keys(m0.weekdayTimes).length)?JSON.parse(JSON.stringify(m0.weekdayTimes)):undefined,byShiftSchedule:!!m0.byShiftSchedule,shiftSchedule:(m0.byShiftSchedule&&m0.shiftSchedule)?JSON.parse(JSON.stringify(m0.shiftSchedule)):undefined,reschedules:(Array.isArray(m0.reschedules)&&m0.reschedules.length)?JSON.parse(JSON.stringify(m0.reschedules)):undefined};
-        if(m0.uid) state.customTodos=(state.customTodos||[]).map(x=>x.uid===m0.uid?data:x);
+        if(m0.uid){
+          const prev=(state.customTodos||[]).find(x=>x.uid===m0.uid);
+          // 既存の編集は「今日以降のみ」反映：変更前の定義を昨日までの過去バージョンとして凍結
+          if(prev){
+            const yb=addDays(todayStr(),-1);
+            const hasPast = prev.startDate && prev.startDate<=yb; // 過去に発生があるものだけ凍結
+            data.pastVer = hasPast ? freezePastVersion(prev) : (Array.isArray(prev.pastVer)?prev.pastVer:undefined);
+            data.startDate = prev.startDate||data.startDate; // 周期の位相を保つ
+          }
+          state.customTodos=(state.customTodos||[]).map(x=>x.uid===m0.uid?data:x);
+        }
         else state.customTodos=[...(state.customTodos||[]),data];
         saveCustomTodos();state.customTodoModal=null;render();
       }},"保存")
