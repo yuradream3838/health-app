@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.48"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.49"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -5865,9 +5865,19 @@ function renderDaySchedule(vd,ds,isToday){
     // 前日以前で未完了の単日目標も繰り越して表示（範囲目標は毎日出るため除外）
     const gCarry=gtCollectByPeriodCarry("daily", vd).carry.filter(n=>!isRangeDaily(n) && !gGoalIds.has(n.id));
     const gPend=gtCollectPeriodlessActive(vd).filter(x=>!gGoalIds.has(x.node.id));
-    if(allDayEvents.length||dueCustom.length||carryCustom.length||dueTodos.length||preItems.length||doneCustom.length||gGoals.length||gCarry.length||gPend.length){
+    const ndPlan=getNextDrinkPlan(); const ndToday=!!(ndPlan&&ndPlan.date===vd); // 🍺 外に飲みに行く予定の当日
+    if(allDayEvents.length||dueCustom.length||carryCustom.length||dueTodos.length||preItems.length||doneCustom.length||gGoals.length||gCarry.length||gPend.length||ndToday){
       const ad=div({className:"card",style:{padding:"8px 10px",marginBottom:"8px"}});
       ad.appendChild(div({style:{fontSize:"10px",fontWeight:700,color:"#94a3b8",marginBottom:"6px"}},"📌 終日・定期ルーティン・TODO"));
+      // 🍺 外に飲みに行く予定（計画飲酒）— 設定した日にプランとして表示
+      if(ndToday){
+        const c="#f59e0b";
+        const chip=div({style:{display:"flex",alignItems:"center",gap:"6px",padding:"6px 10px",background:c+"1f",border:`1px solid ${c}66`,borderRadius:"6px",marginBottom:"4px",cursor:"pointer"}},[
+          div({style:{flex:1,minWidth:0,fontSize:"13px",fontWeight:600,color:"#fbbf24",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},`🍺 外に飲みに行く予定${ndPlan.note?`：${ndPlan.note}`:""}`)
+        ]);
+        chip.addEventListener('click',()=>{ exitWidget&&exitWidget(); state.tab="日記"; state.diarySubTab="アルコール"; render(); });
+        ad.appendChild(chip);
+      }
       // 🎯 目標セクション
       if(gGoals.length||gCarry.length||gPend.length){
         const goalRow=(n, subTxt, done, onToggle)=>{
