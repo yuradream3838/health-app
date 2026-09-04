@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.45"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.46"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -1592,7 +1592,7 @@ function sleepRhythmCard(full){
       c.appendChild(openB);
     } else {
       const near=cd!=null && cd<=45 && cd>-60; const b=btn({style:{width:"100%",padding:"11px",marginBottom:"9px",borderRadius:"8px",border:"none",color:"#fff",fontSize:"13px",fontWeight:800,cursor:"pointer",background:near?"linear-gradient(135deg,#f59e0b,#a855f7)":"#4338ca"}},"🛏 寝支度を始める");
-      b.addEventListener('click',()=>{ const n=new Date(); state.windEditH=n.getHours(); state.windEditM=n.getMinutes(); setDaily(sleepNightDay(),{windDownAt:new Date().toISOString()}); state.sleepMode=true; showToast("🌙 睡眠前モード開始","#a5b4fc"); render(); }); c.appendChild(b);
+      b.addEventListener('click',()=>{ const n=new Date(); state.windEditH=n.getHours(); state.windEditM=n.getMinutes(); setDaily(sleepNightDay(),{windDownAt:new Date().toISOString(),smReturned:false}); state.sleepMode=true; showToast("🌙 睡眠前モード開始","#a5b4fc"); render(); }); c.appendChild(b);
     }
   }
   // ⑤ ストリーク ＋ ④ドリフト（サマリー）
@@ -1701,7 +1701,21 @@ function sleepModeTick(){
   if(!el || !state.sleepMode){ if(window._sleepTick){clearInterval(window._sleepTick);window._sleepTick=null;} return; }
   const n=new Date(); el.textContent=`${String(n.getHours()).padStart(2,'0')}:${String(n.getMinutes()).padStart(2,'0')}`;
 }
-function exitSleepMode(){ state.sleepMode=false; if(window._sleepTick){clearInterval(window._sleepTick);window._sleepTick=null;} }
+function exitSleepMode(){ state.sleepMode=false; if(window._sleepTick){clearInterval(window._sleepTick);window._sleepTick=null;} try{ if(windDownAt())setDaily(sleepNightDay(),{smReturned:true}); }catch(_){} } // アプリに戻ったら入口は一番下へ
+// 睡眠前モードの入口カード（寝支度中〜就寝記録まで表示）
+function sleepModeEntryCard(){
+  const c=div({className:"card",style:{padding:"12px 14px",marginBottom:"10px",border:"1px solid #7c3aed55",background:"linear-gradient(135deg,#4338ca1f,#7c3aed1f)"}});
+  c.appendChild(div({style:{fontSize:"13px",fontWeight:800,color:"#c4b5fd",marginBottom:"2px"}},"🌙 睡眠前モード"));
+  const cd=(typeof bedCountdownMin==="function")?bedCountdownMin():null;
+  const sub = cd==null ? "寝る準備をして、就寝を記録しましょう"
+    : cd>=0 ? `就寝目標まで あと${cd>=60?`${Math.floor(cd/60)}時間${cd%60?`${cd%60}分`:""}`:`${cd}分`}`
+    : `就寝目標を ${-cd}分 過ぎています`;
+  c.appendChild(div({style:{fontSize:"11px",color:cd!=null&&cd<0?"#fbbf24":"#94a3b8",marginBottom:"9px"}},sub));
+  const b=btn({style:{width:"100%",padding:"12px",borderRadius:"10px",border:"none",color:"#fff",fontSize:"14px",fontWeight:800,cursor:"pointer",background:"linear-gradient(135deg,#6d5ae0,#a855f7)"}},"🌙 睡眠前モードを開く");
+  b.addEventListener('click',()=>{ state.sleepMode=true; render(); });
+  c.appendChild(b);
+  return c;
+}
 function renderSleepMode(){
   const nd=sleepNightDay();
   const now=new Date();
@@ -1818,6 +1832,10 @@ function renderWidgetView(vd,ds){
     ])
   ]));
   wrap.appendChild(head);
+  // 🌙 睡眠前モードの入口：寝支度中〜就寝記録まで表示。未帰還は一番上、アプリに戻った後は一番下。
+  const _smActive = vd===todayStr() && !!windDownAt() && getDaily(sleepNightDay()).bedTime==null;
+  const _smReturned = !!getDaily(sleepNightDay()).smReturned;
+  if(_smActive && !_smReturned) wrap.appendChild(sleepModeEntryCard()); // 一番上に固定
   { const bb=backupBanner(); if(bb && vd===todayStr()) wrap.appendChild(bb); }
   // 表示項目のカスタマイズ
   if(state.widgetEditMode){
@@ -2149,6 +2167,7 @@ function renderWidgetView(vd,ds){
   if(pinSleep) wrap.appendChild(secNodes.sleep);
   // 指定順で表示項目を並べる（組み立てたノードのみ）
   widgetOrder().forEach(k=>{ if(k==='sleep' && pinSleep)return; if(secNodes[k]) wrap.appendChild(secNodes[k]); });
+  if(_smActive && _smReturned) wrap.appendChild(sleepModeEntryCard()); // アプリに戻った後は一番下（他カードの下）
 
   wrap.appendChild(btn({style:{width:"100%",padding:"11px",marginTop:"4px",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:700,cursor:"pointer"},
     onClick:()=>{ exitWidget(); render(); }},"アプリを開く"));
