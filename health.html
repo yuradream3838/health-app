@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.47"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.48"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -1672,11 +1672,10 @@ function backupBanner(){
 // ════════════════════════════════════════════════════
 // 夜の寝支度チェックリスト対象：ナイトルーティン群＋夜(_pm/夜/寝)の項目
 function windDownChecklistItems(){
-  // 🌙ナイトルーティン群に割り当てた項目だけを、その並び順で表示
+  // 🌙ナイトルーティン群に割り当てた項目だけを、ルーティンと同じ並び順で表示
   const ng=(state.routines||[]).find(r=>r.key==="night");
-  const gids=(ng&&Array.isArray(ng.ids))?ng.ids:[];
-  const byId=Object.fromEntries(getTodoItems().map(it=>[it.id,it]));
-  return gids.map(id=>byId[id]).filter(Boolean);
+  const gids=new Set((ng&&Array.isArray(ng.ids))?ng.ids:[]);
+  return getOrderedTodoItems().filter(it=>gids.has(it.id));
 }
 // 汎用の「完了/未完了」トグル（チェック式・タイマー式の両対応。睡眠前モード用の簡易版）
 function toggleTodoQuick(vd,it){
