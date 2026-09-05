@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.49"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.50"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -4875,8 +4875,29 @@ const CARDIO_DEFAULT_NAMES=["ランニングマシン","エアロバイク","ウ
 function cardioOn(vd){ const a=getDaily(vd).cardio; return Array.isArray(a)?a:[]; }
 function setCardio(vd,arr){ setDaily(vd,{cardio:arr}); }
 function addCardio(vd,e){ setCardio(vd,[...cardioOn(vd),{uid:Date.now(),t:new Date().toISOString(),name:e.name,speed:e.speed,minutes:e.minutes,distance:e.distance}]); }
-function allCardio(){ const out=[]; (state.dailies||[]).forEach(d=>{ (d.cardio||[]).forEach(w=>out.push({...w,date:d.dateStr})); }); out.sort((a,b)=>{ const ta=a.date+(a.t||""),tb=b.date+(b.t||""); return ta<tb?1:ta>tb?-1:0; }); return out; }
+function allCardio(){ const out=[]; (state.dailies||[]).forEach(d=>{ (d.cardio||[]).forEach(w=>{ if(!w.running)out.push({...w,date:d.dateStr}); }); }); out.sort((a,b)=>{ const ta=a.date+(a.t||""),tb=b.date+(b.t||""); return ta<tb?1:ta>tb?-1:0; }); return out; }
 function cardioNames(){ const seen=new Set(),arr=[]; allCardio().forEach(w=>{ const n=(w.name||"").trim(); if(n&&!seen.has(n)){seen.add(n);arr.push(n);} }); CARDIO_DEFAULT_NAMES.forEach(n=>{ if(!seen.has(n)){seen.add(n);arr.push(n);} }); return arr; }
+// ── タイマー式有酸素：区間(segment)ごとに速度を保持し、距離は速度×時間から自動計算 ──
+function cardioRunning(vd){ return cardioOn(vd).find(w=>w.running); }
+function cardioSegSeconds(segs){ return (segs||[]).reduce((a,s)=>a+(s.seconds||0),0); }
+function cardioSegDistanceKm(segs){ return (segs||[]).reduce((a,s)=>a+((s.speed||0)*(s.seconds||0)/3600),0); }
+function fmtSecMS(sec){ sec=Math.max(0,Math.round(sec||0)); const h=Math.floor(sec/3600),m=Math.floor((sec%3600)/60),s=sec%60; return h>0?`${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`:`${m}:${String(s).padStart(2,'0')}`; }
+// 進行中セッションの現在値（最終区間は開始時刻から現在までを加算）
+function cardioLive(w){
+  const segs=w.segments||[]; let sec=0, dist=0;
+  segs.forEach((s,i)=>{
+    let sc=s.seconds||0;
+    if(w.running && i===segs.length-1 && s.startTime){ sc=(s.seconds||0)+Math.max(0,Math.round((Date.now()-Date.parse(s.startTime))/1000)); }
+    sec+=sc; dist+=(s.speed||0)*sc/3600;
+  });
+  return {seconds:sec, distance:dist, curSpeed:segs.length?segs[segs.length-1].speed:null};
+}
+function startCardio(vd,name,speed){ const now=new Date().toISOString(); setCardio(vd,[...cardioOn(vd),{uid:Date.now(),t:now,name,segments:[{speed:speed,startTime:now}],running:true}]); }
+// 進行中セッションの最終区間を閉じる（経過秒を確定）
+function _cardioCloseLastSeg(segs){ const out=[...(segs||[])]; const last=out[out.length-1]; if(last&&last.startTime){ const sec=Math.max(0,Math.round((Date.now()-Date.parse(last.startTime))/1000)); out[out.length-1]={speed:last.speed,seconds:(last.seconds||0)+sec}; } return out; }
+function cardioChangeSpeed(vd,uid,newSpeed){ setCardio(vd, cardioOn(vd).map(w=>{ if(w.uid!==uid||!w.running)return w; const segs=_cardioCloseLastSeg(w.segments); segs.push({speed:newSpeed,startTime:new Date().toISOString()}); return {...w,segments:segs}; })); }
+function stopCardio(vd,uid){ setCardio(vd, cardioOn(vd).map(w=>{ if(w.uid!==uid||!w.running)return w; const segs=_cardioCloseLastSeg(w.segments); const totalSec=cardioSegSeconds(segs); const distKm=cardioSegDistanceKm(segs); const avg=totalSec>0?cardioSegDistanceKm(segs)/(totalSec/3600):null; return {...w,running:false,segments:segs,seconds:totalSec,minutes:Math.round(totalSec/60*100)/100,distance:Math.round(distKm*100)/100,speed:avg!=null?Math.round(avg*100)/100:null}; })); }
+function cardioTickFn(){ const el=document.getElementById('cardio-elapsed'); if(!el){ if(window._cardioTick){clearInterval(window._cardioTick);window._cardioTick=null;} return; } const w=cardioRunning(state.viewDate); if(!w){ if(window._cardioTick){clearInterval(window._cardioTick);window._cardioTick=null;} return; } const live=cardioLive(w); el.textContent=fmtSecMS(live.seconds); const de=document.getElementById('cardio-dist'); if(de)de.textContent=live.distance.toFixed(2)+" km"; }
 function lastCardio(name,vd){ const n=(name||"").trim().toLowerCase(); const all=allCardio().filter(w=>(w.name||"").trim().toLowerCase()===n); const notToday=all.filter(w=>w.date!==vd); return (notToday[0]||all[0])||null; }
 function bestCardioDist(name){ const n=(name||"").trim().toLowerCase(); const all=allCardio().filter(w=>(w.name||"").trim().toLowerCase()===n&&w.distance!=null); if(!all.length)return null; return all.reduce((m,w)=>w.distance>m.distance?w:m,all[0]); }
 function renderTrainingPanel(vd,ds,isToday){
@@ -4960,54 +4981,105 @@ function renderTrainingPanel(vd,ds,isToday){
     }); }
     wrap.appendChild(c);
   }
-  // ── 🏃 有酸素（ランニングマシン等：速度・時間・距離）──
+  // ── 🏃 有酸素（ランニングマシン等：タイマー式・速度変更・距離自動計算）──
   { const c=div({className:"card",style:{marginBottom:"10px"}});
     c.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#0ea5e9",marginBottom:"6px"}},"🏃 有酸素（ランニングマシン等）"));
+    const running=cardioRunning(vd);
     const dlId="ca-names";
     const dl=document.createElement('datalist'); dl.id=dlId; cardioNames().forEach(n=>{const o=document.createElement('option');o.value=n;dl.appendChild(o);}); c.appendChild(dl);
-    const nameI=document.createElement('input');nameI.type='text';nameI.placeholder="種目（例：ランニングマシン）";nameI.value=state.caName||"";nameI.setAttribute('list',dlId);nameI.style.cssText="width:100%;box-sizing:border-box;padding:8px 10px;margin-bottom:6px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit";
-    nameI.addEventListener('input',e=>{state.caName=e.target.value;}); nameI.addEventListener('change',()=>render());
-    c.appendChild(nameI);
-    if((state.caName||"").trim()){ const lc=lastCardio(state.caName,vd), bc=bestCardioDist(state.caName);
-      if(lc||bc) c.appendChild(div({style:{fontSize:"10px",color:"#94a3b8",marginBottom:"6px"}},[
-        lc?span({},`前回 ${lc.speed!=null?`${lc.speed}km/h`:""}${lc.minutes!=null?` ${lc.minutes}分`:""}${lc.distance!=null?` ${lc.distance}km`:""}（${mdLabel(lc.date)}）`):null,
-        bc?span({style:{color:"#38bdf8",marginLeft:lc?"8px":"0"}},`最長 ${bc.distance}km`):null
-      ]));
-    }
-    const numF=(ph,val,set,step)=>{const i=document.createElement('input');i.type='number';i.placeholder=ph;i.step=step||"0.1";i.min="0";i.value=val!==""&&val!=null?String(val):"";i.style.cssText="width:100%;box-sizing:border-box;padding:8px 6px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:14px;font-family:inherit;text-align:center";i.addEventListener('input',e=>{set(e.target.value);render();});return i;};
+    const numF=(ph,val,set,step)=>{const i=document.createElement('input');i.type='number';i.placeholder=ph;i.step=step||"0.01";i.min="0";i.value=val!==""&&val!=null?String(val):"";i.style.cssText="width:100%;box-sizing:border-box;padding:8px 6px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:14px;font-family:inherit;text-align:center";i.addEventListener('input',e=>{set(e.target.value);render();});return i;};
     const lbl=(t,el)=>div({},[div({style:{fontSize:"9px",color:"#64748b",marginBottom:"2px",textAlign:"center"}},t),el]);
-    const r2=div({style:{display:"grid",gridTemplateColumns:"1fr 1fr 1fr auto",gap:"6px",alignItems:"end",marginBottom:"4px"}});
-    r2.appendChild(lbl("速度(km/h)",numF("km/h",state.caSpeed,v=>{state.caSpeed=v;},"0.1")));
-    r2.appendChild(lbl("時間(分)",numF("分",state.caTime,v=>{state.caTime=v;},"1")));
-    r2.appendChild(lbl("距離(km)",numF("km",state.caDist,v=>{state.caDist=v;},"0.01")));
-    const addB=btn({style:{padding:"9px 14px",background:"#0ea5e918",border:"1px solid #0ea5e9",borderRadius:"8px",color:"#38bdf8",fontSize:"14px",fontWeight:700,cursor:"pointer"}},state.caEditUid?"✓":"＋");
-    addB.addEventListener('click',()=>{
-      const nm=(state.caName||"").trim(); if(!nm){showToast("種目名を入力してください");return;}
-      const sp=state.caSpeed===""||state.caSpeed==null?null:parseFloat(state.caSpeed);
-      const mn=state.caTime===""||state.caTime==null?null:parseFloat(state.caTime);
-      let ds=state.caDist===""||state.caDist==null?null:parseFloat(state.caDist);
-      if(ds==null&&sp!=null&&mn!=null)ds=Math.round(sp*(mn/60)*100)/100; // 速度×時間から距離を自動計算
-      if(state.caEditUid){ setCardio(vd, cardioOn(vd).map(x=>x.uid===state.caEditUid?{...x,name:nm,speed:sp,minutes:mn,distance:ds}:x)); state.caEditUid=null; }
-      else { addCardio(vd,{name:nm,speed:sp,minutes:mn,distance:ds}); }
-      state.caSpeed="";state.caTime="";state.caDist=""; showToast(`🏃 ${nm}`); render();
-    });
-    r2.appendChild(addB); c.appendChild(r2);
-    c.appendChild(div({style:{fontSize:"9px",color:"#475569",marginBottom:"8px"}},"距離が空欄なら「速度×時間」から自動計算します"));
-    const list=cardioOn(vd);
-    if(!list.length){ c.appendChild(div({style:{fontSize:"11px",color:"#475569",padding:"2px 0"}},"ランニングマシンなどの有酸素をここに記録できます。")); }
-    else { list.forEach(w=>{
+    if(running){
+      // ── 計測中パネル ──
+      const live=cardioLive(running);
+      const box=div({style:{padding:"10px",borderRadius:"10px",background:"#0ea5e910",border:"1px solid #0ea5e955",marginBottom:"8px"}});
+      box.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#38bdf8",marginBottom:"8px"}},`⏱ ${running.name||"有酸素"} 計測中`));
+      const grid=div({style:{display:"flex",gap:"8px",marginBottom:"9px",textAlign:"center"}});
+      const cell=(label,valEl)=>div({style:{flex:1}},[valEl,div({style:{fontSize:"9px",color:"#64748b",marginTop:"1px"}},label)]);
+      grid.appendChild(cell("経過",div({id:"cardio-elapsed",style:{fontSize:"20px",fontWeight:800,color:"#e2e8f0",lineHeight:1.1}},fmtSecMS(live.seconds))));
+      grid.appendChild(cell("距離(自動)",div({id:"cardio-dist",style:{fontSize:"20px",fontWeight:800,color:"#38bdf8",lineHeight:1.1}},live.distance.toFixed(2)+" km")));
+      grid.appendChild(cell("現在 km/h",div({style:{fontSize:"20px",fontWeight:800,color:"#a78bfa",lineHeight:1.1}},`${live.curSpeed!=null?live.curSpeed:"-"}`)));
+      box.appendChild(grid);
+      // 速度変更
+      const chRow=div({style:{display:"flex",gap:"6px",marginBottom:"8px"}});
+      const spI=document.createElement('input');spI.type='number';spI.step="0.01";spI.min="0";spI.placeholder="新しい速度 km/h";spI.value=state.caNewSpeed||"";spI.style.cssText="flex:1;min-width:0;padding:8px 10px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:14px;font-family:inherit";
+      spI.addEventListener('input',e=>{state.caNewSpeed=e.target.value;});
+      const chB=btn({style:{padding:"8px 12px",background:"#a78bfa18",border:"1px solid #a78bfa",borderRadius:"8px",color:"#a78bfa",fontSize:"13px",fontWeight:700,cursor:"pointer",flexShrink:0}},"速度変更");
+      chB.addEventListener('click',()=>{ const s=parseFloat(state.caNewSpeed); if(isNaN(s)||s<0){showToast("速度を入力してください");return;} cardioChangeSpeed(vd,running.uid,Math.round(s*100)/100); state.caNewSpeed=""; showToast(`速度 ${s}km/h に変更`); render(); });
+      chRow.appendChild(spI);chRow.appendChild(chB);
+      box.appendChild(chRow);
+      // 区間履歴
+      const segs=running.segments||[];
+      if(segs.length){ box.appendChild(div({style:{fontSize:"10px",color:"#94a3b8",marginBottom:"8px",lineHeight:1.6}},"区間: "+segs.map((s,i)=>{ const sc=(i===segs.length-1&&s.startTime)?(s.seconds||0)+Math.max(0,Math.round((Date.now()-Date.parse(s.startTime))/1000)):(s.seconds||0); return `${s.speed}km/h×${fmtSecMS(sc)}`; }).join(" → "))); }
+      const stopB=btn({style:{width:"100%",padding:"12px",borderRadius:"10px",border:"none",background:"linear-gradient(135deg,#f97316,#ef4444)",color:"#fff",fontSize:"14px",fontWeight:800,cursor:"pointer"}},"⏹ 終了して記録");
+      stopB.addEventListener('click',()=>{ const nm=running.name; stopCardio(vd,running.uid); showToast(`🏃 ${nm||"有酸素"} 記録`); render(); });
+      box.appendChild(stopB);
+      c.appendChild(box);
+      if(!window._cardioTick) window._cardioTick=setInterval(cardioTickFn,1000);
+    } else {
+      // ── 開始フォーム ──
+      const nameI=document.createElement('input');nameI.type='text';nameI.placeholder="種目（例：ランニングマシン）";nameI.value=state.caName||"";nameI.setAttribute('list',dlId);nameI.style.cssText="width:100%;box-sizing:border-box;padding:8px 10px;margin-bottom:6px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit";
+      nameI.addEventListener('input',e=>{state.caName=e.target.value;}); nameI.addEventListener('change',()=>render());
+      c.appendChild(nameI);
+      if((state.caName||"").trim()){ const lc=lastCardio(state.caName,vd), bc=bestCardioDist(state.caName);
+        if(lc||bc) c.appendChild(div({style:{fontSize:"10px",color:"#94a3b8",marginBottom:"6px"}},[
+          lc?span({},`前回 ${lc.speed!=null?`${lc.speed}km/h`:""}${lc.minutes!=null?` ${Math.round(lc.minutes)}分`:""}${lc.distance!=null?` ${lc.distance}km`:""}（${mdLabel(lc.date)}）`):null,
+          bc?span({style:{color:"#38bdf8",marginLeft:lc?"8px":"0"}},`最長 ${bc.distance}km`):null
+        ]));
+      }
+      const sr=div({style:{display:"flex",gap:"6px",alignItems:"end",marginBottom:"6px"}});
+      sr.appendChild(div({style:{flex:1}},[div({style:{fontSize:"9px",color:"#64748b",marginBottom:"2px"}},"初期速度(km/h)"),numF("km/h",state.caInitSpeed,v=>{state.caInitSpeed=v;},"0.01")]));
+      const startB=btn({style:{padding:"10px 16px",background:"#0ea5e9",border:"none",borderRadius:"8px",color:"#fff",fontSize:"14px",fontWeight:800,cursor:"pointer",flexShrink:0}},"▶ 開始");
+      startB.addEventListener('click',()=>{ const nm=(state.caName||"").trim(); if(!nm){showToast("種目名を入力してください");return;} const s=state.caInitSpeed===""||state.caInitSpeed==null?0:parseFloat(state.caInitSpeed); startCardio(vd,nm,isNaN(s)?0:Math.round(s*100)/100); state.caInitSpeed=""; showToast(`⏱ ${nm} 計測開始`); render(); });
+      sr.appendChild(startB); c.appendChild(sr);
+      c.appendChild(div({style:{fontSize:"9px",color:"#475569",marginBottom:"8px"}},"開始後、速度を変えるたびに「速度変更」を押すと区間ごとに記録され、距離が自動計算されます。"));
+      // 手入力（完了済みを直接追加／編集）
+      const mtgl=btn({style:{fontSize:"10px",padding:"4px 9px",borderRadius:"7px",border:`1px solid ${state.caManual||state.caEditUid?"#38bdf8":"#334155"}`,background:state.caManual||state.caEditUid?"#0ea5e918":"transparent",color:state.caManual||state.caEditUid?"#38bdf8":"#64748b",cursor:"pointer",marginBottom:"8px"}},state.caManual||state.caEditUid?"✕ 手入力を閉じる":"✏️ 手入力で追加（速度・時間・距離）");
+      mtgl.addEventListener('click',()=>{ state.caManual=!(state.caManual||state.caEditUid); if(!state.caManual){state.caEditUid=null;} render();});
+      c.appendChild(mtgl);
+      if(state.caManual || state.caEditUid){
+        const r2=div({style:{display:"grid",gridTemplateColumns:"1fr 1fr 1fr auto",gap:"6px",alignItems:"end",marginBottom:"4px"}});
+        r2.appendChild(lbl("速度(km/h)",numF("km/h",state.caSpeed,v=>{state.caSpeed=v;},"0.01")));
+        r2.appendChild(lbl("時間(分)",numF("分",state.caTime,v=>{state.caTime=v;},"1")));
+        r2.appendChild(lbl("距離(km)",numF("km",state.caDist,v=>{state.caDist=v;},"0.01")));
+        const addB=btn({style:{padding:"9px 14px",background:"#0ea5e918",border:"1px solid #0ea5e9",borderRadius:"8px",color:"#38bdf8",fontSize:"14px",fontWeight:700,cursor:"pointer"}},state.caEditUid?"✓":"＋");
+        addB.addEventListener('click',()=>{
+          const nm=(state.caName||"").trim(); if(!nm){showToast("種目名を入力してください");return;}
+          const sp=state.caSpeed===""||state.caSpeed==null?null:parseFloat(state.caSpeed);
+          const mn=state.caTime===""||state.caTime==null?null:parseFloat(state.caTime);
+          let ds=state.caDist===""||state.caDist==null?null:parseFloat(state.caDist);
+          if(ds==null&&sp!=null&&mn!=null)ds=Math.round(sp*(mn/60)*100)/100;
+          if(state.caEditUid){ setCardio(vd, cardioOn(vd).map(x=>x.uid===state.caEditUid?{...x,name:nm,speed:sp,minutes:mn,distance:ds,segments:undefined}:x)); state.caEditUid=null; }
+          else { addCardio(vd,{name:nm,speed:sp,minutes:mn,distance:ds}); }
+          state.caSpeed="";state.caTime="";state.caDist=""; state.caManual=false; showToast(`🏃 ${nm}`); render();
+        });
+        r2.appendChild(addB); c.appendChild(r2);
+        c.appendChild(div({style:{fontSize:"9px",color:"#475569",marginBottom:"8px"}},"距離が空欄なら「速度×時間」から自動計算します"));
+      }
+    }
+    // ── 記録一覧 ──
+    const list=cardioOn(vd).filter(w=>!w.running);
+    if(!list.length && !running){ c.appendChild(div({style:{fontSize:"11px",color:"#475569",padding:"2px 0"}},"ランニングマシンなどの有酸素をここに記録できます。")); }
+    list.forEach(w=>{
       const row=div({style:{display:"flex",gap:"8px",alignItems:"center",padding:"6px 0",borderBottom:"1px solid #1e293b"}});
-      const pace=(w.distance>0&&w.minutes>0)?` ・ ${(w.minutes/w.distance).toFixed(1)}分/km`:"";
+      const mins=w.minutes!=null?w.minutes:(w.seconds!=null?w.seconds/60:null);
+      const pace=(w.distance>0&&mins>0)?` ・ ${(mins/w.distance).toFixed(1)}分/km`:"";
+      const segs=w.segments||[];
+      let spTxt="";
+      if(segs.length){ const sps=segs.map(s=>s.speed).filter(x=>x!=null); if(sps.length)spTxt=(Math.min(...sps)===Math.max(...sps))?`${sps[0]}km/h`:`${Math.min(...sps)}〜${Math.max(...sps)}km/h`; }
+      else if(w.speed!=null) spTxt=`${w.speed}km/h`;
+      const minTxt = mins!=null ? ` ・ ${w.seconds!=null?fmtSecMS(w.seconds):`${Math.round(mins)}分`}` : "";
       row.appendChild(div({style:{flex:1,minWidth:0}},[
-        div({style:{fontSize:"13px",color:"#e2e8f0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},w.name||"(無題)"),
-        div({style:{fontSize:"11px",color:"#94a3b8"}},`${w.speed!=null?`${w.speed}km/h`:""}${w.minutes!=null?` ・ ${w.minutes}分`:""}${w.distance!=null?` ・ ${w.distance}km`:""}${pace}`)
+        div({style:{fontSize:"13px",color:"#e2e8f0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},(segs.length?"⏱ ":"")+(w.name||"(無題)")),
+        div({style:{fontSize:"11px",color:"#94a3b8"}},`${spTxt}${minTxt}${w.distance!=null?` ・ ${w.distance}km`:""}${pace}`)
       ]));
-      const ed=btn({style:{padding:"5px 8px",background:"transparent",border:"1px solid #334155",borderRadius:"6px",color:"#94a3b8",fontSize:"11px",cursor:"pointer",flexShrink:0}},"✏️");
-      ed.addEventListener('click',(()=>{const ww=w;return()=>{ state.caName=ww.name||""; state.caSpeed=ww.speed!=null?ww.speed:""; state.caTime=ww.minutes!=null?ww.minutes:""; state.caDist=ww.distance!=null?ww.distance:""; state.caEditUid=ww.uid; render(); };})());
+      if(!segs.length){ const ed=btn({style:{padding:"5px 8px",background:"transparent",border:"1px solid #334155",borderRadius:"6px",color:"#94a3b8",fontSize:"11px",cursor:"pointer",flexShrink:0}},"✏️");
+        ed.addEventListener('click',(()=>{const ww=w;return()=>{ state.caName=ww.name||""; state.caSpeed=ww.speed!=null?ww.speed:""; state.caTime=ww.minutes!=null?ww.minutes:""; state.caDist=ww.distance!=null?ww.distance:""; state.caEditUid=ww.uid; state.caManual=true; render(); };})());
+        row.appendChild(ed); }
       const del=btn({style:{padding:"5px 8px",background:"transparent",border:"1px solid #7f1d1d",borderRadius:"6px",color:"#f87171",fontSize:"11px",cursor:"pointer",flexShrink:0}},"🗑");
       del.addEventListener('click',(()=>{const uid=w.uid;return()=>{ setCardio(vd,cardioOn(vd).filter(x=>x.uid!==uid)); if(state.caEditUid===uid)state.caEditUid=null; render(); };})());
-      row.appendChild(ed);row.appendChild(del); c.appendChild(row);
-    }); }
+      row.appendChild(del); c.appendChild(row);
+    });
     wrap.appendChild(c);
   }
   // ── 📊 体組成 ──
