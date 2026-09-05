@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.57"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.58"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -3768,6 +3768,9 @@ function saveFoods(){
 // 赤→橙→黄→ライム→緑→ティール→シアン→スカイ→ブルー→インディゴ→バイオレット→パープル→ピンク→ローズ→グレー→ホワイト
 const EV_COLORS=["#ef4444","#f97316","#eab308","#84cc16","#22c55e","#14b8a6","#06b6d4","#38bdf8","#2563eb","#4f46e5","#8b5cf6","#a855f7","#ec4899","#f43f5e","#9ca3af","#ffffff"];
 const EV_DEFAULT="#38bdf8"; // 既定色（並び替えに影響されない）
+// 各色の名称（意味変更画面で色の下に表示）
+const COLOR_NAMES={"#ef4444":"レッド","#f97316":"オレンジ","#eab308":"イエロー","#84cc16":"ライム","#22c55e":"グリーン","#14b8a6":"ティール","#06b6d4":"シアン","#38bdf8":"スカイ","#2563eb":"ブルー","#4f46e5":"インディゴ","#8b5cf6":"バイオレット","#a855f7":"パープル","#ec4899":"マゼンタ","#f43f5e":"ローズ","#9ca3af":"グレー","#ffffff":"ホワイト"};
+function colorNameOf(c){ return COLOR_NAMES[(c||"").toLowerCase()]||""; }
 // 共通カラーピッカー（色相順パレット）。current=現在色, onPick(c)=選択時
 // 色に付ける意味（例：食事・運動）。{ "#hex(小文字)": "ラベル" }
 function getColorLabels(){ try{ const o=JSON.parse(localStorage.getItem(STORAGE_KEY+"_colorlabels")||"{}"); return (o&&typeof o==="object")?o:{}; }catch(_){ return {}; } }
@@ -5627,8 +5630,12 @@ function renderColorLegendPanel(){
   card.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"12px",lineHeight:1.6}},"各色に意味（例：食事・運動・仕事）を付けると、色を選ぶときにその名前が表示され、色分けの基準を決められます。"));
   const labels=getColorLabels();
   EV_COLORS.forEach(c=>{
-    const row=div({style:{display:"flex",alignItems:"center",gap:"9px",marginBottom:"6px"}});
-    row.appendChild(span({style:{width:"22px",height:"22px",borderRadius:"6px",background:c,border:"1px solid #ffffff2e",flexShrink:0,display:"inline-block"}}));
+    const row=div({style:{display:"flex",alignItems:"center",gap:"9px",marginBottom:"8px"}});
+    // 色スウォッチ＋その下に色名
+    row.appendChild(div({style:{display:"flex",flexDirection:"column",alignItems:"center",gap:"2px",width:"48px",flexShrink:0}},[
+      span({style:{width:"24px",height:"24px",borderRadius:"6px",background:c,border:"1px solid #ffffff2e",display:"inline-block"}}),
+      span({style:{fontSize:"9px",color:"#94a3b8",lineHeight:1.1,textAlign:"center"}},colorNameOf(c))
+    ]));
     const inp=document.createElement('input');inp.type='text';inp.placeholder="意味（例：食事）";inp.value=labels[c.toLowerCase()]||"";
     inp.style.cssText="flex:1;min-width:0;padding:7px 10px;background:#0f172a;border:1px solid #334155;border-radius:7px;color:#e2e8f0;font-size:13px;font-family:inherit";
     inp.addEventListener('change',(()=>{const cc=c;return e=>{ setColorLabel(cc,e.target.value); render(); };})());
