@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.53"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.54"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -3754,14 +3754,16 @@ function saveFoods(){
 // ═══════════════════════════════════════════════════
 // 予定タブ（日・週・月・やること・買物）
 // ═══════════════════════════════════════════════════
-// 色相（虹）順に整列：赤→橙→黄→ライム→緑→ティール→シアン→スカイ→インディゴ→紫→マゼンタ→ローズ
-const EV_COLORS=["#ef4444","#f97316","#eab308","#84cc16","#22c55e","#14b8a6","#06b6d4","#38bdf8","#6366f1","#a78bfa","#ec4899","#fb7185"];
+// 全ピッカー共通のパレット（色相順・青系は分離・灰/白＋2色追加でバラける16色）
+// 赤→橙→黄→ライム→緑→ティール→シアン→スカイ→ブルー→インディゴ→バイオレット→パープル→ピンク→ローズ→グレー→ホワイト
+const EV_COLORS=["#ef4444","#f97316","#eab308","#84cc16","#22c55e","#14b8a6","#06b6d4","#38bdf8","#2563eb","#4f46e5","#8b5cf6","#a855f7","#ec4899","#f43f5e","#9ca3af","#ffffff"];
 const EV_DEFAULT="#38bdf8"; // 既定色（並び替えに影響されない）
 // 共通カラーピッカー（色相順パレット）。current=現在色, onPick(c)=選択時
 function colorPickerRow(current, onPick){
-  const row=div({style:{display:"flex",flexWrap:"wrap",gap:"6px"}});
+  const row=div({style:{display:"flex",flexWrap:"wrap",gap:"7px"}});
   EV_COLORS.forEach(c=>{ const on=(current||"").toLowerCase()===c.toLowerCase();
-    const b=btn({style:{width:"26px",height:"26px",borderRadius:"6px",cursor:"pointer",background:c+(on?"":"55"),border:`2px solid ${on?"#fff":"transparent"}`,flexShrink:0}},"");
+    // 淡色/白でも見えるよう薄い枠を常時つけ、選択はリング(box-shadow)で示す
+    const b=btn({style:{width:"26px",height:"26px",borderRadius:"6px",cursor:"pointer",background:c,border:"1px solid #ffffff2e",boxShadow:on?"0 0 0 2px #0f172a, 0 0 0 4px #38bdf8":"none",flexShrink:0}},"");
     b.addEventListener('click',(()=>{const cc=c;return()=>onPick(cc);})()); row.appendChild(b); });
   return row;
 }
@@ -4238,12 +4240,7 @@ function renderActualModal(){
   ub.addEventListener('click',()=>{state.actUnplanned=!state.actUnplanned;render();});
   m.appendChild(ub);
   m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"6px"}},"色"));
-  const crow=div({style:{display:"flex",flexWrap:"wrap",gap:"8px",marginBottom:"14px"}});
-  ["#f97316","#eab308","#22c55e","#14b8a6","#38bdf8","#a78bfa","#f472b6"].forEach(c=>{
-    const on=state.actColor===c;const cb=btn({style:{width:"30px",height:"30px",borderRadius:"8px",cursor:"pointer",background:c,border:`2px solid ${on?"#fff":"transparent"}`}},"");
-    cb.addEventListener('click',()=>{state.actColor=c;render();});crow.appendChild(cb);
-  });
-  m.appendChild(crow);
+  m.appendChild(div({style:{marginBottom:"14px"}},[colorPickerRow(state.actColor,c=>{state.actColor=c;render();})]));
   const btns=[];
   if(state.actEditUid){
     btns.push(btn({style:{padding:"9px 12px",background:"transparent",border:"1px solid #ef444455",borderRadius:"8px",color:"#f87171",cursor:"pointer",fontSize:"12px",fontWeight:600},
@@ -5514,9 +5511,7 @@ function renderPlanPatternPanel(){
     });
     body.appendChild(wtWrap);
     // 色
-    const l4=div({style:{display:"flex",gap:"6px"}});
-    (()=>{const a=[...EV_COLORS];a.splice(a.indexOf("#38bdf8")+1,0,"#60a5fa");return a;})().forEach(c=>{const on=p.color===c;const cb=btn({style:{width:"24px",height:"24px",borderRadius:"6px",cursor:"pointer",background:c+(on?"":"55"),border:`2px solid ${on?c:"transparent"}`}},"");cb.addEventListener('click',()=>upd(p.uid,{color:c}));l4.appendChild(cb);});
-    body.appendChild(l4);
+    body.appendChild(colorPickerRow(p.color,(()=>{const uid=p.uid;return c=>upd(uid,{color:c});})()));
     // 連動ルーティン（セット/単体）：完了すると予定タブでこのパターンがグレーアウトする
     const lkRow=div({style:{marginTop:"8px",display:"flex",alignItems:"center",gap:"6px",flexWrap:"wrap"}});
     lkRow.appendChild(span({style:{fontSize:"10px",color:"#64748b",flexShrink:0}},"🔗 連動ルーティン"));
@@ -7041,15 +7036,7 @@ function renderAddEventModal(vd){
 
   // 色選択
   m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"6px"}},"色"));
-  const colorRow=div({style:{display:"flex",flexWrap:"wrap",gap:"8px",marginBottom:"12px"}});
-  EV_COLORS.forEach(c=>{
-    const on=state.newEvColor===c;
-    const cb=btn({style:{width:"32px",height:"32px",borderRadius:"8px",cursor:"pointer",
-      background:c+(on?"":"44"),border:`2px solid ${on?c:"transparent"}`,boxShadow:on?`0 0 0 2px #0f172a, 0 0 0 4px ${c}66`:"none"}},"");
-    cb.addEventListener('click',()=>{state.newEvColor=c;render();});
-    colorRow.appendChild(cb);
-  });
-  m.appendChild(colorRow);
+  m.appendChild(div({style:{marginBottom:"12px"}},[colorPickerRow(state.newEvColor,c=>{state.newEvColor=c;render();})]));
 
   // 繰り返し選択（選択した日付の情報から動的にオプション生成）
   const baseDate=isRepEdit?vd:(state.newEvDate||vd);
