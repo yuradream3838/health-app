@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.61"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.62"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -3767,7 +3767,10 @@ function saveFoods(){
 // 全ピッカー共通のパレット（色相順・青系は分離・灰/白＋2色追加でバラける16色）
 // 赤→橙→黄→ライム→緑→ティール→シアン→スカイ→ブルー→インディゴ→バイオレット→パープル→ピンク→ローズ→グレー→ホワイト
 const EV_COLORS=["#ef4444","#f97316","#eab308","#84cc16","#22c55e","#14b8a6","#22d3ee","#0ea5e9","#2563eb","#4f46e5","#8b5cf6","#c026d3","#ec4899","#f43f5e","#000000","#9ca3af","#ffffff"];
-const EV_DEFAULT="#0ea5e9"; // 既定色（並び替えに影響されない）
+let EV_DEFAULT="#0ea5e9"; // 既定色（変更可能。色未設定の予定などに使用）
+try{ const _dc=localStorage.getItem(STORAGE_KEY+"_defaultcolor"); if(_dc)EV_DEFAULT=_dc; }catch(_){}
+function getDefaultColor(){ return EV_DEFAULT; }
+function setDefaultColor(c){ EV_DEFAULT=c||"#0ea5e9"; try{localStorage.setItem(STORAGE_KEY+"_defaultcolor",EV_DEFAULT);}catch(_){} }
 // 各色の名称（意味変更画面で色の下に表示）
 const COLOR_NAMES={"#ef4444":"レッド","#f97316":"オレンジ","#eab308":"イエロー","#84cc16":"ライム","#22c55e":"グリーン","#14b8a6":"ティール","#22d3ee":"シアン","#0ea5e9":"スカイ","#2563eb":"ブルー","#4f46e5":"インディゴ","#8b5cf6":"バイオレット","#c026d3":"パープル","#ec4899":"マゼンタ","#f43f5e":"ローズ","#000000":"ブラック","#9ca3af":"グレー","#ffffff":"ホワイト"};
 function colorNameOf(c){ return COLOR_NAMES[(c||"").toLowerCase()]||""; }
@@ -5631,6 +5634,10 @@ function renderColorLegendPanel(){
   const card=div({className:"card"});
   card.appendChild(div({style:{fontSize:"14px",fontWeight:700,color:"#e2e8f0",marginBottom:"4px"}},"🎨 色の意味（凡例）"));
   card.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"12px",lineHeight:1.6}},"各色に意味（例：食事・運動・仕事）を付けると、色を選ぶときにその名前が表示され、色分けの基準を決められます。"));
+  // 既定の色（色を指定しない予定・項目に使われる色）
+  card.appendChild(div({style:{fontSize:"12px",fontWeight:700,color:"#94a3b8",marginBottom:"6px"}},`⭐ 既定の色（色未設定の予定に使用）`));
+  card.appendChild(colorPickerRow(getDefaultColor(),c=>{ setDefaultColor(c); render(); }));
+  card.appendChild(div({style:{height:"1px",background:"#1e3a5f33",margin:"12px 0"}}));
   const labels=getColorLabels();
   EV_COLORS.forEach(c=>{
     const row=div({style:{display:"flex",alignItems:"center",gap:"9px",marginBottom:"8px"}});
@@ -11277,6 +11284,7 @@ function exportData(){
   try{ejacColor=localStorage.getItem(STORAGE_KEY+"_ejaccolor")||null;}catch{}
   let colorLabels=null; try{const cl=localStorage.getItem(STORAGE_KEY+"_colorlabels");if(cl)colorLabels=JSON.parse(cl);}catch{}
   let sleepColor=null, alcColor=null; try{sleepColor=localStorage.getItem(STORAGE_KEY+"_sleepcolor")||null;}catch{} try{alcColor=localStorage.getItem(STORAGE_KEY+"_alccolor")||null;}catch{}
+  let defaultColor=null; try{defaultColor=localStorage.getItem(STORAGE_KEY+"_defaultcolor")||null;}catch{}
   const payload={
     version:2,
     exportedAt:new Date().toISOString(),
@@ -11289,6 +11297,7 @@ function exportData(){
     colorLabels,
     sleepColor,
     alcColor,
+    defaultColor,
     goals:state.goals,
     schedule:state.schedule,
     repeatEvents:state.repeatEvents,
@@ -11368,6 +11377,7 @@ function importData(e){
       if(p.colorLabels&&typeof p.colorLabels==="object"){try{localStorage.setItem(STORAGE_KEY+"_colorlabels",JSON.stringify(p.colorLabels));}catch{}}
       if(p.sleepColor){try{localStorage.setItem(STORAGE_KEY+"_sleepcolor",p.sleepColor);}catch{}}
       if(p.alcColor){try{localStorage.setItem(STORAGE_KEY+"_alccolor",p.alcColor);}catch{}}
+      if(p.defaultColor){try{localStorage.setItem(STORAGE_KEY+"_defaultcolor",p.defaultColor);}catch{} EV_DEFAULT=p.defaultColor;}
       if(p.goals){state.goals=p.goals;try{localStorage.setItem(STORAGE_KEY+"_goals",JSON.stringify(p.goals));}catch{}}
       if(p.schedule){state.schedule=p.schedule;try{localStorage.setItem(STORAGE_KEY+"_schedule",JSON.stringify(p.schedule));}catch{}}
       if(p.repeatEvents){state.repeatEvents=p.repeatEvents;try{localStorage.setItem(STORAGE_KEY+"_repeat",JSON.stringify(p.repeatEvents));}catch{}}
