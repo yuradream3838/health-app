@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.54"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.55"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -3759,12 +3759,23 @@ function saveFoods(){
 const EV_COLORS=["#ef4444","#f97316","#eab308","#84cc16","#22c55e","#14b8a6","#06b6d4","#38bdf8","#2563eb","#4f46e5","#8b5cf6","#a855f7","#ec4899","#f43f5e","#9ca3af","#ffffff"];
 const EV_DEFAULT="#38bdf8"; // 既定色（並び替えに影響されない）
 // 共通カラーピッカー（色相順パレット）。current=現在色, onPick(c)=選択時
+// 色に付ける意味（例：食事・運動）。{ "#hex(小文字)": "ラベル" }
+function getColorLabels(){ try{ const o=JSON.parse(localStorage.getItem(STORAGE_KEY+"_colorlabels")||"{}"); return (o&&typeof o==="object")?o:{}; }catch(_){ return {}; } }
+function colorLabelOf(c){ return (getColorLabels()[(c||"").toLowerCase()])||""; }
+function setColorLabel(c,label){ const m=getColorLabels(); const k=(c||"").toLowerCase(); const v=(label||"").trim(); if(v)m[k]=v; else delete m[k]; try{localStorage.setItem(STORAGE_KEY+"_colorlabels",JSON.stringify(m));}catch(_){} }
 function colorPickerRow(current, onPick){
-  const row=div({style:{display:"flex",flexWrap:"wrap",gap:"7px"}});
+  const labels=getColorLabels();
+  const row=div({style:{display:"flex",flexWrap:"wrap",gap:"7px",alignItems:"flex-start"}});
   EV_COLORS.forEach(c=>{ const on=(current||"").toLowerCase()===c.toLowerCase();
+    const lab=labels[c.toLowerCase()]||"";
+    const cell=div({style:{display:"flex",flexDirection:"column",alignItems:"center",gap:"2px"}});
     // 淡色/白でも見えるよう薄い枠を常時つけ、選択はリング(box-shadow)で示す
-    const b=btn({style:{width:"26px",height:"26px",borderRadius:"6px",cursor:"pointer",background:c,border:"1px solid #ffffff2e",boxShadow:on?"0 0 0 2px #0f172a, 0 0 0 4px #38bdf8":"none",flexShrink:0}},"");
-    b.addEventListener('click',(()=>{const cc=c;return()=>onPick(cc);})()); row.appendChild(b); });
+    const b=btn({style:{width:"26px",height:"26px",borderRadius:"6px",cursor:"pointer",background:c,border:"1px solid #ffffff2e",boxShadow:on?"0 0 0 2px #0f172a, 0 0 0 4px #38bdf8":"none",flexShrink:0},title:lab||undefined},"");
+    b.addEventListener('click',(()=>{const cc=c;return()=>onPick(cc);})());
+    cell.appendChild(b);
+    if(lab) cell.appendChild(div({style:{fontSize:"8px",color:"#94a3b8",maxWidth:"38px",textAlign:"center",lineHeight:1.15,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"},title:lab},lab));
+    row.appendChild(cell);
+  });
   return row;
 }
 const WEEKDAYS_JP=["日","月","火","水","木","金","土"];
@@ -5602,6 +5613,23 @@ function renderPlanPatternPanel(){
 function getFontScale(){ let v=1; try{const s=localStorage.getItem(STORAGE_KEY+"_fontscale"); if(s){const n=parseFloat(s); if(n>=0.8&&n<=1.6)v=n;}}catch{} return v; }
 function applyFontScale(){ try{ document.body.style.zoom=String(getFontScale()); }catch(_){}}
 function setFontScale(v){ try{localStorage.setItem(STORAGE_KEY+"_fontscale",String(v));}catch(_){} applyFontScale(); }
+// 🎨 色の意味（凡例）：各色に「食事」などの意味を付ける。カラーピッカーに表示される。
+function renderColorLegendPanel(){
+  const card=div({className:"card"});
+  card.appendChild(div({style:{fontSize:"14px",fontWeight:700,color:"#e2e8f0",marginBottom:"4px"}},"🎨 色の意味（凡例）"));
+  card.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"12px",lineHeight:1.6}},"各色に意味（例：食事・運動・仕事）を付けると、色を選ぶときにその名前が表示され、色分けの基準を決められます。"));
+  const labels=getColorLabels();
+  EV_COLORS.forEach(c=>{
+    const row=div({style:{display:"flex",alignItems:"center",gap:"9px",marginBottom:"6px"}});
+    row.appendChild(span({style:{width:"22px",height:"22px",borderRadius:"6px",background:c,border:"1px solid #ffffff2e",flexShrink:0,display:"inline-block"}}));
+    const inp=document.createElement('input');inp.type='text';inp.placeholder="意味（例：食事）";inp.value=labels[c.toLowerCase()]||"";
+    inp.style.cssText="flex:1;min-width:0;padding:7px 10px;background:#0f172a;border:1px solid #334155;border-radius:7px;color:#e2e8f0;font-size:13px;font-family:inherit";
+    inp.addEventListener('change',(()=>{const cc=c;return e=>{ setColorLabel(cc,e.target.value); render(); };})());
+    row.appendChild(inp);
+    card.appendChild(row);
+  });
+  return card;
+}
 function renderDisplayPanel(){
   const card=div({className:"card"});
   card.appendChild(div({style:{fontSize:"14px",fontWeight:700,color:"#e2e8f0",marginBottom:"4px"}},"🔡 文字サイズ"));
@@ -5689,6 +5717,7 @@ function renderSettingsHub(){
   const wrap=div({style:{maxWidth:"600px",margin:"0 auto",padding:"12px 16px 60px"}});
   wrap.appendChild(renderFeatureIndexPanel());
   wrap.appendChild(renderDisplayPanel());
+  wrap.appendChild(renderColorLegendPanel());
   wrap.appendChild(renderShiftPanel());
   wrap.appendChild(renderPlanPatternPanel());
   wrap.appendChild(sleepRhythmSettingsCard());
@@ -11224,6 +11253,7 @@ function exportData(){
   try{const t=localStorage.getItem(STORAGE_KEY+"_todo_order");if(t)todoOrder=JSON.parse(t);}catch{}
   try{const s=localStorage.getItem(STORAGE_KEY+"_shiftcolors");if(s)shiftColors=JSON.parse(s);}catch{}
   try{ejacColor=localStorage.getItem(STORAGE_KEY+"_ejaccolor")||null;}catch{}
+  let colorLabels=null; try{const cl=localStorage.getItem(STORAGE_KEY+"_colorlabels");if(cl)colorLabels=JSON.parse(cl);}catch{}
   const payload={
     version:2,
     exportedAt:new Date().toISOString(),
@@ -11233,6 +11263,7 @@ function exportData(){
     todoOrder,
     shiftColors,
     ejacColor,
+    colorLabels,
     goals:state.goals,
     schedule:state.schedule,
     repeatEvents:state.repeatEvents,
@@ -11309,6 +11340,7 @@ function importData(e){
       if(p.todoOrder){try{localStorage.setItem(STORAGE_KEY+"_todo_order",JSON.stringify(p.todoOrder));}catch{}}
       if(p.shiftColors&&typeof p.shiftColors==="object"){try{localStorage.setItem(STORAGE_KEY+"_shiftcolors",JSON.stringify(p.shiftColors));}catch{} Object.keys(p.shiftColors).forEach(k=>{ if(SHIFT_TYPES[k]&&p.shiftColors[k])SHIFT_TYPES[k].color=p.shiftColors[k]; });}
       if(p.ejacColor){try{localStorage.setItem(STORAGE_KEY+"_ejaccolor",p.ejacColor);}catch{}}
+      if(p.colorLabels&&typeof p.colorLabels==="object"){try{localStorage.setItem(STORAGE_KEY+"_colorlabels",JSON.stringify(p.colorLabels));}catch{}}
       if(p.goals){state.goals=p.goals;try{localStorage.setItem(STORAGE_KEY+"_goals",JSON.stringify(p.goals));}catch{}}
       if(p.schedule){state.schedule=p.schedule;try{localStorage.setItem(STORAGE_KEY+"_schedule",JSON.stringify(p.schedule));}catch{}}
       if(p.repeatEvents){state.repeatEvents=p.repeatEvents;try{localStorage.setItem(STORAGE_KEY+"_repeat",JSON.stringify(p.repeatEvents));}catch{}}
