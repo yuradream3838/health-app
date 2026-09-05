@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.56"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.57"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -3775,16 +3775,13 @@ function colorLabelOf(c){ return (getColorLabels()[(c||"").toLowerCase()])||""; 
 function setColorLabel(c,label){ const m=getColorLabels(); const k=(c||"").toLowerCase(); const v=(label||"").trim(); if(v)m[k]=v; else delete m[k]; try{localStorage.setItem(STORAGE_KEY+"_colorlabels",JSON.stringify(m));}catch(_){} }
 function colorPickerRow(current, onPick){
   const labels=getColorLabels();
-  const row=div({style:{display:"flex",flexWrap:"wrap",gap:"7px",alignItems:"flex-start"}});
+  const row=div({style:{display:"flex",flexWrap:"wrap",gap:"7px"}});
   EV_COLORS.forEach(c=>{ const on=(current||"").toLowerCase()===c.toLowerCase();
     const lab=labels[c.toLowerCase()]||"";
-    const cell=div({style:{display:"flex",flexDirection:"column",alignItems:"center",gap:"2px"}});
-    // 淡色/白でも見えるよう薄い枠を常時つけ、選択はリング(box-shadow)で示す
+    // 淡色/白でも見えるよう薄い枠を常時つけ、選択はリング(box-shadow)で示す。名前はtooltipのみ（下の名前表示は「色の意味」画面だけ）
     const b=btn({style:{width:"26px",height:"26px",borderRadius:"6px",cursor:"pointer",background:c,border:"1px solid #ffffff2e",boxShadow:on?"0 0 0 2px #0f172a, 0 0 0 4px #38bdf8":"none",flexShrink:0},title:lab||undefined},"");
     b.addEventListener('click',(()=>{const cc=c;return()=>onPick(cc);})());
-    cell.appendChild(b);
-    if(lab) cell.appendChild(div({style:{fontSize:"8px",color:"#94a3b8",maxWidth:"38px",textAlign:"center",lineHeight:1.15,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"},title:lab},lab));
-    row.appendChild(cell);
+    row.appendChild(b);
   });
   return row;
 }
