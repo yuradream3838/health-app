@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.50"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.51"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -3978,8 +3978,16 @@ function getActualActivities(vd){
         (d.sessions||[]).forEach(s=>{ addMin(s.startTime); addMin(s.endTime); });
       });
       if(mins.length){
-        const s=Math.min(...mins), e=Math.max(...mins);
-        acts.push({title:routineOverrideTitle(DD,g.key,g.title), startMin:s, endMin:Math.max(e, s+16), color:g.color, routineKey:g.key, routineBase:g.title, ownDay:DD});
+        // 30分以上あいたら別のまとまりに分割（連続する完了時刻の間隔が30分未満なら1ブロック）
+        const GAP=30;
+        const sorted=[...mins].sort((a,b)=>a-b);
+        let cluster=[sorted[0]];
+        const clusters=[cluster];
+        for(let i=1;i<sorted.length;i++){ if(sorted[i]-sorted[i-1]<GAP){ cluster.push(sorted[i]); } else { cluster=[sorted[i]]; clusters.push(cluster); } }
+        clusters.forEach(cl=>{
+          const s=Math.min(...cl), e=Math.max(...cl);
+          acts.push({title:routineOverrideTitle(DD,g.key,g.title), startMin:s, endMin:Math.max(e, s+16), color:g.color, routineKey:g.key, routineBase:g.title, ownDay:DD});
+        });
       }
     });
   });
