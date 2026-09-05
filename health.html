@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.51"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.52"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -1873,8 +1873,8 @@ function renderWidgetView(vd,ds){
   schedCard.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#38bdf8",marginBottom:"8px"}},"📅 今日の予定"));
   const items=[];
   getEventsForDate(vd).forEach(e=>{
-    if(e.allDay){ items.push({allDay:true,title:e.title,color:e.color||EV_COLORS[0]}); }
-    else { items.push({s:e.startH*60+(e.startM||0),sh:e.startH,sm:e.startM||0,eh:e.endH,em:e.endM||0,title:e.title,color:e.color||EV_COLORS[0]}); }
+    if(e.allDay){ items.push({allDay:true,title:e.title,color:e.color||EV_DEFAULT}); }
+    else { items.push({s:e.startH*60+(e.startM||0),sh:e.startH,sm:e.startM||0,eh:e.endH,em:e.endM||0,title:e.title,color:e.color||EV_DEFAULT}); }
   });
   getPlannedExtras(vd).forEach(x=>{
     if(x.customTodo && (state.todos[vd]||{})[x.ctUid]?.checked) return; // チェック済みルーティンは非表示
@@ -2649,7 +2649,7 @@ function openGoalAsEvent(node, targetDate){
   state.newEvDate=target; state.newEvEndDate=null; state.newEvTitle="🎯 "+text;
   state.newEvH=now.getHours(); state.newEvM=0;
   state.newEvEndH=Math.min(23,now.getHours()+1); state.newEvEndM=0; state.newEvEndNextDay=false;
-  state.newEvRepeat="none"; state.newEvColor=EV_COLORS[0];
+  state.newEvRepeat="none"; state.newEvColor=EV_DEFAULT;
   state.newEvWeekdays=[parseDS(target).getDay()];
   state.newEvFromTask=null; state.newEvAllDay=false; state.newEvPlace=""; state.newEvNote=""; state.newEvPreDays=0;
   render();
@@ -3748,7 +3748,9 @@ function saveFoods(){
 // ═══════════════════════════════════════════════════
 // 予定タブ（日・週・月・やること・買物）
 // ═══════════════════════════════════════════════════
-const EV_COLORS=["#38bdf8","#22c55e","#eab308","#f97316","#ef4444","#a78bfa","#ec4899","#14b8a6","#6366f1","#84cc16","#06b6d4","#fb7185"];
+// 色相（虹）順に整列：赤→橙→黄→ライム→緑→ティール→シアン→スカイ→インディゴ→紫→マゼンタ→ローズ
+const EV_COLORS=["#ef4444","#f97316","#eab308","#84cc16","#22c55e","#14b8a6","#06b6d4","#38bdf8","#6366f1","#a78bfa","#ec4899","#fb7185"];
+const EV_DEFAULT="#38bdf8"; // 既定色（並び替えに影響されない）
 const WEEKDAYS_JP=["日","月","火","水","木","金","土"];
 
 function saveSchedule(){
@@ -4111,7 +4113,7 @@ function openAddEvent(vd, startH, startM){
   state.newEvDate=vd;state.newEvEndDate=null;
   state.newEvTitle="";state.newEvH=sh;state.newEvM=sm;
   state.newEvEndH=(sh+1)%24;state.newEvEndM=sm;state.newEvEndNextDay=(sh+1)>=24;
-  state.newEvRepeat="none";state.newEvColor=EV_COLORS[0];
+  state.newEvRepeat="none";state.newEvColor=EV_DEFAULT;
   state.newEvWeekdays=[parseDS(vd).getDay()];
   state.newEvFromTask=null;state.newEvAllDay=false;state.newEvPlace="";state.newEvNote="";state.newEvPreDays=0;
   render();
@@ -4222,7 +4224,7 @@ function renderActualModal(){
   m.appendChild(ub);
   m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"6px"}},"色"));
   const crow=div({style:{display:"flex",flexWrap:"wrap",gap:"8px",marginBottom:"14px"}});
-  ["#f472b6","#22c55e","#38bdf8","#eab308","#f97316","#a78bfa","#14b8a6"].forEach(c=>{
+  ["#f97316","#eab308","#22c55e","#14b8a6","#38bdf8","#a78bfa","#f472b6"].forEach(c=>{
     const on=state.actColor===c;const cb=btn({style:{width:"30px",height:"30px",borderRadius:"8px",cursor:"pointer",background:c,border:`2px solid ${on?"#fff":"transparent"}`}},"");
     cb.addEventListener('click',()=>{state.actColor=c;render();});crow.appendChild(cb);
   });
@@ -5462,7 +5464,7 @@ function renderPlanPatternPanel(){
     body.appendChild(wtWrap);
     // 色
     const l4=div({style:{display:"flex",gap:"6px"}});
-    [...EV_COLORS,"#60a5fa"].forEach(c=>{const on=p.color===c;const cb=btn({style:{width:"24px",height:"24px",borderRadius:"6px",cursor:"pointer",background:c+(on?"":"55"),border:`2px solid ${on?c:"transparent"}`}},"");cb.addEventListener('click',()=>upd(p.uid,{color:c}));l4.appendChild(cb);});
+    (()=>{const a=[...EV_COLORS];a.splice(a.indexOf("#38bdf8")+1,0,"#60a5fa");return a;})().forEach(c=>{const on=p.color===c;const cb=btn({style:{width:"24px",height:"24px",borderRadius:"6px",cursor:"pointer",background:c+(on?"":"55"),border:`2px solid ${on?c:"transparent"}`}},"");cb.addEventListener('click',()=>upd(p.uid,{color:c}));l4.appendChild(cb);});
     body.appendChild(l4);
     // 連動ルーティン（セット/単体）：完了すると予定タブでこのパターンがグレーアウトする
     const lkRow=div({style:{marginTop:"8px",display:"flex",alignItems:"center",gap:"6px",flexWrap:"wrap"}});
@@ -5693,7 +5695,7 @@ function collectSearchItems(){
         onTap:()=>{ state.widget=false; state.viewDate=dsk; state.tab="予定"; state.scheduleSubTab="日";
           state.modal="addEvent";state.editEventUid=e.uid;state.editEventIsRepeat=false;state.editEventDate=dsk;state.eventEditMode=false;
           state.newEvTitle=e.title;state.newEvH=e.startH;state.newEvM=e.startM;state.newEvEndH=e.endH;state.newEvEndM=e.endM;
-          state.newEvRepeat="none";state.newEvColor=e.color||EV_COLORS[0];state.newEvWeekdays=[parseDS(dsk).getDay()];state.newEvDate=dsk;state.newEvEndDate=e.endDate||null;
+          state.newEvRepeat="none";state.newEvColor=e.color||EV_DEFAULT;state.newEvWeekdays=[parseDS(dsk).getDay()];state.newEvDate=dsk;state.newEvEndDate=e.endDate||null;
           state.newEvFromTask=e.fromTask||null;state.newEvAllDay=!!e.allDay;state.newEvPlace=e.place||"";state.newEvNote=e.note||"";state.newEvPreDays=e.preDays||0;state.editScope="this";render(); }});
     });
   });
@@ -5706,7 +5708,7 @@ function collectSearchItems(){
       onTap:()=>{ state.widget=false; state.tab="予定"; state.scheduleSubTab="日"; state.viewDate=todayStr();
         state.modal="addEvent";state.editEventUid=e.uid;state.editEventIsRepeat=true;state.editEventDate=todayStr();state.eventEditMode=false;
         state.newEvTitle=e.title;state.newEvH=e.startH;state.newEvM=e.startM;state.newEvEndH=e.endH;state.newEvEndM=e.endM;
-        state.newEvRepeat=e.repeatType||"weekly";state.newEvColor=e.color||EV_COLORS[0];
+        state.newEvRepeat=e.repeatType||"weekly";state.newEvColor=e.color||EV_DEFAULT;
         state.newEvWeekdays=(e.weekdays&&e.weekdays.length)?[...e.weekdays]:[parseDS(e.startDate||todayStr()).getDay()];state.newEvDate=todayStr();state.newEvEndDate=null;
         state.newEvFromTask=e.fromTask||null;state.newEvAllDay=!!e.allDay;state.newEvPlace=e.place||"";state.newEvNote=e.note||"";state.newEvPreDays=e.preDays||0;state.editScope="this";render(); }});
   });
@@ -5936,7 +5938,7 @@ function renderDaySchedule(vd,ds,isToday){
     const preItems=[];
     for(let off=1; off<=90; off++){
       const dd=addDays(vd,off);
-      (state.schedule[dd]||[]).forEach(e=>{ if(e.preDays && e.preDays>=off){ preItems.push({title:e.title,color:e.color||EV_COLORS[0],daysAhead:off,dd,uid:e.uid,allDay:!!e.allDay,place:e.place,note:e.note}); } });
+      (state.schedule[dd]||[]).forEach(e=>{ if(e.preDays && e.preDays>=off){ preItems.push({title:e.title,color:e.color||EV_DEFAULT,daysAhead:off,dd,uid:e.uid,allDay:!!e.allDay,place:e.place,note:e.note}); } });
     }
     preItems.sort((a,b)=>a.daysAhead-b.daysAhead);
     // 🎯 今日の目標（日次目標＋直近の週間/月次目標の下の期日なし目標）
@@ -5982,7 +5984,7 @@ function renderDaySchedule(vd,ds,isToday){
         ad.appendChild(row);
       });
       allDayEvents.forEach(ev=>{
-        const c=ev.color||EV_COLORS[0];
+        const c=ev.color||EV_DEFAULT;
         const mdBadge=ev._mdCount?`📆${ev._mdIndex}/${ev._mdCount}日目 `:"";
         const mdArrow=ev._mdCount?(ev._mdIndex===1?" →":ev._mdLast?"← ":"↔ "):"";
         const chip=div({style:{display:"flex",alignItems:"center",gap:"6px",padding:"6px 10px",background:c,border:`1px solid ${c}`,borderRadius:"6px",marginBottom:"4px",cursor:"pointer"}},[
@@ -5992,7 +5994,7 @@ function renderDaySchedule(vd,ds,isToday){
           const owner=e2._mdStart||vd;
           state.modal="addEvent";state.editEventUid=e2.uid;state.editEventIsRepeat=!!e2.isRepeat;state.editEventDate=owner;state.eventEditMode=false;
           state.newEvTitle=e2.title;state.newEvH=e2.startH||9;state.newEvM=e2.startM||0;state.newEvEndH=e2.endH||10;state.newEvEndM=e2.endM||0;
-          state.newEvRepeat=e2.isRepeat?e2.repeatType:"none";state.newEvColor=e2.color||EV_COLORS[0];
+          state.newEvRepeat=e2.isRepeat?e2.repeatType:"none";state.newEvColor=e2.color||EV_DEFAULT;
           state.newEvWeekdays=(e2.weekdays&&e2.weekdays.length)?[...e2.weekdays]:[parseDS(e2.startDate||vd).getDay()];
           state.newEvDate=owner;state.newEvEndDate=e2.endDate||e2._mdEnd||null;
           state.newEvFromTask=e2.fromTask||null;state.newEvAllDay=true;state.newEvPlace=e2.place||"";state.newEvNote=e2.note||"";state.newEvPreDays=e2.preDays||0;state.editScope="this";render();
@@ -6108,7 +6110,7 @@ function renderDaySchedule(vd,ds,isToday){
         onClick:()=>{
           if(!state.schedule[vd])state.schedule[vd]=[];
           (state.aiScheduleProposal.events||[]).forEach(ev=>{
-            state.schedule[vd].push({uid:Date.now()+Math.random(),title:ev.title,startH:ev.startH,startM:ev.startM,endH:ev.endH,endM:ev.endM,color:EV_COLORS[0]});
+            state.schedule[vd].push({uid:Date.now()+Math.random(),title:ev.title,startH:ev.startH,startM:ev.startM,endH:ev.endH,endM:ev.endM,color:EV_DEFAULT});
           });
           saveSchedule();state.aiScheduleProposal=null;render();
           showToast("📅 スケジュールを登録しました");
@@ -6251,7 +6253,7 @@ function renderDaySchedule(vd,ds,isToday){
     if(x > rect.width*0.5) openActualEdit(vd,null,hour); else openAddEvent(vd,hour);
   });
   tl.appendChild(tapLayer);
-  blockArea(events,"36px","50% - 40px",EV_COLORS[0],ev=>{
+  blockArea(events,"36px","50% - 40px",EV_DEFAULT,ev=>{
     if(ev._tail){ state.viewDate=addDays(vd,-1); render(); return; } // 前日の予定 → 前日へ移動して編集
     if(ev.customTodo){ state.planCustomTodo={uid:ev.ctUid,label:ev.ctLabel||ev.title,vd:ev.ctDate||vd}; state.modal="planCustomTodo"; render(); return; }
     if(ev.isPattern){ openPatternEdit(ev,vd); return; }
@@ -6260,7 +6262,7 @@ function renderDaySchedule(vd,ds,isToday){
     state.newEvTitle=ev.title;state.newEvH=ev.startH;state.newEvM=ev.startM;
     state.newEvEndH=ev.endH;state.newEvEndM=ev.endM;
     state.newEvRepeat=ev.isRepeat?ev.repeatType:"none";
-    state.newEvColor=ev.color||EV_COLORS[0];
+    state.newEvColor=ev.color||EV_DEFAULT;
     state.newEvWeekdays=(ev.weekdays&&ev.weekdays.length)?[...ev.weekdays]:[parseDS(ev.startDate||vd).getDay()];
     state.newEvFromTask=ev.fromTask||null;
     state.newEvAllDay=!!ev.allDay;
@@ -6440,7 +6442,7 @@ function renderWeekCalendar(vd,ds){
       col.appendChild(badge);
     }
     evs.slice(0,5).forEach(ev=>{
-      const c=ev.color||EV_COLORS[0];
+      const c=ev.color||EV_DEFAULT;
       col.appendChild(div({style:{fontSize:"8px",color:c,background:c+"22",borderLeft:`2px solid ${c}`,borderRadius:"3px",padding:"1px 3px",marginBottom:"2px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},
         `${ev.allDay?"終日":`${String(ev.startH).padStart(2,'0')}:${String(ev.startM).padStart(2,'0')}`} ${ev.title}`));
     });
@@ -6487,7 +6489,7 @@ function renderMonthCalendar(vd,ds){
       background:"#0f172a",border:`1px solid ${isT?"#38bdf8":"#1e3a5f"}`,cursor:"pointer",overflow:"hidden"}});
     cell.appendChild(div({style:{fontSize:"9px",color:isT?"#38bdf8":"#64748b",fontWeight:isT?700:400,marginBottom:"2px"}},String(day)));
     evs.slice(0,3).forEach(ev=>{
-      const c=ev.color||EV_COLORS[0];
+      const c=ev.color||EV_DEFAULT;
       cell.appendChild(div({style:{fontSize:"7px",color:c,background:c+"22",borderRadius:"2px",padding:"0 2px",marginBottom:"1px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},ev.title));
     });
     if(evs.length>3)cell.appendChild(div({style:{fontSize:"7px",color:"#475569"}},`+${evs.length-3}`));
@@ -6638,7 +6640,7 @@ function renderTaskMatrix(){
       state.newEvTitle=it.text;
       state.newEvH=now.getHours();state.newEvM=0;
       state.newEvEndH=Math.min(23,now.getHours()+1);state.newEvEndM=0;
-      state.newEvRepeat="none";state.newEvColor=EV_COLORS[0];
+      state.newEvRepeat="none";state.newEvColor=EV_DEFAULT;
       state.newEvWeekdays=[parseDS(target).getDay()];
       state.newEvFromTask=it.uid;
       state.newEvPlace="";state.newEvNote=(it.note||"");
@@ -10041,7 +10043,7 @@ function renderAchievement(vd){
           state.newEvDate=target; state.newEvEndDate=null; state.newEvTitle="🎁 "+text;
           state.newEvH=now.getHours(); state.newEvM=0;
           state.newEvEndH=Math.min(23,now.getHours()+1); state.newEvEndM=0; state.newEvEndNextDay=false;
-          state.newEvRepeat="none"; state.newEvColor=EV_COLORS[0];
+          state.newEvRepeat="none"; state.newEvColor=EV_DEFAULT;
           state.newEvWeekdays=[parseDS(target).getDay()];
           state.newEvFromTask=null; state.newEvAllDay=false; state.newEvPlace=""; state.newEvNote=""; state.newEvPreDays=0;
           render();
