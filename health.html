@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.55"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.56"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -389,6 +389,11 @@ function saveShiftColors(){ try{ const m={}; Object.keys(SHIFT_TYPES).forEach(k=
 // 射精記録の表示色（変更可能）
 function getEjacColor(){ try{ return localStorage.getItem(STORAGE_KEY+"_ejaccolor")||"#ec4899"; }catch(_){ return "#ec4899"; } }
 function setEjacColor(c){ try{ localStorage.setItem(STORAGE_KEY+"_ejaccolor",c); }catch(_){} }
+// 睡眠・飲酒の実績表示色（変更可能）
+function getSleepColor(){ try{ return localStorage.getItem(STORAGE_KEY+"_sleepcolor")||"#60a5fa"; }catch(_){ return "#60a5fa"; } }
+function setSleepColor(c){ try{ localStorage.setItem(STORAGE_KEY+"_sleepcolor",c); }catch(_){} }
+function getAlcColor(){ try{ return localStorage.getItem(STORAGE_KEY+"_alccolor")||"#f59e0b"; }catch(_){ return "#f59e0b"; } }
+function setAlcColor(c){ try{ localStorage.setItem(STORAGE_KEY+"_alccolor",c); }catch(_){} }
 // 直近の月曜日(YYYY-MM-DD)
 function mondayStr(ds){
   const d=parseDS(ds); d.setDate(d.getDate()-((d.getDay()+6)%7));
@@ -2324,6 +2329,11 @@ function renderSleepPanel(vd,ds,isToday){
   if(!isToday){ const isFuture=vd>ds; wrap.appendChild(div({style:{background:"#1e3a5f22",border:"1px solid #1e3a5f",borderRadius:"10px",padding:"8px 12px",marginBottom:"8px",fontSize:"12px",color:"#64748b"}},isFuture?"📅 未来の日付を表示中 — 事前に記録できます":"📅 過去の記録を表示中 — 編集可能です")); }
   const card=div({className:"card"},[ div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0",marginBottom:"12px"}},"😴 睡眠"), ...buildSleepSections(vd) ]);
   wrap.appendChild(card);
+  { const cc=div({className:"card"});
+    cc.appendChild(div({style:{fontSize:"12px",color:"#94a3b8",marginBottom:"7px"}},"🎨 睡眠の実績色（予定タブのタイムライン）"));
+    cc.appendChild(colorPickerRow(getSleepColor(),c=>{ setSleepColor(c); render(); }));
+    wrap.appendChild(cc);
+  }
   return wrap;
 }
 function renderDailyPanel(vd){
@@ -4031,13 +4041,13 @@ function getActualActivities(vd){
       const dt=resolveDT(dr);
       const sMin=(dr.hour||0)*60+(dr.min||0);
       const k=`drink:${dr.hour}:${dr.min}:${dt.label}`;
-      acts.push({title:`${dt.emoji}${dt.label}`+aNote(k),startMin:sMin,endMin:sMin+12,isPoint:true,color:"#f59e0b",noteKey:k});
+      acts.push({title:`${dt.emoji}${dt.label}`+aNote(k),startMin:sMin,endMin:sMin+12,isPoint:true,color:getAlcColor(),noteKey:k});
     });
   }
   // 睡眠：就寝日(D)を1つの夜として bed(D)→wake(D+1) を span&clip で反映
   // （その日の就寝と、翌朝の起床。就寝が早朝<12なら翌日就寝として扱う）
   {
-    const SC="#60a5fa";
+    const SC=getSleepColor();
     for(let off=-1; off<=0; off++){
       const D=addDays(vd,off);
       const bed=getDaily(D).bedTime, wake=getDaily(addDays(D,1)).wakeTime;
@@ -9504,6 +9514,11 @@ function renderAlcohol(vd,isToday){
     ])),
     div({style:{marginTop:"8px",padding:"8px",background:"#0f172a",borderRadius:"6px",fontSize:"10px",color:"#475569",lineHeight:1.6}},"※ Widmark式による推計値。個人差があります。")
   ]));
+  { const cc=div({className:"card"});
+    cc.appendChild(div({style:{fontSize:"12px",color:"#94a3b8",marginBottom:"7px"}},"🎨 飲酒の実績色（予定タブのタイムライン）"));
+    cc.appendChild(colorPickerRow(getAlcColor(),c=>{ setAlcColor(c); render(); }));
+    wrap.appendChild(cc);
+  }
   return wrap;
 }
 
@@ -11254,6 +11269,7 @@ function exportData(){
   try{const s=localStorage.getItem(STORAGE_KEY+"_shiftcolors");if(s)shiftColors=JSON.parse(s);}catch{}
   try{ejacColor=localStorage.getItem(STORAGE_KEY+"_ejaccolor")||null;}catch{}
   let colorLabels=null; try{const cl=localStorage.getItem(STORAGE_KEY+"_colorlabels");if(cl)colorLabels=JSON.parse(cl);}catch{}
+  let sleepColor=null, alcColor=null; try{sleepColor=localStorage.getItem(STORAGE_KEY+"_sleepcolor")||null;}catch{} try{alcColor=localStorage.getItem(STORAGE_KEY+"_alccolor")||null;}catch{}
   const payload={
     version:2,
     exportedAt:new Date().toISOString(),
@@ -11264,6 +11280,8 @@ function exportData(){
     shiftColors,
     ejacColor,
     colorLabels,
+    sleepColor,
+    alcColor,
     goals:state.goals,
     schedule:state.schedule,
     repeatEvents:state.repeatEvents,
@@ -11341,6 +11359,8 @@ function importData(e){
       if(p.shiftColors&&typeof p.shiftColors==="object"){try{localStorage.setItem(STORAGE_KEY+"_shiftcolors",JSON.stringify(p.shiftColors));}catch{} Object.keys(p.shiftColors).forEach(k=>{ if(SHIFT_TYPES[k]&&p.shiftColors[k])SHIFT_TYPES[k].color=p.shiftColors[k]; });}
       if(p.ejacColor){try{localStorage.setItem(STORAGE_KEY+"_ejaccolor",p.ejacColor);}catch{}}
       if(p.colorLabels&&typeof p.colorLabels==="object"){try{localStorage.setItem(STORAGE_KEY+"_colorlabels",JSON.stringify(p.colorLabels));}catch{}}
+      if(p.sleepColor){try{localStorage.setItem(STORAGE_KEY+"_sleepcolor",p.sleepColor);}catch{}}
+      if(p.alcColor){try{localStorage.setItem(STORAGE_KEY+"_alccolor",p.alcColor);}catch{}}
       if(p.goals){state.goals=p.goals;try{localStorage.setItem(STORAGE_KEY+"_goals",JSON.stringify(p.goals));}catch{}}
       if(p.schedule){state.schedule=p.schedule;try{localStorage.setItem(STORAGE_KEY+"_schedule",JSON.stringify(p.schedule));}catch{}}
       if(p.repeatEvents){state.repeatEvents=p.repeatEvents;try{localStorage.setItem(STORAGE_KEY+"_repeat",JSON.stringify(p.repeatEvents));}catch{}}
