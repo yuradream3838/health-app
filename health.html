@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.52"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.53"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -383,6 +383,12 @@ const SHIFT_TYPES = {
 const SHIFT_OPTS = [["s1","1直"],["s2","2直"],["off","休み1"],["off2","休み2"]];
 // 休み系キー（勤務なし）
 const OFF_KEYS = ["off","off2"];
+// 勤務の色はユーザーが変更可能（保存値をSHIFT_TYPESに反映。全参照箇所に自動適用される）
+try{ const _sc=JSON.parse(localStorage.getItem(STORAGE_KEY+"_shiftcolors")||"null"); if(_sc&&typeof _sc==="object"){ Object.keys(_sc).forEach(k=>{ if(SHIFT_TYPES[k]&&_sc[k])SHIFT_TYPES[k].color=_sc[k]; }); } }catch(_){}
+function saveShiftColors(){ try{ const m={}; Object.keys(SHIFT_TYPES).forEach(k=>m[k]=SHIFT_TYPES[k].color); localStorage.setItem(STORAGE_KEY+"_shiftcolors",JSON.stringify(m)); }catch(_){} }
+// 射精記録の表示色（変更可能）
+function getEjacColor(){ try{ return localStorage.getItem(STORAGE_KEY+"_ejaccolor")||"#ec4899"; }catch(_){ return "#ec4899"; } }
+function setEjacColor(c){ try{ localStorage.setItem(STORAGE_KEY+"_ejaccolor",c); }catch(_){} }
 // 直近の月曜日(YYYY-MM-DD)
 function mondayStr(ds){
   const d=parseDS(ds); d.setDate(d.getDate()-((d.getDay()+6)%7));
@@ -3751,6 +3757,14 @@ function saveFoods(){
 // 色相（虹）順に整列：赤→橙→黄→ライム→緑→ティール→シアン→スカイ→インディゴ→紫→マゼンタ→ローズ
 const EV_COLORS=["#ef4444","#f97316","#eab308","#84cc16","#22c55e","#14b8a6","#06b6d4","#38bdf8","#6366f1","#a78bfa","#ec4899","#fb7185"];
 const EV_DEFAULT="#38bdf8"; // 既定色（並び替えに影響されない）
+// 共通カラーピッカー（色相順パレット）。current=現在色, onPick(c)=選択時
+function colorPickerRow(current, onPick){
+  const row=div({style:{display:"flex",flexWrap:"wrap",gap:"6px"}});
+  EV_COLORS.forEach(c=>{ const on=(current||"").toLowerCase()===c.toLowerCase();
+    const b=btn({style:{width:"26px",height:"26px",borderRadius:"6px",cursor:"pointer",background:c+(on?"":"55"),border:`2px solid ${on?"#fff":"transparent"}`,flexShrink:0}},"");
+    b.addEventListener('click',(()=>{const cc=c;return()=>onPick(cc);})()); row.appendChild(b); });
+  return row;
+}
 const WEEKDAYS_JP=["日","月","火","水","木","金","土"];
 
 function saveSchedule(){
@@ -3949,16 +3963,17 @@ function getActualActivities(vd){
       if(routineIds.has(item.id))return; // ルーティンは後でまとめて1ブロックに
       const d=t[item.id];
       if(!d||d.excluded)return;
+      const icol=item.color||undefined; // 項目ごとの色（任意）
       if(item.multi&&d.sessions){
         d.sessions.forEach(s=>{
           if(s.startTime&&s.endTime&&onVd(s.startTime)){
-            acts.push({title:item.label+(s.note?`：${s.note}`:""),startMin:mm(s.startTime),endMin:mm(s.endTime)});
+            acts.push({title:item.label+(s.note?`：${s.note}`:""),startMin:mm(s.startTime),endMin:mm(s.endTime),color:icol});
           }
         });
       } else if(item.type==="timer"&&d.startTime&&d.endTime){
-        if(onVd(d.startTime)) acts.push({title:item.label,startMin:mm(d.startTime),endMin:mm(d.endTime)});
+        if(onVd(d.startTime)) acts.push({title:item.label,startMin:mm(d.startTime),endMin:mm(d.endTime),color:icol});
       } else if(item.type==="check"&&d.checked&&d.time){
-        if(onVd(d.time)) acts.push({title:"✓"+item.label,startMin:mm(d.time),endMin:mm(d.time)+12,isPoint:true});
+        if(onVd(d.time)) acts.push({title:"✓"+item.label,startMin:mm(d.time),endMin:mm(d.time)+12,isPoint:true,color:icol});
       }
     });
   });
@@ -4044,7 +4059,7 @@ function getActualActivities(vd){
     const s=(ej.hour||0)*60+(ej.min||0);
     const tagAbbr = ej.tag==="自慰"?"ON":ej.tag==="セックス"?"SE":(ej.tag||"");
     const k=`ej:${ej.uid||s}`;
-    acts.push({title:`💧${tagAbbr?" "+tagAbbr:""}`+aNote(k),startMin:s,endMin:s+12,isPoint:true,color:"#ec4899",noteKey:k});
+    acts.push({title:`💧${tagAbbr?" "+tagAbbr:""}`+aNote(k),startMin:s,endMin:s+12,isPoint:true,color:getEjacColor(),noteKey:k});
   });
   // 服薬（点イベント）
   (daily.meds||[]).forEach(md0=>{
@@ -5215,7 +5230,19 @@ function renderRoutinePanel(){
     (state.routines||[]).forEach(r=>{const o=document.createElement('option');o.value=r.key;o.textContent="まとめ: "+r.title;if(cur===r.key)o.selected=true;sel.appendChild(o);});
     sel.addEventListener('change',(()=>{const id=item.id;return e=>{ const key=e.target.value; state.routines=(state.routines||[]).map(r=>({...r, ids:(r.ids||[]).filter(x=>x!==id)})); if(key){const g=state.routines.find(r=>r.key===key); if(g)g.ids.push(id);} saveRoutines();render(); };})());
     r2.appendChild(sel);
+    // 色（スウォッチをタップでパレット展開）
+    const swatch=btn({style:{width:"26px",height:"26px",borderRadius:"6px",flexShrink:0,cursor:"pointer",background:item.color||"#334155",border:`2px solid ${state.itemColorEdit===item.id?"#fff":"transparent"}`},title:"色"},item.color?"":"🎨");
+    swatch.addEventListener('click',(()=>{const id=item.id;return()=>{ state.itemColorEdit=state.itemColorEdit===id?null:id; render(); };})());
+    r2.appendChild(swatch);
     box.appendChild(r2);
+    if(state.itemColorEdit===item.id){
+      const cp=div({style:{marginTop:"6px",paddingLeft:"28px",display:"flex",flexWrap:"wrap",gap:"6px",alignItems:"center"}});
+      cp.appendChild(colorPickerRow(item.color,(()=>{const id=item.id;return c=>{ getTodoItems().forEach(x=>{if(x.id===id)x.color=c;}); saveTodoItems(); render(); };})()));
+      const clr=btn({style:{padding:"5px 9px",borderRadius:"6px",border:"1px solid #334155",background:"transparent",color:"#64748b",fontSize:"11px",cursor:"pointer"}},"既定に戻す");
+      clr.addEventListener('click',(()=>{const id=item.id;return()=>{ getTodoItems().forEach(x=>{if(x.id===id)delete x.color;}); saveTodoItems(); render(); };})());
+      cp.appendChild(clr);
+      box.appendChild(cp);
+    }
     card.appendChild(box);
   });
   // 新規追加
@@ -5228,6 +5255,19 @@ function renderRoutinePanel(){
     const b=btn({style:{padding:"7px 14px",background:"#22c55e18",border:"1px solid #22c55e",borderRadius:"7px",color:"#4ade80",fontSize:"14px",fontWeight:700,cursor:"pointer",flexShrink:0}},"＋");
     b.addEventListener('click',()=>{ const l=(state.newRoutineItem||"").trim(); if(!l)return; const t=state.newRoutineType||"check"; const it={id:"ti"+Date.now(),label:l,type:t==="check"?"check":"timer"}; if(t==="multi")it.multi=true; getTodoItems().push(it); saveTodoItems(); state.newRoutineItem=""; showToast(`＋ ${l}`); render(); });
     add.appendChild(ni);add.appendChild(tsel);add.appendChild(b); card.appendChild(add);
+  }
+  // 🎨 まとめ（グループ）の色
+  if((state.routines||[]).length){
+    card.appendChild(div({style:{fontSize:"12px",fontWeight:700,color:"#94a3b8",margin:"14px 0 6px",paddingTop:"10px",borderTop:"1px solid #1e3a5f33"}},"🎨 まとめの色（実績ブロック）"));
+    (state.routines||[]).forEach(g=>{
+      const row=div({style:{marginBottom:"8px"}});
+      row.appendChild(div({style:{display:"flex",alignItems:"center",gap:"7px",marginBottom:"5px"}},[
+        span({style:{width:"14px",height:"14px",borderRadius:"4px",background:g.color||"#38bdf8",flexShrink:0,display:"inline-block"}}),
+        span({style:{fontSize:"12px",color:"#e2e8f0"}},g.title||g.key)
+      ]));
+      row.appendChild(colorPickerRow(g.color,(()=>{const key=g.key;return c=>{ state.routines=(state.routines||[]).map(r=>r.key===key?{...r,color:c}:r); saveRoutines(); render(); };})()));
+      card.appendChild(row);
+    });
   }
   card.appendChild(btn({className:"btn-ghost",style:{width:"100%",marginTop:"14px"},onClick:()=>{
     if(confirm("ルーティン項目とグループを初期設定に戻しますか？（追加した項目は消えます・過去の記録は残ります）")){ state.todoItems=JSON.parse(JSON.stringify(TODO_ITEMS)); saveTodoItems(); state.routines=cloneRoutines(); saveRoutines(); try{localStorage.removeItem(STORAGE_KEY+"_todo_order");}catch{} render(); }
@@ -5282,6 +5322,17 @@ function renderShiftPanel(){
       rowEl.appendChild(cell);
     }
     card.appendChild(rowEl);
+  });
+  // 🎨 勤務の色
+  card.appendChild(div({style:{fontSize:"12px",fontWeight:700,color:"#94a3b8",margin:"14px 0 6px",paddingTop:"10px",borderTop:"1px solid #1e3a5f33"}},"🎨 勤務の色"));
+  SHIFT_OPTS.forEach(([k,l])=>{
+    const row=div({style:{marginBottom:"8px"}});
+    row.appendChild(div({style:{display:"flex",alignItems:"center",gap:"7px",marginBottom:"5px"}},[
+      span({style:{width:"14px",height:"14px",borderRadius:"4px",background:SHIFT_TYPES[k].color,flexShrink:0,display:"inline-block"}}),
+      span({style:{fontSize:"12px",color:"#e2e8f0"}},SHIFT_TYPES[k].label||l)
+    ]));
+    row.appendChild(colorPickerRow(SHIFT_TYPES[k].color,(()=>{const key=k;return c=>{ SHIFT_TYPES[key].color=c; saveShiftColors(); render(); };})()));
+    card.appendChild(row);
   });
   return card;
 }
@@ -11180,10 +11231,12 @@ function renderAIChat(chat, loading, inputKey, onSend, placeholder){
 // エクスポート・インポート（全データ対応）
 // ═══════════════════════════════════════════════════
 function exportData(){
-  let weather={}, city=null, todoOrder=null;
+  let weather={}, city=null, todoOrder=null, shiftColors=null, ejacColor=null;
   try{const w=localStorage.getItem(STORAGE_KEY+"_weather");if(w)weather=JSON.parse(w);}catch{}
   try{const c=localStorage.getItem(STORAGE_KEY+"_city");if(c)city=JSON.parse(c);}catch{}
   try{const t=localStorage.getItem(STORAGE_KEY+"_todo_order");if(t)todoOrder=JSON.parse(t);}catch{}
+  try{const s=localStorage.getItem(STORAGE_KEY+"_shiftcolors");if(s)shiftColors=JSON.parse(s);}catch{}
+  try{ejacColor=localStorage.getItem(STORAGE_KEY+"_ejaccolor")||null;}catch{}
   const payload={
     version:2,
     exportedAt:new Date().toISOString(),
@@ -11191,6 +11244,8 @@ function exportData(){
     dailies:state.dailies,
     todos:state.todos,
     todoOrder,
+    shiftColors,
+    ejacColor,
     goals:state.goals,
     schedule:state.schedule,
     repeatEvents:state.repeatEvents,
@@ -11265,6 +11320,8 @@ function importData(e){
       state.dailies=p.dailies;
       if(p.todos){state.todos=p.todos;try{localStorage.setItem(STORAGE_KEY+"_todo",JSON.stringify(p.todos));}catch{}}
       if(p.todoOrder){try{localStorage.setItem(STORAGE_KEY+"_todo_order",JSON.stringify(p.todoOrder));}catch{}}
+      if(p.shiftColors&&typeof p.shiftColors==="object"){try{localStorage.setItem(STORAGE_KEY+"_shiftcolors",JSON.stringify(p.shiftColors));}catch{} Object.keys(p.shiftColors).forEach(k=>{ if(SHIFT_TYPES[k]&&p.shiftColors[k])SHIFT_TYPES[k].color=p.shiftColors[k]; });}
+      if(p.ejacColor){try{localStorage.setItem(STORAGE_KEY+"_ejaccolor",p.ejacColor);}catch{}}
       if(p.goals){state.goals=p.goals;try{localStorage.setItem(STORAGE_KEY+"_goals",JSON.stringify(p.goals));}catch{}}
       if(p.schedule){state.schedule=p.schedule;try{localStorage.setItem(STORAGE_KEY+"_schedule",JSON.stringify(p.schedule));}catch{}}
       if(p.repeatEvents){state.repeatEvents=p.repeatEvents;try{localStorage.setItem(STORAGE_KEY+"_repeat",JSON.stringify(p.repeatEvents));}catch{}}
@@ -11667,6 +11724,11 @@ function renderAddEjacModal(vd){
   });
   m.appendChild(tagRow);
 
+  // 🎨 表示色（射精記録の色。全体に適用）
+  m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"7px"}},"🎨 表示色（実績タイムラインの色）"));
+  m.appendChild(colorPickerRow(getEjacColor(),c=>{ setEjacColor(c); render(); }));
+  m.appendChild(div({style:{height:"18px"}}));
+
   m.appendChild(div({style:{display:"flex",gap:"8px"}},[
     btn({className:"btn-ghost",style:{flex:1},onClick:()=>{state.modal=null;render();}},"キャンセル"),
     btn({style:{flex:2,padding:"10px",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:600,cursor:"pointer"},
@@ -12035,6 +12097,10 @@ function renderCustomTodoModal(){
     box.appendChild(addB);
     m.appendChild(box);
   }
+  // 🎨 色
+  m.appendChild(div({style:{fontSize:"11px",color:"#64748b",margin:"4px 0 6px"}},"🎨 色"));
+  m.appendChild(colorPickerRow(m0.color||"#38bdf8",c=>{ m0.color=c; render(); }));
+  m.appendChild(div({style:{height:"10px"}}));
   if(m0.uid){
     m.appendChild(btn({style:{width:"100%",padding:"7px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#475569",cursor:"pointer",fontSize:"12px",marginBottom:"8px"},
       onClick:()=>{ if(confirm("この項目を削除しますか？")){pushUndo("定期ルーティンを削除しました");state.customTodos=(state.customTodos||[]).filter(x=>x.uid!==m0.uid);saveCustomTodos();state.customTodoModal=null;render();} }},"この項目を削除"));
