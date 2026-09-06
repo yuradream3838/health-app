@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.62"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.63"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -2582,9 +2582,6 @@ function getGoalKey(type, dateStr){
   }
 }
 
-function getGoal(type, dateStr){
-  return state.goals[getGoalKey(type,dateStr)]||{text:"",done:false,progress:""};
-}
 
 function goalPeriodLabel(type, dateStr){
   const p=dateStr.split('-');
@@ -3777,7 +3774,6 @@ function colorNameOf(c){ return COLOR_NAMES[(c||"").toLowerCase()]||""; }
 // 共通カラーピッカー（色相順パレット）。current=現在色, onPick(c)=選択時
 // 色に付ける意味（例：食事・運動）。{ "#hex(小文字)": "ラベル" }
 function getColorLabels(){ try{ const o=JSON.parse(localStorage.getItem(STORAGE_KEY+"_colorlabels")||"{}"); return (o&&typeof o==="object")?o:{}; }catch(_){ return {}; } }
-function colorLabelOf(c){ return (getColorLabels()[(c||"").toLowerCase()])||""; }
 function setColorLabel(c,label){ const m=getColorLabels(); const k=(c||"").toLowerCase(); const v=(label||"").trim(); if(v)m[k]=v; else delete m[k]; try{localStorage.setItem(STORAGE_KEY+"_colorlabels",JSON.stringify(m));}catch(_){} }
 function colorPickerRow(current, onPick){
   const labels=getColorLabels();
@@ -5556,61 +5552,6 @@ function renderPlanPatternPanel(){
     lkRow.appendChild(lkSel);
     body.appendChild(lkRow);
     body.appendChild(div({style:{fontSize:"9px",color:"#475569",marginTop:"3px"}},"連動先が完了すると、予定タブでこの予定がグレーアウトします"));
-    // 手動の「この日以降で時間を変更」ボックスは非表示（編集は自動で「今日以降のみ」反映）
-    if(false){
-      body.appendChild(div({style:{borderTop:"1px solid #1e293b",margin:"9px 0 5px",paddingTop:"8px",fontSize:"11px",fontWeight:700,color:"#a5b4fc"}},"📅 この日以降で時間を変更"));
-      body.appendChild(div({style:{fontSize:"9px",color:"#64748b",marginBottom:"6px",lineHeight:1.5}},"指定日以降だけ時間を切り替えます。それ以前の日はこれまでの時間のまま表示されます。"));
-      const rsegs=(p.reschedules||[]).slice().sort((a,b)=>(a.from<b.from?-1:1));
-      rsegs.forEach(seg=>{
-        const lbl = seg.byShift ? "直別に変更" : `${hhmm(seg.sH,seg.sM||0)}〜${seg.eH!=null?hhmm(seg.eH,seg.eM||0):""}`;
-        const row=div({style:{display:"flex",alignItems:"center",gap:"6px",padding:"5px 8px",background:"#1e293b",borderRadius:"6px",marginBottom:"4px"}});
-        row.appendChild(div({style:{flex:1,fontSize:"11px",color:"#e2e8f0"}},[span({style:{color:"#a5b4fc",fontWeight:700}},(seg.from||"").replace(/-/g,"/")+"〜 "),span({},lbl)]));
-        const del=btn({style:{flexShrink:0,fontSize:"11px",padding:"3px 9px",borderRadius:"6px",cursor:"pointer",fontWeight:600,border:"1px solid #7f1d1d",background:"transparent",color:"#fca5a5"}},"削除");
-        del.addEventListener('click',(()=>{const f=seg.from;return()=>{ upd(p.uid,{reschedules:(p.reschedules||[]).filter(x=>x.from!==f)}); };})());
-        row.appendChild(del); body.appendChild(row);
-      });
-      state.patSegDraft=state.patSegDraft||{};
-      const ns=state.patSegDraft[p.uid]||(state.patSegDraft[p.uid]={from:todayStr()});
-      const nbox=div({style:{padding:"8px 9px",background:"#1e293b",borderRadius:"7px",border:"1px dashed #334155",marginBottom:"6px"}});
-      nbox.appendChild(div({style:{fontSize:"9px",color:"#64748b",marginBottom:"3px"}},"この日以降"));
-      const df=document.createElement('input');df.type='date';df.value=ns.from||todayStr();df.style.cssText="width:100%;padding:7px 9px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#e2e8f0;font-size:13px;font-family:inherit;box-sizing:border-box;margin-bottom:7px;color-scheme:dark";
-      df.addEventListener('change',e=>{if(e.target.value)ns.from=e.target.value;});
-      nbox.appendChild(df);
-      if(p.byShift){
-        nbox.appendChild(div({style:{fontSize:"9px",color:"#64748b",marginBottom:"3px"}},"新しい時間（直別）"));
-        if(!ns.shiftTimes)ns.shiftTimes=JSON.parse(JSON.stringify(p.shiftTimes||{}));
-        SHIFT_OPTS.forEach(([k,slbl])=>{
-          const st=ns.shiftTimes[k]||(ns.shiftTimes[k]={on:true,startH:1,startM:0,endH:9,endM:0,nextDay:false});
-          const rr=div({style:{display:"flex",gap:"5px",alignItems:"center",marginBottom:"5px"}});
-          rr.appendChild(span({style:{width:"28px",fontSize:"10px",color:SHIFT_TYPES[k].color,flexShrink:0,fontWeight:700}},slbl));
-          rr.appendChild(timeField(()=>st.startH!=null?st.startH:1,()=>st.startM||0,(h,mm)=>{st.startH=h;st.startM=mm;}));
-          rr.appendChild(span({style:{color:"#475569"}},"〜"));
-          rr.appendChild(timeField(()=>st.endH!=null?st.endH:9,()=>st.endM||0,(h,mm)=>{st.endH=h;st.endM=mm;st.nextDay=(st.endH*60+st.endM)<=(st.startH*60+(st.startM||0));}));
-          nbox.appendChild(rr);
-        });
-      } else {
-        nbox.appendChild(div({style:{fontSize:"9px",color:"#64748b",marginBottom:"3px"}},"新しい時間"));
-        if(ns.sH==null){ns.sH=p.startH!=null?p.startH:22;ns.sM=p.startM||0;ns.eH=p.endH!=null?p.endH:6;ns.eM=p.endM||0;}
-        const rr=div({style:{display:"flex",gap:"6px",alignItems:"center",marginBottom:"6px"}});
-        rr.appendChild(timeField(()=>ns.sH,()=>ns.sM||0,(h,mm)=>{ns.sH=h;ns.sM=mm;}));
-        rr.appendChild(span({style:{color:"#475569"}},"〜"));
-        rr.appendChild(timeField(()=>ns.eH,()=>ns.eM||0,(h,mm)=>{ns.eH=h;ns.eM=mm;}));
-        nbox.appendChild(rr);
-      }
-      const addB=btn({style:{width:"100%",padding:"8px",borderRadius:"7px",cursor:"pointer",fontWeight:700,fontSize:"11px",border:"none",background:"linear-gradient(135deg,#6366f1,#a855f7)",color:"#fff"}},"＋ この日以降の時間を追加");
-      addB.addEventListener('click',()=>{
-        if(!ns.from){alert("日付を選んでください");return;}
-        let seg;
-        if(p.byShift){ seg={from:ns.from,byShift:true,shiftTimes:JSON.parse(JSON.stringify(ns.shiftTimes||{}))}; }
-        else { const nextDay=(ns.eH*60+(ns.eM||0))<=(ns.sH*60+(ns.sM||0)); seg={from:ns.from,sH:ns.sH,sM:ns.sM||0,eH:ns.eH,eM:ns.eM||0,nextDay}; }
-        const newRs=[...((p.reschedules||[]).filter(x=>x.from!==seg.from)),seg];
-        if(state.patSegDraft)delete state.patSegDraft[p.uid];
-        upd(p.uid,{reschedules:newRs});
-        showToast("この日以降の時間を追加しました");
-      });
-      nbox.appendChild(addB);
-      body.appendChild(nbox);
-    }
     card.appendChild(box);
   });
   const templates=[{t:"😴 睡眠",c:"#60a5fa",s:[23,0],e:[7,0]},{t:"🏋️ 運動",c:"#22c55e",s:[19,0],e:[20,0]},{t:"🍽️ 食事",c:"#fb923c",s:[12,0],e:[13,0]}];
@@ -7395,7 +7336,6 @@ function getInvestActions(){ if(!Array.isArray(state.investActions)||!state.inve
 function saveInvestActions(){ try{localStorage.setItem(STORAGE_KEY+"_investactions",JSON.stringify(state.investActions||[]));}catch{} }
 function logInvest(vd, act){ const d=getDaily(vd); const rec={t:new Date().toISOString(), label:(act&&act.label)||"", cat:(act&&act.cat)||"", amount:Math.max(0,(act&&act.amount)||0)}; const note=act&&act.note&&String(act.note).trim(); if(note)rec.note=note; const investments=[...(d.investments||[]), rec]; setDaily(vd,{investments}); }
 // 未来投資/つながりエントリの内容を更新（日付＋タイムスタンプで特定）
-function updateInvestLog(ds, t, upd){ const arr=(getDaily(ds).investments||[]).map(r=>((r.t||null)===t)?{...r,...upd}:r); setDaily(ds,{investments:arr}); }
 // 記録の日付/時刻を修正（別の日への移動にも対応）。oldT で対象を特定し、newDsへ移す。
 function moveInvestLog(oldDs, oldT, newDs, newT, upd){
   const oldArr=(getDaily(oldDs).investments||[]).slice();
@@ -12070,89 +12010,6 @@ function renderCustomTodoModal(){
   });
   m.appendChild(cwWrap);
   } // end !byShiftSchedule
-  // 手動の「途中でスケジュールを変更」ボックスは非表示（編集は自動で「今日以降のみ」反映されるため）
-  if(false){
-    m.appendChild(div({style:{borderTop:"1px solid #1e293b",margin:"2px 0 10px",paddingTop:"12px",fontSize:"12px",fontWeight:700,color:"#a5b4fc"}},"📅 途中でスケジュールを変更"));
-    m.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"8px",lineHeight:1.5}},"指定した日以降だけ周期を切り替えられます（その日を新しい起点に数え直し・それ以前はそのまま）。例：直が変わって一週ずらしてまた2週ごとに。"));
-    const segs=(m0.reschedules||[]).slice().sort((a,b)=>(a.from<b.from?-1:1));
-    segs.forEach(seg=>{
-      const row=div({style:{display:"flex",alignItems:"center",gap:"8px",padding:"6px 9px",background:"#0f172a",borderRadius:"7px",marginBottom:"5px"}});
-      const segTimeLbl = seg.timeH!=null ? `　🕐${hhmm(seg.timeH,seg.timeM||0)}${seg.endH!=null?`〜${hhmm(seg.endH,seg.endM||0)}`:""}` : "";
-      row.appendChild(div({style:{flex:1,fontSize:"11px",color:"#e2e8f0",lineHeight:1.4}},[
-        span({style:{color:"#a5b4fc",fontWeight:700}},(seg.from||"").replace(/-/g,"/")+"〜 "),
-        span({},customTodoIntervalLabel(seg)+segTimeLbl)
-      ]));
-      const del=btn({style:{flexShrink:0,fontSize:"11px",padding:"4px 10px",borderRadius:"6px",cursor:"pointer",fontWeight:600,border:"1px solid #7f1d1d",background:"transparent",color:"#fca5a5"}},"削除");
-      del.addEventListener('click',(()=>{const f=seg.from;return()=>{m0.reschedules=(m0.reschedules||[]).filter(x=>x.from!==f);render();};})());
-      row.appendChild(del);
-      m.appendChild(row);
-    });
-    if(!m0._newSeg)m0._newSeg={from:todayStr(),itype:m0.itype||"week",n:m0.n||1,weekdays:m0.weekdays?[...m0.weekdays]:[],shifts:m0.shifts?[...m0.shifts]:[]};
-    const ns=m0._newSeg;
-    const box=div({style:{padding:"9px 10px",background:"#0f172a",borderRadius:"8px",border:"1px dashed #334155",marginBottom:"10px"}});
-    box.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"4px"}},"この日以降"));
-    const df=document.createElement('input');df.type='date';df.value=ns.from;df.style.cssText="width:100%;padding:8px 10px;background:#1e293b;border:1px solid #334155;border-radius:7px;color:#e2e8f0;font-size:14px;font-family:inherit;box-sizing:border-box;margin-bottom:8px;color-scheme:dark";
-    df.addEventListener('change',e=>{if(e.target.value)ns.from=e.target.value;});
-    box.appendChild(df);
-    box.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"4px"}},"新しい間隔"));
-    const ir=div({style:{display:"flex",gap:"8px",alignItems:"center",marginBottom:"8px"}});
-    const nn=document.createElement('input');nn.type='number';nn.min="1";nn.value=String(ns.n||1);nn.style.cssText="width:64px;padding:8px;background:#1e293b;border:1px solid #334155;border-radius:7px;color:#e2e8f0;font-size:14px;font-family:inherit";
-    nn.addEventListener('input',e=>{ns.n=Math.max(1,parseInt(e.target.value)||1);});
-    ir.appendChild(nn);
-    const us=document.createElement('select');us.className='sel';
-    [["day","日ごと"],["week","週ごと"],["month","ヶ月ごと"]].forEach(([v,l])=>{const o=document.createElement('option');o.value=v;o.textContent=l;if(ns.itype===v)o.selected=true;us.appendChild(o);});
-    us.addEventListener('change',e=>{ns.itype=e.target.value;render();});
-    ir.appendChild(us);
-    box.appendChild(ir);
-    if(ns.itype==="week"){
-      box.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"4px"}},"曜日（複数選択可・未選択なら起点日から数えます）"));
-      const wr=div({style:{display:"flex",gap:"4px",marginBottom:"8px"}});
-      ["日","月","火","水","木","金","土"].forEach((lbl,idx)=>{
-        const on=(ns.weekdays||[]).includes(idx);
-        const wb=btn({style:{flex:1,padding:"6px 0",borderRadius:"6px",cursor:"pointer",fontSize:"11px",fontWeight:600,border:`1px solid ${on?"#38bdf8":"#334155"}`,background:on?"#0ea5e922":"transparent",color:on?"#38bdf8":"#475569"}},lbl);
-        wb.addEventListener('click',()=>{const set=new Set(ns.weekdays||[]);if(set.has(idx))set.delete(idx);else set.add(idx);ns.weekdays=[...set].sort((a,b)=>a-b);render();});
-        wr.appendChild(wb);
-      });
-      box.appendChild(wr);
-    }
-    box.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"4px"}},"シフト連動（選んだ直の日だけ・未選択なら全日）"));
-    const sr=div({style:{display:"flex",gap:"6px",marginBottom:"10px"}});
-    SHIFT_OPTS.forEach(([k,l])=>{
-      const on=(ns.shifts||[]).includes(k);const c=SHIFT_TYPES[k].color;
-      const sb=btn({style:{flex:1,padding:"6px 0",borderRadius:"6px",cursor:"pointer",fontSize:"11px",fontWeight:600,border:`1px solid ${on?c:"#334155"}`,background:on?c+"22":"transparent",color:on?c:"#475569"}},l);
-      sb.addEventListener('click',()=>{const set=new Set(ns.shifts||[]);if(set.has(k))set.delete(k);else set.add(k);ns.shifts=[...set];render();});
-      sr.appendChild(sb);
-    });
-    box.appendChild(sr);
-    // 🕐 時刻も「この日以降」で変更（任意）
-    { const tgl=btn({style:{width:"100%",padding:"7px",borderRadius:"7px",cursor:"pointer",fontSize:"11px",fontWeight:600,marginBottom:"8px",border:`1px solid ${ns._setTime?"#38bdf8":"#334155"}`,background:ns._setTime?"#0ea5e918":"transparent",color:ns._setTime?"#38bdf8":"#64748b"}},ns._setTime?"🕐 時刻も変更する（ON）":"🕐 時刻も変更する（任意）");
-      tgl.addEventListener('click',()=>{ ns._setTime=!ns._setTime; if(ns._setTime&&ns.timeH==null){ ns.timeH=(m0.timeH!=null?m0.timeH:9); ns.timeM=(m0.timeM||0); ns.endH=(m0.endH!=null?m0.endH:null); ns.endM=(m0.endM||0);} render(); });
-      box.appendChild(tgl);
-      if(ns._setTime){
-        const trow=div({style:{display:"flex",gap:"8px",alignItems:"center",marginBottom:"8px"}});
-        trow.appendChild(timeField(()=>ns.timeH!=null?ns.timeH:9,()=>ns.timeM||0,(h,mm)=>{ns.timeH=h;ns.timeM=mm;}));
-        trow.appendChild(span({style:{color:"#475569"}},"〜"));
-        trow.appendChild(timeField(()=>ns.endH!=null?ns.endH:(ns.timeH!=null?ns.timeH:9),()=>ns.endM||0,(h,mm)=>{ns.endH=h;ns.endM=mm;}));
-        box.appendChild(trow);
-        box.appendChild(div({style:{fontSize:"10px",color:"#475569",marginBottom:"8px"}},"タイマー式はこの開始時刻から実績に入ります。終了が開始より前なら翌日扱い。"));
-      }
-    }
-    const addB=btn({style:{width:"100%",padding:"9px",borderRadius:"8px",cursor:"pointer",fontWeight:700,fontSize:"12px",border:"none",background:"linear-gradient(135deg,#6366f1,#a855f7)",color:"#fff"}},"＋ この日以降の変更を追加");
-    addB.addEventListener('click',()=>{
-      if(!ns.from){alert("日付を選んでください");return;}
-      const seg={from:ns.from,itype:ns.itype||"week",n:Math.max(1,ns.n||1),weekdays:ns.itype==="week"?[...(ns.weekdays||[])]:[],shifts:[...(ns.shifts||[])]};
-      if(ns._setTime && ns.timeH!=null){
-        seg.timeH=ns.timeH; seg.timeM=ns.timeM||0;
-        if(ns.endH!=null){ seg.endH=ns.endH; seg.endM=ns.endM||0; const startTot=seg.timeH*60+seg.timeM, endTot=seg.endH*60+seg.endM; seg.endNextDay=endTot<=startTot; }
-      }
-      m0.reschedules=[...((m0.reschedules||[]).filter(x=>x.from!==seg.from)),seg];
-      m0._newSeg=null;
-      showToast("この日以降の変更を追加しました");
-      render();
-    });
-    box.appendChild(addB);
-    m.appendChild(box);
-  }
   // 🎨 色
   m.appendChild(div({style:{fontSize:"11px",color:"#64748b",margin:"4px 0 6px"}},"🎨 色"));
   m.appendChild(colorPickerRow(m0.color||"#38bdf8",c=>{ m0.color=c; render(); }));
