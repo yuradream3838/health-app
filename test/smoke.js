@@ -69,7 +69,7 @@ function findChromium() {
     日記: ['diarySubTab', ['生活記録', '睡眠', 'トレーニング', '体調記録', 'アルコール']],
     タスク: ['taskSubTab', ['ルーティン', '定期ルーティン', '目標', 'TODO', '買物']],
     達成: ['achieveSubTab', ['達成', '未来投資', 'つながり', '動機づけ面談', 'if-then']],
-    分析: ['analysisSubTab', ['日次ログ', '週次分析', '総合分析']],
+    分析: ['analysisSubTab', ['日次ログ', '週次分析', '総合分析', 'AIに質問']],
   };
   for (const [tab, [key, subs]] of Object.entries(SUBS)) {
     for (const s of subs) {

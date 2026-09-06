@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.63"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.64"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -10185,7 +10185,7 @@ function renderAchievement(vd){
 }
 
 function renderAnalysisHub(vd, ds, curH, isToday){
-  const SUB_TABS=["日次ログ","週次分析","総合分析"];
+  const SUB_TABS=["日次ログ","週次分析","総合分析","AIに質問"];
   const wrap=div({style:{maxWidth:"600px",margin:"0 auto"}});
 
   // サブタブバー
@@ -10207,6 +10207,7 @@ function renderAnalysisHub(vd, ds, curH, isToday){
   if(state.analysisSubTab==="日次ログ")  inner.appendChild(renderLog());
   if(state.analysisSubTab==="週次分析")  inner.appendChild(renderWeekly());
   if(state.analysisSubTab==="総合分析")  inner.appendChild(renderAnalysis());
+  if(state.analysisSubTab==="AIに質問")  inner.appendChild(renderAIQA());
   wrap.appendChild(inner);
   return wrap;
 }
@@ -11073,6 +11074,8 @@ function renderAnalysis(){
   return wrap;
 }
 
+const AI_TAG_COLORS={"睡眠":"#60a5fa","運動":"#22c55e","飲酒":"#f59e0b","食事":"#fb923c","メンタル":"#a855f7","生活リズム":"#38bdf8","仕事":"#14b8a6","その他":"#94a3b8"};
+function aiTagChip(tag){ const c=AI_TAG_COLORS[tag]||"#94a3b8"; return span({style:{fontSize:"9px",fontWeight:700,padding:"1px 8px",borderRadius:"9px",color:c,background:c+"1f",border:`1px solid ${c}55`,flexShrink:0,whiteSpace:"nowrap"}},tag||"その他"); }
 function renderAIAnalysisCard(scored){
   const card=div({className:"card"},[div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0",marginBottom:"10px"}},"✨ AI総合分析")]);
   const content=div({style:{textAlign:"center"}});
@@ -11090,13 +11093,24 @@ function renderAIAnalysisCard(scored){
     (r.topFactors||[]).forEach(f=>{
       content.appendChild(div({style:{display:"flex",alignItems:"center",gap:"8px",marginBottom:"5px",padding:"6px 10px",borderRadius:"8px",background:f.impact==="positive"?"#22c55e11":"#ef444411",border:`1px solid ${f.impact==="positive"?"#22c55e33":"#ef444433"}`}},[
         span({},f.impact==="positive"?"✅":"⚠️"),
-        div({style:{flex:1}},[div({style:{fontSize:"12px",fontWeight:600,color:f.impact==="positive"?"#4ade80":"#f87171"}},f.factor),div({style:{fontSize:"11px",color:"#94a3b8"}},f.detail)]),
+        div({style:{flex:1,minWidth:0}},[
+          div({style:{display:"flex",alignItems:"center",gap:"6px",flexWrap:"wrap"}},[ f.tag?aiTagChip(f.tag):null, span({style:{fontSize:"12px",fontWeight:600,color:f.impact==="positive"?"#4ade80":"#f87171"}},f.factor) ]),
+          div({style:{fontSize:"11px",color:"#94a3b8"}},f.detail)
+        ]),
         div({style:{display:"flex",gap:"2px"}},[1,2,3,4,5].map(j=>div({style:{width:"5px",height:"14px",borderRadius:"2px",background:j<=f.score?(f.impact==="positive"?"#22c55e":"#ef4444"):"#1e3a5f"}})))
       ]));
     });
     if(r.worstCondition) content.appendChild(div({style:{background:"#ef444411",border:"1px solid #ef444433",borderRadius:"8px",padding:"10px 12px",marginBottom:"6px",marginTop:"10px"}},[div({style:{fontSize:"11px",color:"#f87171",marginBottom:"2px"}},"😞 体調が悪くなる条件"),div({style:{fontSize:"12px",color:"#cbd5e1"}},r.worstCondition)]));
     if(r.bestCondition)  content.appendChild(div({style:{background:"#22c55e11",border:"1px solid #22c55e33",borderRadius:"8px",padding:"10px 12px",marginBottom:"12px"}},[div({style:{fontSize:"11px",color:"#4ade80",marginBottom:"2px"}},"😊 体調が良くなる条件"),div({style:{fontSize:"12px",color:"#cbd5e1"}},r.bestCondition)]));
-    (r.advice||[]).forEach(a=>content.appendChild(div({style:{fontSize:"12px",color:"#cbd5e1",lineHeight:1.6,marginBottom:"5px",paddingLeft:"10px",borderLeft:"2px solid #0ea5e9"}},a)));
+    if((r.advice||[]).length) content.appendChild(div({style:{fontSize:"11px",fontWeight:700,color:"#a5b4fc",margin:"12px 0 6px"}},"💡 アドバイス"));
+    (r.advice||[]).forEach(a=>{
+      const txt=(typeof a==='string')?a:(a&&a.text)||""; const tag=(a&&typeof a==='object')?a.tag:"";
+      const c=AI_TAG_COLORS[tag]||"#0ea5e9";
+      content.appendChild(div({style:{marginBottom:"6px",paddingLeft:"10px",borderLeft:`2px solid ${c}`}},[
+        tag?div({style:{marginBottom:"2px"}},[aiTagChip(tag)]):null,
+        div({style:{fontSize:"12px",color:"#cbd5e1",lineHeight:1.6}},txt)
+      ]));
+    });
     if(r.newPerspective) content.appendChild(div({style:{background:"#6366f118",border:"1px solid #6366f144",borderRadius:"8px",padding:"10px 12px",marginTop:"12px",marginBottom:"4px"}},[
       div({style:{fontSize:"11px",color:"#a5b4fc",marginBottom:"3px",fontWeight:700}},"💡 別の視点"),
       div({style:{fontSize:"12px",color:"#cbd5e1",lineHeight:1.6}},r.newPerspective)
@@ -11145,8 +11159,9 @@ async function runAI(scored,dailies){
       method:"POST",
       headers:aiHeaders(),
       body:JSON.stringify({
-        system:`あなたは健康データアナリストです。ユーザーはシフト勤務者（1直/2直/休み）です。体調・睡眠・飲酒・飲水・食事に加え、仕事シフトやその日の実際の行動（スケジュール）、今後の予定も踏まえて総合的に分析してください。以下のJSON形式のみで返答してください。前後に説明文やMarkdownの装飾は不要です:
-{"summary":"全体傾向の要約2〜3文","topFactors":[{"factor":"要因名","impact":"positive または negative","detail":"具体的な説明","score":1から5の整数}],"worstCondition":"体調が悪くなる条件","bestCondition":"体調が良くなる条件","advice":["具体的で実行可能なアドバイスを、睡眠・栄養・運動・生活リズム・シフト勤務・メンタルなど毎回できるだけ異なる観点から3〜4個"],"newPerspective":"表面的な相関ではなく、データから読み取れる本人が気づきにくい別の観点・仮説を1〜2文で"}`,
+        system:`あなたは健康データアナリストです。ユーザーはシフト勤務者（1直/2直/休み）です。体調・睡眠・飲酒・飲水・食事に加え、仕事シフトやその日の実際の行動（スケジュール）、今後の予定も踏まえて総合的に分析してください。要因とアドバイスには必ずタグ（分類）を付けてください。tagは「睡眠」「運動」「飲酒」「食事」「メンタル」「生活リズム」「仕事」「その他」のいずれか1つ。以下のJSON形式のみで返答してください。前後に説明文やMarkdownの装飾は不要です:
+{"summary":"全体傾向の要約2〜3文","topFactors":[{"factor":"要因名","impact":"positive または negative","detail":"具体的な説明","score":1から5の整数,"tag":"分類タグ"}],"worstCondition":"体調が悪くなる条件","bestCondition":"体調が良くなる条件","advice":[{"tag":"分類タグ","text":"具体的で実行可能なアドバイス"}],"newPerspective":"表面的な相関ではなく、データから読み取れる本人が気づきにくい別の観点・仮説を1〜2文で"}
+adviceは3〜4個、できるだけ異なるタグでバランスよく。`,
         prompt:`${buildAnalysisContext()}\n\n分析してください。`
       })
     });
@@ -11185,6 +11200,71 @@ async function aiAnalysisChatSend(){
     state.aiAnalysisChat=[...state.aiAnalysisChat,{role:"ai",text:`（エラー: ${e.message}）`}];
   }
   state.aiAnalysisChatLoading=false; render();
+}
+// ── AIに質問（単体チャット）：アプリ内データを幅広く参照して事実ベースで答える ──
+// 1日ごとの記録（体調メモ・睡眠・飲酒・食事・実際の行動・予定）を過去約120日ぶん＋
+// トレーニング・目標をまとめ、「〇〇はいつ？」「〇〇の日の体調は？」などに対応する。
+function qaDateLine(ds){
+  const d=getDaily(ds);
+  const wd=["日","月","火","水","木","金","土"][parseDS(ds).getDay()];
+  const shift=d.workStart==null?'休':(d.workStart<12?'1直':'2直');
+  const _sh=getNightSleepHours(ds); const sh=_sh!=null?Math.round(_sh*10)/10:null;
+  const drinks=(d.drinks||[]).map(dr=>({...dr,drinkType:resolveDT(dr)}));
+  const g=drinks.reduce((a,b)=>a+pureAlcohol(b.ml,b.drinkType.pct),0);
+  const drinkNames=[...new Set(drinks.map(dr=>dr.drinkType.label))].join(',');
+  const logs=(state.logs||[]).filter(l=>l.dateStr===ds && l.score!=null);
+  const cond=logs.map(l=>`${l.hour}時${l.score}/10${(l.symptoms&&l.symptoms.length)?`[${l.symptoms.join('・')}]`:''}${l.note?`「${l.note}」`:''}`).join(' ');
+  let acts=""; try{ acts=getActualActivities(ds).map(a=>(a.title||"").replace(/^[✓]/,'')).filter(Boolean).join(','); }catch(_){}
+  const parts=[];
+  if(cond)parts.push(`体調:${cond}`);
+  if(sh!=null)parts.push(`睡眠${sh}h`);
+  if(d.water!=null)parts.push(`水${d.water}L`);
+  if(g>0)parts.push(`酒${g.toFixed(0)}g${drinkNames?`[${drinkNames}]`:''}`);
+  if((d.foods||[]).length)parts.push(`食事[${d.foods.join(',')}]`);
+  if(acts)parts.push(`行動[${acts}]`);
+  return parts.length?`${ds}(${wd}${shift}) ${parts.join(' ')}`:null;
+}
+function buildQAContext(){
+  const cutoff=addDays(todayStr(),-120);
+  const dateSet=new Set();
+  (state.dailies||[]).forEach(d=>{ if(d.dateStr&&d.dateStr>=cutoff)dateSet.add(d.dateStr); });
+  (state.logs||[]).forEach(l=>{ if(l.dateStr&&l.dateStr>=cutoff)dateSet.add(l.dateStr); });
+  Object.keys(state.todos||{}).forEach(ds=>{ if(ds>=cutoff)dateSet.add(ds); });
+  const dates=[...dateSet].sort();
+  const lines=dates.map(qaDateLine).filter(Boolean).join('\n');
+  const up=[]; for(let i=0;i<21;i++){ const dd=addDays(todayStr(),i); let pl=[]; try{pl=getPlannedExtras(dd).map(e=>e.title);}catch(_){}; if(pl.length)up.push(`${dd}: ${pl.join(',')}`); }
+  const bc=(state.bodyComps||[]).slice(-8).map(b=>`${b.date} 体重${b.weight??'?'}kg 体脂肪${b.bodyFat??'?'}%`).join('\n')||'なし';
+  let wk="なし",cd="なし";
+  try{ wk=allWorkouts().slice(0,20).map(w=>`${w.date} ${w.name} ${w.weight!=null?w.weight+'kg':''}${w.reps!=null?'×'+w.reps:''}${w.sets!=null?'×'+w.sets+'set':''}`).join('\n')||'なし'; }catch(_){}
+  try{ cd=allCardio().slice(0,15).map(w=>`${w.date} ${w.name} ${w.distance!=null?w.distance+'km':''}${w.minutes!=null?' '+Math.round(w.minutes)+'分':''}`).join('\n')||'なし'; }catch(_){}
+  const goals=[]; const walk=ns=>(ns||[]).forEach(n=>{ if(n.text)goals.push(`${n.text}${n.done?'(達成)':''}`); if(n.children)walk(n.children); }); walk(state.goalTree);
+  return `【1日ごとの記録（過去約120日・記録がある日のみ）】\n${lines||'記録なし'}\n\n【今後3週間の予定】\n${up.join('\n')||'なし'}\n\n【体組成（最近）】\n${bc}\n\n【ワークアウト（最近）】\n${wk}\n\n【有酸素（最近）】\n${cd}\n\n【目標】\n${goals.slice(0,30).join(' / ')||'なし'}\n\n※日付はYYYY-MM-DD形式。今日は${todayStr()}。`;
+}
+async function aiQAChatSend(){
+  const msg=(state.aiQAInput||"").trim();
+  if(!msg||state.aiQAChatLoading)return;
+  state.aiQAChat=[...(state.aiQAChat||[]),{role:"user",text:msg}];
+  state.aiQAInput=""; state.aiQAChatLoading=true; render();
+  try{
+    const prompt=`【あなたが参照できるユーザーのアプリ内データ】\n${buildQAContext()}\n\n【これまでの会話】\n${chatHistoryText(state.aiQAChat)}\n\n上記データに基づき、最新の質問に日本語で簡潔・具体的に答えてください。「いつ？」と聞かれたら該当する日付を挙げる。データに無い事は「記録にありません」と正直に答え、憶測で作らないこと。`;
+    const text=await callAIText("あなたはユーザーの健康管理アプリ専属アシスタントです。アプリ内の記録データ（体調・睡眠・飲酒・食事・行動・予定・トレーニング・目標）を検索し、事実に基づいて答えます。データに無い事は正直に『記録にありません』と答え、作り話をしません。JSONやMarkdown装飾は使いません。", prompt);
+    state.aiQAChat=[...state.aiQAChat,{role:"ai",text}];
+  }catch(e){ state.aiQAChat=[...state.aiQAChat,{role:"ai",text:`（エラー: ${e.message}）`}]; }
+  state.aiQAChatLoading=false; render();
+}
+function renderAIQA(){
+  const wrap=div({style:{maxWidth:"600px",margin:"0 auto",padding:"12px 16px 60px"}});
+  const card=div({className:"card"});
+  card.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0",marginBottom:"4px"}},"💬 AIに質問"));
+  card.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"8px",lineHeight:1.6}},"アプリの記録（体調・睡眠・飲酒・食事・行動・予定・トレーニング・目標）について自由に質問できます。例：「ジムに行ったのはいつ？」「頭痛を記録した日の睡眠は？」（無料・1日20回まで）"));
+  const chips=["最近の体調の傾向は？","よく眠れた日の共通点は？","飲酒が多い曜日は？","運動した日の体調は？"];
+  const chipRow=div({style:{display:"flex",flexWrap:"wrap",gap:"6px",marginBottom:"4px"}});
+  chips.forEach(q=>{ const b=btn({style:{fontSize:"11px",padding:"5px 10px",borderRadius:"13px",border:"1px solid #334155",background:"#0f172a",color:"#94a3b8",cursor:"pointer",fontFamily:"inherit"}},q); b.addEventListener('click',()=>{ if(state.aiQAChatLoading)return; state.aiQAInput=q; aiQAChatSend(); }); chipRow.appendChild(b); });
+  card.appendChild(chipRow);
+  card.appendChild(renderAIChat(state.aiQAChat, state.aiQAChatLoading, "aiQAInput", aiQAChatSend, "例: ○○をやったのはいつ？"));
+  if((state.aiQAChat||[]).length){ const clr=btn({style:{marginTop:"8px",fontSize:"11px",color:"#475569",background:"transparent",border:"none",cursor:"pointer"}},"🗑 会話をクリア"); clr.addEventListener('click',()=>{ state.aiQAChat=[]; render(); }); card.appendChild(clr); }
+  wrap.appendChild(card);
+  return wrap;
 }
 // AIチャットUI（分析・スケジュール共用）
 function renderAIChat(chat, loading, inputKey, onSend, placeholder){
