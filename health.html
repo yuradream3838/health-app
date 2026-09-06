@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.65"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.66"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -429,7 +429,15 @@ function getPatternShift(ds){
 // planShift は "s1"/"s2"/"off" または カスタム時刻オブジェクト {startH,startM,endH,endM}
 function getPlanShiftKey(ds){
   const d=getDaily(ds);
-  if(d.planShift&&typeof d.planShift==='object') return d.planShift.startH<12?"s1":"s2"; // カスタムは時間帯で近似
+  // カスタム時刻上書きでも、シフト種別(key)が保存されていればそれを優先（時刻変更で直が変わらない）
+  if(d.planShift&&typeof d.planShift==='object') return d.planShift.key || (d.planShift.startH<12?"s1":"s2");
+  if(d.planShift!=null) return d.planShift;
+  return getPatternShift(ds);
+}
+// カスタム時刻を無視した「本来のシフト種別」（保存済みkey→plain上書き→パターンの順）
+function basePlanShiftKey(ds){
+  const d=getDaily(ds);
+  if(d.planShift&&typeof d.planShift==='object') return d.planShift.key || getPatternShift(ds);
   if(d.planShift!=null) return d.planShift;
   return getPatternShift(ds);
 }
@@ -4519,7 +4527,7 @@ function renderPatternEditModal(vd){
         const patch={shiftLabel:lv||null,shiftNote:nv||null,shiftPlace:pv||null};
         const timeChanged=`${pe.startH}:${pe.startM}-${pe.endH}:${pe.endM}`!==pe.shiftTimeInit;
         const isCustom=(typeof dS.planShift==='object' && dS.planShift.startH!=null);
-        if(timeChanged||isCustom) patch.planShift={startH:pe.startH,startM:pe.startM,endH:pe.endH,endM:pe.endM};
+        if(timeChanged||isCustom) patch.planShift={key:basePlanShiftKey(vd),startH:pe.startH,startM:pe.startM,endH:pe.endH,endM:pe.endM};
         setDaily(vd,patch); state.modal=null; showToast("この日だけ保存しました"); render(); }},"✅ この日だけ保存"));
     if(dS.shiftLabel||dS.shiftNote||dS.shiftPlace||(typeof dS.planShift==='object'&&dS.planShift.startH!=null))
       m.appendChild(btn({style:{width:"100%",padding:"8px",marginBottom:"12px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#94a3b8",cursor:"pointer",fontSize:"12px"},
