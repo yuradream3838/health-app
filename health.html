@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.64"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.65"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -9862,13 +9862,18 @@ function renderInvestPanel(vd){
       const row=div({style:{display:"flex",gap:"6px",alignItems:"center",padding:"6px 0",borderBottom:"1px solid #1e293b"}});
       const tm=(()=>{try{const d=new Date(r.t);return hhmm(d.getHours(),d.getMinutes());}catch{return"";}})();
       if(state.investEdit&&state.investEdit.vd===vd&&state.investEdit.i===i){
-        const li=document.createElement('input');li.type='text';li.value=r.label||"";li.style.cssText="flex:1;min-width:0;padding:6px 8px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#e2e8f0;font-size:12px;font-family:inherit";
+        row.style.flexWrap="wrap";
+        const te=document.createElement('input');te.type='time';
+        te.value=(()=>{try{const d=new Date(r.t);return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;}catch{return"";}})();
+        te.style.cssText="width:98px;flex-shrink:0;padding:6px 8px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#e2e8f0;font-size:12px;font-family:inherit;color-scheme:dark";
+        te.addEventListener('input',e=>{ const v=e.target.value; if(v){ const p=v.split(':'); const dd=parseDS(vd); dd.setHours(Number(p[0])||0,Number(p[1])||0,0,0); r.t=dd.toISOString(); } });
+        const li=document.createElement('input');li.type='text';li.value=r.label||"";li.style.cssText="flex:1;min-width:80px;padding:6px 8px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#e2e8f0;font-size:12px;font-family:inherit";
         li.addEventListener('input',e=>{r.label=e.target.value;});
         const ai=document.createElement('input');ai.type='number';ai.min="0";ai.value=String(r.amount||0);ai.style.cssText="width:70px;flex-shrink:0;padding:6px 8px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#e2e8f0;font-size:12px;font-family:inherit";
         ai.addEventListener('input',e=>{r.amount=Math.max(0,parseInt(e.target.value)||0);});
         const ok=btn({style:{padding:"6px 10px",background:"#22c55e18",border:"1px solid #22c55e",borderRadius:"6px",color:"#22c55e",fontSize:"12px",cursor:"pointer",flexShrink:0}},"✓");
         ok.addEventListener('click',()=>{ setDaily(vd,{investments:investListOn(vd)}); state.investEdit=null; render(); });
-        row.appendChild(li);row.appendChild(ai);row.appendChild(ok);
+        row.appendChild(te);row.appendChild(li);row.appendChild(ai);row.appendChild(ok);
       } else {
         row.appendChild(span({style:{fontSize:"10px",color:"#64748b",flexShrink:0,width:"38px"}},tm));
         row.appendChild(div({style:{flex:1,minWidth:0}},[
