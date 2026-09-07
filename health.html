@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.67"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.68"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -1973,6 +1973,10 @@ function selfModeLauncher(){
   c.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"8px",lineHeight:1.5}},"今の状態に合わせて切り替えをサポート"));
   const grid=div({style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"7px"}});
   Object.keys(SELF_MODES).forEach(k=>{ const M=SELF_MODES[k]; const b=btn({style:{padding:"11px 8px",borderRadius:"10px",border:`1px solid ${M.accent}55`,background:M.accent+"14",color:M.accent,fontSize:"13px",fontWeight:700,cursor:"pointer",fontFamily:"inherit"}},`${M.icon} ${M.title.replace("モード","")}`); b.addEventListener('click',()=>enterSelfMode(k)); grid.appendChild(b); });
+  // 🌙 睡眠モードも同じランチャーから（専用の睡眠前モード画面へ）
+  const sb=btn({style:{gridColumn:"1 / -1",padding:"11px 8px",borderRadius:"10px",border:"1px solid #a855f755",background:"#a855f714",color:"#c4b5fd",fontSize:"13px",fontWeight:700,cursor:"pointer",fontFamily:"inherit"}},"🌙 睡眠");
+  sb.addEventListener('click',()=>{ state.sleepMode=true; render(); });
+  grid.appendChild(sb);
   c.appendChild(grid);
   return c;
 }
