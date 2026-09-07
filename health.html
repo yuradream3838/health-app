@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.69"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.70"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -1903,7 +1903,20 @@ function getSelfModeLog(){ if(!Array.isArray(state.selfModeLog))state.selfModeLo
 function saveSelfModeLog(){ try{localStorage.setItem(STORAGE_KEY+"_selfmodelog",JSON.stringify(getSelfModeLog().slice(-300)));}catch(_){} }
 function enterSelfMode(key){ state.selfMode=key; state.selfModeStart=Date.now(); state.selfMoodBefore=null; state.selfMoodCur=null; state.selfDelayUntil=null; state.selfNote=""; state.selfChecks={}; state.selfBreathing=false; state.selfEditChecks=null; render(); }
 function exitSelfMode(recordIt){
-  if(recordIt && state.selfMode){ getSelfModeLog().push({t:new Date(state.selfModeStart||Date.now()).toISOString(), mode:state.selfMode, durSec:Math.round((Date.now()-(state.selfModeStart||Date.now()))/1000), before:state.selfMoodBefore, after:state.selfMoodCur, note:(state.selfNote||"").trim()||null}); saveSelfModeLog(); }
+  if(recordIt && state.selfMode){
+    getSelfModeLog().push({t:new Date(state.selfModeStart||Date.now()).toISOString(), mode:state.selfMode, durSec:Math.round((Date.now()-(state.selfModeStart||Date.now()))/1000), before:state.selfMoodBefore, after:state.selfMoodCur, note:(state.selfNote||"").trim()||null}); saveSelfModeLog();
+    // afterの気分を日次の体調記録「心の調子（メンタル）」に反映（1〜5 → 1〜10）。AI分析・週次ふりかえりから使えるようにする
+    if(state.selfMoodCur!=null){
+      const ds=todayStr(), hour=new Date().getHours(), ex=getLog(ds,hour)||{};
+      const mapped=Math.max(1,Math.min(10,Math.round(state.selfMoodCur*2)));
+      const M=SELF_MODES[state.selfMode], tag=M?`🧭${M.title}`:"🧭セルフモード";
+      const add=(state.selfNote||"").trim();
+      const entry=add?`${tag}：${add}`:tag;
+      let note=ex.note||"";
+      if(!note) note=entry; else if(!note.includes(tag)) note=`${note} / ${entry}`;
+      setLog(ds,hour,{...ex,mental:mapped,note});
+    }
+  }
   state.selfMode=null; if(window._selfTick){clearInterval(window._selfTick);window._selfTick=null;}
 }
 function selfModeTick(){ if(!state.selfMode){ if(window._selfTick){clearInterval(window._selfTick);window._selfTick=null;} return; }
@@ -1940,9 +1953,10 @@ function renderSelfMode(){
   const back=btn({style:{padding:"6px 12px",borderRadius:"8px",border:"1px solid #ffffff22",background:"transparent",color:"#cdc3b2",fontSize:"11px",cursor:"pointer",fontFamily:"inherit"}},"閉じる");
   back.addEventListener('click',()=>{ exitSelfMode(false); render(); });
   top.appendChild(back); inner.appendChild(top);
-  // 気分（前後で記録して効果がわかる）
+  // 気分（前後で記録して効果がわかる）。最後に選んだ気分は「記録して終了」で体調記録（心の調子）に反映される
   inner.appendChild(div({style:{fontSize:"11px",color:"#a89e8c",textAlign:"center"}},"今の気分は？"));
   inner.appendChild(selfMoodRow());
+  if(state.selfMoodCur!=null) inner.appendChild(div({style:{fontSize:"10px",color:"#8a8172",textAlign:"center",marginTop:"-6px",marginBottom:"8px"}},"↑ 終了時にこの気分を体調記録（心の調子）へ保存"));
 
   const vd=todayStr();
   // ── モード別の中身 ──
