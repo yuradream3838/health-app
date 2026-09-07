@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.73"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.74"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -1404,7 +1404,6 @@ const WIDGET_SECTIONS=[
   {k:'alcgauge',  l:'🍺 純アルコール量', defOff:true},
   {k:'ruler',     l:'📏 動機のものさし', defOff:true},
   {k:'nightritual', l:'🌙 飲まない夜のルーティン', defOff:true},
-  {k:'selfmode',  l:'🧭 セルフモード'},
   {k:'sleep',     l:'🌙 就寝リズム'},
 ];
 const WIDGET_DEFAULT_OFF=new Set(WIDGET_SECTIONS.filter(s=>s.defOff).map(s=>s.k));
@@ -2236,19 +2235,6 @@ function renderSelfMode(){
 }
 function bigExitBtn(label,accent){ const b=btn({style:{width:"100%",padding:"15px",borderRadius:"13px",border:"none",color:"#1a1408",fontSize:"15px",fontWeight:800,cursor:"pointer",background:accent,marginTop:"4px"}},label); b.addEventListener('click',()=>{ exitSelfMode(true); showToast("記録しました","#a5b4fc"); render(); }); return b; }
 // セルフモードのランチャー（ウィジェット等から）
-function selfModeLauncher(){
-  const c=div({className:"card",style:{padding:"12px 14px",marginBottom:"10px"}});
-  c.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0",marginBottom:"3px"}},"🧭 セルフモード"));
-  c.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"8px",lineHeight:1.5}},"今の状態に合わせて切り替えをサポート"));
-  const grid=div({style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"7px"}});
-  Object.keys(SELF_MODES).forEach(k=>{ const M=SELF_MODES[k]; const b=btn({style:{padding:"11px 8px",borderRadius:"10px",border:`1px solid ${M.accent}55`,background:M.accent+"14",color:M.accent,fontSize:"13px",fontWeight:700,cursor:"pointer",fontFamily:"inherit"}},`${M.icon} ${M.title.replace("モード","")}`); b.addEventListener('click',()=>enterSelfMode(k)); grid.appendChild(b); });
-  // 🌙 睡眠モードも同じランチャーから（専用の睡眠前モード画面へ）
-  const sb=btn({style:{gridColumn:"1 / -1",padding:"11px 8px",borderRadius:"10px",border:"1px solid #a855f755",background:"#a855f714",color:"#c4b5fd",fontSize:"13px",fontWeight:700,cursor:"pointer",fontFamily:"inherit"}},"🌙 睡眠");
-  sb.addEventListener('click',()=>{ state.sleepMode=true; render(); });
-  grid.appendChild(sb);
-  c.appendChild(grid);
-  return c;
-}
 // ── ウィジェット（今日の予定＋ルーティンをまとめて素早く確認・チェック）──
 // URLハッシュ #widget で直接起動でき、ホーム画面ショートカットから開ける。
 function renderWidgetView(vd,ds){
@@ -2601,7 +2587,6 @@ function renderWidgetView(vd,ds){
   if(wSecOn('urge')){ const u=urgeTriggerCard(); if(u)secNodes.urge=u; } // 🔎 飲みに行きたくなる引き金
   if(wSecOn('alcgauge')){ const g=alcGaugeMiniCard(vd); if(g)secNodes.alcgauge=g; } // 🍺 純アルコール量
   if(wSecOn('ruler')) secNodes.ruler=motivationRulerCard(vd); // 📏 動機のものさし
-  if(vd===todayStr() && wSecOn('selfmode')) secNodes.selfmode=selfModeLauncher(); // 🧭 セルフモード
 
   // 就寝カウントダウン中（寝支度を押すまで）は就寝リズムを一番上に固定
   const pinSleep = vd===todayStr() && secNodes.sleep && getSleepGoal() && !windDownAt() && (()=>{ const cd=bedCountdownMin(); return cd!=null && cd<=cdLeadMin() && cd>-240; })();
