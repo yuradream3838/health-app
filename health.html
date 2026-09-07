@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.68"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.69"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -794,6 +794,8 @@ function loadStorage(){
     if(tdi){try{const a=JSON.parse(tdi); if(Array.isArray(a)&&a.length)state.todoItems=a;}catch{}}
     const smg=localStorage.getItem(STORAGE_KEY+"_selfmodelog");
     if(smg){try{const a=JSON.parse(smg); if(Array.isArray(a))state.selfModeLog=a;}catch{}}
+    const scc=localStorage.getItem(STORAGE_KEY+"_selfchecks");
+    if(scc){try{const o=JSON.parse(scc); if(o&&typeof o==="object")state.selfChecksCfg=o;}catch{}}
     const word=localStorage.getItem(STORAGE_KEY+"_widgetorder");
     if(word){try{const a=JSON.parse(word); if(Array.isArray(a))state.widgetSecOrder=a;}catch{}}
     const dcb=localStorage.getItem(STORAGE_KEY+"_decisbalance");
@@ -1694,12 +1696,13 @@ function backupBanner(){
 //   ① 減光＋暖色の静かな画面  ② 夜のルーティンに集中  ③「就寝した」で睡眠記録に直結
 // ════════════════════════════════════════════════════
 // 夜の寝支度チェックリスト対象：ナイトルーティン群＋夜(_pm/夜/寝)の項目
-function windDownChecklistItems(){
-  // 🌙ナイトルーティン群に割り当てた項目だけを、ルーティンと同じ並び順で表示
-  const ng=(state.routines||[]).find(r=>r.key==="night");
-  const gids=new Set((ng&&Array.isArray(ng.ids))?ng.ids:[]);
+// 指定グループ（例 "night" / "morning"）に割り当てたルーティン項目を、ルーティンと同じ並び順で返す
+function routineGroupItems(key){
+  const g=(state.routines||[]).find(r=>r.key===key);
+  const gids=new Set((g&&Array.isArray(g.ids))?g.ids:[]);
   return getOrderedTodoItems().filter(it=>gids.has(it.id));
 }
+function windDownChecklistItems(){ return routineGroupItems("night"); }
 // 汎用の「完了/未完了」トグル（チェック式・タイマー式の両対応。睡眠前モード用の簡易版）
 function toggleTodoQuick(vd,it){
   const t=(state.todos[vd]||{})[it.id]||{};
@@ -1844,9 +1847,61 @@ const SELF_MODES={
   hype:   {icon:"⚡",title:"たかぶりモード",sub:"少し落ち着こう",accent:"#e879f9",bg:"radial-gradient(130% 90% at 50% -10%,#3a1030 0%,#26142a 45%,#0e0912 100%)"},
   morning:{icon:"☀️",title:"朝モード",sub:"ゆっくり起きよう",accent:"#fbbf24",bg:"radial-gradient(130% 90% at 50% -10%,#3a3416 0%,#2a2a18 45%,#0f0f0a 100%)"},
 };
+// 各モードの「自分で編集できるチェック項目」。朝モードはモーニングルーティンを使うのでここには持たない。
+const SELF_CHECK_DEFAULTS={
+  drink:["水を1杯はさんだ","何か食べた","ゆっくり味わった","次の1杯を待てた"],
+  low: ["深呼吸した","水を飲んだ","5分だけ動いた","気持ちを書き出した","誰かに連絡した"],
+  hype:["本当に今すぐ必要？","お金は大丈夫？","明日の自分は後悔しない？","一晩おいてから決める"],
+};
+function getSelfChecksCfg(){
+  if(!state.selfChecksCfg||typeof state.selfChecksCfg!=="object") state.selfChecksCfg={};
+  for(const k of Object.keys(SELF_CHECK_DEFAULTS)){ if(!Array.isArray(state.selfChecksCfg[k])) state.selfChecksCfg[k]=[...SELF_CHECK_DEFAULTS[k]]; }
+  return state.selfChecksCfg;
+}
+function saveSelfChecksCfg(){ try{localStorage.setItem(STORAGE_KEY+"_selfchecks",JSON.stringify(getSelfChecksCfg()));}catch(_){} }
+// モードのチェックリスト（表示＋その場編集）。チェック状態は state.selfChecks に添字で保持（モード起動ごとにリセット）
+function selfChecklistCard(modeKey,accent){
+  const items=getSelfChecksCfg()[modeKey]||[];
+  const editing=state.selfEditChecks===modeKey;
+  const done=state.selfChecks||{};
+  const cnt=items.filter((_,i)=>done["c"+i]).length;
+  const cc=div({style:{background:"#ffffff0d",border:"1px solid #ffffff14",borderRadius:"11px",padding:"9px 12px",marginBottom:"9px"}});
+  const head=div({style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"5px"}});
+  head.appendChild(div({style:{fontSize:"11px",color:"#a89e8c"}},editing?"✏️ 項目を編集":`チェック項目 ${cnt}/${items.length}`));
+  const ed=btn({style:{fontSize:"11px",color:accent,background:"transparent",border:"none",cursor:"pointer",fontFamily:"inherit"}},editing?"完了":"✏️ 編集");
+  ed.addEventListener('click',()=>{ if(editing){saveSelfChecksCfg();state.selfEditChecks=null;} else {state.selfEditChecks=modeKey;} render(); });
+  head.appendChild(ed); cc.appendChild(head);
+  if(editing){
+    items.forEach((label,idx)=>{
+      const row=div({style:{display:"flex",gap:"6px",alignItems:"center",margin:"4px 0"}});
+      const inp=document.createElement('input'); inp.type="text"; inp.value=label; inp.style.cssText="flex:1;box-sizing:border-box;padding:7px 9px;background:#0000002e;border:1px solid #ffffff22;border-radius:8px;color:#f0e9dd;font-size:13px;font-family:inherit";
+      inp.addEventListener('input',(()=>{const i=idx,k=modeKey;return e=>{ getSelfChecksCfg()[k][i]=e.target.value; };})());
+      inp.addEventListener('blur',()=>saveSelfChecksCfg());
+      row.appendChild(inp);
+      const del=btn({style:{padding:"6px 9px",borderRadius:"8px",border:"1px solid #ffffff22",background:"transparent",color:"#e0a0a0",fontSize:"13px",cursor:"pointer"}},"✕");
+      del.addEventListener('click',(()=>{const i=idx,k=modeKey;return()=>{ getSelfChecksCfg()[k].splice(i,1); saveSelfChecksCfg(); render(); };})());
+      row.appendChild(del); cc.appendChild(row);
+    });
+    const bar=div({style:{display:"flex",gap:"7px",marginTop:"7px"}});
+    const add=btn({style:{flex:1,padding:"8px",borderRadius:"8px",border:`1px dashed ${accent}66`,background:"transparent",color:accent,fontSize:"12px",cursor:"pointer",fontFamily:"inherit"}},"＋ 項目を追加");
+    add.addEventListener('click',(()=>{const k=modeKey;return()=>{ getSelfChecksCfg()[k].push(""); saveSelfChecksCfg(); render(); };})());
+    bar.appendChild(add);
+    const rst=btn({style:{padding:"8px 10px",borderRadius:"8px",border:"1px solid #ffffff22",background:"transparent",color:"#a89e8c",fontSize:"12px",cursor:"pointer",fontFamily:"inherit"}},"初期化");
+    rst.addEventListener('click',(()=>{const k=modeKey;return()=>{ if(confirm("この項目を初期設定に戻しますか？")){ getSelfChecksCfg()[k]=[...SELF_CHECK_DEFAULTS[k]]; saveSelfChecksCfg(); render(); } };})());
+    bar.appendChild(rst); cc.appendChild(bar);
+  } else {
+    if(!items.length) cc.appendChild(div({style:{fontSize:"11px",color:"#a89e8c",lineHeight:1.5}},"項目がありません。「✏️ 編集」から追加できます。"));
+    items.forEach((label,idx)=>{ const on=!!done["c"+idx]; const row=div({style:{display:"flex",alignItems:"center",gap:"10px",padding:"7px 0",cursor:"pointer",borderBottom:"1px solid #ffffff10"}});
+      row.appendChild(div({style:{width:"23px",height:"23px",borderRadius:"6px",flexShrink:0,border:`2px solid ${on?accent:"#6b6455"}`,background:on?accent:"transparent",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"13px",color:"#1a1408"}},on?"✓":""));
+      row.appendChild(div({style:{fontSize:"13px",color:on?"#a89e8c":"#f0e9dd",textDecoration:on?"line-through":"none"}},label||"（空の項目）"));
+      row.addEventListener('click',(()=>{const i=idx;return()=>{ state.selfChecks=state.selfChecks||{}; state.selfChecks["c"+i]=!state.selfChecks["c"+i]; render(); };})());
+      cc.appendChild(row); });
+  }
+  return cc;
+}
 function getSelfModeLog(){ if(!Array.isArray(state.selfModeLog))state.selfModeLog=[]; return state.selfModeLog; }
 function saveSelfModeLog(){ try{localStorage.setItem(STORAGE_KEY+"_selfmodelog",JSON.stringify(getSelfModeLog().slice(-300)));}catch(_){} }
-function enterSelfMode(key){ state.selfMode=key; state.selfModeStart=Date.now(); state.selfMoodBefore=null; state.selfMoodCur=null; state.selfDelayUntil=null; state.selfNote=""; state.selfChecks={}; state.selfBreathing=false; render(); }
+function enterSelfMode(key){ state.selfMode=key; state.selfModeStart=Date.now(); state.selfMoodBefore=null; state.selfMoodCur=null; state.selfDelayUntil=null; state.selfNote=""; state.selfChecks={}; state.selfBreathing=false; state.selfEditChecks=null; render(); }
 function exitSelfMode(recordIt){
   if(recordIt && state.selfMode){ getSelfModeLog().push({t:new Date(state.selfModeStart||Date.now()).toISOString(), mode:state.selfMode, durSec:Math.round((Date.now()-(state.selfModeStart||Date.now()))/1000), before:state.selfMoodBefore, after:state.selfMoodCur, note:(state.selfNote||"").trim()||null}); saveSelfModeLog(); }
   state.selfMode=null; if(window._selfTick){clearInterval(window._selfTick);window._selfTick=null;}
@@ -1914,6 +1969,7 @@ function renderSelfMode(){
     // 減らしたい理由
     if(hasLifeVision()){ const v=getLifeVision(); const rc=div({style:{background:"#ffffff0d",border:"1px solid #ffffff14",borderRadius:"11px",padding:"10px 12px",marginBottom:"10px"}}); rc.appendChild(div({style:{fontSize:"10px",color:"#a89e8c",marginBottom:"4px"}},"💜 減らしたい理由")); (v.reasons.length?v.reasons:[v.vision]).filter(Boolean).slice(0,3).forEach(r=>rc.appendChild(div({style:{fontSize:"13px",color:"#f0e9dd",lineHeight:1.5}},`・${r}`))); inner.appendChild(rc); }
     else inner.appendChild(div({style:{fontSize:"12px",color:"#a89e8c",textAlign:"center",lineHeight:1.6,marginBottom:"10px"}},"ゆっくりいこう。水を挟むと翌朝がぐっと楽になる。"));
+    inner.appendChild(selfChecklistCard("drink",M.accent));
     inner.appendChild(bigExitBtn("🛑 今日はここまで（記録して終了）",M.accent));
   }
   else if(key==="low"){
@@ -1926,28 +1982,31 @@ function renderSelfMode(){
     { const ta=document.createElement('textarea'); ta.placeholder="今の気持ちを書き出す（任意）"; ta.value=state.selfNote||""; ta.rows=2; ta.style.cssText="width:100%;box-sizing:border-box;padding:9px 11px;background:#0000002e;border:1px solid #ffffff22;border-radius:10px;color:#f0e9dd;font-size:13px;font-family:inherit;resize:vertical;margin-bottom:7px"; ta.addEventListener('input',e=>{state.selfNote=e.target.value;}); inner.appendChild(ta); }
     if((state.selfDelayUntil&&state.selfDelayUntil>Date.now())) inner.appendChild(div({style:{textAlign:"center",marginBottom:"8px"}},[div({style:{fontSize:"10px",color:"#a89e8c"}},"のこり"),div({id:"selfmode-delay",style:{fontSize:"22px",fontWeight:800,color:M.accent}},fmtSecMS(Math.round((state.selfDelayUntil-Date.now())/1000)))]));
     inner.appendChild(div({style:{fontSize:"11px",color:"#a89e8c",textAlign:"center",lineHeight:1.6,margin:"4px 0 10px"}},"💡 お酒に逃げたくなったら、まず水か呼吸を。飲みたい衝動は波のように引いていきます。"));
+    inner.appendChild(selfChecklistCard("low",M.accent));
     inner.appendChild(bigExitBtn("✅ 気分を記録して終了",M.accent));
   }
   else if(key==="hype"){
     inner.appendChild(div({style:{fontSize:"13px",color:"#e6dccb",lineHeight:1.7,textAlign:"center",marginBottom:"12px",whiteSpace:"pre-line"}},"勢いは大事。でも大きな決断・散財・深酒は、\n少しだけ待ってから決めよう。"));
     if(state.selfBreathing) inner.appendChild(breathingGuide(M.accent));
     inner.appendChild(selfActionBtn(state.selfBreathing?"🫁 呼吸をやめる":"🫁 呼吸で落ち着く（4-7-8）",M.accent,()=>{state.selfBreathing=!state.selfBreathing;render();}));
-    // 衝動チェック
-    const checks=[["really","本当に今すぐ必要？"],["money","お金は大丈夫？"],["regret","明日の自分は後悔しない？"]];
-    const cc=div({style:{background:"#ffffff0d",border:"1px solid #ffffff14",borderRadius:"11px",padding:"8px 12px",marginBottom:"8px"}});
-    cc.appendChild(div({style:{fontSize:"10px",color:"#a89e8c",marginBottom:"4px"}},"⏳ 24時間ルール — その前に自問"));
-    checks.forEach(([id,q])=>{ const on=!!(state.selfChecks||{})[id]; const row=div({style:{display:"flex",alignItems:"center",gap:"9px",padding:"7px 0",cursor:"pointer"}}); row.appendChild(div({style:{width:"22px",height:"22px",borderRadius:"6px",flexShrink:0,border:`2px solid ${on?M.accent:"#6b6455"}`,background:on?M.accent:"transparent",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"13px",color:"#1a1408"}},on?"✓":"")); row.appendChild(div({style:{fontSize:"13px",color:on?"#a89e8c":"#f0e9dd"}},q)); row.addEventListener('click',(()=>{const i=id;return()=>{ state.selfChecks=state.selfChecks||{}; state.selfChecks[i]=!state.selfChecks[i]; render(); };})()); cc.appendChild(row); });
-    inner.appendChild(cc);
+    // 衝動チェック（24時間ルール・自分で編集可）
+    inner.appendChild(div({style:{fontSize:"10px",color:"#a89e8c",margin:"2px 2px 4px"}},"⏳ 24時間ルール — その前に自問"));
+    inner.appendChild(selfChecklistCard("hype",M.accent));
     inner.appendChild(selfActionBtn("🔀 if-thenプランを見る",M.accent,()=>{ exitSelfMode(true); state.tab="達成"; state.achieveSubTab="if-then"; state.widget=false; render(); }));
     inner.appendChild(bigExitBtn("✅ 記録して終了",M.accent));
   }
   else { // morning
     inner.appendChild(div({style:{fontSize:"13px",color:"#e6dccb",lineHeight:1.7,textAlign:"center",marginBottom:"12px",whiteSpace:"pre-line"}},"あせらず、一つずつ。\n体を起こすスイッチを入れよう。"));
-    const steps=[["curtain","🪟 カーテンを開ける／光を浴びる"],["water","💧 水を1杯飲む"],["stretch","🙆 軽く伸びをする"],["face","🚿 顔を洗う"]];
-    const done=state.selfChecks||{}; const cnt=steps.filter(s=>done[s[0]]).length;
+    // 🌅モーニングルーティンの項目をチェックリストに（設定→ルーティン設定で編集）
+    const mItems=routineGroupItems("morning");
+    const mDone=mItems.filter(it=>isTodoDone(vd,it)).length;
     const cc=div({style:{background:"#ffffff0d",border:"1px solid #ffffff14",borderRadius:"11px",padding:"8px 12px",marginBottom:"10px"}});
-    cc.appendChild(div({style:{fontSize:"11px",color:"#a89e8c",marginBottom:"4px"}},`起床チェック ${cnt}/${steps.length}`));
-    steps.forEach(([id,q])=>{ const on=!!done[id]; const row=div({style:{display:"flex",alignItems:"center",gap:"10px",padding:"8px 0",cursor:"pointer",borderBottom:"1px solid #ffffff10"}}); row.appendChild(div({style:{width:"24px",height:"24px",borderRadius:"6px",flexShrink:0,border:`2px solid ${on?M.accent:"#6b6455"}`,background:on?M.accent:"transparent",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"14px",color:"#1a1408"}},on?"✓":"")); row.appendChild(div({style:{fontSize:"14px",color:on?"#a89e8c":"#f0e9dd",textDecoration:on?"line-through":"none"}},q)); row.addEventListener('click',(()=>{const i=id;return()=>{ state.selfChecks=state.selfChecks||{}; state.selfChecks[i]=!state.selfChecks[i]; render(); };})()); cc.appendChild(row); });
+    cc.appendChild(div({style:{fontSize:"11px",color:"#a89e8c",marginBottom:"4px"}},mItems.length?`起床チェック（モーニングルーティン） ${mDone}/${mItems.length}`:"起床チェック"));
+    if(!mItems.length){
+      cc.appendChild(div({style:{fontSize:"11px",color:"#a89e8c",lineHeight:1.6}},"🌅モーニングルーティンの項目がありません。設定→ルーティン設定で、項目のグループを「🌅モーニングルーティン」にすると、ここに表示されます。"));
+    } else {
+      mItems.forEach(it=>{ const on=isTodoDone(vd,it); const row=div({style:{display:"flex",alignItems:"center",gap:"10px",padding:"8px 0",cursor:"pointer",borderBottom:"1px solid #ffffff10"}}); row.appendChild(div({style:{width:"24px",height:"24px",borderRadius:"6px",flexShrink:0,border:`2px solid ${on?M.accent:"#6b6455"}`,background:on?M.accent:"transparent",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"14px",color:"#1a1408"}},on?"✓":"")); row.appendChild(div({style:{fontSize:"14px",color:on?"#a89e8c":"#f0e9dd",textDecoration:on?"line-through":"none"}},it.label)); row.addEventListener('click',(()=>{const item=it;return()=>{ toggleTodoQuick(vd,item); render(); };})()); cc.appendChild(row); });
+    }
     inner.appendChild(cc);
     // 今日の予定・目標をひと目
     let goalN=0; try{ goalN=gtCollectDaily(vd).length; }catch(_){}
@@ -11506,6 +11565,7 @@ function exportData(){
     bodyComps:state.bodyComps,
     todoItems:state.todoItems,
     selfModeLog:state.selfModeLog,
+    selfChecksCfg:state.selfChecksCfg,
     decisBalance:state.decisBalance,
     miValues:state.miValues,
     changePlan:state.changePlan,
@@ -11587,6 +11647,7 @@ function importData(e){
       if(Array.isArray(p.bodyComps)){state.bodyComps=p.bodyComps;saveBodyComps();}
       if(Array.isArray(p.todoItems)&&p.todoItems.length){state.todoItems=p.todoItems;saveTodoItems();}
       if(Array.isArray(p.selfModeLog)){state.selfModeLog=p.selfModeLog;saveSelfModeLog();}
+      if(p.selfChecksCfg&&typeof p.selfChecksCfg==="object"){state.selfChecksCfg=p.selfChecksCfg;saveSelfChecksCfg();}
       if(p.decisBalance&&typeof p.decisBalance==="object"){state.decisBalance=p.decisBalance;saveDecisBalance();}
       if(p.miValues&&typeof p.miValues==="object"){state.miValues=p.miValues;saveMIValues();}
       if(p.changePlan&&typeof p.changePlan==="object"){state.changePlan=p.changePlan;saveChangePlan();}
