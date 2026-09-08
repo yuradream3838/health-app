@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.76"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.77"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -1903,9 +1903,39 @@ function openLifeMode(key){
   else { state.lifeScreen=key; render(); }
 }
 function modeTotalsForDay(ds){ const dayStart=parseDS(ds).getTime(), dayEnd=dayStart+86400000, now=Date.now(), tot={}; getModeLog().forEach(s=>{ const st=Math.max(s.start,dayStart), en=Math.min(s.end||now,dayEnd); if(en>st) tot[s.key]=(tot[s.key]||0)+(en-st); }); return tot; }
-// 自己投資モードの「インプット/アウトプット」時間記録（1つずつ計測。当日の累計秒を daily に保存）
-function investTotals(vd){ const d=getDaily(vd); let inp=d.investInput||0, out=d.investOutput||0, running=null; if(d.investRun&&d.investRun.start){ const add=Math.max(0,Math.round((Date.now()-d.investRun.start)/1000)); if(d.investRun.type==='output'){out+=add;running='output';} else {inp+=add;running='input';} } return {input:inp,output:out,running}; }
-function investToggle(vd,type){ const d=getDaily(vd), run=d.investRun; if(run&&run.start){ const add=Math.max(0,Math.round((Date.now()-run.start)/1000)); const key=run.type==='output'?'investOutput':'investInput'; const base=getDaily(vd); setDaily(vd,{[key]:(base[key]||0)+add,investRun:null}); if(run.type===type){ render(); return; } } setDaily(vd,{investRun:{type,start:Date.now()}}); render(); }
+// ルーティン項目の当日の計測秒（タイマー式：セッション/開始終了の合計。実行中は現在まで加算）
+function routineItemSec(vd,item){ const t=(state.todos[vd]||{})[item.id]||{}; let sec=0; const nowISO=new Date().toISOString(); const add=(a,b)=>{ if(a&&b)sec+=Math.max(0,(Date.parse(b)-Date.parse(a))/1000); }; if(item.multi){ (t.sessions||[]).forEach(s=>{ if(s.startTime) add(s.startTime,s.endTime||nowISO); }); } else if(t.startTime){ add(t.startTime,t.endTime||nowISO); } return Math.round(sec); }
+function routineGroupSec(vd,groupKey){ return routineGroupItems(groupKey).reduce((a,it)=> a + ((it.type==='timer')?routineItemSec(vd,it):0), 0); }
+// ルーティン項目1件の行（チェック式＝✓トグル／タイマー式＝▶開始・⏹停止＋経過表示）。既存のルーティン記録(setTodo)に連動
+function routineItemRow(vd,item,accent){
+  const t=(state.todos[vd]||{})[item.id]||{};
+  if(item.type!=='timer'){
+    const on=isTodoDone(vd,item);
+    const row=div({style:{display:'flex',alignItems:'center',gap:'10px',padding:'8px 0',cursor:'pointer',borderBottom:'1px solid #ffffff10'}});
+    row.appendChild(div({style:{width:'24px',height:'24px',borderRadius:'6px',flexShrink:0,border:`2px solid ${on?accent:'#475569'}`,background:on?accent:'transparent',display:'flex',alignItems:'center',justifyContent:'center',fontSize:'14px',color:'#0b1120'}},on?'✓':''));
+    row.appendChild(div({style:{flex:1,fontSize:'14px',color:on?'#94a3b8':'#e2e8f0',textDecoration:on?'line-through':'none'}},item.label));
+    row.addEventListener('click',()=>{ setTodo(vd,item.id,{...t,checked:!t.checked,time:!t.checked?new Date().toISOString():null}); });
+    return row;
+  }
+  const running = item.multi ? (t.sessions||[]).some(s=>s.startTime&&!s.endTime) : (t.startTime&&!t.endTime);
+  const doneMark = item.multi ? (t.sessions||[]).some(s=>s.startTime&&s.endTime) : (t.startTime&&t.endTime);
+  const sec=routineItemSec(vd,item);
+  const row=div({style:{display:'flex',alignItems:'center',gap:'10px',padding:'8px 0',borderBottom:'1px solid #ffffff10'}});
+  let b;
+  const mk=(label,col,onClick)=>{ const x=btn({style:{padding:'6px 12px',borderRadius:'8px',border:`1px solid ${col}`,background:col+'22',color:col,fontSize:'13px',fontWeight:700,cursor:'pointer',flexShrink:0,fontFamily:'inherit'}},label); x.addEventListener('click',onClick); return x; };
+  if(item.multi){
+    if(running) b=mk('⏹ 停止','#f97316',()=>{ const ss=[...(t.sessions||[])]; const i=ss.findIndex(s=>s.startTime&&!s.endTime); if(i>=0)ss[i]={...ss[i],endTime:new Date().toISOString()}; setTodo(vd,item.id,{...t,sessions:ss}); showToast(`✅ ${item.label}`); });
+    else b=mk('▶ 開始',accent,()=>{ const ss=[...(t.sessions||[])]; ss.push({uid:Date.now(),startTime:new Date().toISOString()}); setTodo(vd,item.id,{...t,sessions:ss}); });
+  } else {
+    if(!t.startTime) b=mk('▶ 開始',accent,()=>{ setTodo(vd,item.id,{...t,startTime:new Date().toISOString()}); });
+    else if(!t.endTime) b=mk('⏹ 停止','#f97316',()=>{ setTodo(vd,item.id,{...t,endTime:new Date().toISOString()}); showToast(`✅ ${item.label}`); });
+    else b=div({style:{width:'26px',height:'26px',borderRadius:'6px',flexShrink:0,border:`2px solid ${accent}`,background:accent,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'14px',color:'#0b1120'}},'✓');
+  }
+  row.appendChild(b);
+  row.appendChild(div({style:{flex:1,fontSize:'14px',color:doneMark&&!running?'#94a3b8':'#e2e8f0'}},item.label));
+  row.appendChild(div({style:{fontSize:'12px',fontWeight:700,color:running?'#f97316':'#94a3b8',flexShrink:0}}, (sec>0||running)?fmtDur(sec*1000):''));
+  return row;
+}
 // 現在モードバー（ウィジェット上部に常設）
 function currentModeBar(){
   const s=currentModeSession(), def=s?lifeModeDef(s.key):null;
@@ -1920,7 +1950,7 @@ function currentModeBar(){
   if(!window._lifeTick) window._lifeTick=setInterval(lifeTick,1000);
   return bar;
 }
-function lifeTick(){ const el=document.getElementById('lifescreen-elapsed'); const bs=document.getElementById('modebar-sub'); const ii=document.getElementById('invest-input-time'), io=document.getElementById('invest-output-time'); if(!el&&!bs&&!ii&&!io){ if(window._lifeTick){clearInterval(window._lifeTick);window._lifeTick=null;} return; } const s=currentModeSession(); if(s){ const t=fmtDur(Date.now()-s.start); if(el)el.textContent=t; if(bs)bs.textContent=`経過 ${t}・タップで切替`; } if(ii||io){ const it=investTotals(todayStr()); if(ii)ii.textContent=fmtDur(it.input*1000); if(io)io.textContent=fmtDur(it.output*1000); } }
+function lifeTick(){ const el=document.getElementById('lifescreen-elapsed'); const bs=document.getElementById('modebar-sub'); if(!el&&!bs){ if(window._lifeTick){clearInterval(window._lifeTick);window._lifeTick=null;} return; } const s=currentModeSession(); if(s){ const t=fmtDur(Date.now()-s.start); if(el)el.textContent=t; if(bs)bs.textContent=`経過 ${t}・タップで切替`; } }
 // フルスクリーン：モード切替画面（生活モード＋ケアモード＋編集）
 function renderModeSwitcher(){
   const wrap=div({style:{position:'fixed',inset:'0',zIndex:'9997',overflowY:'auto',background:'#0b1120',color:'#e2e8f0',WebkitTapHighlightColor:'transparent',padding:'calc(env(safe-area-inset-top,0px) + 22px) 16px calc(env(safe-area-inset-bottom,0px) + 40px)'}});
@@ -1978,13 +2008,11 @@ function lifeRoutineChecklist(groupKey,title,color,vd){
   const items=routineGroupItems(groupKey);
   const cc=div({style:{background:'#ffffff0d',border:'1px solid #ffffff14',borderRadius:'11px',padding:'10px 12px',marginBottom:'10px'}});
   const done=items.filter(it=>isTodoDone(vd,it)).length;
-  cc.appendChild(div({style:{fontSize:'12px',fontWeight:700,color:'#e2e8f0',marginBottom:'5px'}},`${title}${items.length?` ${done}/${items.length}`:''}`));
-  if(!items.length){ cc.appendChild(div({style:{fontSize:'11px',color:'#94a3b8',lineHeight:1.6}},'この区分のルーティン項目がありません。設定→ルーティン設定で項目のグループをこの区分にすると表示されます。')); }
-  else items.forEach(it=>{ const on=isTodoDone(vd,it); const row=div({style:{display:'flex',alignItems:'center',gap:'10px',padding:'8px 0',cursor:'pointer',borderBottom:'1px solid #ffffff10'}});
-    row.appendChild(div({style:{width:'24px',height:'24px',borderRadius:'6px',flexShrink:0,border:`2px solid ${on?color:'#475569'}`,background:on?color:'transparent',display:'flex',alignItems:'center',justifyContent:'center',fontSize:'14px',color:'#0b1120'}},on?'✓':''));
-    row.appendChild(div({style:{flex:1,fontSize:'14px',color:on?'#94a3b8':'#e2e8f0',textDecoration:on?'line-through':'none'}},it.label));
-    row.addEventListener('click',(()=>{const item=it;return()=>{ toggleTodoQuick(vd,item); render(); };})());
-    cc.appendChild(row); });
+  const hasTimer=items.some(it=>it.type==='timer');
+  const secTot=hasTimer?routineGroupSec(vd,groupKey):0;
+  cc.appendChild(div({style:{fontSize:'12px',fontWeight:700,color:'#e2e8f0',marginBottom:'5px'}},`${title}${items.length?` ${done}/${items.length}`:''}${secTot?` ・計 ${fmtDur(secTot*1000)}`:''}`));
+  if(!items.length){ cc.appendChild(div({style:{fontSize:'11px',color:'#94a3b8',lineHeight:1.6}},'この区分のルーティン項目がありません。設定→ルーティン設定で項目をこの区分に割り当てると表示されます（タイマー式にすると時間も記録できます）。')); }
+  else items.forEach(it=> cc.appendChild(routineItemRow(vd,it,color)));
   return cc;
 }
 function renderLifeScreen(){
@@ -2003,20 +2031,9 @@ function renderLifeScreen(){
   ]));
   const c=def.content;
   if(c==='invest'){
-    const t=investTotals(vd);
-    inner.appendChild(div({style:{fontSize:'11px',color:'#94a3b8',textAlign:'center',marginBottom:'8px'}},'インプット／アウトプットの時間を記録（タップで計測 開始/停止・切替）'));
-    [['input','📥 インプット','#38bdf8'],['output','📤 アウトプット','#f472b6']].forEach(([type,label,col])=>{
-      const running=t.running===type, sec=t[type];
-      const card=div({style:{background:'#ffffff0d',border:`1px solid ${running?col:'#ffffff14'}`,borderRadius:'12px',padding:'12px',marginBottom:'9px'}});
-      card.appendChild(div({style:{display:'flex',justifyContent:'space-between',alignItems:'center'}},[
-        div({style:{fontSize:'13px',fontWeight:700,color:running?col:'#e2e8f0'}},label),
-        div({id:`invest-${type}-time`,style:{fontSize:'20px',fontWeight:800,color:running?col:'#f1f5f9'}},fmtDur(sec*1000))
-      ]));
-      const b=btn({style:{width:'100%',marginTop:'9px',padding:'11px',borderRadius:'10px',border:'none',background:running?col:col+'22',color:running?'#0b1120':col,fontSize:'14px',fontWeight:800,cursor:'pointer',fontFamily:'inherit'}},running?'⏸ 計測を停止':'▶ 計測を開始');
-      b.addEventListener('click',(()=>{const ty=type;return()=>investToggle(vd,ty);})());
-      card.appendChild(b);
-      inner.appendChild(card);
-    });
+    inner.appendChild(div({style:{fontSize:'11px',color:'#94a3b8',textAlign:'center',marginBottom:'8px'}},'ルーティンの📥インプット／📤アウトプットと連動（タイマー式は時間を記録）'));
+    inner.appendChild(lifeRoutineChecklist('input','📥 インプット',def.color,vd));
+    inner.appendChild(lifeRoutineChecklist('output','📤 アウトプット',def.color,vd));
   } else if(c==='meal'){
     ['breakfast','lunch','dinner'].forEach(k=>{ const g=(state.routines||[]).find(r=>r.key===k); if(!g)return; if(!routineGroupItems(k).length)return; inner.appendChild(lifeRoutineChecklist(k,g.title,g.color||def.color,vd)); });
     const foodN=(getDaily(vd).foods||[]).length;
