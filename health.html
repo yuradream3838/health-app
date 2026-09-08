@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.79"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.80"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -1900,7 +1900,9 @@ function getModeLog(){ if(!Array.isArray(state.modeLog))state.modeLog=[]; return
 function saveModeLog(){ try{localStorage.setItem(STORAGE_KEY+'_modelog',JSON.stringify(getModeLog().slice(-3000)));}catch(_){} }
 function currentModeSession(){ const l=getModeLog(); for(let i=l.length-1;i>=0;i--){ if(!l[i].end) return l[i]; } return null; }
 function currentLifeModeKey(){ const s=currentModeSession(); return s?s.key:null; }
-function switchLifeMode(key){ const cur=currentModeSession(), now=Date.now(); if(cur){ if(cur.key===key)return; cur.end=now; } getModeLog().push({key,start:now}); saveModeLog(); }
+function switchLifeMode(key,auto){ const cur=currentModeSession(), now=Date.now(); if(cur){ if(cur.key===key)return; cur.end=now; } const s={key,start:now}; if(auto)s.auto=true; getModeLog().push(s); saveModeLog(); }
+// 帰宅ルーティン（gohomeグループ）が全て完了しているか。項目が無ければ完了扱い
+function gohomeComplete(vd){ const items=routineGroupItems('gohome'); if(!items.length) return true; return items.every(it=>isTodoDone(vd,it)); }
 function endLifeMode(){ const cur=currentModeSession(); if(cur){ cur.end=Date.now(); saveModeLog(); } }
 // 生活モードを開始して、その画面を開く（朝/飲み=リッチなセルフ画面、睡眠前=睡眠前モード、他=汎用画面）
 function openLifeMode(key){
@@ -1924,15 +1926,19 @@ function autoModeTick(now){
   if(state.autoModeOn===false) return false;
   if(state.sleepMode||state.selfMode) return false; // ケア/睡眠の全画面中は触らない
   const cur=autoModeKey(now||Date.now());
-  if(cur===state.autoLastKey) return false; // 境界をまたいでいない
   const first=(state.autoLastKey===undefined);
-  state.autoLastKey=cur; saveAutoState();
-  if(first){ // 初回は手動選択を潰さない。勤務中で未設定のときだけ仕事へ
-    if(cur==='work' && !currentLifeModeKey()){ switchLifeMode('work'); return true; }
+  const boundary=(cur!==state.autoLastKey);
+  if(boundary){ state.autoLastKey=cur; saveAutoState(); }
+  if(cur==='work'){ // 勤務時間帯：仕事へ（初回は手動選択を潰さない）
+    if(boundary){ if(first){ if(!currentLifeModeKey()){ switchLifeMode('work',true); return true; } } else if(currentLifeModeKey()!=='work'){ switchLifeMode('work',true); return true; } }
     return false;
   }
-  if(cur==='work'){ if(currentLifeModeKey()!=='work'){ switchLifeMode('work'); return true; } }
-  else { if(currentLifeModeKey()==='work'){ switchLifeMode('rest'); return true; } } // 勤務終了→休息（手動で別モードなら尊重）
+  // 勤務外：自動で入った仕事は「帰宅ルーティンが終わるまで」維持し、完了したら休息へ
+  const cs=currentModeSession();
+  if(cs && cs.key==='work' && cs.auto){
+    if(gohomeComplete(todayStr())){ switchLifeMode('rest',true); if(state.lifeScreen==='work')state.lifeScreen=null; showToast('🏠 帰宅ルーティン完了 → 休息モード','#4ade80'); return true; }
+    return false; // 帰宅ルーティンが残っている間は仕事モードのまま
+  }
   return false;
 }
 function modeTotalsForDay(ds){ const dayStart=parseDS(ds).getTime(), dayEnd=dayStart+86400000, now=Date.now(), tot={}; getModeLog().forEach(s=>{ const st=Math.max(s.start,dayStart), en=Math.min(s.end||now,dayEnd); if(en>st) tot[s.key]=(tot[s.key]||0)+(en-st); }); return tot; }
