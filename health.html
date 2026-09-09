@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.83"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.84"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -2402,11 +2402,14 @@ function renderSelfMode(){
     const drinkList=(getDaily(vd).drinks||[]).map(dr=>({...dr,drinkType:resolveDT(dr)}));
     if(drinkList.length){
       const list=div({style:{marginTop:"8px",display:"flex",flexDirection:"column",gap:"4px"}});
-      drinkList.forEach(dr=>{ const pct=dr.drinkType.pct, gG=Math.round(pureAlcohol(dr.ml,pct));
-        const row=div({style:{display:"flex",alignItems:"center",gap:"8px",padding:"6px 8px",borderRadius:"8px",background:"#ffffff08"}});
+      drinkList.forEach(dr=>{ const pct=dr.drinkType.pct, gG=Math.round(pureAlcohol(dr.ml,pct)); const hasEnd=dr.endHour!=null;
+        const row=div({style:{display:"flex",alignItems:"center",gap:"7px",padding:"6px 8px",borderRadius:"8px",background:"#ffffff08"}});
         row.appendChild(div({style:{fontSize:"15px"}},dr.drinkType.emoji||"🍺"));
-        row.appendChild(div({style:{flex:1,fontSize:"12px",color:"#f0e9dd"}},[div({},`${dr.drinkType.label} ${dr.ml}ml・${pct}%`),div({style:{fontSize:"9px",color:"#a89e8c"}},`${hhmm(dr.hour,dr.min||0)}・純ｱﾙｺｰﾙ${gG}g`)]));
-        const ce=btn({style:{padding:"5px 8px",borderRadius:"7px",border:"1px solid #ffffff22",background:"transparent",color:"#e0a0a0",fontSize:"11px",cursor:"pointer",fontFamily:"inherit"}},"削除");
+        row.appendChild(div({style:{flex:1,minWidth:0,fontSize:"12px",color:"#f0e9dd"}},[div({},`${dr.drinkType.label} ${dr.ml}ml・${pct}%`),div({style:{fontSize:"9px",color:"#a89e8c"}},`${hhmm(dr.hour,dr.min||0)}${hasEnd?`〜${hhmm(dr.endHour,dr.endMin||0)}`:""}・純ｱﾙｺｰﾙ${gG}g`)]));
+        const eb=btn({style:{padding:"5px 8px",borderRadius:"7px",border:`1px solid ${hasEnd?"#86efac55":"#ffffff22"}`,background:hasEnd?"#22c55e18":"transparent",color:hasEnd?"#86efac":"#cdc3b2",fontSize:"11px",cursor:"pointer",fontFamily:"inherit",flexShrink:0},title:hasEnd?"飲み終わりを取消":"飲み終わりの時刻を記録"},hasEnd?"✓終":"🍵終");
+        eb.addEventListener('click',(()=>{const uid=dr.uid,he=hasEnd;return()=>{ he?clearEnd(vd,uid):recordEnd(vd,uid); };})());
+        row.appendChild(eb);
+        const ce=btn({style:{padding:"5px 8px",borderRadius:"7px",border:"1px solid #ffffff22",background:"transparent",color:"#e0a0a0",fontSize:"11px",cursor:"pointer",fontFamily:"inherit",flexShrink:0}},"削除");
         ce.addEventListener('click',(()=>{const uid=dr.uid;return()=>{ const d=getDaily(vd); setDaily(vd,{drinks:(d.drinks||[]).filter(x=>x.uid!==uid)}); showToast("削除しました","#a5b4fc"); render(); };})());
         row.appendChild(ce); list.appendChild(row);
       });
@@ -2429,7 +2432,10 @@ function renderSelfMode(){
     if(hasLifeVision()){ const v=getLifeVision(); const rc=div({style:{background:"#ffffff0d",border:"1px solid #ffffff14",borderRadius:"11px",padding:"10px 12px",marginBottom:"10px"}}); rc.appendChild(div({style:{fontSize:"10px",color:"#a89e8c",marginBottom:"4px"}},"💜 減らしたい理由")); (v.reasons.length?v.reasons:[v.vision]).filter(Boolean).slice(0,3).forEach(r=>rc.appendChild(div({style:{fontSize:"13px",color:"#f0e9dd",lineHeight:1.5}},`・${r}`))); inner.appendChild(rc); }
     else inner.appendChild(div({style:{fontSize:"12px",color:"#a89e8c",textAlign:"center",lineHeight:1.6,marginBottom:"10px"}},"ゆっくりいこう。水を挟むと翌朝がぐっと楽になる。"));
     inner.appendChild(selfChecklistCard("drink",M.accent));
-    inner.appendChild(bigExitBtn("🛑 今日はここまで（記録して終了）",M.accent));
+    // 「今日はここまで」＝最後の1杯の飲み終わり時刻（未記録なら）を今の時刻で記録してから終了
+    const exitB=btn({style:{width:"100%",padding:"15px",borderRadius:"13px",border:"none",color:"#1a1408",fontSize:"15px",fontWeight:800,cursor:"pointer",background:M.accent,marginTop:"4px"}},"🛑 今日はここまで（飲み終わりを記録して終了）");
+    exitB.addEventListener('click',()=>{ const d=getDaily(vd), drs=d.drinks||[]; if(drs.length){ let li=-1,lm=-1; drs.forEach((x,i)=>{ const mm=(x.hour||0)*60+(x.min||0); if(mm>=lm){lm=mm;li=i;} }); if(li>=0 && drs[li].endHour==null){ const n=new Date(); setDaily(vd,{drinks:drs.map((x,i)=>i===li?{...x,endHour:n.getHours(),endMin:n.getMinutes()}:x)}); } } exitSelfMode(true); showToast("飲み終わりを記録しました 🍵","#a5b4fc"); render(); });
+    inner.appendChild(exitB);
   }
   else if(key==="low"){
     inner.appendChild(div({style:{fontSize:"13px",color:"#e6dccb",lineHeight:1.7,textAlign:"center",marginBottom:"12px",whiteSpace:"pre-line"}},"つらい時は、無理しなくて大丈夫。\nまず一つだけ試してみよう。"));
