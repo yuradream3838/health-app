@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.84"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.85"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -9678,14 +9678,9 @@ function renderTodo(vd, ds, isToday){
           const newChecked=!t.checked;
           setTodo(vd,item.id,{checked:newChecked,time:new Date().toISOString()});
           if(newChecked){
-            // 全完了チェック
-            const newDone=getTodoItems().filter(it=>{
-              if(it.id===item.id)return true;
-              return isTodoDone(vd,it);
-            }).length;
-            const targets=getTodoItems().filter(it=>!(( state.todos[vd]||{})[it.id]||{}).excluded);
-            if(newDone>=targets.length){
-              setTimeout(()=>{showToast("🎉 全TODO完了！おめでとう！","#22c55e");showConfetti();maybeCelebrateStreak();},100);
+            // 全完了チェック（除外項目は対象外。除外を「達成」と数えて誤発火しないよう overallDoneOnDay で判定）
+            if(overallDoneOnDay(vd)){
+              setTimeout(()=>{showToast("🎉 全ルーティン完了！おめでとう！","#22c55e");showConfetti();maybeCelebrateStreak();},100);
             } else {
               showToast(`✅ ${item.label} 達成！`);
             }
