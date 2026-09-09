@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.82"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.83"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -2085,7 +2085,7 @@ function routineItemRow(vd,item,accent,forceTimer){
   }
   row.appendChild(b);
   row.appendChild(div({style:{flex:1,fontSize:'14px',color:doneMark&&!running?'#94a3b8':'#e2e8f0'}},item.label));
-  row.appendChild(div({style:{fontSize:'12px',fontWeight:700,color:running?'#f97316':'#94a3b8',flexShrink:0}}, (sec>0||running)?fmtDur(sec*1000):''));
+  row.appendChild(div({'data-rtid':item.id,'data-rtmulti':(item.multi&&item.type==='timer')?'1':'',style:{fontSize:'12px',fontWeight:700,color:running?'#f97316':'#94a3b8',flexShrink:0}}, (sec>0||running)?fmtDur(sec*1000):''));
   return row;
 }
 // 現在モードバー（ウィジェット上部に常設）
@@ -2102,7 +2102,7 @@ function currentModeBar(){
   if(!window._lifeTick) window._lifeTick=setInterval(lifeTick,1000);
   return bar;
 }
-function lifeTick(){ const el=document.getElementById('lifescreen-elapsed'); const bs=document.getElementById('modebar-sub'); if(!el&&!bs){ if(window._lifeTick){clearInterval(window._lifeTick);window._lifeTick=null;} return; } const s=currentModeSession(); if(s){ const t=fmtDur(Date.now()-s.start); if(el)el.textContent=t; if(bs)bs.textContent=`経過 ${t}・タップで切替`; } }
+function lifeTick(){ const el=document.getElementById('lifescreen-elapsed'); const bs=document.getElementById('modebar-sub'); const rt=document.querySelectorAll('[data-rtid]'); if(!el&&!bs&&!rt.length){ if(window._lifeTick){clearInterval(window._lifeTick);window._lifeTick=null;} return; } const s=currentModeSession(); if(s){ const t=fmtDur(Date.now()-s.start); if(el)el.textContent=t; if(bs)bs.textContent=`経過 ${t}・タップで切替`; } if(rt.length){ const vd=todayStr(); rt.forEach(e=>{ const id=e.getAttribute('data-rtid'); const multi=e.getAttribute('data-rtmulti')==='1'; const sec=routineItemSec(vd,{id,multi,type:'timer'}); e.textContent=sec>0?fmtDur(sec*1000):''; }); } }
 // フルスクリーン：モード切替画面（生活モード＋ケアモード＋編集）
 function renderModeSwitcher(){
   const wrap=div({style:{position:'fixed',inset:'0',zIndex:'9997',overflowY:'auto',background:'#0b1120',color:'#e2e8f0',WebkitTapHighlightColor:'transparent',padding:'calc(env(safe-area-inset-top,0px) + 22px) 16px calc(env(safe-area-inset-bottom,0px) + 40px)'}});
