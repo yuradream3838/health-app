@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.87"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.88"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -4700,26 +4700,24 @@ function getActualActivities(vd){
   routines.forEach(g=>{
     scanDays.forEach(DD=>{
       const t=state.todos[DD]||{};
-      const mins=[];
-      const addMin=iso=>{ if(iso&&onVd(iso)) mins.push(mm(iso)); };
+      // 各項目を「区間（開始〜終了）」として集める。1件の計測が長くても内部では割らない。
+      const intervals=[]; // {s,e}
       (g.ids||[]).forEach(id=>{
         const d=t[id];
         if(!d||d.excluded)return;
-        if(d.checked&&d.time) addMin(d.time);
-        addMin(d.startTime);
-        addMin(d.endTime);
-        (d.sessions||[]).forEach(s=>{ addMin(s.startTime); addMin(s.endTime); });
+        (d.sessions||[]).forEach(s=>{ if(s.startTime&&onVd(s.startTime)) intervals.push({s:mm(s.startTime), e:s.endTime?mm(s.endTime):mm(s.startTime)}); });
+        if(d.startTime&&onVd(d.startTime)) intervals.push({s:mm(d.startTime), e:d.endTime?mm(d.endTime):mm(d.startTime)});
+        else if(d.checked&&d.time&&onVd(d.time)){ const m=mm(d.time); intervals.push({s:m,e:m}); }
       });
-      if(mins.length){
-        // 30分以上あいたら別のまとまりに分割（連続する完了時刻の間隔が30分未満なら1ブロック）
+      if(intervals.length){
+        // 区間どうしの「空き」が30分以上なら別ブロックに分割（1つの計測時間内の経過は含めない）
         const GAP=30;
-        const sorted=[...mins].sort((a,b)=>a-b);
-        let cluster=[sorted[0]];
-        const clusters=[cluster];
-        for(let i=1;i<sorted.length;i++){ if(sorted[i]-sorted[i-1]<GAP){ cluster.push(sorted[i]); } else { cluster=[sorted[i]]; clusters.push(cluster); } }
-        clusters.forEach(cl=>{
-          const s=Math.min(...cl), e=Math.max(...cl);
-          acts.push({title:routineOverrideTitle(DD,g.key,g.title), startMin:s, endMin:Math.max(e, s+16), color:g.color, routineKey:g.key, routineBase:g.title, ownDay:DD});
+        intervals.sort((a,b)=>a.s-b.s);
+        let cur={s:intervals[0].s, e:intervals[0].e};
+        const merged=[cur];
+        for(let i=1;i<intervals.length;i++){ const iv=intervals[i]; if(iv.s-cur.e<GAP){ cur.e=Math.max(cur.e,iv.e); } else { cur={s:iv.s,e:iv.e}; merged.push(cur); } }
+        merged.forEach(cl=>{
+          acts.push({title:routineOverrideTitle(DD,g.key,g.title), startMin:cl.s, endMin:Math.max(cl.e, cl.s+16), color:g.color, routineKey:g.key, routineBase:g.title, ownDay:DD});
         });
       }
     });
