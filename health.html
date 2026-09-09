@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.80"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.81"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -710,6 +710,7 @@ const state = {
   lifeModes:null, modeLog:null, // 🕒 ライフモード定義・タイムライン（常に1つの生活モードに属する）
   modeSwitcher:false, modeEditMode:false, lifeScreen:null, lifeBreathing:false, // ライフモードの切替画面・編集・各モード画面
   autoModeOn:true, autoLastKey:undefined, // ライフモードの自動切替（勤務シフト起点）
+  nudges:null, nudgesOff:false, wakeGoal:null, moodCheckH:18, moodCheckM:0, // セルフスイッチ・ナッジ
   nextDrink:null, nextDrinkEdit:false, // 次に飲みに行く予定（計画飲酒）
   investHistExpanded:false, // 未来投資履歴の全件展開
   lifeVision:null, nightRitual:null, connectGoal:null, // 根本解決の習慣機能
@@ -809,6 +810,12 @@ function loadStorage(){
     if(mlg){try{const a=JSON.parse(mlg); if(Array.isArray(a))state.modeLog=a;}catch{}}
     const amd=localStorage.getItem(STORAGE_KEY+"_automode");
     if(amd){try{const o=JSON.parse(amd); if(o&&typeof o==="object"){ state.autoModeOn=o.on!==false; if('lastKey' in o)state.autoLastKey=o.lastKey; }}catch{}}
+    const wgl=localStorage.getItem(STORAGE_KEY+"_wakegoal");
+    if(wgl){try{const o=JSON.parse(wgl); if(o&&typeof o==="object")state.wakeGoal=o;}catch{}}
+    const ncf=localStorage.getItem(STORAGE_KEY+"_nudgecfg");
+    if(ncf){try{const o=JSON.parse(ncf); if(o&&typeof o==="object"){ state.nudgesOff=!!o.off; if(o.moodH!=null)state.moodCheckH=o.moodH; if(o.moodM!=null)state.moodCheckM=o.moodM; }}catch{}}
+    const ndg=localStorage.getItem(STORAGE_KEY+"_nudges");
+    if(ndg){try{const o=JSON.parse(ndg); if(o&&typeof o==="object"&&o.ds)state.nudges=o;}catch{}}
     const word=localStorage.getItem(STORAGE_KEY+"_widgetorder");
     if(word){try{const a=JSON.parse(word); if(Array.isArray(a))state.widgetSecOrder=a;}catch{}}
     const dcb=localStorage.getItem(STORAGE_KEY+"_decisbalance");
@@ -1491,7 +1498,7 @@ function bedDrift(){ const arr=recentBedNights(7).slice().reverse(); if(arr.leng
 // 目標±許容内に寝た連続夜数（その夜の目標で判定）
 function bedStreak(){ if(!getSleepGoal())return 0; const tol=sleepTol(); let n=0; for(let i=1;i<400;i++){ const ds=addDays(todayStr(),-i); const b=getDaily(ds).bedTime; if(typeof b!=="number")break; const t=bedTargetNightMin(ds); if(t!=null&&Math.abs(bedFloatToNightMin(b)-t)<=tol)n++; else break; } return n; }
 // 今夜の就寝までの分（負=超過）。今日のシフトの目標で
-function bedCountdownMin(){ const t=bedTargetNightMin(sleepNightDay()); if(t==null)return null; const now=new Date(); const nowN=toNightMin(now.getHours()*60+now.getMinutes()); return t-nowN; }
+function bedCountdownMin(now){ const t=bedTargetNightMin(sleepNightDay()); if(t==null)return null; const d=now?new Date(now):new Date(); const nowN=toNightMin(d.getHours()*60+d.getMinutes()); return t-nowN; }
 function windDownAt(){ return getDaily(sleepNightDay()).windDownAt||null; }
 function goToSleepSettings(){ exitWidget&&exitWidget(); state.tab="設定"; state.sgDraft=null; render(); setTimeout(()=>{ try{ const el=document.getElementById('sleep-settings'); if(el)el.scrollIntoView({block:"start",behavior:"smooth"}); }catch(_){} },80); }
 // 就寝リズムの設定カード（設定画面に配置）。目標の入力フォーム
@@ -1941,6 +1948,86 @@ function autoModeTick(now){
   }
   return false;
 }
+// ══════════════════════════════════════════════════
+// 🔔 セルフスイッチ・ナッジ（今の状態に合わせて切り替えを提案）
+// ══════════════════════════════════════════════════
+const DEFAULT_WAKE_GOAL={ s1:{h:6,m:30}, s2:{h:8,m:0}, off:{h:8,m:0}, off2:{h:8,m:0} }; // 目標起床時刻（シフト別）
+function getWakeGoal(){ if(!state.wakeGoal||typeof state.wakeGoal!=='object')state.wakeGoal={}; for(const k of Object.keys(DEFAULT_WAKE_GOAL)){ if(!state.wakeGoal[k]||state.wakeGoal[k].h==null)state.wakeGoal[k]={...DEFAULT_WAKE_GOAL[k]}; } return state.wakeGoal; }
+function saveWakeGoal(){ try{localStorage.setItem(STORAGE_KEY+'_wakegoal',JSON.stringify(getWakeGoal()));}catch(_){} }
+function wakeGoalMinsFor(ds){ const k=getPlanShiftKey(ds); const g=getWakeGoal()[k]; return g&&g.h!=null?g.h*60+(g.m||0):null; }
+function moodCheckMin(){ return (state.moodCheckH!=null?state.moodCheckH:18)*60+(state.moodCheckM||0); }
+function saveNudgeCfg(){ try{localStorage.setItem(STORAGE_KEY+'_nudgecfg',JSON.stringify({off:!!state.nudgesOff,moodH:(state.moodCheckH!=null?state.moodCheckH:18),moodM:state.moodCheckM||0}));}catch(_){} }
+// 当日・トリガー別の snooze/dismiss/answered 状態
+function getNudgeState(){ const ds=todayStr(); if(!state.nudges||state.nudges.ds!==ds){ state.nudges={ds,rules:{}}; } return state.nudges; }
+function saveNudges(){ try{localStorage.setItem(STORAGE_KEY+'_nudges',JSON.stringify(getNudgeState()));}catch(_){} }
+function nudgeR(id){ const ns=getNudgeState(); if(!ns.rules[id])ns.rules[id]={snoozeUntil:0,dismissed:false,answered:false}; return ns.rules[id]; }
+function nudgeActive(id,now){ const r=nudgeR(id); return !r.dismissed && now>=(r.snoozeUntil||0); }
+function snoozeNudge(id,mins){ nudgeR(id).snoozeUntil=Date.now()+(mins||30)*60000; saveNudges(); }
+function dismissNudge(id){ nudgeR(id).dismissed=true; saveNudges(); }
+function lastDrinkMin(vd,now){ const drs=(getDaily(vd).drinks||[]); if(!drs.length)return null; let mx=-1; drs.forEach(d=>{ const m=(d.hour||0)*60+(d.min||0); if(m>mx)mx=m; }); const nd=new Date(now); return (nd.getHours()*60+nd.getMinutes())-mx; }
+function currentMealDue(vd,nowMin){
+  const bands=[['breakfast','朝食',6*60,9*60],['lunch','昼食',11*60,14*60],['dinner','夕食',18*60,21*60]];
+  for(const [k,label,s,e] of bands){ if(nowMin>=s&&nowMin<=e){ const items=routineGroupItems(k); const doneAll=items.length? items.every(it=>isTodoDone(vd,it)) : ((getDaily(vd).foods||[]).length>0); if(!doneAll) return {key:k,label}; } }
+  return null;
+}
+// 全ルールを評価して最優先の1件を返す（なければ null）
+function evalNudges(now){
+  if(state.nudgesOff) return null;
+  if(state.sleepMode||state.selfMode||state.modeSwitcher||state.lifeScreen) return null; // 全画面表示中は出さない
+  now=now||Date.now(); const nd=new Date(now); const nowMin=nd.getHours()*60+nd.getMinutes();
+  const vd=todayStr(); const curMode=currentLifeModeKey(); const cands=[];
+  // R3 飲み過ぎ（最後の1杯から90分以内）
+  if(nudgeActive('drink',now) && curMode!=='drink'){ const dm=lastDrinkMin(vd,now); if(dm!=null && dm>=0 && dm<=90){ const g=Math.round(pureAlcoholG(vd)), lim=alcLimitDay(), over=g>=lim; cands.push({pri:1,id:'drink',icon:'🍶',title:over?`今日 ${g}g（上限${lim}g）`:'まだ飲みが続いています',sub:over?'そろそろ切り上げませんか？':'飲みモードで水と間隔を',act:()=>openLifeMode('drink')}); } }
+  // R2 寝坊（目標起床時刻・シフト別）
+  if(nudgeActive('wake',now) && curMode!=='sleep' && curMode!=='sleepprep'){ const wg=wakeGoalMinsFor(vd); if(wg!=null && nowMin>=wg && nowMin<=wg+180 && getDaily(vd).wakeTime==null){ cands.push({pri:2,id:'wake',icon:'☀️',title:'起きる時間です',sub:'朝モードで一日を始めましょう',act:()=>openLifeMode('morning')}); } }
+  // R1 夜更かし（就寝リズムのリード時間と同じ）
+  if(nudgeActive('sleep',now) && curMode!=='sleep' && curMode!=='sleepprep'){ const cd=bedCountdownMin(now); if(cd!=null && cd<=cdLeadMin() && cd>-120 && getDaily(sleepNightDay()).bedTime==null){ cands.push({pri:3,id:'sleep',icon:'🌙',title:cd>0?'そろそろ寝る準備':'まだ起きています',sub:'睡眠前モードに切り替える？',act:()=>openLifeMode('sleepprep')}); } }
+  // R4 夕方の気分チェック（バナー内で気分入力）
+  if(nudgeActive('mood',now) && !nudgeR('mood').answered && nowMin>=moodCheckMin()){ cands.push({pri:4,id:'mood',icon:'🫧',title:'今日の気分は？',sub:'タップで記録（落ち込み/たかぶりの入口）',mood:true}); }
+  // R5 食事
+  if(nudgeActive('meal',now) && curMode!=='meal'){ const meal=currentMealDue(vd,nowMin); if(meal){ cands.push({pri:5,id:'meal',icon:'🍚',title:`${meal.label}の時間`,sub:'食事モードで記録しませんか？',act:()=>openLifeMode('meal')}); } }
+  // R6 停滞
+  if(nudgeActive('stall',now) && (curMode==='hobby'||curMode==='rest')){ const s=currentModeSession(); if(s && now-s.start>=3*3600000){ const def=lifeModeDef(curMode); cands.push({pri:6,id:'stall',icon:'🔀',title:`${def?def.label:''}モードが3時間`,sub:'切り替えますか？',act:()=>{ state.modeSwitcher=true; }}); } }
+  cands.sort((a,b)=>a.pri-b.pri);
+  return cands[0]||null;
+}
+function answerMood(v){
+  const ds=todayStr(), hour=new Date().getHours(), ex=getLog(ds,hour)||{};
+  setLog(ds,hour,{...ex,mental:Math.max(1,Math.min(10,v*2))});
+  nudgeR('mood').answered=true; saveNudges();
+  if(v<=2){ enterSelfMode('low'); }
+  else if(v>=5){ enterSelfMode('hype'); }
+  else { showToast('気分を記録しました 🫧','#38bdf8'); render(); }
+}
+function nudgeBanner(){
+  const n=evalNudges(Date.now()); if(!n) return null;
+  const c=div({className:'card',style:{padding:'11px 13px',marginBottom:'10px',border:'1px solid #38bdf855',background:'#0ea5e912'}});
+  c.appendChild(div({style:{display:'flex',alignItems:'center',gap:'10px'}},[
+    div({style:{fontSize:'22px'}},n.icon),
+    div({style:{flex:1,minWidth:0}},[div({style:{fontSize:'13px',fontWeight:700,color:'#e2e8f0'}},n.title),div({style:{fontSize:'11px',color:'#94a3b8'}},n.sub)])
+  ]));
+  if(n.mood){
+    const row=div({style:{display:'flex',gap:'6px',justifyContent:'space-between',marginTop:'9px'}});
+    [['😣',1],['😟',2],['😐',3],['🙂',4],['😄',5]].forEach(([f,v])=>{ const b=btn({style:{flex:1,fontSize:'22px',padding:'6px',borderRadius:'9px',border:'1px solid #334155',background:'transparent',cursor:'pointer'}},f); b.addEventListener('click',(()=>{const val=v;return()=>answerMood(val);})()); row.appendChild(b); });
+    c.appendChild(row);
+    const dm=btn({style:{marginTop:'6px',fontSize:'11px',color:'#64748b',background:'transparent',border:'none',cursor:'pointer',fontFamily:'inherit'}},'今日はしない');
+    dm.addEventListener('click',()=>{ dismissNudge('mood'); render(); });
+    c.appendChild(dm);
+  } else {
+    const row=div({style:{display:'flex',gap:'7px',marginTop:'9px'}});
+    const go=btn({style:{flex:1,padding:'9px',borderRadius:'9px',border:'none',background:'#0ea5e9',color:'#fff',fontSize:'13px',fontWeight:700,cursor:'pointer',fontFamily:'inherit'}},'切り替える');
+    go.addEventListener('click',()=>{ if(n.act)n.act(); render(); });
+    row.appendChild(go);
+    const later=btn({style:{padding:'9px 11px',borderRadius:'9px',border:'1px solid #334155',background:'transparent',color:'#94a3b8',fontSize:'12px',cursor:'pointer',fontFamily:'inherit'}},'あとで');
+    later.addEventListener('click',()=>{ snoozeNudge(n.id,30); render(); });
+    row.appendChild(later);
+    const no=btn({style:{padding:'9px 11px',borderRadius:'9px',border:'1px solid #334155',background:'transparent',color:'#94a3b8',fontSize:'12px',cursor:'pointer',fontFamily:'inherit'}},'今日はしない');
+    no.addEventListener('click',()=>{ dismissNudge(n.id); render(); });
+    row.appendChild(no);
+    c.appendChild(row);
+  }
+  return c;
+}
 function modeTotalsForDay(ds){ const dayStart=parseDS(ds).getTime(), dayEnd=dayStart+86400000, now=Date.now(), tot={}; getModeLog().forEach(s=>{ const st=Math.max(s.start,dayStart), en=Math.min(s.end||now,dayEnd); if(en>st) tot[s.key]=(tot[s.key]||0)+(en-st); }); return tot; }
 // ルーティン項目の当日の計測秒（タイマー式：セッション/開始終了の合計。実行中は現在まで加算）
 function routineItemSec(vd,item){ const t=(state.todos[vd]||{})[item.id]||{}; let sec=0; const nowISO=new Date().toISOString(); const add=(a,b)=>{ if(a&&b)sec+=Math.max(0,(Date.parse(b)-Date.parse(a))/1000); }; if(item.multi){ (t.sessions||[]).forEach(s=>{ if(s.startTime) add(s.startTime,s.endTime||nowISO); }); } else if(t.startTime){ add(t.startTime,t.endTime||nowISO); } return Math.round(sec); }
@@ -1999,9 +2086,10 @@ function renderModeSwitcher(){
   const top=div({style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'14px'}});
   top.appendChild(div({style:{fontSize:'16px',fontWeight:800}},'🕒 モードを選ぶ'));
   const cl=btn({style:{padding:'6px 12px',borderRadius:'8px',border:'1px solid #334155',background:'transparent',color:'#94a3b8',fontSize:'12px',cursor:'pointer',fontFamily:'inherit'}},'閉じる');
-  cl.addEventListener('click',()=>{ state.modeSwitcher=false; render(); });
+  cl.addEventListener('click',()=>{ state.modeSwitcher=false; state.modeEditMode=false; state.nudgeCfgOpen=false; render(); });
   top.appendChild(cl); inner.appendChild(top);
   if(state.modeEditMode){ inner.appendChild(renderModeEditor()); wrap.appendChild(inner); return wrap; }
+  if(state.nudgeCfgOpen){ inner.appendChild(renderNudgeConfig()); wrap.appendChild(inner); return wrap; }
   const curKey=currentLifeModeKey();
   inner.appendChild(div({style:{fontSize:'11px',color:'#64748b',marginBottom:'7px'}},'いまの生活モード（タップで切替・時間が記録されます）'));
   const grid=div({style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'9px',marginBottom:'18px'}});
@@ -2025,6 +2113,13 @@ function renderModeSwitcher(){
   const at=btn({style:{width:'100%',padding:'11px',borderRadius:'10px',border:`1px solid ${autoOn?'#22c55e':'#334155'}`,background:autoOn?'#22c55e18':'transparent',color:autoOn?'#4ade80':'#94a3b8',fontSize:'12px',fontWeight:600,cursor:'pointer',fontFamily:'inherit',marginBottom:'8px'}},`⚙️ 自動切替：${autoOn?'ON':'OFF'}（勤務シフトで仕事へ／終了で休息へ）`);
   at.addEventListener('click',()=>{ state.autoModeOn=!autoOn; saveAutoState(); render(); });
   inner.appendChild(at);
+  const nOn=!state.nudgesOff;
+  const nt=btn({style:{width:'100%',padding:'11px',borderRadius:'10px',border:`1px solid ${nOn?'#38bdf8':'#334155'}`,background:nOn?'#38bdf818':'transparent',color:nOn?'#7dd3fc':'#94a3b8',fontSize:'12px',fontWeight:600,cursor:'pointer',fontFamily:'inherit',marginBottom:'8px'}},`🔔 切り替え提案（ナッジ）：${nOn?'ON':'OFF'}`);
+  nt.addEventListener('click',()=>{ state.nudgesOff=!nOn; saveNudgeCfg(); render(); });
+  inner.appendChild(nt);
+  const nc=btn({style:{width:'100%',padding:'11px',borderRadius:'10px',border:'1px solid #334155',background:'transparent',color:'#94a3b8',fontSize:'12px',cursor:'pointer',fontFamily:'inherit',marginBottom:'8px'}},'🌅 目標起床時刻・気分チェックの設定');
+  nc.addEventListener('click',()=>{ state.nudgeCfgOpen=true; render(); });
+  inner.appendChild(nc);
   const eb=btn({style:{width:'100%',padding:'11px',borderRadius:'10px',border:'1px solid #334155',background:'transparent',color:'#94a3b8',fontSize:'12px',cursor:'pointer',fontFamily:'inherit'}},'🎨 モードの色を変更');
   eb.addEventListener('click',()=>{ state.modeEditMode=true; render(); });
   inner.appendChild(eb);
@@ -2045,6 +2140,28 @@ function renderModeEditor(){
   });
   const done=btn({style:{width:'100%',padding:'11px',borderRadius:'10px',border:'none',background:'#334155',color:'#e2e8f0',fontSize:'13px',fontWeight:700,cursor:'pointer',fontFamily:'inherit'}},'完了');
   done.addEventListener('click',()=>{ saveLifeModes(); state.modeEditMode=false; render(); });
+  box.appendChild(done);
+  return box;
+}
+function renderNudgeConfig(){
+  const box=div({});
+  box.appendChild(div({style:{fontSize:'13px',fontWeight:700,color:'#e2e8f0',marginBottom:'4px'}},'🌅 目標起床時刻（シフト別）'));
+  box.appendChild(div({style:{fontSize:'11px',color:'#64748b',marginBottom:'9px',lineHeight:1.6}},'この時刻を過ぎて起床未記録なら「起きる時間です」と提案します。'));
+  const wg=getWakeGoal();
+  [['s1','1直'],['s2','2直'],['off','休み1'],['off2','休み2']].forEach(([k,label])=>{
+    const row=div({style:{display:'flex',alignItems:'center',gap:'10px',marginBottom:'8px'}});
+    row.appendChild(div({style:{width:'60px',fontSize:'13px',color:'#cbd5e1'}},label));
+    row.appendChild(clockField(wg[k].h,wg[k].m,(()=>{const kk=k;return(H,M)=>{ getWakeGoal()[kk]={h:H,m:M}; saveWakeGoal(); };})()));
+    box.appendChild(row);
+  });
+  box.appendChild(div({style:{fontSize:'13px',fontWeight:700,color:'#e2e8f0',margin:'14px 0 4px'}},'🫧 気分チェックの時刻'));
+  box.appendChild(div({style:{fontSize:'11px',color:'#64748b',marginBottom:'9px',lineHeight:1.6}},'この時刻以降に1日1回「今日の気分は？」を表示（落ち込み/たかぶりの入口）。'));
+  const mrow=div({style:{display:'flex',alignItems:'center',gap:'10px',marginBottom:'8px'}});
+  mrow.appendChild(div({style:{width:'60px',fontSize:'13px',color:'#cbd5e1'}},'時刻'));
+  mrow.appendChild(clockField(state.moodCheckH!=null?state.moodCheckH:18,state.moodCheckM||0,(H,M)=>{ state.moodCheckH=H; state.moodCheckM=M; saveNudgeCfg(); }));
+  box.appendChild(mrow);
+  const done=btn({style:{width:'100%',marginTop:'12px',padding:'11px',borderRadius:'10px',border:'none',background:'#334155',color:'#e2e8f0',fontSize:'13px',fontWeight:700,cursor:'pointer',fontFamily:'inherit'}},'完了');
+  done.addEventListener('click',()=>{ saveWakeGoal(); saveNudgeCfg(); state.nudgeCfgOpen=false; render(); });
   box.appendChild(done);
   return box;
 }
@@ -2351,6 +2468,8 @@ function renderWidgetView(vd,ds){
   wrap.appendChild(head);
   // 🕒 現在モードバー（常に1つの生活モードに属する。タップで切替画面へ）
   if(vd===todayStr()) wrap.appendChild(currentModeBar());
+  // 🔔 セルフスイッチ・ナッジ（切り替えの提案）
+  if(vd===todayStr()){ const nb=nudgeBanner(); if(nb) wrap.appendChild(nb); }
   // 🌙 睡眠前モードの入口：寝支度中〜就寝記録まで表示。未帰還は一番上、アプリに戻った後は一番下。
   const _smActive = vd===todayStr() && !!windDownAt() && getDaily(sleepNightDay()).bedTime==null;
   const _smReturned = !!getDaily(sleepNightDay()).smReturned;
@@ -11858,6 +11977,7 @@ function exportData(){
     selfChecksCfg:state.selfChecksCfg,
     lifeModes:state.lifeModes,
     modeLog:state.modeLog,
+    wakeGoal:state.wakeGoal,
     decisBalance:state.decisBalance,
     miValues:state.miValues,
     changePlan:state.changePlan,
@@ -11942,6 +12062,7 @@ function importData(e){
       if(p.selfChecksCfg&&typeof p.selfChecksCfg==="object"){state.selfChecksCfg=p.selfChecksCfg;saveSelfChecksCfg();}
       if(Array.isArray(p.lifeModes)&&p.lifeModes.length){state.lifeModes=p.lifeModes;saveLifeModes();}
       if(Array.isArray(p.modeLog)){state.modeLog=p.modeLog;saveModeLog();}
+      if(p.wakeGoal&&typeof p.wakeGoal==="object"){state.wakeGoal=p.wakeGoal;saveWakeGoal();}
       if(p.decisBalance&&typeof p.decisBalance==="object"){state.decisBalance=p.decisBalance;saveDecisBalance();}
       if(p.miValues&&typeof p.miValues==="object"){state.miValues=p.miValues;saveMIValues();}
       if(p.changePlan&&typeof p.changePlan==="object"){state.changePlan=p.changePlan;saveChangePlan();}
