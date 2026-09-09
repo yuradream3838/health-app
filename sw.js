@@ -1,7 +1,8 @@
-// 体調管理アプリ Service Worker v2.0
+// 体調管理アプリ Service Worker v2.1
 // HTML(ドキュメント)は常に最新をネットワークから取得し、オフライン時のみキャッシュを使う。
 // これにより「古いバージョンが表示される」問題を防ぐ。
-const CACHE_NAME = "health-app-v2";
+// v2.1: 通知タップ(notificationclick)でアプリを前面化するハンドラを追加。
+const CACHE_NAME = "health-app-v2-1";
 const ASSETS = ["./health.html", "./manifest.json", "./icon.svg"];
 
 // インストール：主要ファイルをキャッシュ（オフライン用）
@@ -53,4 +54,18 @@ self.addEventListener("fetch", e => {
 // クライアントからの即時更新要求
 self.addEventListener("message", e => {
   if (e.data === "skipWaiting") self.skipWaiting();
+});
+
+// 通知タップ：既存のタブがあればフォーカス、なければアプリを開く（#widgetで起動）
+self.addEventListener("notificationclick", e => {
+  e.notification.close();
+  e.waitUntil((async () => {
+    const all = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    for (const c of all) {
+      if ("focus" in c) { try { await c.focus(); } catch (_) {} return; }
+    }
+    if (self.clients.openWindow) {
+      try { await self.clients.openWindow("./health.html#widget"); } catch (_) {}
+    }
+  })());
 });
