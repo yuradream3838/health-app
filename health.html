@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.85"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.86"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -711,6 +711,7 @@ const state = {
   modeSwitcher:false, modeEditMode:false, lifeScreen:null, lifeBreathing:false, // ライフモードの切替画面・編集・各モード画面
   autoModeOn:true, autoLastKey:undefined, // ライフモードの自動切替（勤務シフト起点）
   nudges:null, nudgesOff:false, notifyOn:false, wakeGoal:null, moodCheckH:18, moodCheckM:0, // セルフスイッチ・ナッジ
+  dayCutoffH:5, // 1日の区切り時刻（この時刻までは前日扱い＝深夜でも基準日を変えない）
   nextDrink:null, nextDrinkEdit:false, // 次に飲みに行く予定（計画飲酒）
   investHistExpanded:false, // 未来投資履歴の全件展開
   lifeVision:null, nightRitual:null, connectGoal:null, // 根本解決の習慣機能
@@ -813,7 +814,7 @@ function loadStorage(){
     const wgl=localStorage.getItem(STORAGE_KEY+"_wakegoal");
     if(wgl){try{const o=JSON.parse(wgl); if(o&&typeof o==="object")state.wakeGoal=o;}catch{}}
     const ncf=localStorage.getItem(STORAGE_KEY+"_nudgecfg");
-    if(ncf){try{const o=JSON.parse(ncf); if(o&&typeof o==="object"){ state.nudgesOff=!!o.off; state.notifyOn=!!o.notify; if(o.moodH!=null)state.moodCheckH=o.moodH; if(o.moodM!=null)state.moodCheckM=o.moodM; }}catch{}}
+    if(ncf){try{const o=JSON.parse(ncf); if(o&&typeof o==="object"){ state.nudgesOff=!!o.off; state.notifyOn=!!o.notify; if(o.moodH!=null)state.moodCheckH=o.moodH; if(o.moodM!=null)state.moodCheckM=o.moodM; if(o.cutoffH!=null)state.dayCutoffH=o.cutoffH; }}catch{}}
     const ndg=localStorage.getItem(STORAGE_KEY+"_nudges");
     if(ndg){try{const o=JSON.parse(ndg); if(o&&typeof o==="object"&&o.ds)state.nudges=o;}catch{}}
     const word=localStorage.getItem(STORAGE_KEY+"_widgetorder");
@@ -1179,7 +1180,7 @@ function render(){
   if(state.sleepMode){ content.appendChild(renderSleepMode()); return; }
   if(state.selfMode){ content.appendChild(renderSelfMode());
     // 飲みモードから「飲み物を追加」＝アルコールタブと同じモーダルをセルフモードの上に重ねる
-    if(state.modal==="addDrink"){ const mo=renderAddDrinkModal(todayStr()); mo.style.zIndex="10000"; content.appendChild(mo); }
+    if(state.modal==="addDrink"){ const mo=renderAddDrinkModal(activeDay()); mo.style.zIndex="10000"; content.appendChild(mo); }
     return; }
   if(state.modeSwitcher){ content.appendChild(renderModeSwitcher()); return; }
   if(state.lifeScreen){ content.appendChild(renderLifeScreen());
@@ -1907,6 +1908,9 @@ function getModeLog(){ if(!Array.isArray(state.modeLog))state.modeLog=[]; return
 function saveModeLog(){ try{localStorage.setItem(STORAGE_KEY+'_modelog',JSON.stringify(getModeLog().slice(-3000)));}catch(_){} }
 function currentModeSession(){ const l=getModeLog(); for(let i=l.length-1;i>=0;i--){ if(!l[i].end) return l[i]; } return null; }
 function currentLifeModeKey(){ const s=currentModeSession(); return s?s.key:null; }
+// 基準日（モードの記録先）。深夜は「区切り時刻」までは前日扱いにして、日付が変わっても基準日を変えない。
+function dayCutoffH(){ return state.dayCutoffH!=null?state.dayCutoffH:5; }
+function activeDay(now){ const d=now?new Date(now):new Date(); return d.getHours()<dayCutoffH() ? addDays(fmtDS(d),-1) : fmtDS(d); }
 function switchLifeMode(key,auto){ const cur=currentModeSession(), now=Date.now(); if(cur){ if(cur.key===key)return; cur.end=now; } const s={key,start:now}; if(auto)s.auto=true; getModeLog().push(s); saveModeLog(); }
 // 帰宅ルーティン（gohomeグループ）が全て完了しているか。項目が無ければ完了扱い
 function gohomeComplete(vd){ const items=routineGroupItems('gohome'); if(!items.length) return true; return items.every(it=>isTodoDone(vd,it)); }
@@ -1956,7 +1960,7 @@ function getWakeGoal(){ if(!state.wakeGoal||typeof state.wakeGoal!=='object')sta
 function saveWakeGoal(){ try{localStorage.setItem(STORAGE_KEY+'_wakegoal',JSON.stringify(getWakeGoal()));}catch(_){} }
 function wakeGoalMinsFor(ds){ const k=getPlanShiftKey(ds); const g=getWakeGoal()[k]; return g&&g.h!=null?g.h*60+(g.m||0):null; }
 function moodCheckMin(){ return (state.moodCheckH!=null?state.moodCheckH:18)*60+(state.moodCheckM||0); }
-function saveNudgeCfg(){ try{localStorage.setItem(STORAGE_KEY+'_nudgecfg',JSON.stringify({off:!!state.nudgesOff,notify:!!state.notifyOn,moodH:(state.moodCheckH!=null?state.moodCheckH:18),moodM:state.moodCheckM||0}));}catch(_){} }
+function saveNudgeCfg(){ try{localStorage.setItem(STORAGE_KEY+'_nudgecfg',JSON.stringify({off:!!state.nudgesOff,notify:!!state.notifyOn,moodH:(state.moodCheckH!=null?state.moodCheckH:18),moodM:state.moodCheckM||0,cutoffH:dayCutoffH()}));}catch(_){} }
 // 端末通知（ローカル通知）。サーバなしのためアプリ起動中/バックグラウンド中のみベストエフォート
 function canNotify(){ try{ return !!state.notifyOn && typeof Notification!=='undefined' && Notification.permission==='granted'; }catch(_){ return false; } }
 function requestNotify(){
@@ -2016,7 +2020,7 @@ function evalNudges(now){
   return cands[0]||null;
 }
 function answerMood(v){
-  const ds=todayStr(), hour=new Date().getHours(), ex=getLog(ds,hour)||{};
+  const ds=activeDay(), hour=new Date().getHours(), ex=getLog(ds,hour)||{};
   setLog(ds,hour,{...ex,mental:Math.max(1,Math.min(10,v*2))});
   nudgeR('mood').answered=true; saveNudges();
   if(v<=2){ enterSelfMode('low'); }
@@ -2184,6 +2188,12 @@ function renderNudgeConfig(){
   mrow.appendChild(div({style:{width:'60px',fontSize:'13px',color:'#cbd5e1'}},'時刻'));
   mrow.appendChild(clockField(state.moodCheckH!=null?state.moodCheckH:18,state.moodCheckM||0,(H,M)=>{ state.moodCheckH=H; state.moodCheckM=M; saveNudgeCfg(); }));
   box.appendChild(mrow);
+  box.appendChild(div({style:{fontSize:'13px',fontWeight:700,color:'#e2e8f0',margin:'14px 0 4px'}},'🌃 1日の区切り時刻'));
+  box.appendChild(div({style:{fontSize:'11px',color:'#64748b',marginBottom:'9px',lineHeight:1.6}},'この時刻までは前日扱い。深夜に飲酒・記録しても基準日が変わらず、その夜の分としてまとまります（既定5:00）。'));
+  const crow=div({style:{display:'flex',alignItems:'center',gap:'10px',marginBottom:'8px'}});
+  crow.appendChild(div({style:{width:'60px',fontSize:'13px',color:'#cbd5e1'}},'区切り'));
+  crow.appendChild(clockField(dayCutoffH(),0,(H)=>{ state.dayCutoffH=H; saveNudgeCfg(); }));
+  box.appendChild(crow);
   // 端末通知
   box.appendChild(div({style:{fontSize:'13px',fontWeight:700,color:'#e2e8f0',margin:'14px 0 4px'}},'📱 端末通知'));
   const permGranted=(typeof Notification!=='undefined' && Notification.permission==='granted');
@@ -2222,7 +2232,7 @@ function lifeRoutineChecklist(groupKey,title,color,vd,forceTimer){
 }
 function renderLifeScreen(){
   const key=state.lifeScreen, def=lifeModeDef(key)||{icon:'🕒',label:'モード',color:'#64748b',content:'time'};
-  const s=currentModeSession(), vd=todayStr();
+  const s=currentModeSession(), vd=activeDay();
   const wrap=div({style:{position:'fixed',inset:'0',zIndex:'9996',overflowY:'auto',background:`radial-gradient(120% 80% at 50% -10%, ${def.color}22 0%, #0b1120 55%, #070b14 100%)`,color:'#e2e8f0',WebkitTapHighlightColor:'transparent',padding:'calc(env(safe-area-inset-top,0px) + 24px) 18px calc(env(safe-area-inset-bottom,0px) + 36px)'}});
   const inner=div({style:{maxWidth:'440px',margin:'0 auto'}});
   const top=div({style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'14px'}});
@@ -2243,7 +2253,7 @@ function renderLifeScreen(){
     inner.appendChild(div({style:{fontSize:'11px',color:'#94a3b8',textAlign:'center',marginBottom:'8px'}},'朝食・昼食・夕食のルーティンを▶開始/⏹停止で時間記録（既存ルーティンに連携）'));
     ['breakfast','lunch','dinner'].forEach(k=>{ const g=(state.routines||[]).find(r=>r.key===k); if(!g)return; inner.appendChild(lifeRoutineChecklist(k,g.title,g.color||def.color,vd,true)); });
     const foodN=(getDaily(vd).foods||[]).length;
-    inner.appendChild(lifeActionBtn(`🍽 食べたものを記録${foodN?`（${foodN}品）`:''}`,def.color,()=>{ state.viewDate=todayStr(); state.foodSelected=[...(getDaily(todayStr()).foods||[])]; state.foodOpenCat=null; state.modal='food'; render(); }));
+    inner.appendChild(lifeActionBtn(`🍽 食べたものを記録${foodN?`（${foodN}品）`:''}`,def.color,()=>{ state.viewDate=activeDay(); state.foodSelected=[...(getDaily(activeDay()).foods||[])]; state.foodOpenCat=null; state.modal='food'; render(); }));
     inner.appendChild(lifeActionBtn('💧 水を1杯 飲んだ（+0.2L）',def.color,()=>{ const d=getDaily(vd); setDaily(vd,{water:Math.round(((d.water||0)+0.2)*10)/10}); showToast('💧 水 +0.2L'); render(); }));
   } else if(c==='rest'){
     if(state.lifeBreathing) inner.appendChild(breathingGuide(def.color));
@@ -2326,7 +2336,7 @@ function exitSelfMode(recordIt){
     getSelfModeLog().push({t:new Date(state.selfModeStart||Date.now()).toISOString(), mode:state.selfMode, durSec:Math.round((Date.now()-(state.selfModeStart||Date.now()))/1000), before:state.selfMoodBefore, after:state.selfMoodCur, note:(state.selfNote||"").trim()||null}); saveSelfModeLog();
     // afterの気分を日次の体調記録「心の調子（メンタル）」に反映（1〜5 → 1〜10）。AI分析・週次ふりかえりから使えるようにする
     if(state.selfMoodCur!=null){
-      const ds=todayStr(), hour=new Date().getHours(), ex=getLog(ds,hour)||{};
+      const ds=activeDay(), hour=new Date().getHours(), ex=getLog(ds,hour)||{};
       const mapped=Math.max(1,Math.min(10,Math.round(state.selfMoodCur*2)));
       const M=SELF_MODES[state.selfMode], tag=M?`🧭${M.title}`:"🧭セルフモード";
       const add=(state.selfNote||"").trim();
@@ -2379,7 +2389,7 @@ function renderSelfMode(){
   inner.appendChild(selfMoodRow());
   if(state.selfMoodCur!=null) inner.appendChild(div({style:{fontSize:"10px",color:"#8a8172",textAlign:"center",marginTop:"-6px",marginBottom:"8px"}},"↑ 終了時にこの気分を体調記録（心の調子）へ保存"));
 
-  const vd=todayStr();
+  const vd=activeDay();
   // ── モード別の中身 ──
   if(key==="drink"){
     const dd=getDaily(vd); const g=Math.round(pureAlcoholG(vd)); const drinks=(dd.drinks||[]).length; const water=dd.water||0; const dl=alcLimitDay();
@@ -2396,7 +2406,7 @@ function renderSelfMode(){
     const recWrap=div({style:{background:"#ffffff0d",border:"1px solid #ffffff14",borderRadius:"11px",padding:"9px 10px",marginBottom:"10px"}});
     recWrap.appendChild(div({style:{fontSize:"11px",color:"#a89e8c",marginBottom:"6px"}},"🍺 飲んだものを記録"));
     const addBtn=btn({style:{width:"100%",padding:"11px",borderRadius:"10px",border:`1px solid ${M.accent}66`,background:M.accent+"1a",color:"#f0e9dd",fontSize:"14px",fontWeight:700,cursor:"pointer",fontFamily:"inherit"}},"＋ 飲み物を追加（種類・量・度数・時刻）");
-    addBtn.addEventListener('click',()=>{ const now=new Date(); state.modal="addDrink"; state.newDrink={typeId:"beer",ml:350,hour:now.getHours(),min:now.getMinutes(),pct:5,startNextDay:false}; render(); });
+    addBtn.addEventListener('click',()=>{ const now=new Date(); state.modal="addDrink"; state.newDrink={typeId:"beer",ml:350,hour:now.getHours(),min:now.getMinutes(),pct:5,startNextDay:(todayStr()!==activeDay())}; render(); });
     recWrap.appendChild(addBtn);
     // 記録済みの一覧（種類・度数・時刻）＋各行の削除
     const drinkList=(getDaily(vd).drinks||[]).map(dr=>({...dr,drinkType:resolveDT(dr)}));
