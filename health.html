@@ -222,7 +222,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.13"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.14"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -1346,9 +1346,39 @@ function updateHeaderDynamic(){
   // 設定ボタンのアクティブ表示
   const setBtn=document.getElementById('hdr-settings-btn');
   if(setBtn){const a=state.tab==='設定';setBtn.style.border='1px solid '+(a?'var(--mode)':'#334155');setBtn.style.background=a?'var(--mode-soft)':'transparent';setBtn.style.color=a?'var(--mode)':'#94a3b8';}
+  // 今のモード帯（ヘッダーは作り直さないので、ここで作り替えて最新のモードを反映する）
+  const oldStrip=document.getElementById('hdr-mode');
+  if(oldStrip && oldStrip.parentNode) oldStrip.parentNode.replaceChild(headerModeStrip(), oldStrip);
 }
 
 // ── ヘッダー ──────────────────────────────────────
+// ヘッダーの「今のモード」帯（日付の上に常時表示）。タップでそのモードの画面、🔀で切替画面。
+function headerModeStrip(){
+  try{ ensureActiveMode(); }catch(_){}
+  const s=currentModeSession(), def=s?lifeModeDef(s.key):null;
+  const col=def?def.color:'#64748b';
+  const row=document.createElement('div');
+  row.id='hdr-mode';
+  row.style.cssText=`display:flex;align-items:center;gap:8px;margin:0 0 2px;padding:5px 8px;border-radius:9px;background:var(--mode-soft);border:1px solid ${col}55`;
+  const left=document.createElement('button');
+  left.style.cssText="flex:1;min-width:0;display:flex;align-items:center;gap:8px;background:transparent;border:none;cursor:pointer;font-family:inherit;padding:0;text-align:left";
+  const ic=document.createElement('span'); ic.style.cssText="font-size:16px;flex-shrink:0"; ic.textContent=def?def.icon:'🕒';
+  const tx=document.createElement('div'); tx.style.cssText="min-width:0;display:flex;align-items:baseline;gap:7px;flex-wrap:wrap";
+  const nm=document.createElement('span'); nm.style.cssText=`font-size:12px;font-weight:700;color:${col};white-space:nowrap`; nm.textContent=def?`${def.label}モード`:'モード';
+  const sub=document.createElement('span'); sub.id='hdr-mode-sub'; sub.style.cssText="font-size:10px;color:var(--text-3);white-space:nowrap";
+  sub.textContent=s?`経過 ${fmtDur(Date.now()-s.start)}`:'タップで開く';
+  tx.appendChild(nm); tx.appendChild(sub);
+  left.appendChild(ic); left.appendChild(tx);
+  left.addEventListener('click',()=>{ if(s) openLifeMode(s.key); else { state.modeSwitcher=true; render(); } });
+  row.appendChild(left);
+  const sw=document.createElement('button');
+  sw.textContent='🔀';
+  sw.style.cssText=`flex-shrink:0;font-size:12px;padding:3px 9px;border-radius:8px;cursor:pointer;font-family:inherit;border:1px solid ${col}66;background:transparent;color:${col}`;
+  sw.addEventListener('click',e=>{ e.stopPropagation(); state.modeSwitcher=true; render(); });
+  row.appendChild(sw);
+  if(!window._lifeTick) window._lifeTick=setInterval(lifeTick,1000);
+  return row;
+}
 function renderHeader(){
   const ds=todayStr(), vd=state.viewDate, isToday=vd===ds;
   const showNav=true;
@@ -1450,6 +1480,7 @@ function renderHeader(){
   titleRow.appendChild(titleLeft); titleRow.appendChild(titleRight);
 
   inner.appendChild(titleRow);
+  inner.appendChild(headerModeStrip()); // 今のモード（日付の上に常時表示）
   inner.appendChild(nav);
   inner.appendChild(tabBar);
 
@@ -2276,25 +2307,7 @@ function routineItemRow(vd,item,accent,forceTimer){
   wrap.appendChild(list);
   return wrap;
 }
-// 現在モードバー（ウィジェット上部に常設）
-function currentModeBar(){
-  const s=currentModeSession(), def=s?lifeModeDef(s.key):null;
-  const bar=div({className:'card',style:{padding:'10px 12px',marginBottom:'10px',display:'flex',alignItems:'center',gap:'11px',borderLeft:`4px solid ${def?def.color:'#475569'}`}});
-  const left=div({style:{flex:1,minWidth:0,display:'flex',alignItems:'center',gap:'11px',cursor:'pointer'}});
-  left.appendChild(div({style:{fontSize:'22px'}}, def?def.icon:'🕒'));
-  const mid=div({style:{flex:1,minWidth:0}});
-  mid.appendChild(div({style:{fontSize:'13px',fontWeight:700,color:def?def.color:'#e2e8f0'}}, def?`${def.label}モード`:'モード'));
-  mid.appendChild(div({id:'modebar-sub',style:{fontSize:'10px',color:'#64748b'}}, s?`経過 ${fmtDur(Date.now()-s.start)}・タップで開く`:'タップで開く'));
-  left.appendChild(mid);
-  left.addEventListener('click',()=>{ if(s) openLifeMode(s.key); else { state.modeSwitcher=true; render(); } });
-  bar.appendChild(left);
-  const sw=btn({style:{fontSize:'12px',color:'#cbd5e1',whiteSpace:'nowrap',background:'transparent',border:'1px solid #ffffff22',borderRadius:'9px',padding:'7px 11px',cursor:'pointer',fontFamily:'inherit'}},'🔀 切替');
-  sw.addEventListener('click',(e)=>{ e.stopPropagation(); state.modeSwitcher=true; render(); });
-  bar.appendChild(sw);
-  if(!window._lifeTick) window._lifeTick=setInterval(lifeTick,1000);
-  return bar;
-}
-function lifeTick(){ const el=document.getElementById('lifescreen-elapsed'); const bs=document.getElementById('modebar-sub'); const rt=document.querySelectorAll('[data-rtid]'); if(!el&&!bs&&!rt.length){ if(window._lifeTick){clearInterval(window._lifeTick);window._lifeTick=null;} return; } const s=currentModeSession(); if(s){ const t=fmtDur(Date.now()-s.start); if(el)el.textContent=t; if(bs)bs.textContent=`経過 ${t}・タップで開く`; } if(rt.length){ const vd=todayStr(); rt.forEach(e=>{ const id=e.getAttribute('data-rtid'); const multi=e.getAttribute('data-rtmulti')==='1'; const sec=routineItemSec(vd,{id,multi,type:'timer'}); e.textContent=sec>0?fmtDur(sec*1000):''; }); } }
+function lifeTick(){ const el=document.getElementById('lifescreen-elapsed'); const bs=document.getElementById('modebar-sub'); const hs=document.getElementById('hdr-mode-sub'); const rt=document.querySelectorAll('[data-rtid]'); if(!el&&!bs&&!hs&&!rt.length){ if(window._lifeTick){clearInterval(window._lifeTick);window._lifeTick=null;} return; } const s=currentModeSession(); if(s){ const t=fmtDur(Date.now()-s.start); if(el)el.textContent=t; if(bs)bs.textContent=`経過 ${t}・タップで開く`; if(hs)hs.textContent=`経過 ${t}`; } if(rt.length){ const vd=todayStr(); rt.forEach(e=>{ const id=e.getAttribute('data-rtid'); const multi=e.getAttribute('data-rtmulti')==='1'; const sec=routineItemSec(vd,{id,multi,type:'timer'}); e.textContent=sec>0?fmtDur(sec*1000):''; }); } }
 // フルスクリーン：モード切替画面（生活モード＋ケアモード＋編集）
 function renderModeSwitcher(){
   const wrap=div({style:{position:'fixed',inset:'0',zIndex:'9997',overflowY:'auto',background:'#0b1120',color:'#e2e8f0',WebkitTapHighlightColor:'transparent',padding:'calc(env(safe-area-inset-top,0px) + 22px) 16px calc(env(safe-area-inset-bottom,0px) + 40px)'}});
@@ -2809,7 +2822,7 @@ function renderWidgetView(vd,ds){
   ]));
   wrap.appendChild(head);
   // 🕒 現在モードバー（常に1つの生活モードに属する。タップで切替画面へ）
-  if(vd===todayStr()) wrap.appendChild(currentModeBar());
+  // 今のモードはヘッダー（日付の上）に常時表示するため、ウィジェット内の重複表示は廃止
   // 🔔 セルフスイッチ・ナッジ（切り替えの提案）
   if(vd===todayStr()){ const nb=nudgeBanner(); if(nb) wrap.appendChild(nb); }
   // 🌙 睡眠前モードの入口：寝支度中〜就寝記録まで表示。未帰還は一番上、アプリに戻った後は一番下。
