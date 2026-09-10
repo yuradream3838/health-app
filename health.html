@@ -221,7 +221,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.10"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.11"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -2006,6 +2006,15 @@ function ensureActiveMode(){ if(!currentModeSession()){ switchLifeMode(getDefaul
 // 帰宅ルーティン（gohomeグループ）が全て完了しているか。項目が無ければ完了扱い
 function gohomeComplete(vd){ const items=routineGroupItems('gohome'); if(!items.length) return true; return items.every(it=>isTodoDone(vd,it)); }
 function endLifeMode(){ const cur=currentModeSession(); if(cur){ cur.end=Date.now(); saveModeLog(); } }
+// そのモードを「終了」したとき、自動で次に入る生活モード
+//   😴睡眠 →（起床したら）☀️朝 ／ 🍶飲み →（飲み終わったら）🛋休息
+const MODE_AFTER_FINISH={ sleep:"morning", drink:"rest" };
+// モードを終了する。次モードが決まっていればそこへ自動で切り替える（決まっていなければ既定モードへ戻る）
+function finishLifeMode(key){
+  const nxt=MODE_AFTER_FINISH[key];
+  if(nxt && lifeModeDef(nxt)){ switchLifeMode(nxt,true); return nxt; }
+  endLifeMode(); return null;
+}
 // 生活モードを開始して、その画面を開く（朝/飲み=リッチなセルフ画面、睡眠前=睡眠前モード、他=汎用画面）
 function openLifeMode(key){
   // すでにそのモードが進行中なら「開き直し」＝経過時間やチェック・タイマーを引き継ぐ
@@ -2460,7 +2469,12 @@ function renderLifeScreen(){
   } else if(c==='sleep'){
     inner.appendChild(div({style:{textAlign:'center',fontSize:'13px',color:'#cbd5e1',lineHeight:1.7,marginBottom:'14px'}},'おやすみなさい。'));
     addAssigned();
-    inner.appendChild(lifeActionBtn('🌅 起床した（睡眠を終了）',def.color,()=>{ const n=new Date(); setDaily(vd,{wakeTime:n.getHours()+n.getMinutes()/60}); endLifeMode(); state.lifeScreen=null; showToast('🌅 起床を記録','#a5b4fc'); render(); }));
+    // 起床＝睡眠モードを終えて☀️朝モードへ（朝の画面を開く）
+    inner.appendChild(lifeActionBtn('🌅 起床した（睡眠を終了）',def.color,()=>{
+      const n=new Date(); setDaily(vd,{wakeTime:n.getHours()+n.getMinutes()/60});
+      state.lifeScreen=null; openLifeMode('morning');
+      showToast(`🌅 起床 ${hhmm(n.getHours(),n.getMinutes())} を記録 → ☀️朝モード`,'#a5b4fc');
+    }));
   } else { // time（仕事・副業など）
     inner.appendChild(div({style:{textAlign:'center',fontSize:'13px',color:'#cbd5e1',lineHeight:1.7,marginBottom:'14px',whiteSpace:'pre-line'}}, key==='work'?'仕事に集中。スマホは置いてOK。\n戻ってきたら切替を。':'集中して取り組もう。\n時間はここで記録されます。'));
     addAssigned();
@@ -2563,8 +2577,9 @@ function exitSelfMode(recordIt){
         setLog(ds,hour,{...ex,note});
       }
     }
-    // 朝・飲みが生活モードとして進行中なら、「記録して終了」でそのモード時間も終了する
-    if(currentLifeModeKey()===state.selfMode) endLifeMode();
+    // 朝・飲みが生活モードとして進行中なら、「記録して終了」でそのモード時間も終了する。
+    // 終了後に入るモードが決まっているもの（飲み→休息）は、そのモードへ自動で切り替える。
+    if(currentLifeModeKey()===state.selfMode) finishLifeMode(state.selfMode);
   }
   state.selfMode=null; if(window._selfTick){clearInterval(window._selfTick);window._selfTick=null;}
 }
@@ -2707,7 +2722,7 @@ function renderSelfMode(){
     inner.appendChild(selfChecklistCard("drink",M.accent));
     // 「今日はここまで」＝最後の1杯の飲み終わり時刻（未記録なら）を今の時刻で記録してから終了
     const exitB=btn({style:{width:"100%",padding:"15px",borderRadius:"13px",border:"none",color:"#1a1408",fontSize:"15px",fontWeight:800,cursor:"pointer",background:M.accent,marginTop:"4px"}},"🛑 今日はここまで（飲み終わりを記録して終了）");
-    exitB.addEventListener('click',()=>{ const d=getDaily(vd), drs=d.drinks||[]; if(drs.length){ let li=-1,lm=-1; drs.forEach((x,i)=>{ const mm=(x.hour||0)*60+(x.min||0); if(mm>=lm){lm=mm;li=i;} }); if(li>=0 && drs[li].endHour==null){ const n=new Date(); setDaily(vd,{drinks:drs.map((x,i)=>i===li?{...x,endHour:n.getHours(),endMin:n.getMinutes()}:x)}); } } exitSelfMode(true); showToast("飲み終わりを記録しました 🍵","#a5b4fc"); render(); });
+    exitB.addEventListener('click',()=>{ const d=getDaily(vd), drs=d.drinks||[]; if(drs.length){ let li=-1,lm=-1; drs.forEach((x,i)=>{ const mm=(x.hour||0)*60+(x.min||0); if(mm>=lm){lm=mm;li=i;} }); if(li>=0 && drs[li].endHour==null){ const n=new Date(); setDaily(vd,{drinks:drs.map((x,i)=>i===li?{...x,endHour:n.getHours(),endMin:n.getMinutes()}:x)}); } } exitSelfMode(true); showToast("🍵 飲み終わりを記録 → 🛋休息モード","#a5b4fc"); render(); });
     inner.appendChild(exitB);
   }
   else if(key==="low"){
