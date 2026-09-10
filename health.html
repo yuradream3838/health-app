@@ -220,7 +220,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.88"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.89"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -708,7 +708,7 @@ const state = {
   windEditOpen:false, windEditH:22, windEditM:0, // 寝支度スイッチの開始時刻編集
   sleepMode:false, // 🌙 睡眠前モード（寝支度を始めると全画面で起動）
   lifeModes:null, modeLog:null, // 🕒 ライフモード定義・タイムライン（常に1つの生活モードに属する）
-  modeSwitcher:false, modeEditMode:false, lifeScreen:null, lifeBreathing:false, // ライフモードの切替画面・編集・各モード画面
+  modeSwitcher:false, modeEditMode:false, lifeScreen:null, lifeBreathing:false, defaultMode:'rest', // ライフモードの切替画面・編集・各モード画面・既定モード
   autoModeOn:true, autoLastKey:undefined, // ライフモードの自動切替（勤務シフト起点）
   nudges:null, nudgesOff:false, notifyOn:false, wakeGoal:null, moodCheckH:18, moodCheckM:0, // セルフスイッチ・ナッジ
   dayCutoffH:12, // 就寝未記録時のフォールバック切替時刻（既定12:00＝正午）
@@ -807,6 +807,7 @@ function loadStorage(){
     const lmd=localStorage.getItem(STORAGE_KEY+"_lifemodes");
     if(lmd){try{const a=JSON.parse(lmd); if(Array.isArray(a)&&a.length)state.lifeModes=a;}catch{}}
     migrateLifeModes(); // 朝/飲み/睡眠前などの新しい生活モードを既存データに補完
+    const dfm=localStorage.getItem(STORAGE_KEY+"_defaultmode"); if(dfm)state.defaultMode=dfm;
     const mlg=localStorage.getItem(STORAGE_KEY+"_modelog");
     if(mlg){try{const a=JSON.parse(mlg); if(Array.isArray(a))state.modeLog=a;}catch{}}
     const amd=localStorage.getItem(STORAGE_KEY+"_automode");
@@ -1174,6 +1175,9 @@ function render(){
 
   // 🕒 ライフモードの自動切替（勤務境界をまたいだら反映）。この render 内で状態を更新して描画に反映
   autoModeTick();
+  ensureActiveMode(); // 常にどれかの生活モードに属する（未選択を無くす）
+  // 画面全体を現在の生活モードのイメージカラーに（ダーク下地に淡くのせる）
+  try{ const _mc=lifeModeDef(currentLifeModeKey()); const _col=_mc?_mc.color:'#0ea5e9'; document.body.style.backgroundColor='#0f172a'; document.body.style.backgroundImage=`linear-gradient(180deg, ${_col}38 0%, ${_col}16 45%, ${_col}0a 100%)`; document.body.style.backgroundAttachment='fixed'; document.body.style.backgroundRepeat='no-repeat'; }catch(_){}
   if(!window._autoTick) window._autoTick=setInterval(()=>{ const changed=autoModeTick(); nudgeNotifyTick(); if(changed) render(); },60000);
 
   // 🌙 睡眠前モード：起動中は全画面で専用画面に切り替える（他は描画しない）
@@ -1892,7 +1896,9 @@ const DEFAULT_LIFE_MODES=[
   {key:'work',     label:'仕事',    icon:'🏢', color:'#3b82f6', content:'time'},
   {key:'side',     label:'副業',    icon:'💻', color:'#8b5cf6', content:'time'},
   {key:'invest',   label:'自己投資',icon:'📚', color:'#22c55e', content:'invest'},
+  {key:'train',    label:'トレーニング',icon:'🏋️', color:'#f43f5e', content:'train'},
   {key:'hobby',    label:'趣味',    icon:'🎮', color:'#ec4899', content:'hobby'},
+  {key:'social',   label:'交流',    icon:'🫂', color:'#06b6d4', content:'social'},
   {key:'meal',     label:'食事',    icon:'🍚', color:'#f59e0b', content:'meal'},
   {key:'rest',     label:'休息',    icon:'🛋️', color:'#14b8a6', content:'rest'},
   {key:'drink',    label:'飲み',    icon:'🍶', color:'#f97316', content:'time', screen:'self:drink'}, // 飲酒ブレーキ（リッチ画面）
@@ -1919,6 +1925,10 @@ function activeDay(now){
   return cal;                                          // 就寝記録済み＝翌日へ
 }
 function switchLifeMode(key,auto){ const cur=currentModeSession(), now=Date.now(); if(cur){ if(cur.key===key)return; cur.end=now; } const s={key,start:now}; if(auto)s.auto=true; getModeLog().push(s); saveModeLog(); }
+// 常に1つの生活モードに属する：進行中セッションが無ければ既定モードを開始（モード未選択を無くす）
+function getDefaultMode(){ const dm=state.defaultMode||'rest'; return lifeModeDef(dm)?dm:(getLifeModes()[0]||{key:'rest'}).key; }
+function setDefaultMode(k){ state.defaultMode=k; try{localStorage.setItem(STORAGE_KEY+'_defaultmode',k);}catch(_){} }
+function ensureActiveMode(){ if(!currentModeSession()){ switchLifeMode(getDefaultMode(),true); return true; } return false; }
 // 帰宅ルーティン（gohomeグループ）が全て完了しているか。項目が無ければ完了扱い
 function gohomeComplete(vd){ const items=routineGroupItems('gohome'); if(!items.length) return true; return items.every(it=>isTodoDone(vd,it)); }
 function endLifeMode(){ const cur=currentModeSession(); if(cur){ cur.end=Date.now(); saveModeLog(); } }
@@ -2163,6 +2173,14 @@ function renderModeSwitcher(){
 }
 function renderModeEditor(){
   const box=div({});
+  // 既定モード（未選択時に自動で入る）
+  const drow=div({style:{background:'#111827',border:'1px solid #1e293b',borderRadius:'11px',padding:'10px',marginBottom:'12px'}});
+  drow.appendChild(div({style:{fontSize:'12px',fontWeight:700,color:'#e2e8f0',marginBottom:'3px'}},'🏠 既定モード'));
+  drow.appendChild(div({style:{fontSize:'11px',color:'#64748b',marginBottom:'7px',lineHeight:1.5}},'他のモードを終えた後に自動で入る、いつもの生活モード。'));
+  const sel=document.createElement('select'); sel.className='sel'; sel.style.cssText='width:100%;padding:8px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:13px;color-scheme:dark;font-family:inherit';
+  getLifeModes().forEach(m=>{ const o=document.createElement('option'); o.value=m.key; o.textContent=`${m.icon} ${m.label}`; if(m.key===getDefaultMode())o.selected=true; sel.appendChild(o); });
+  sel.addEventListener('change',e=>{ setDefaultMode(e.target.value); });
+  drow.appendChild(sel); box.appendChild(drow);
   box.appendChild(div({style:{fontSize:'11px',color:'#64748b',marginBottom:'9px',lineHeight:1.6}},'各モードの色を変更できます。'));
   getLifeModes().forEach((m,idx)=>{
     const card=div({style:{background:'#111827',border:'1px solid #1e293b',borderRadius:'11px',padding:'10px',marginBottom:'9px'}});
@@ -2269,6 +2287,12 @@ function renderLifeScreen(){
     inner.appendChild(div({style:{textAlign:'center',fontSize:'12px',color:'#94a3b8',lineHeight:1.6,margin:'6px 0 10px'}},'ゆっくり休もう。お酒以外の回復を大切に。'));
   } else if(c==='hobby'){
     inner.appendChild(div({style:{textAlign:'center',fontSize:'14px',color:'#e2e8f0',lineHeight:1.8,marginBottom:'14px',whiteSpace:'pre-line'}},'今は楽しむ時間。\n罪悪感はいらない。'));
+  } else if(c==='train'){
+    inner.appendChild(div({style:{textAlign:'center',fontSize:'13px',color:'#cbd5e1',lineHeight:1.7,marginBottom:'14px'}},'体を動かそう。記録して積み上げ。'));
+    inner.appendChild(lifeActionBtn('🏋️ トレーニングを記録する',def.color,()=>{ state.lifeScreen=null; state.tab='日記'; state.diarySubTab='トレーニング'; state.widget=false; state.viewDate=activeDay(); render(); }));
+  } else if(c==='social'){
+    inner.appendChild(div({style:{textAlign:'center',fontSize:'13px',color:'#cbd5e1',lineHeight:1.7,marginBottom:'14px'}},'人とのつながりを大切に。'));
+    inner.appendChild(lifeActionBtn('🫂 つながりを開く（連絡・記録）',def.color,()=>{ state.lifeScreen=null; state.tab='達成'; state.achieveSubTab='つながり'; state.widget=false; render(); }));
   } else if(c==='sleep'){
     inner.appendChild(div({style:{textAlign:'center',fontSize:'13px',color:'#cbd5e1',lineHeight:1.7,marginBottom:'14px'}},'おやすみなさい。'));
     inner.appendChild(lifeActionBtn('🌅 起床した（睡眠を終了）',def.color,()=>{ const n=new Date(); setDaily(vd,{wakeTime:n.getHours()+n.getMinutes()/60}); endLifeMode(); state.lifeScreen=null; showToast('🌅 起床を記録','#a5b4fc'); render(); }));
