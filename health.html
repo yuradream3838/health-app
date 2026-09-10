@@ -12,6 +12,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <style>
+:root{--mode:#38bdf8;--mode-soft:#38bdf818;}
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:#0f172a;color:#f1f5f9;font-family:'Segoe UI',system-ui,sans-serif;min-height:100vh}
 button{font-family:inherit}
@@ -19,17 +20,17 @@ select{font-family:inherit}
 textarea{font-family:inherit}
 .tab-bar{display:flex;background:#1e293b;border-bottom:1px solid #1e3a5f}
 .tab-btn{flex:1;padding:8px 2px;border:none;cursor:pointer;font-size:11px;font-weight:600;background:transparent;color:#475569;border-bottom:2px solid transparent}
-.tab-btn.active{color:#38bdf8;border-bottom-color:#38bdf8}
+.tab-btn.active{color:var(--mode);border-bottom-color:var(--mode)}
 .card{background:#1e293b;border-radius:14px;border:1px solid #1e3a5f;padding:14px 16px;margin-bottom:10px}
 .row-between{display:flex;justify-content:space-between;align-items:center}
 .hour-row{background:#1e293b;border:1px solid #1e3a5f;border-radius:10px;margin-bottom:5px;overflow:hidden}
-.hour-row.now{background:#1e3a5f;border-color:#38bdf8;box-shadow:0 0 0 2px #38bdf818}
+.hour-row.now{background:#1e3a5f;border-color:var(--mode);box-shadow:0 0 0 2px var(--mode-soft)}
 .modal-bg{position:fixed;inset:0;background:#000000cc;display:flex;align-items:flex-end;z-index:200}
 .modal{width:100%;max-width:600px;margin:0 auto;background:#1e293b;border-radius:16px 16px 0 0;padding:18px 16px 36px;max-height:80vh;overflow-y:auto}
 .modal-center{position:fixed;inset:0;background:#000000cc;display:flex;align-items:center;justify-content:center;z-index:400}
 .modal-box{width:90%;max-width:360px;background:#1e293b;border-radius:16px;padding:22px 20px}
 .sel{flex:1;padding:6px 4px;background:#0f172a;border:1px solid #334155;border-radius:7px;color:#e2e8f0;font-size:13px}
-.btn-primary{padding:10px;border-radius:8px;border:none;font-size:13px;font-weight:600;cursor:pointer;background:linear-gradient(135deg,#0ea5e9,#6366f1);color:#fff}
+.btn-primary{padding:10px;border-radius:8px;border:none;font-size:13px;font-weight:600;cursor:pointer;background:var(--mode);color:#fff}
 .btn-ghost{padding:10px;background:transparent;border:1px solid #334155;border-radius:8px;color:#64748b;cursor:pointer;font-size:13px}
 #root{padding-bottom:20px}
 /* トースト */
@@ -38,7 +39,7 @@ textarea{font-family:inherit}
 /* 取り消しバー */
 #undo-bar{position:fixed;bottom:76px;left:50%;transform:translateX(-50%) translateY(20px);z-index:999;background:#1e293b;border:1px solid #475569;border-radius:12px;padding:8px 8px 8px 16px;color:#e2e8f0;font-size:13px;font-weight:600;opacity:0;transition:all 0.25s ease;pointer-events:none;display:flex;align-items:center;gap:12px;box-shadow:0 4px 20px #00000088;max-width:calc(100% - 32px)}
 #undo-bar.show{opacity:1;transform:translateX(-50%) translateY(0);pointer-events:auto}
-#undo-bar button{background:#0ea5e9;border:none;border-radius:8px;padding:6px 14px;color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap}
+#undo-bar button{background:var(--mode);border:none;border-radius:8px;padding:6px 14px;color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap}
 #undo-bar .undo-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* コンフェッティ */
 #confetti-canvas{position:fixed;inset:0;pointer-events:none;z-index:998}
@@ -220,7 +221,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.89"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.90"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -1176,8 +1177,12 @@ function render(){
   // 🕒 ライフモードの自動切替（勤務境界をまたいだら反映）。この render 内で状態を更新して描画に反映
   autoModeTick();
   ensureActiveMode(); // 常にどれかの生活モードに属する（未選択を無くす）
-  // 画面全体を現在の生活モードのイメージカラーに（ダーク下地に淡くのせる）
-  try{ const _mc=lifeModeDef(currentLifeModeKey()); const _col=_mc?_mc.color:'#0ea5e9'; document.body.style.backgroundColor='#0f172a'; document.body.style.backgroundImage=`linear-gradient(180deg, ${_col}38 0%, ${_col}16 45%, ${_col}0a 100%)`; document.body.style.backgroundAttachment='fixed'; document.body.style.backgroundRepeat='no-repeat'; }catch(_){}
+  // アプリのアクセント色＆画面全体を現在の生活モードのイメージカラーに
+  try{ const _mc=lifeModeDef(currentLifeModeKey()); const _col=_mc?_mc.color:'#0ea5e9';
+    document.documentElement.style.setProperty('--mode', _col);
+    document.documentElement.style.setProperty('--mode-soft', _col+'22');
+    document.body.style.backgroundColor='#0f172a'; document.body.style.backgroundImage=`linear-gradient(180deg, ${_col}38 0%, ${_col}16 45%, ${_col}0a 100%)`; document.body.style.backgroundAttachment='fixed'; document.body.style.backgroundRepeat='no-repeat';
+  }catch(_){}
   if(!window._autoTick) window._autoTick=setInterval(()=>{ const changed=autoModeTick(); nudgeNotifyTick(); if(changed) render(); },60000);
 
   // 🌙 睡眠前モード：起動中は全画面で専用画面に切り替える（他は描画しない）
@@ -1269,7 +1274,7 @@ function updateHeaderDynamic(){
       const p=vd.split('-');
       dateText.textContent=new Date(parseInt(p[0]),parseInt(p[1])-1,parseInt(p[2])).toLocaleDateString("ja-JP",{month:"short",day:"numeric",weekday:"short"});
     }
-    if(dateBtn){dateBtn.style.color=isToday?"#38bdf8":"#e2e8f0";}
+    if(dateBtn){dateBtn.style.color=isToday?"var(--mode)":"#e2e8f0";}
     const nextBtn=document.getElementById('hdr-next-btn');
     if(nextBtn){nextBtn.style.color="#94a3b8";}
   }
@@ -1280,7 +1285,7 @@ function updateHeaderDynamic(){
   });
   // 設定ボタンのアクティブ表示
   const setBtn=document.getElementById('hdr-settings-btn');
-  if(setBtn){const a=state.tab==='設定';setBtn.style.border='1px solid '+(a?'#38bdf8':'#334155');setBtn.style.background=a?'#0ea5e922':'transparent';setBtn.style.color=a?'#38bdf8':'#94a3b8';}
+  if(setBtn){const a=state.tab==='設定';setBtn.style.border='1px solid '+(a?'var(--mode)':'#334155');setBtn.style.background=a?'var(--mode-soft)':'transparent';setBtn.style.color=a?'var(--mode)':'#94a3b8';}
 }
 
 // ── ヘッダー ──────────────────────────────────────
@@ -1301,7 +1306,7 @@ function renderHeader(){
   const dObj=new Date(parseInt(p[0]),parseInt(p[1])-1,parseInt(p[2]));
   const dateBtn=document.createElement('button');
   dateBtn.id='hdr-date-label';
-  dateBtn.style.cssText=`display:inline-flex;align-items:center;gap:6px;font-size:15px;font-weight:700;color:${isToday?"#38bdf8":"#e2e8f0"};background:transparent;border:none;cursor:pointer;font-family:inherit;padding:5px 8px;border-radius:8px`;
+  dateBtn.style.cssText=`display:inline-flex;align-items:center;gap:6px;font-size:15px;font-weight:700;color:${isToday?"var(--mode)":"#e2e8f0"};background:transparent;border:none;cursor:pointer;font-family:inherit;padding:5px 8px;border-radius:8px`;
   const dateText=document.createElement('span');
   dateText.id='hdr-date-text';
   dateText.textContent=dObj.toLocaleDateString("ja-JP",{month:"short",day:"numeric",weekday:"short"});
@@ -1360,7 +1365,7 @@ function renderHeader(){
   titleRow.style.cssText="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px";
   const titleLeft=document.createElement('div');
   titleLeft.style.cssText="display:flex;align-items:center;gap:8px";
-  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:#38bdf8;margin-left:6px;font-weight:600;background:#0ea5e922;padding:2px 7px;border-radius:10px;border:1px solid #0ea5e944">v'+APP_VERSION+'</span>';
+  titleLeft.innerHTML='<span>🩺</span><h1 style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">体調管理</h1><span style="font-size:11px;color:var(--mode);margin-left:6px;font-weight:600;background:var(--mode-soft);padding:2px 7px;border-radius:10px;border:1px solid var(--mode)">v'+APP_VERSION+'</span>';
   // 設定ボタン（バージョンの隣）
   const setBtn=document.createElement('button');
   setBtn.id='hdr-settings-btn';
