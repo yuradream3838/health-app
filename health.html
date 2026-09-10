@@ -221,7 +221,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.05"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.06"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -2495,7 +2495,12 @@ function saveSelfModeLog(){ try{localStorage.setItem(STORAGE_KEY+"_selfmodelog",
 // resume=true（既に進行中のモードを開き直した）のときは、経過時間・チェック・待ちタイマー・メモ・気分を引き継ぐ
 function enterSelfMode(key,resume){
   state.selfMode=key;
-  if(!resume){ state.selfModeStart=Date.now(); state.selfMoodBefore=null; state.selfMoodCur=null; state.selfDelayUntil=null; state.selfNote=""; state.selfChecks={}; }
+  if(!resume){
+    state.selfModeStart=Date.now(); state.selfDelayUntil=null; state.selfNote=""; state.selfChecks={};
+    // 開始時点の「心の調子」を before として控える（体調記録から取得。以降の変更が after になる）
+    const _ex=getLog(activeDay(),new Date().getHours())||{};
+    state.selfMoodBefore=_ex.mental!=null?_ex.mental:null; state.selfMoodCur=state.selfMoodBefore;
+  }
   else if(state.selfModeStart==null){ state.selfModeStart=Date.now(); }
   state.selfBreathing=false; state.selfEditChecks=null; render();
 }
@@ -2510,16 +2515,19 @@ function exitSelfMode(recordIt){
   if(recordIt && state.selfMode){
     const _st=selfModeStartAt();
     getSelfModeLog().push({t:new Date(_st).toISOString(), mode:state.selfMode, durSec:Math.round((Date.now()-_st)/1000), before:state.selfMoodBefore, after:state.selfMoodCur, note:(state.selfNote||"").trim()||null}); saveSelfModeLog();
-    // afterの気分を日次の体調記録「心の調子（メンタル）」に反映（1〜5 → 1〜10）。AI分析・週次ふりかえりから使えるようにする
-    if(state.selfMoodCur!=null){
+    // 体調（体の調子・心の調子・症状・メモ）はモード内で体調記録へ即時保存済みなので、ここでは
+    // どのモードで記録したかが後から分かるようにメモへモード名だけ追記する。
+    {
       const ds=activeDay(), hour=new Date().getHours(), ex=getLog(ds,hour)||{};
-      const mapped=Math.max(1,Math.min(10,Math.round(state.selfMoodCur*2)));
-      const M=SELF_MODES[state.selfMode], tag=M?`🧭${M.title}`:"🧭セルフモード";
-      const add=(state.selfNote||"").trim();
-      const entry=add?`${tag}：${add}`:tag;
-      let note=ex.note||"";
-      if(!note) note=entry; else if(!note.includes(tag)) note=`${note} / ${entry}`;
-      setLog(ds,hour,{...ex,mental:mapped,note});
+      const hasCond = ex.score!=null || ex.mental!=null || (ex.symptoms||[]).length || (ex.note||"").trim();
+      if(hasCond){
+        const M=SELF_MODES[state.selfMode], tag=M?`🧭${M.title}`:"🧭セルフモード";
+        const add=(state.selfNote||"").trim();
+        const entry=add?`${tag}：${add}`:tag;
+        let note=ex.note||"";
+        if(!note) note=entry; else if(!note.includes(tag)) note=`${note} / ${entry}`;
+        setLog(ds,hour,{...ex,note});
+      }
     }
     // 朝・飲みが生活モードとして進行中なら、「記録して終了」でそのモード時間も終了する
     if(currentLifeModeKey()===state.selfMode) endLifeMode();
@@ -2538,17 +2546,64 @@ function breathingGuide(accent){
   box.appendChild(div({style:{fontSize:"11px",color:"#94a3b8",lineHeight:1.6}},"4秒吸う → 7秒止める → 8秒吐く（円に合わせて）"));
   return box;
 }
-// モード内の気分セレクタ（1〜5）。beforeが未設定なら初回にbeforeも設定
-function selfMoodRow(){
-  const faces=[["😣",1],["😟",2],["😐",3],["🙂",4],["😄",5]];
-  const row=div({style:{display:"flex",gap:"7px",justifyContent:"center",margin:"4px 0 10px"}});
-  faces.forEach(([f,v])=>{
-    const on=state.selfMoodCur===v;
-    const b=btn({style:{fontSize:"22px",lineHeight:1,padding:"6px",borderRadius:"10px",cursor:"pointer",background:on?"#ffffff1f":"transparent",border:`1px solid ${on?"#ffffff88":"transparent"}`,opacity:on?1:0.55}},f);
-    b.addEventListener('click',(()=>{const val=v;return()=>{ if(state.selfMoodBefore==null)state.selfMoodBefore=val; state.selfMoodCur=val; render(); };})());
-    row.appendChild(b);
-  });
-  return row;
+// モード内の体調入力。体調記録（logs／飲酒欲求）と**同じ項目・同じ保存先**に直接書き込むので常に同期する。
+// 記録先は基準日(activeDay)の「現在の時刻」。体調記録タブで開いても同じ内容が入っている。
+function selfConditionCard(accent){
+  const ds=activeDay(), hour=new Date().getHours();
+  const ex=getLog(ds,hour)||{};
+  const putLog=upd=>{ const cur=getLog(ds,hour)||{}; setLog(ds,hour,{...cur,...upd}); };
+  const box=div({style:{background:"#ffffff0d",border:"1px solid #ffffff14",borderRadius:"12px",padding:"11px 13px",marginBottom:"10px"}});
+  box.appendChild(div({style:{display:"flex",justifyContent:"space-between",alignItems:"baseline",gap:"8px",marginBottom:"8px"}},[
+    div({style:{fontSize:"12px",fontWeight:700,color:"#f0e9dd"}},"🩺 いまの体調を記録"),
+    div({style:{fontSize:"10px",color:"#a89e8c",whiteSpace:"nowrap"}},`${hour}時・体調記録と同期`)
+  ]));
+  const bar=(label,val,onPick)=>{
+    const w=div({style:{marginBottom:"10px"}});
+    w.appendChild(div({style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"4px"}},[
+      span({style:{fontSize:"11px",color:"#a89e8c"}},label),
+      span({style:{fontSize:"14px",fontWeight:800,color:val?scoreColor(val):"#8a8172"}}, val?`${val}/10 ${scoreLabel(val)}`:"—")
+    ]));
+    const r=div({style:{display:"flex",gap:"2px"}});
+    for(let n=1;n<=10;n++){ const nn=n, on=val===nn;
+      const b=btn({style:{flex:1,height:"28px",border:"none",borderRadius:"5px",cursor:"pointer",fontSize:"10px",fontFamily:"inherit",fontWeight:on?700:400,
+        background:on?scoreColor(nn):(val&&nn<=val?scoreColor(nn)+"55":"#00000038"),color:on?"#fff":"#8a8172"}},String(nn));
+      b.addEventListener('click',()=>onPick(on?null:nn));
+      r.appendChild(b);
+    }
+    w.appendChild(r); return w;
+  };
+  box.appendChild(bar("💪 体の調子（体調スコア）",ex.score||null,v=>{ putLog({score:v}); render(); }));
+  box.appendChild(bar("🧠 心の調子（メンタル）",ex.mental||null,v=>{ putLog({mental:v}); if(state.selfMoodBefore==null)state.selfMoodBefore=v; state.selfMoodCur=v; render(); }));
+  // 🍺 飲酒欲求（体調記録モーダルと同じ・日次の cravings[時刻]）
+  const cr=((getDaily(ds).cravings||{})[hour])||null;
+  box.appendChild(div({style:{fontSize:"11px",color:"#a89e8c",marginBottom:"4px"}},"🍺 飲酒欲求（任意）"));
+  { const r=div({style:{display:"flex",gap:"2px",marginBottom:"10px"}});
+    for(let n=1;n<=10;n++){ const nn=n, col=nn>=8?"#ef4444":nn>=5?"#f97316":"#eab308", on=cr===nn;
+      const b=btn({style:{flex:1,height:"26px",border:"none",borderRadius:"5px",cursor:"pointer",fontSize:"10px",fontFamily:"inherit",fontWeight:on?700:400,
+        background:on?col:(cr&&nn<=cr?col+"44":"#00000038"),color:on?"#fff":"#8a8172"}},String(nn));
+      b.addEventListener('click',()=>{ const c={...(getDaily(ds).cravings||{})}; if(cr===nn)delete c[hour]; else c[hour]=nn; setDaily(ds,{cravings:c}); render(); });
+      r.appendChild(b);
+    }
+    box.appendChild(r);
+  }
+  // 体調状態（症状）
+  box.appendChild(div({style:{fontSize:"11px",color:"#a89e8c",marginBottom:"4px"}},"体調状態（複数可）"));
+  const syms=ex.symptoms||[];
+  box.appendChild(div({style:{display:"flex",flexWrap:"wrap",gap:"4px",marginBottom:"10px"}},SYMPTOMS.map(s=>{
+    const on=syms.includes(s);
+    const b=btn({style:{padding:"4px 10px",borderRadius:"20px",fontSize:"11px",cursor:"pointer",fontFamily:"inherit",
+      background:on?accent:"transparent",color:on?"#1a1408":"#cdc3b2",border:`1px solid ${on?accent:"#ffffff2e"}`}},s);
+    b.addEventListener('click',()=>{ putLog({symptoms:on?syms.filter(x=>x!==s):[...syms,s]}); render(); });
+    return b;
+  })));
+  // メモ
+  box.appendChild(div({style:{fontSize:"11px",color:"#a89e8c",marginBottom:"4px"}},"メモ"));
+  const ta=document.createElement('textarea');
+  ta.value=ex.note||""; ta.placeholder="気になることを..."; ta.rows=2;
+  ta.style.cssText="width:100%;box-sizing:border-box;padding:8px 10px;background:#0000002e;border:1px solid #ffffff22;border-radius:8px;color:#f0e9dd;font-size:12px;font-family:inherit;resize:vertical";
+  ta.addEventListener('change',e=>{ putLog({note:e.target.value}); });
+  box.appendChild(ta);
+  return box;
 }
 function selfActionBtn(label,accent,onClick){ const b=btn({style:{width:"100%",padding:"12px",borderRadius:"11px",border:`1px solid ${accent}66`,background:accent+"1a",color:"#f0e9dd",fontSize:"14px",fontWeight:700,cursor:"pointer",marginBottom:"7px",textAlign:"left"}},label); b.addEventListener('click',onClick); return b; }
 function renderSelfMode(){
@@ -2560,10 +2615,8 @@ function renderSelfMode(){
   const back=btn({style:{padding:"6px 12px",borderRadius:"8px",border:"1px solid #ffffff22",background:"transparent",color:"#cdc3b2",fontSize:"11px",cursor:"pointer",fontFamily:"inherit"}},"閉じる");
   back.addEventListener('click',()=>{ exitSelfMode(false); render(); });
   top.appendChild(back); inner.appendChild(top);
-  // 気分（前後で記録して効果がわかる）。最後に選んだ気分は「記録して終了」で体調記録（心の調子）に反映される
-  inner.appendChild(div({style:{fontSize:"11px",color:"#a89e8c",textAlign:"center"}},"今の気分は？"));
-  inner.appendChild(selfMoodRow());
-  if(state.selfMoodCur!=null) inner.appendChild(div({style:{fontSize:"10px",color:"#8a8172",textAlign:"center",marginTop:"-6px",marginBottom:"8px"}},"↑ 終了時にこの気分を体調記録（心の調子）へ保存"));
+  // いまの体調（体調記録と同じ項目・同じ保存先に即時保存＝双方向で同期）
+  inner.appendChild(selfConditionCard(M.accent));
 
   const vd=activeDay();
   // ── モード別の中身 ──
