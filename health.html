@@ -221,7 +221,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.92"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.93"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -533,6 +533,21 @@ const scoreColor = s => !s?"#475569":s<=3?"#ef4444":s<=5?"#f97316":s<=7?"#eab308
 const textOn = hex => { const c=(hex||"#38bdf8").replace('#',''); const r=parseInt(c.slice(0,2),16)||0,g=parseInt(c.slice(2,4),16)||0,b=parseInt(c.slice(4,6),16)||0; return (0.299*r+0.587*g+0.114*b)>150?"#0a1120":"#ffffff"; };
 // 2色を重み t（=aの割合 0〜1）で混ぜて #rrggbb を返す
 function mixHex(a,b,t){ const p=h=>{const c=(h||'').replace('#','');return [parseInt(c.slice(0,2),16)||0,parseInt(c.slice(2,4),16)||0,parseInt(c.slice(4,6),16)||0];}; const A=p(a),B=p(b); const m=i=>Math.max(0,Math.min(255,Math.round(A[i]*t+B[i]*(1-t)))); return '#'+[m(0),m(1),m(2)].map(x=>x.toString(16).padStart(2,'0')).join(''); }
+// 描画後：インラインで直接指定された暗い面色（rgb化される）をモード色トーンへ一括置換する。
+// カード等はCSS変数で追従するが、コード内で個別に #1e293b 等を書いた細かいサブパネルはここで拾う。
+// canvas は fillStyle をJSで持つのでインラインstyleに出ず、影響しない。
+function tintSurfaces(root){
+  try{
+    const map=window.__tintMap; if(!root||!map||!map.length) return;
+    const els=root.querySelectorAll('[style]');
+    for(const el of els){
+      let s=el.getAttribute('style'); if(!s||s.indexOf('rgb(')<0) continue;
+      let changed=false;
+      for(const [from,to] of map){ if(s.indexOf(from)>=0){ s=s.split(from).join(to); changed=true; } }
+      if(changed) el.setAttribute('style',s);
+    }
+  }catch(_){}
+}
 const scoreLabel = s => !s?"—":s<=2?"最悪":s<=4?"悪い":s<=6?"普通":s<=8?"良好":"絶好調";
 
 function pressureLevel(diff){
@@ -1181,27 +1196,31 @@ function render(){
   ensureActiveMode(); // 常にどれかの生活モードに属する（未選択を無くす）
   // アプリのアクセント色＆画面全体を現在の生活モードのイメージカラーに
   try{ const _mc=lifeModeDef(currentLifeModeKey()); const _col=_mc?_mc.color:'#0ea5e9';
+    const _surf=mixHex(_col,'#1a1f27',0.14), _surf2=mixHex(_col,'#0c0f15',0.10), _bord=mixHex(_col,'#2a3340',0.30);
     document.documentElement.style.setProperty('--mode', _col);
     document.documentElement.style.setProperty('--mode-soft', _col+'22');
     // ベース面（カード・パネル・区切り）をモード色に寄せたダークトーンに
-    document.documentElement.style.setProperty('--surface', mixHex(_col,'#1a1f27',0.14));
-    document.documentElement.style.setProperty('--surface-2', mixHex(_col,'#0c0f15',0.10));
-    document.documentElement.style.setProperty('--border', mixHex(_col,'#2a3340',0.30));
+    document.documentElement.style.setProperty('--surface', _surf);
+    document.documentElement.style.setProperty('--surface-2', _surf2);
+    document.documentElement.style.setProperty('--border', _bord);
     document.body.style.backgroundColor='#0f172a'; document.body.style.backgroundImage=`linear-gradient(180deg, ${_col}38 0%, ${_col}16 45%, ${_col}0a 100%)`; document.body.style.backgroundAttachment='fixed'; document.body.style.backgroundRepeat='no-repeat';
+    // 細かいサブパネル（インラインで直接指定された暗い面色）を描画後にモード色トーンへ置換するためのマップ
+    const _rgb=h=>{const c=h.replace('#','');return `rgb(${parseInt(c.slice(0,2),16)}, ${parseInt(c.slice(2,4),16)}, ${parseInt(c.slice(4,6),16)})`;};
+    window.__tintMap=[[_rgb('#1e293b'),_surf],[_rgb('#0f172a'),_surf2],[_rgb('#111827'),_surf2],[_rgb('#0a1120'),_surf2],[_rgb('#0b1120'),_surf2],[_rgb('#1e3a5f'),_bord]];
   }catch(_){}
   if(!window._autoTick) window._autoTick=setInterval(()=>{ const changed=autoModeTick(); nudgeNotifyTick(); if(changed) render(); },60000);
 
   // 🌙 睡眠前モード：起動中は全画面で専用画面に切り替える（他は描画しない）
-  if(state.sleepMode){ content.appendChild(renderSleepMode()); return; }
+  if(state.sleepMode){ content.appendChild(renderSleepMode()); tintSurfaces(content); return; }
   if(state.selfMode){ content.appendChild(renderSelfMode());
     // 飲みモードから「飲み物を追加」＝アルコールタブと同じモーダルをセルフモードの上に重ねる
     if(state.modal==="addDrink"){ const mo=renderAddDrinkModal(activeDay()); mo.style.zIndex="10000"; content.appendChild(mo); }
-    return; }
-  if(state.modeSwitcher){ content.appendChild(renderModeSwitcher()); return; }
+    tintSurfaces(content); return; }
+  if(state.modeSwitcher){ content.appendChild(renderModeSwitcher()); tintSurfaces(content); return; }
   if(state.lifeScreen){ content.appendChild(renderLifeScreen());
     // 食事モードから「食べたものを記録」＝食事モーダルをライフモード画面の上に重ねる
     if(state.modal==="food"){ const mo=renderFoodModal(todayStr()); mo.style.zIndex="10000"; content.appendChild(mo); }
-    return; }
+    tintSurfaces(content); return; }
 
   const ds=todayStr(), vd=state.viewDate, curH=new Date().getHours();
   const isToday=vd===ds;
@@ -1255,6 +1274,8 @@ function render(){
     banner.appendChild(exitB);
     content.appendChild(banner);
   }
+
+  tintSurfaces(content);
 
   // サブタブを固定表示するため、ヘッダー高さをCSS変数に反映
   const hdrEl=document.getElementById('app-header');
