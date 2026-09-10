@@ -221,7 +221,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.93"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.94"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -1215,11 +1215,15 @@ function render(){
   if(state.selfMode){ content.appendChild(renderSelfMode());
     // 飲みモードから「飲み物を追加」＝アルコールタブと同じモーダルをセルフモードの上に重ねる
     if(state.modal==="addDrink"){ const mo=renderAddDrinkModal(activeDay()); mo.style.zIndex="10000"; content.appendChild(mo); }
+    // モード内でルーティンのメモを編集するモーダルを重ねる
+    if(state.modal==="routineActualEdit"){ const mo=renderRoutineActualEditModal(); mo.style.zIndex="10000"; content.appendChild(mo); }
     tintSurfaces(content); return; }
   if(state.modeSwitcher){ content.appendChild(renderModeSwitcher()); tintSurfaces(content); return; }
   if(state.lifeScreen){ content.appendChild(renderLifeScreen());
     // 食事モードから「食べたものを記録」＝食事モーダルをライフモード画面の上に重ねる
     if(state.modal==="food"){ const mo=renderFoodModal(todayStr()); mo.style.zIndex="10000"; content.appendChild(mo); }
+    // モード内でルーティンのメモを編集するモーダルを重ねる
+    if(state.modal==="routineActualEdit"){ const mo=renderRoutineActualEditModal(); mo.style.zIndex="10000"; content.appendChild(mo); }
     tintSurfaces(content); return; }
 
   const ds=todayStr(), vd=state.viewDate, curH=new Date().getHours();
@@ -2273,10 +2277,23 @@ function lifeRoutineChecklist(groupKey,title,color,vd,forceTimer){
   const done=items.filter(isDone).length;
   const showTime = forceTimer || items.some(it=>it.type==='timer');
   const secTot=showTime?routineGroupSec(vd,groupKey):0;
-  cc.appendChild(div({style:{fontSize:'12px',fontWeight:700,color:'#e2e8f0',marginBottom:'5px'}},`${title}${items.length?` ${done}/${items.length}`:''}${secTot?` ・計 ${fmtDur(secTot*1000)}`:''}`));
+  const head=div({style:{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'8px',marginBottom:'5px'}});
+  head.appendChild(div({style:{fontSize:'12px',fontWeight:700,color:'#e2e8f0',minWidth:0}},`${title}${items.length?` ${done}/${items.length}`:''}${secTot?` ・計 ${fmtDur(secTot*1000)}`:''}`));
+  head.appendChild(routineMemoBtn(vd,groupKey,title,color));
+  cc.appendChild(head);
+  const note=(getRoutineOverride(vd,groupKey).note||'').trim();
+  if(note) cc.appendChild(div({style:{fontSize:'11px',color:'#cbd5e1',lineHeight:1.5,margin:'0 0 6px',padding:'6px 9px',background:'#ffffff0d',borderRadius:'8px',borderLeft:`2px solid ${color}`,whiteSpace:'pre-wrap',wordBreak:'break-word'}},'📝 '+note));
   if(!items.length){ cc.appendChild(div({style:{fontSize:'11px',color:'#94a3b8',lineHeight:1.6}},'この区分のルーティン項目がありません。設定→ルーティン設定で項目をこの区分に割り当てると表示されます。')); }
   else items.forEach(it=> cc.appendChild(routineItemRow(vd,it,color,forceTimer)));
   return cc;
+}
+// モード内でルーティンのメモ（その日だけ）を編集するボタン。実績ブロックのメモと同じ仕組み（routineOverrides）。
+function routineMemoBtn(vd,groupKey,title,color){
+  const has=!!(getRoutineOverride(vd,groupKey).note||'').trim();
+  const b=btn({style:{flexShrink:0,fontSize:'11px',padding:'4px 9px',borderRadius:'7px',cursor:'pointer',fontFamily:'inherit',whiteSpace:'nowrap',
+    border:`1px solid ${has?color:'#ffffff2e'}`,background:has?color+'22':'transparent',color:has?color:'#94a3b8'}}, has?'📝 メモ':'📝 メモ＋');
+  b.addEventListener('click',()=>{ openRoutineActualEdit(vd,groupKey,title); });
+  return b;
 }
 function renderLifeScreen(){
   const key=state.lifeScreen, def=lifeModeDef(key)||{icon:'🕒',label:'モード',color:'#64748b',content:'time'};
@@ -2532,7 +2549,12 @@ function renderSelfMode(){
     const mItems=routineGroupItems("morning");
     const mDone=mItems.filter(it=>isTodoDone(vd,it)).length;
     const cc=div({style:{background:"#ffffff0d",border:"1px solid #ffffff14",borderRadius:"11px",padding:"8px 12px",marginBottom:"10px"}});
-    cc.appendChild(div({style:{fontSize:"11px",color:"#a89e8c",marginBottom:"4px"}},mItems.length?`起床チェック（モーニングルーティン） ${mDone}/${mItems.length}`:"起床チェック"));
+    const mhead=div({style:{display:"flex",alignItems:"center",justifyContent:"space-between",gap:"8px",marginBottom:"4px"}});
+    mhead.appendChild(div({style:{fontSize:"11px",color:"#a89e8c",minWidth:0}},mItems.length?`起床チェック（モーニングルーティン） ${mDone}/${mItems.length}`:"起床チェック"));
+    mhead.appendChild(routineMemoBtn(vd,"morning","🌅モーニングルーティン",M.accent));
+    cc.appendChild(mhead);
+    const mNote=(getRoutineOverride(vd,"morning").note||"").trim();
+    if(mNote) cc.appendChild(div({style:{fontSize:"11px",color:"#e6dccb",lineHeight:1.5,margin:"0 0 6px",padding:"6px 9px",background:"#ffffff0d",borderRadius:"8px",borderLeft:`2px solid ${M.accent}`,whiteSpace:"pre-wrap",wordBreak:"break-word"}},"📝 "+mNote));
     if(!mItems.length){
       cc.appendChild(div({style:{fontSize:"11px",color:"#a89e8c",lineHeight:1.6}},"🌅モーニングルーティンの項目がありません。設定→ルーティン設定で、項目のグループを「🌅モーニングルーティン」にすると、ここに表示されます。"));
     } else {
