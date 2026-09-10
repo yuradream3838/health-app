@@ -12,14 +12,15 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <style>
-:root{--mode:#38bdf8;--mode-soft:#38bdf818;--surface:#1e293b;--surface-2:#0f172a;--border:#1e3a5f;}
+:root{--mode:#38bdf8;--mode-soft:#38bdf818;--surface:#1e293b;--surface-2:#0f172a;--border:#1e3a5f;
+--body-text:#f1f5f9;--text-1:#e2e8f0;--text-2:#94a3b8;--text-3:#64748b;--text-4:#475569;--dim:#334155;}
 *{box-sizing:border-box;margin:0;padding:0}
-body{background:#0f172a;color:#f1f5f9;font-family:'Segoe UI',system-ui,sans-serif;min-height:100vh}
+body{background:#0f172a;color:var(--body-text);font-family:'Segoe UI',system-ui,sans-serif;min-height:100vh}
 button{font-family:inherit}
 select{font-family:inherit}
 textarea{font-family:inherit}
 .tab-bar{display:flex;background:var(--surface);border-bottom:1px solid var(--border)}
-.tab-btn{flex:1;padding:8px 2px;border:none;cursor:pointer;font-size:11px;font-weight:600;background:transparent;color:#475569;border-bottom:2px solid transparent}
+.tab-btn{flex:1;padding:8px 2px;border:none;cursor:pointer;font-size:11px;font-weight:600;background:transparent;color:var(--text-4);border-bottom:2px solid transparent}
 .tab-btn.active{color:var(--mode);border-bottom-color:var(--mode)}
 .card{background:var(--surface);border-radius:14px;border:1px solid var(--border);padding:14px 16px;margin-bottom:10px}
 .row-between{display:flex;justify-content:space-between;align-items:center}
@@ -29,15 +30,15 @@ textarea{font-family:inherit}
 .modal{width:100%;max-width:600px;margin:0 auto;background:var(--surface);border-radius:16px 16px 0 0;padding:18px 16px 36px;max-height:80vh;overflow-y:auto}
 .modal-center{position:fixed;inset:0;background:#000000cc;display:flex;align-items:center;justify-content:center;z-index:400}
 .modal-box{width:90%;max-width:360px;background:var(--surface);border-radius:16px;padding:22px 20px}
-.sel{flex:1;padding:6px 4px;background:var(--surface-2);border:1px solid var(--border);border-radius:7px;color:#e2e8f0;font-size:13px}
+.sel{flex:1;padding:6px 4px;background:var(--surface-2);border:1px solid var(--border);border-radius:7px;color:var(--text-1);font-size:13px}
 .btn-primary{padding:10px;border-radius:8px;border:none;font-size:13px;font-weight:600;cursor:pointer;background:var(--mode);color:#fff}
-.btn-ghost{padding:10px;background:transparent;border:1px solid #334155;border-radius:8px;color:#64748b;cursor:pointer;font-size:13px}
+.btn-ghost{padding:10px;background:transparent;border:1px solid var(--dim);border-radius:8px;color:var(--text-3);cursor:pointer;font-size:13px}
 #root{padding-bottom:20px}
 /* トースト */
-#toast{position:fixed;top:70px;left:50%;transform:translateX(-50%) translateY(-20px);z-index:999;background:#1e293b;border:1px solid #22c55e;border-radius:12px;padding:10px 20px;color:#22c55e;font-size:13px;font-weight:600;opacity:0;transition:all 0.3s ease;pointer-events:none;white-space:nowrap;box-shadow:0 4px 20px #00000066}
+#toast{position:fixed;top:70px;left:50%;transform:translateX(-50%) translateY(-20px);z-index:999;background:var(--surface);border:1px solid #22c55e;border-radius:12px;padding:10px 20px;color:#22c55e;font-size:13px;font-weight:600;opacity:0;transition:all 0.3s ease;pointer-events:none;white-space:nowrap;box-shadow:0 4px 20px #00000066}
 #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 /* 取り消しバー */
-#undo-bar{position:fixed;bottom:76px;left:50%;transform:translateX(-50%) translateY(20px);z-index:999;background:#1e293b;border:1px solid #475569;border-radius:12px;padding:8px 8px 8px 16px;color:#e2e8f0;font-size:13px;font-weight:600;opacity:0;transition:all 0.25s ease;pointer-events:none;display:flex;align-items:center;gap:12px;box-shadow:0 4px 20px #00000088;max-width:calc(100% - 32px)}
+#undo-bar{position:fixed;bottom:76px;left:50%;transform:translateX(-50%) translateY(20px);z-index:999;background:var(--surface);border:1px solid var(--text-4);border-radius:12px;padding:8px 8px 8px 16px;color:var(--text-1);font-size:13px;font-weight:600;opacity:0;transition:all 0.25s ease;pointer-events:none;display:flex;align-items:center;gap:12px;box-shadow:0 4px 20px #00000088;max-width:calc(100% - 32px)}
 #undo-bar.show{opacity:1;transform:translateX(-50%) translateY(0);pointer-events:auto}
 #undo-bar button{background:var(--mode);border:none;border-radius:8px;padding:6px 14px;color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap}
 #undo-bar .undo-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -221,7 +222,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.11"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.12"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -1221,9 +1222,24 @@ function render(){
     document.documentElement.style.setProperty('--surface-2', _surf2);
     document.documentElement.style.setProperty('--border', _bord);
     document.body.style.backgroundColor='#0f172a'; document.body.style.backgroundImage=`linear-gradient(180deg, ${_col}38 0%, ${_col}16 45%, ${_col}0a 100%)`; document.body.style.backgroundAttachment='fixed'; document.body.style.backgroundRepeat='no-repeat';
-    // 細かいサブパネル（インラインで直接指定された暗い面色）を描画後にモード色トーンへ置換するためのマップ
+    // 文字色もモード色にわずかに寄せる（読みやすさを保つため、明るい文字ほど弱く・淡い文字ほど強く混ぜる）
+    const _tx=(base,t)=>mixHex(_col,base,t);
+    const _t0=_tx('#f1f5f9',0.08), _t1=_tx('#e2e8f0',0.10), _t1b=_tx('#cbd5e1',0.12),
+          _t2=_tx('#94a3b8',0.16), _t3=_tx('#64748b',0.20), _t4=_tx('#475569',0.22), _tdim=_tx('#334155',0.24);
+    document.documentElement.style.setProperty('--body-text', _t0);
+    document.documentElement.style.setProperty('--text-1', _t1);
+    document.documentElement.style.setProperty('--text-2', _t2);
+    document.documentElement.style.setProperty('--text-3', _t3);
+    document.documentElement.style.setProperty('--text-4', _t4);
+    document.documentElement.style.setProperty('--dim', _tdim);
+    // 細かいサブパネル（インラインで直接指定された面色・文字色）を描画後にモード色トーンへ置換するためのマップ
     const _rgb=h=>{const c=h.replace('#','');return `rgb(${parseInt(c.slice(0,2),16)}, ${parseInt(c.slice(2,4),16)}, ${parseInt(c.slice(4,6),16)})`;};
-    window.__tintMap=[[_rgb('#1e293b'),_surf],[_rgb('#0f172a'),_surf2],[_rgb('#111827'),_surf2],[_rgb('#0a1120'),_surf2],[_rgb('#0b1120'),_surf2],[_rgb('#1e3a5f'),_bord]];
+    window.__tintMap=[
+      // 面（背景・枠）
+      [_rgb('#1e293b'),_surf],[_rgb('#0f172a'),_surf2],[_rgb('#111827'),_surf2],[_rgb('#0a1120'),_surf2],[_rgb('#0b1120'),_surf2],[_rgb('#1e3a5f'),_bord],
+      // 文字（濃→淡）
+      [_rgb('#f1f5f9'),_t0],[_rgb('#e2e8f0'),_t1],[_rgb('#cbd5e1'),_t1b],[_rgb('#94a3b8'),_t2],[_rgb('#64748b'),_t3],[_rgb('#475569'),_t4],[_rgb('#334155'),_tdim]
+    ];
   }catch(_){}
   if(!window._autoTick) window._autoTick=setInterval(()=>{ const changed=autoModeTick(); nudgeNotifyTick(); if(changed) render(); },60000);
 
