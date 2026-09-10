@@ -12,24 +12,24 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <style>
-:root{--mode:#38bdf8;--mode-soft:#38bdf818;}
+:root{--mode:#38bdf8;--mode-soft:#38bdf818;--surface:#1e293b;--surface-2:#0f172a;--border:#1e3a5f;}
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:#0f172a;color:#f1f5f9;font-family:'Segoe UI',system-ui,sans-serif;min-height:100vh}
 button{font-family:inherit}
 select{font-family:inherit}
 textarea{font-family:inherit}
-.tab-bar{display:flex;background:#1e293b;border-bottom:1px solid #1e3a5f}
+.tab-bar{display:flex;background:var(--surface);border-bottom:1px solid var(--border)}
 .tab-btn{flex:1;padding:8px 2px;border:none;cursor:pointer;font-size:11px;font-weight:600;background:transparent;color:#475569;border-bottom:2px solid transparent}
 .tab-btn.active{color:var(--mode);border-bottom-color:var(--mode)}
-.card{background:#1e293b;border-radius:14px;border:1px solid #1e3a5f;padding:14px 16px;margin-bottom:10px}
+.card{background:var(--surface);border-radius:14px;border:1px solid var(--border);padding:14px 16px;margin-bottom:10px}
 .row-between{display:flex;justify-content:space-between;align-items:center}
-.hour-row{background:#1e293b;border:1px solid #1e3a5f;border-radius:10px;margin-bottom:5px;overflow:hidden}
-.hour-row.now{background:#1e3a5f;border-color:var(--mode);box-shadow:0 0 0 2px var(--mode-soft)}
+.hour-row{background:var(--surface);border:1px solid var(--border);border-radius:10px;margin-bottom:5px;overflow:hidden}
+.hour-row.now{background:var(--border);border-color:var(--mode);box-shadow:0 0 0 2px var(--mode-soft)}
 .modal-bg{position:fixed;inset:0;background:#000000cc;display:flex;align-items:flex-end;z-index:200}
-.modal{width:100%;max-width:600px;margin:0 auto;background:#1e293b;border-radius:16px 16px 0 0;padding:18px 16px 36px;max-height:80vh;overflow-y:auto}
+.modal{width:100%;max-width:600px;margin:0 auto;background:var(--surface);border-radius:16px 16px 0 0;padding:18px 16px 36px;max-height:80vh;overflow-y:auto}
 .modal-center{position:fixed;inset:0;background:#000000cc;display:flex;align-items:center;justify-content:center;z-index:400}
-.modal-box{width:90%;max-width:360px;background:#1e293b;border-radius:16px;padding:22px 20px}
-.sel{flex:1;padding:6px 4px;background:#0f172a;border:1px solid #334155;border-radius:7px;color:#e2e8f0;font-size:13px}
+.modal-box{width:90%;max-width:360px;background:var(--surface);border-radius:16px;padding:22px 20px}
+.sel{flex:1;padding:6px 4px;background:var(--surface-2);border:1px solid var(--border);border-radius:7px;color:#e2e8f0;font-size:13px}
 .btn-primary{padding:10px;border-radius:8px;border:none;font-size:13px;font-weight:600;cursor:pointer;background:var(--mode);color:#fff}
 .btn-ghost{padding:10px;background:transparent;border:1px solid #334155;border-radius:8px;color:#64748b;cursor:pointer;font-size:13px}
 #root{padding-bottom:20px}
@@ -221,7 +221,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.90"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.91"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -531,6 +531,8 @@ const todayStr = () => {
 const scoreColor = s => !s?"#475569":s<=3?"#ef4444":s<=5?"#f97316":s<=7?"#eab308":"#22c55e";
 // 背景色に対して読みやすい文字色（明るい背景→濃色 / 暗い背景→白）を返す
 const textOn = hex => { const c=(hex||"#38bdf8").replace('#',''); const r=parseInt(c.slice(0,2),16)||0,g=parseInt(c.slice(2,4),16)||0,b=parseInt(c.slice(4,6),16)||0; return (0.299*r+0.587*g+0.114*b)>150?"#0a1120":"#ffffff"; };
+// 2色を重み t（=aの割合 0〜1）で混ぜて #rrggbb を返す
+function mixHex(a,b,t){ const p=h=>{const c=(h||'').replace('#','');return [parseInt(c.slice(0,2),16)||0,parseInt(c.slice(2,4),16)||0,parseInt(c.slice(4,6),16)||0];}; const A=p(a),B=p(b); const m=i=>Math.max(0,Math.min(255,Math.round(A[i]*t+B[i]*(1-t)))); return '#'+[m(0),m(1),m(2)].map(x=>x.toString(16).padStart(2,'0')).join(''); }
 const scoreLabel = s => !s?"—":s<=2?"最悪":s<=4?"悪い":s<=6?"普通":s<=8?"良好":"絶好調";
 
 function pressureLevel(diff){
@@ -1181,6 +1183,10 @@ function render(){
   try{ const _mc=lifeModeDef(currentLifeModeKey()); const _col=_mc?_mc.color:'#0ea5e9';
     document.documentElement.style.setProperty('--mode', _col);
     document.documentElement.style.setProperty('--mode-soft', _col+'22');
+    // ベース面（カード・パネル・区切り）をモード色に寄せたダークトーンに
+    document.documentElement.style.setProperty('--surface', mixHex(_col,'#1a1f27',0.14));
+    document.documentElement.style.setProperty('--surface-2', mixHex(_col,'#0c0f15',0.10));
+    document.documentElement.style.setProperty('--border', mixHex(_col,'#2a3340',0.30));
     document.body.style.backgroundColor='#0f172a'; document.body.style.backgroundImage=`linear-gradient(180deg, ${_col}38 0%, ${_col}16 45%, ${_col}0a 100%)`; document.body.style.backgroundAttachment='fixed'; document.body.style.backgroundRepeat='no-repeat';
   }catch(_){}
   if(!window._autoTick) window._autoTick=setInterval(()=>{ const changed=autoModeTick(); nudgeNotifyTick(); if(changed) render(); },60000);
@@ -1395,7 +1401,7 @@ function renderHeader(){
 
   const hdr=document.createElement('div');
   hdr.id='app-header';
-  hdr.style.cssText="background:#1e293b;border-bottom:1px solid #1e3a5f;padding:12px 16px 0;position:sticky;top:0;z-index:100";
+  hdr.style.cssText="background:var(--surface);border-bottom:1px solid var(--border);padding:12px 16px 0;position:sticky;top:0;z-index:100";
   hdr.appendChild(inner);
   return hdr;
 }
