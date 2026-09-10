@@ -222,7 +222,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.12"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.13"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -5766,13 +5766,13 @@ function renderPlanCustomTodoModal(){
 function padBody(body){return div({style:{maxWidth:"600px",margin:"0 auto",padding:"10px 16px 60px"}},[body]);}
 function renderSubHub(SUB,active,onSel,renderBody){
   const wrap=div({style:{maxWidth:"600px",margin:"0 auto"}});
-  const subBar=div({style:{display:"flex",borderBottom:"1px solid #1e3a5f",background:"#1e293b",position:"sticky",top:"var(--hdr-h, 150px)",zIndex:50}});
+  const subBar=div({style:{display:"flex",borderBottom:"1px solid var(--border)",background:"var(--surface)",position:"sticky",top:"var(--hdr-h, 150px)",zIndex:50}});
   // 表示だけ改行する（識別子tはそのまま）。長いタブ名を2行に。
   const SUB_DISP={"動機づけ面談":"動機づけ\n面談"};
   SUB.forEach(t=>{
     const b=btn({style:{flex:1,padding:"10px 2px",border:"none",cursor:"pointer",fontSize:"12px",fontWeight:600,whiteSpace:"pre-line",lineHeight:1.2,textAlign:"center",
-      background:"transparent",color:active===t?"#38bdf8":"#475569",
-      borderBottom:`2px solid ${active===t?"#38bdf8":"transparent"}`}},SUB_DISP[t]||t);
+      background:"transparent",color:active===t?"var(--mode)":"var(--text-4)",
+      borderBottom:`2px solid ${active===t?"var(--mode)":"transparent"}`}},SUB_DISP[t]||t);
     b.addEventListener('click',()=>onSel(t));
     subBar.appendChild(b);
   });
@@ -6840,11 +6840,11 @@ function renderScheduleSearch(){
 function renderScheduleHub(vd,ds,isToday){
   const SUB=["日","週","月","🔍検索"];
   const wrap=div({style:{maxWidth:"600px",margin:"0 auto"}});
-  const subBar=div({style:{display:"flex",borderBottom:"1px solid #1e3a5f",background:"#1e293b",position:"sticky",top:"var(--hdr-h, 150px)",zIndex:50}});
+  const subBar=div({style:{display:"flex",borderBottom:"1px solid var(--border)",background:"var(--surface)",position:"sticky",top:"var(--hdr-h, 150px)",zIndex:50}});
   SUB.forEach(t=>{
     const b=btn({style:{flex:1,padding:"10px 2px",border:"none",cursor:"pointer",fontSize:"12px",fontWeight:600,
-      background:"transparent",color:state.scheduleSubTab===t?"#38bdf8":"#475569",
-      borderBottom:`2px solid ${state.scheduleSubTab===t?"#38bdf8":"transparent"}`}},t);
+      background:"transparent",color:state.scheduleSubTab===t?"var(--mode)":"var(--text-4)",
+      borderBottom:`2px solid ${state.scheduleSubTab===t?"var(--mode)":"transparent"}`}},t);
     b.addEventListener('click',()=>{
       // 日タブ選択中にもう一度日タブを押したら今日へ移動
       if(t==="日" && state.scheduleSubTab==="日") state.viewDate=todayStr();
@@ -11226,13 +11226,13 @@ function renderAnalysisHub(vd, ds, curH, isToday){
   const wrap=div({style:{maxWidth:"600px",margin:"0 auto"}});
 
   // サブタブバー
-  const subBar=div({style:{display:"flex",borderBottom:"1px solid #1e3a5f",background:"#1e293b",position:"sticky",top:"var(--hdr-h, 150px)",zIndex:50}});
+  const subBar=div({style:{display:"flex",borderBottom:"1px solid var(--border)",background:"var(--surface)",position:"sticky",top:"var(--hdr-h, 150px)",zIndex:50}});
   SUB_TABS.forEach(t=>{
     const b=btn({style:{
       flex:1,padding:"10px 4px",border:"none",cursor:"pointer",fontSize:"12px",fontWeight:600,
       background:"transparent",
-      color:state.analysisSubTab===t?"#38bdf8":"#475569",
-      borderBottom:`2px solid ${state.analysisSubTab===t?"#38bdf8":"transparent"}`
+      color:state.analysisSubTab===t?"var(--mode)":"var(--text-4)",
+      borderBottom:`2px solid ${state.analysisSubTab===t?"var(--mode)":"transparent"}`
     }},t);
     b.addEventListener('click',()=>{state.analysisSubTab=t;render();});
     subBar.appendChild(b);
