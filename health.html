@@ -221,7 +221,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.99"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.00"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -2047,10 +2047,29 @@ function nudgeActive(id,now){ const r=nudgeR(id); return !r.dismissed && now>=(r
 function snoozeNudge(id,mins){ nudgeR(id).snoozeUntil=Date.now()+(mins||30)*60000; saveNudges(); }
 function dismissNudge(id){ nudgeR(id).dismissed=true; saveNudges(); }
 function lastDrinkMin(vd,now){ const drs=(getDaily(vd).drinks||[]); if(!drs.length)return null; let mx=-1; drs.forEach(d=>{ const m=(d.hour||0)*60+(d.min||0); if(m>mx)mx=m; }); const nd=new Date(now); return (nd.getHours()*60+nd.getMinutes())-mx; }
-function currentMealDue(vd,nowMin){
-  const bands=[['breakfast','朝食',6*60,9*60],['lunch','昼食',11*60,14*60],['dinner','夕食',18*60,21*60]];
-  for(const [k,label,s,e] of bands){ if(nowMin>=s&&nowMin<=e){ const items=routineGroupItems(k); const doneAll=items.length? items.every(it=>isTodoDone(vd,it)) : ((getDaily(vd).foods||[]).length>0); if(!doneAll) return {key:k,label}; } }
+// 予定タブに入れた食事の予定（イベント/パターン/定期ルーティン）を朝食/昼食/夕食に対応づける。
+const MEAL_LABEL={breakfast:'朝食',lunch:'昼食',dinner:'夕食'};
+function mealKeyFromTitle(t){ if(!t)return null;
+  if(/朝食|朝ごはん|朝ご飯|朝飯|モーニング/i.test(t)||/breakfast/i.test(t)) return 'breakfast';
+  if(/昼食|昼ごはん|昼ご飯|昼飯|ランチ/i.test(t)||/lunch/i.test(t)) return 'lunch';
+  if(/夕食|夕飯|夕ごはん|晩ごはん|晩ご飯|晩飯|夜食|ディナー/i.test(t)||/dinner|supper/i.test(t)) return 'dinner';
   return null;
+}
+function mealRoutineDone(vd,key){ const items=routineGroupItems(key); return items.length? items.every(it=>isTodoDone(vd,it)) : ((getDaily(vd).foods||[]).length>0); }
+// その日の予定から食事の予定時刻を集める（同じ食事は最も早い予定を採用）。{key,startMin,label}[]
+function scheduledMealsForDay(vd){
+  const byKey={};
+  const put=(k,sm)=>{ if(k==null||sm==null)return; if(byKey[k]==null||sm<byKey[k])byKey[k]=sm; };
+  try{ dayOccupancy(vd).timed.forEach(t=>{ put(mealKeyFromTitle(t.title), t.s); }); }catch(_){}
+  try{ (dueCustomTodos(vd)||[]).forEach(ct=>{ const k=mealKeyFromTitle(ct.label); if(k){ const tt=customTodoTimeFor(ct,vd); if(tt&&!tt.sn) put(k, tt.h*60+(tt.m||0)); } }); }catch(_){}
+  return Object.keys(byKey).map(k=>({key:k,startMin:byKey[k],label:MEAL_LABEL[k]||k}));
+}
+// 予定時刻を過ぎて未記録の食事があれば返す（予定時刻〜+2時間の間だけ提案）
+function currentMealDue(vd,nowMin){
+  const WINDOW=120;
+  const due=scheduledMealsForDay(vd).filter(m=> nowMin>=m.startMin && nowMin<=m.startMin+WINDOW && !mealRoutineDone(vd,m.key));
+  due.sort((a,b)=>a.startMin-b.startMin);
+  return due[0]||null;
 }
 // 全ルールを評価して最優先の1件を返す（なければ null）
 function evalNudges(now){
@@ -2058,8 +2077,8 @@ function evalNudges(now){
   if(state.sleepMode||state.selfMode||state.modeSwitcher||state.lifeScreen) return null; // 全画面表示中は出さない
   now=now||Date.now(); const nd=new Date(now); const nowMin=nd.getHours()*60+nd.getMinutes();
   const vd=todayStr(); const curMode=currentLifeModeKey(); const cands=[];
-  // R3 飲み過ぎ（最後の1杯から90分以内）
-  if(nudgeActive('drink',now) && curMode!=='drink'){ const dm=lastDrinkMin(vd,now); if(dm!=null && dm>=0 && dm<=90){ const g=Math.round(pureAlcoholG(vd)), lim=alcLimitDay(), over=g>=lim; cands.push({pri:1,id:'drink',icon:'🍶',title:over?`今日 ${g}g（上限${lim}g）`:'まだ飲みが続いています',sub:over?'そろそろ切り上げませんか？':'飲みモードで水と間隔を',act:()=>openLifeMode('drink')}); } }
+  // R3 飲み過ぎ（飲みモード開始から90分経過）
+  if(nudgeActive('drink',now) && curMode==='drink'){ const ses=currentModeSession(); const el=ses?(now-ses.start):0; if(el>=90*60000){ const g=Math.round(pureAlcoholG(vd)), lim=alcLimitDay(), over=g>=lim; cands.push({pri:1,id:'drink',icon:'🍶',title:over?`今日 ${g}g（上限${lim}g）`:'飲みモードが90分',sub:'そろそろ切り上げませんか？',act:()=>{ state.modeSwitcher=true; }}); } }
   // R2 寝坊（目標起床時刻・シフト別）
   if(nudgeActive('wake',now) && curMode!=='sleep' && curMode!=='sleepprep'){ const wg=wakeGoalMinsFor(vd); if(wg!=null && nowMin>=wg && nowMin<=wg+180 && getDaily(vd).wakeTime==null){ cands.push({pri:2,id:'wake',icon:'☀️',title:'起きる時間です',sub:'朝モードで一日を始めましょう',act:()=>openLifeMode('morning')}); } }
   // R1 夜更かし（就寝リズムのリード時間と同じ）
@@ -2069,7 +2088,7 @@ function evalNudges(now){
   // R5 食事
   if(nudgeActive('meal',now) && curMode!=='meal'){ const meal=currentMealDue(vd,nowMin); if(meal){ cands.push({pri:5,id:'meal',icon:'🍚',title:`${meal.label}の時間`,sub:'食事モードで記録しませんか？',act:()=>openLifeMode('meal')}); } }
   // R6 停滞
-  if(nudgeActive('stall',now) && (curMode==='hobby'||curMode==='rest')){ const s=currentModeSession(); if(s && now-s.start>=3*3600000){ const def=lifeModeDef(curMode); cands.push({pri:6,id:'stall',icon:'🔀',title:`${def?def.label:''}モードが3時間`,sub:'切り替えますか？',act:()=>{ state.modeSwitcher=true; }}); } }
+  if(nudgeActive('stall',now) && (curMode==='hobby'||curMode==='rest')){ const s=currentModeSession(); if(s && now-s.start>=2*3600000){ const def=lifeModeDef(curMode); cands.push({pri:6,id:'stall',icon:'🔀',title:`${def?def.label:''}モードが2時間`,sub:'切り替えますか？',act:()=>{ state.modeSwitcher=true; }}); } }
   cands.sort((a,b)=>a.pri-b.pri);
   return cands[0]||null;
 }
