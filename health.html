@@ -221,7 +221,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.97"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.98"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -6982,39 +6982,50 @@ function renderDaySchedule(vd,ds,isToday){
     }
   }
   // 重なりをレーン（横並び）に振り分けて文字被りを防ぐ
+  // 表示上の縦位置(px)を全実績で統一して算出する。
+  //   タイマー式（開始〜終了がある）：開始を上端・終了を下端にした帯（span）。
+  //   チェック式（点＝isPoint）：完了/チェック時刻を下端にして上へ一定量伸ばす。
+  //   レーン割当（重なり検出）も描画も、この topPx/heightPx を使うので表示がずれない・かぶらない。
+  const blockGeom=(ev)=>{
+    const s=(ev.startMin!=null?ev.startMin:ev.startH*60+ev.startM);
+    let e=(ev.endMin!=null?ev.endMin:ev.endH*60+ev.endM);
+    if(e<=s)e=s+(ev.isPoint?12:16);
+    const heightPx=ev.isPoint?14:Math.max(16,((e-s)/60)*HOUR_H-2);
+    const topPx=((s/60)-START_H)*HOUR_H - (ev.isPoint?heightPx:0);
+    return {s,e,topPx,heightPx,botPx:topPx+heightPx};
+  };
   const layoutLanes=(items)=>{
     const arr=items.map(ev=>{
-      const s=(ev.startMin!=null?ev.startMin:ev.startH*60+ev.startM);
-      let e=(ev.endMin!=null?ev.endMin:ev.endH*60+ev.endM);
-      if(e<=s)e=s+(ev.isPoint?12:16);
-      return {ev,s,e,lane:0,lanes:1};
-    }).sort((a,b)=>a.s-b.s||a.e-b.e);
-    // 連続して重なるものをクラスタ化し、各クラスタ内でレーン割当
-    let cluster=[], clusterEnd=-1;
+      const g=blockGeom(ev);
+      return {ev,s:g.s,e:g.e,topPx:g.topPx,heightPx:g.heightPx,botPx:g.botPx,lane:0,lanes:1};
+    }).sort((a,b)=>a.topPx-b.topPx||a.botPx-b.botPx);
+    // 連続して重なるものをクラスタ化し、各クラスタ内でレーン割当（表示位置=px基準で重なり判定）
+    let cluster=[], clusterEnd=-Infinity;
     const flush=()=>{
       if(!cluster.length)return;
       const laneEnd=[];
       cluster.forEach(o=>{
         let placed=false;
-        for(let i=0;i<laneEnd.length;i++){ if(o.s>=laneEnd[i]){o.lane=i;laneEnd[i]=o.e;placed=true;break;} }
-        if(!placed){ o.lane=laneEnd.length; laneEnd.push(o.e); }
+        for(let i=0;i<laneEnd.length;i++){ if(o.topPx>=laneEnd[i]-0.5){o.lane=i;laneEnd[i]=o.botPx;placed=true;break;} }
+        if(!placed){ o.lane=laneEnd.length; laneEnd.push(o.botPx); }
       });
       cluster.forEach(o=>o.lanes=laneEnd.length);
-      cluster=[]; clusterEnd=-1;
+      cluster=[]; clusterEnd=-Infinity;
     };
     arr.forEach(o=>{
-      if(cluster.length && o.s>=clusterEnd) flush();
-      cluster.push(o); clusterEnd=Math.max(clusterEnd,o.e);
+      if(cluster.length && o.topPx>=clusterEnd) flush();
+      cluster.push(o); clusterEnd=Math.max(clusterEnd,o.botPx);
     });
     flush();
     return arr;
   };
   const blockArea=(items,leftBase,widthArea,defaultColor,onTap,onMove)=>{
-    layoutLanes(items).forEach(({ev,s:sMin,e:eMin,lane,lanes})=>{
+    layoutLanes(items).forEach(({ev,s:sMin,e:eMin,lane,lanes,topPx,heightPx})=>{
       const color=ev.color||defaultColor;
-      const height=ev.isPoint?14:Math.max(16,((eMin-sMin)/60)*HOUR_H-2);
-      // 点イベント（実績）は「完了時刻」を下端にして上（前）へ伸ばす＝完了時刻より下に出さない
-      const top=((sMin/60)-START_H)*HOUR_H - (ev.isPoint?height:0);
+      // タイマー式は開始が上・終了が下の帯。チェック式（点）は完了時刻を下端にして上へ伸ばす。
+      // レイアウトと同じ topPx/heightPx を使うので、実績ごとに表示位置がずれたりかぶったりしない。
+      const height=heightPx;
+      const top=topPx;
       if(top+height<0||top>(END_H-START_H)*HOUR_H)return;
       // レーン位置（横分割）。widthArea/leftBase は calc 用の生の式
       const left=`calc((${leftBase}) + (${widthArea}) * ${(lane/lanes).toFixed(4)})`;
