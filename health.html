@@ -221,7 +221,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.08"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.09"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -841,6 +841,8 @@ function loadStorage(){
     if(lmd){try{const a=JSON.parse(lmd); if(Array.isArray(a)&&a.length)state.lifeModes=a;}catch{}}
     migrateLifeModes(); // 朝/飲み/睡眠前などの新しい生活モードを既存データに補完
     const dfm=localStorage.getItem(STORAGE_KEY+"_defaultmode"); if(dfm)state.defaultMode=dfm;
+    const mgl=localStorage.getItem(STORAGE_KEY+"_modegoals");
+    if(mgl){try{const o=JSON.parse(mgl); if(o&&typeof o==="object")state.modeGoals=o;}catch{}}
     const mlg=localStorage.getItem(STORAGE_KEY+"_modelog");
     if(mlg){try{const a=JSON.parse(mlg); if(Array.isArray(a))state.modeLog=a;}catch{}}
     const amd=localStorage.getItem(STORAGE_KEY+"_automode");
@@ -1993,6 +1995,11 @@ function activeDay(now){
 }
 function switchLifeMode(key,auto){ const cur=currentModeSession(), now=Date.now(); if(cur){ if(cur.key===key)return; cur.end=now; } const s={key,start:now}; if(auto)s.auto=true; getModeLog().push(s); saveModeLog(); }
 // 常に1つの生活モードに属する：進行中セッションが無ければ既定モードを開始（モード未選択を無くす）
+// モード別の「1日の目標時間（分）」。0/未設定なら目標なし
+function getModeGoals(){ if(!state.modeGoals||typeof state.modeGoals!=='object')state.modeGoals={}; return state.modeGoals; }
+function saveModeGoals(){ try{localStorage.setItem(STORAGE_KEY+'_modegoals',JSON.stringify(getModeGoals()));}catch(_){} }
+function modeGoalMin(key){ const v=getModeGoals()[key]; return (v>0)?v:0; }
+function setModeGoalMin(key,min){ const g=getModeGoals(); if(min>0)g[key]=min; else delete g[key]; saveModeGoals(); }
 function getDefaultMode(){ const dm=state.defaultMode||'rest'; return lifeModeDef(dm)?dm:(getLifeModes()[0]||{key:'rest'}).key; }
 function setDefaultMode(k){ state.defaultMode=k; try{localStorage.setItem(STORAGE_KEY+'_defaultmode',k);}catch(_){} }
 function ensureActiveMode(){ if(!currentModeSession()){ switchLifeMode(getDefaultMode(),true); return true; } return false; }
@@ -2309,13 +2316,29 @@ function renderModeEditor(inSettings){
   getLifeModes().forEach(m=>{ const o=document.createElement('option'); o.value=m.key; o.textContent=`${m.icon} ${m.label}`; if(m.key===getDefaultMode())o.selected=true; sel.appendChild(o); });
   sel.addEventListener('change',e=>{ setDefaultMode(e.target.value); });
   drow.appendChild(sel); box.appendChild(drow);
-  box.appendChild(div({style:{fontSize:'11px',color:'#64748b',marginBottom:'9px',lineHeight:1.6}},'各モードの色を変更できます。'));
+  box.appendChild(div({style:{fontSize:'11px',color:'#64748b',marginBottom:'9px',lineHeight:1.6}},'各モードの色と「1日の目標時間」を設定できます。目標を入れると分析の「モード別の時間」に達成ゲージが出ます（空欄・0で目標なし）。'));
   getLifeModes().forEach((m,idx)=>{
     const card=div({style:{background:'#111827',border:'1px solid #1e293b',borderRadius:'11px',padding:'10px',marginBottom:'9px'}});
     card.appendChild(div({style:{display:'flex',alignItems:'center',gap:'9px',marginBottom:'8px'}},[
       div({style:{fontSize:'20px'}},m.icon),
       div({style:{fontSize:'13px',fontWeight:700,color:m.color}},m.label)
     ]));
+    // 1日の目標時間（時間・分）
+    { const g=modeGoalMin(m.key);
+      const row=div({style:{display:'flex',alignItems:'center',gap:'6px',marginBottom:'8px'}});
+      row.appendChild(span({style:{fontSize:'11px',color:'#94a3b8',flexShrink:0}},'1日の目標'));
+      const mk=(val,max,ph,onCh)=>{ const i=document.createElement('input'); i.type='number'; i.min='0'; i.max=String(max); i.placeholder=ph; i.value=val?String(val):'';
+        i.style.cssText='width:56px;padding:6px 8px;background:#0f172a;border:1px solid #334155;border-radius:7px;color:#e2e8f0;font-size:13px;font-family:inherit;text-align:center';
+        i.addEventListener('change',onCh); return i; };
+      const hI=mk(Math.floor(g/60),23,'0',null), mI=mk(g%60,59,'0',null);
+      const apply=()=>{ const H=Math.max(0,Math.min(23,parseInt(hI.value)||0)), M=Math.max(0,Math.min(59,parseInt(mI.value)||0)); setModeGoalMin(m.key,H*60+M); render(); };
+      hI.addEventListener('change',apply); mI.addEventListener('change',apply);
+      row.appendChild(hI); row.appendChild(span({style:{fontSize:'11px',color:'#94a3b8'}},'時間'));
+      row.appendChild(mI); row.appendChild(span({style:{fontSize:'11px',color:'#94a3b8'}},'分'));
+      if(g>0){ const cl=btn({style:{marginLeft:'auto',padding:'5px 9px',borderRadius:'7px',border:'1px solid #334155',background:'transparent',color:'#64748b',fontSize:'11px',cursor:'pointer',fontFamily:'inherit'}},'クリア');
+        cl.addEventListener('click',(()=>{const k=m.key;return()=>{ setModeGoalMin(k,0); render(); };})()); row.appendChild(cl); }
+      card.appendChild(row);
+    }
     card.appendChild(colorPickerRow(m.color,(()=>{const i=idx;return c=>{ getLifeModes()[i].color=c; saveLifeModes(); render(); };})()));
     box.appendChild(card);
   });
@@ -11229,9 +11252,102 @@ function renderModeStatCard(){
     row.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:def?def.color:"#cbd5e1",flexShrink:0}},fmtDur(ms)));
     row.appendChild(div({style:{fontSize:"11px",color:"#64748b",width:"36px",textAlign:"right",flexShrink:0}},`${Math.round(ms/grand*100)}%`));
     card.appendChild(row);
+    // 目標時間の達成ゲージ（1日あたりで比較）
+    const goal=modeGoalMin(k);
+    if(goal>0){
+      const perDay=ms/days, goalMs=goal*60000, pct=Math.min(200,Math.round(perDay/goalMs*100));
+      const g=div({style:{margin:"0 0 6px 27px"}});
+      g.appendChild(div({style:{display:"flex",justifyContent:"space-between",fontSize:"9px",color:"#64748b",marginBottom:"2px"}},[
+        span({},`目標 ${fmtDur(goalMs)}/日${days>1?`・1日平均 ${fmtDur(perDay)}`:""}`),
+        span({style:{color:pct>=100?"#4ade80":"#94a3b8",fontWeight:700}},`${pct}%`)
+      ]));
+      const track=div({style:{height:"5px",borderRadius:"3px",background:"#0f172a",overflow:"hidden"}});
+      track.appendChild(div({style:{height:"100%",width:`${Math.min(100,pct)}%`,background:pct>=100?"#22c55e":(def?def.color:"#38bdf8"),borderRadius:"3px"}}));
+      g.appendChild(track);
+      card.appendChild(g);
+    }
+  });
+  // 目標はあるがこの期間まったく記録が無いモードも、未達として出す
+  getLifeModes().forEach(m=>{
+    const goal=modeGoalMin(m.key); if(!goal||tot[m.key]>0) return;
+    const g=div({style:{display:"flex",alignItems:"center",gap:"9px",padding:"5px 0",borderBottom:"1px solid #1e293b",opacity:0.65}});
+    g.appendChild(div({style:{width:"18px",fontSize:"17px",textAlign:"center",flexShrink:0}},m.icon));
+    g.appendChild(div({style:{flex:1,minWidth:0,fontSize:"13px",color:"#94a3b8"}},m.label));
+    g.appendChild(div({style:{fontSize:"11px",color:"#f97316",flexShrink:0}},`目標 ${fmtDur(goal*60000)}/日・記録なし`));
+    card.appendChild(g);
   });
   if(days>1) card.appendChild(div({style:{fontSize:"10px",color:"#475569",marginTop:"9px",textAlign:"center"}},`直近${days}日間・記録のある時間の合計 ${fmtDur(grand)}（1日あたり平均 ${fmtDur(grand/days)}）`));
   card.appendChild(renderModeDaySection(list));
+  return card;
+}
+// モード時間と体調・睡眠・飲酒の関係を、「そのモードが多い日／少ない日」の平均比較で求める。
+// 統計的な因果ではなく傾向の提示。日数が少ない・差が小さいものは出さない。
+const MODE_METRICS=[
+  {k:"score", label:"体調",       unit:"",  dec:1, norm:10, min:0.5, hiGood:true},
+  {k:"mental",label:"心の調子",   unit:"",  dec:1, norm:10, min:0.5, hiGood:true},
+  {k:"sleep", label:"睡眠",       unit:"h", dec:1, norm:8,  min:0.4, hiGood:true},
+  {k:"alc",   label:"純アルコール",unit:"g", dec:0, norm:20, min:3,   hiGood:false}
+];
+function modeDayMetrics(ds){
+  const ls=state.logs.filter(l=>l.dateStr===ds);
+  const sc=ls.filter(l=>l.score!=null), mn=ls.filter(l=>l.mental!=null);
+  return {
+    score: sc.length? sc.reduce((a,b)=>a+b.score,0)/sc.length : null,
+    mental: mn.length? mn.reduce((a,b)=>a+b.mental,0)/mn.length : null,
+    sleep: getNightSleepHours(addDays(ds,1)),   // その日の夜の睡眠
+    alc: pureAlcoholG(ds)
+  };
+}
+function modeConditionInsights(dsList){
+  const met={}; dsList.forEach(ds=>{ met[ds]=modeDayMetrics(ds); });
+  const out=[];
+  getLifeModes().forEach(m=>{
+    const mins=dsList.map(ds=>({ds,v:(modeTotalsForDay(ds)[m.key]||0)/60000}));
+    if(mins.filter(x=>x.v>0).length<3) return;
+    // 値の順位で上位半分／下位半分に分ける（同値が多くても必ず両群に分かれる）
+    const sorted=[...mins].sort((a,b)=>a.v-b.v);
+    const half=Math.floor(sorted.length/2);
+    if(half<2) return;
+    const lo=sorted.slice(0,half), hi=sorted.slice(sorted.length-half);
+    const avgV=arr=>arr.reduce((a,x)=>a+x.v,0)/arr.length;
+    if(avgV(hi)-avgV(lo)<10) return; // 多い日と少ない日の差が10分未満なら比較しない
+    MODE_METRICS.forEach(mt=>{
+      const avg=arr=>{ const vs=arr.map(x=>met[x.ds][mt.k]).filter(v=>v!=null&&isFinite(v)); return vs.length>=2?vs.reduce((a,b)=>a+b,0)/vs.length:null; };
+      const a=avg(hi), b=avg(lo);
+      if(a==null||b==null) return;
+      const d=a-b;
+      if(Math.abs(d)<mt.min) return;
+      out.push({mode:m,met:mt,hi:a,lo:b,diff:d,score:Math.abs(d)/mt.norm});
+    });
+  });
+  return out.sort((x,y)=>y.score-x.score);
+}
+function renderModeInsightCard(){
+  const days=30, list=[]; for(let i=1;i<=days;i++) list.push(addDays(todayStr(),-i)); // 昨日まで（当日は途中なので除く）
+  const ins=modeConditionInsights(list);
+  if(!ins.length) return null;
+  const card=div({className:"card"});
+  card.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0",marginBottom:"2px"}},"🔎 モード時間と体調の関係"));
+  card.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"10px"}},`直近${days}日・そのモードが「多い日」と「少ない日」の平均を比較`));
+  ins.slice(0,5).forEach(o=>{
+    const up=o.diff>0, good=up===o.met.hiGood;
+    const col=good?"#4ade80":"#f97316";
+    const f=v=>v.toFixed(o.met.dec)+o.met.unit;
+    const row=div({style:{display:"flex",alignItems:"center",gap:"9px",padding:"7px 0",borderBottom:"1px solid #1e293b"}});
+    row.appendChild(div({style:{width:"18px",fontSize:"17px",textAlign:"center",flexShrink:0}},o.mode.icon));
+    const t=div({style:{flex:1,minWidth:0}});
+    t.appendChild(div({style:{fontSize:"12px",color:"#e2e8f0",lineHeight:1.4}},[
+      span({style:{color:o.mode.color,fontWeight:700}},o.mode.label),
+      txt(`が多い日は `),
+      span({style:{fontWeight:700}},o.met.label),
+      txt(` が${up?"高い":"低い"}`)
+    ]));
+    t.appendChild(div({style:{fontSize:"10px",color:"#64748b"}},`多い日 ${f(o.hi)} ／ 少ない日 ${f(o.lo)}`));
+    row.appendChild(t);
+    row.appendChild(div({style:{fontSize:"13px",fontWeight:800,color:col,flexShrink:0}},`${up?"+":"−"}${f(Math.abs(o.diff)).replace("-","")}`));
+    card.appendChild(row);
+  });
+  card.appendChild(div({style:{fontSize:"9px",color:"#475569",marginTop:"8px",lineHeight:1.5}},"※ 記録の傾向であり、因果関係を示すものではありません。日数が少ないほど偶然の影響を受けます。"));
   return card;
 }
 // 日別セクション：1日1行の24時間帯（いつどのモードだったか）。タップでその日の内訳を展開。
@@ -11287,6 +11403,7 @@ function renderModeDaySection(dsList){
 function renderLog(){
   const wrap=div({style:{maxWidth:"600px",margin:"0 auto",padding:"12px 16px 60px"}});
   wrap.appendChild(renderModeStatCard());
+  { const ic=renderModeInsightCard(); if(ic) wrap.appendChild(ic); }
 
   // ── 月間体調ヒートマップ ──
   if(state.heatmapMonth===undefined){
@@ -11383,6 +11500,45 @@ function renderLog(){
   return wrap;
 }
 
+// 週次分析：その週のモード別時間（帯グラフ＋一覧＋前週比＋日別の24時間帯）
+function renderModeWeekCard(days,prevDays){
+  const tot=modeTotalsForRange(days);
+  const entries=Object.entries(tot).filter(([,ms])=>ms>0).sort((a,b)=>b[1]-a[1]);
+  const grand=entries.reduce((a,[,ms])=>a+ms,0);
+  const card=div({className:"card"});
+  card.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0",marginBottom:"8px"}},"🕒 モード別の時間"));
+  if(!grand){ card.appendChild(div({style:{fontSize:"12px",color:"#64748b",textAlign:"center",padding:"6px 0"}},"この週のモード記録はありません。")); return card; }
+  const prevTot=prevDays?modeTotalsForRange(prevDays):null;
+  const bar=div({style:{display:"flex",height:"14px",borderRadius:"7px",overflow:"hidden",marginBottom:"10px",background:"#0f172a"}});
+  entries.forEach(([k,ms])=>{ const def=lifeModeDef(k); bar.appendChild(div({style:{width:`${(ms/grand*100).toFixed(3)}%`,background:def?def.color:"#64748b"}})); });
+  card.appendChild(bar);
+  entries.forEach(([k,ms])=>{ const def=lifeModeDef(k);
+    const row=div({style:{display:"flex",alignItems:"center",gap:"9px",padding:"4px 0",borderBottom:"1px solid #1e293b"}});
+    row.appendChild(div({style:{width:"18px",fontSize:"16px",textAlign:"center",flexShrink:0}},def?def.icon:"🕒"));
+    const lbl=div({style:{flex:1,minWidth:0}});
+    lbl.appendChild(div({style:{fontSize:"12px",color:"#e2e8f0",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},def?def.label:k));
+    if(prevTot){ const d=ms-(prevTot[k]||0);
+      if(Math.abs(d)>=60000) lbl.appendChild(div({style:{fontSize:"9px",color:d>0?"#4ade80":"#f97316"}},`${d>0?"↑":"↓"} 前週比 ${fmtDur(Math.abs(d))}`));
+    }
+    row.appendChild(lbl);
+    row.appendChild(div({style:{fontSize:"12px",fontWeight:700,color:def?def.color:"#cbd5e1",flexShrink:0}},fmtDur(ms)));
+    row.appendChild(div({style:{fontSize:"10px",color:"#64748b",width:"32px",textAlign:"right",flexShrink:0}},`${Math.round(ms/grand*100)}%`));
+    card.appendChild(row);
+    const goal=modeGoalMin(k);
+    if(goal>0){ const perDay=ms/days.length, pct=Math.min(200,Math.round(perDay/(goal*60000)*100));
+      const g=div({style:{margin:"0 0 5px 27px"}});
+      g.appendChild(div({style:{display:"flex",justifyContent:"space-between",fontSize:"9px",color:"#64748b",marginBottom:"2px"}},[
+        span({},`目標 ${fmtDur(goal*60000)}/日・1日平均 ${fmtDur(perDay)}`),
+        span({style:{color:pct>=100?"#4ade80":"#94a3b8",fontWeight:700}},`${pct}%`)]));
+      const tr=div({style:{height:"5px",borderRadius:"3px",background:"#0f172a",overflow:"hidden"}});
+      tr.appendChild(div({style:{height:"100%",width:`${Math.min(100,pct)}%`,background:pct>=100?"#22c55e":(def?def.color:"#38bdf8"),borderRadius:"3px"}}));
+      g.appendChild(tr); card.appendChild(g);
+    }
+  });
+  card.appendChild(div({style:{fontSize:"10px",color:"#475569",margin:"8px 0 4px",textAlign:"center"}},`合計 ${fmtDur(grand)}（1日平均 ${fmtDur(grand/days.length)}）`));
+  card.appendChild(renderModeDaySection([...days].reverse()));
+  return card;
+}
 // ── 分析タブ ──────────────────────────────────────
 // ── 週次レポート ──────────────────────────────────
 function renderWeekly(){
@@ -11447,6 +11603,11 @@ function renderWeekly(){
     const isFuture = d > todayD;
     return {d, label:DAY_LABELS[i], daily, logs, avgScore, alcG, sleepH, todoDone, isFuture};
   });
+
+  // ── 🕒 モード別の時間（この週・前週比） ──
+  { const prev=weeks[state.weeklyIdx+1];
+    const mc=renderModeWeekCard(week.days, prev?prev.days:null);
+    if(mc) wrap.appendChild(mc); }
 
   // ── 体調スコアグラフ ──
   wrap.appendChild(div({className:"card"},[
@@ -12222,7 +12383,31 @@ function buildAnalysisContext(){
     }
     return lines.join('\n')||'なし';
   })();
-  return `【日次記録（シフト・実際の行動つき）】\n${ds2}\n\n【時間別体調】\n${hs}\n\n【今後1週間の予定】\n${upcoming}`;
+  return `【日次記録（シフト・実際の行動つき）】\n${ds2}\n\n【時間別体調】\n${hs}\n\n【今後1週間の予定】\n${upcoming}\n\n${buildModeContext(14)}`;
+}
+// AIに渡す「生活モード（時間の使い方）」の要約。1日平均・構成比・目標達成・日別内訳。
+function buildModeContext(days){
+  days=days||14;
+  const list=[]; for(let i=0;i<days;i++) list.push(addDays(todayStr(),-i));
+  const tot=modeTotalsForRange(list);
+  const entries=Object.entries(tot).filter(([,ms])=>ms>0).sort((a,b)=>b[1]-a[1]);
+  if(!entries.length) return `【生活モード（時間の使い方）】\n記録なし`;
+  const grand=entries.reduce((a,[,ms])=>a+ms,0);
+  const hh=ms=>(ms/3600000).toFixed(1);
+  const sum=entries.map(([k,ms])=>{
+    const def=lifeModeDef(k); const goal=modeGoalMin(k);
+    const perDay=ms/days;
+    const g=goal>0?`（目標${(goal/60).toFixed(1)}h/日・達成${Math.round(perDay/(goal*60000)*100)}%）`:'';
+    return `${def?def.label:k}: 合計${hh(ms)}h 1日平均${hh(perDay)}h 構成比${Math.round(ms/grand*100)}%${g}`;
+  }).join('\n');
+  // 日別（いつ何をしていたか。時刻付きで並べる）
+  const byDay=list.slice(0,days).map(ds=>{
+    const t=modeTotalsForDay(ds);
+    const es=Object.entries(t).filter(([,ms])=>ms>0).sort((a,b)=>b[1]-a[1])
+      .map(([k,ms])=>{ const def=lifeModeDef(k); return `${def?def.label:k}${hh(ms)}h`; }).join(' ');
+    return es?`${ds}: ${es}`:null;
+  }).filter(Boolean).join('\n');
+  return `【生活モード（時間の使い方・直近${days}日）】\n${sum}\n\n【生活モードの日別内訳】\n${byDay||'なし'}\n※「モード」はユーザーが今どの生活場面にいるかを自分で切り替えて記録したもの。時間の使い方の偏りや、体調・睡眠・飲酒との関係を読み取るのに使ってください。`;
 }
 async function runAI(scored,dailies){
   if(state.aiAnalysisLoading)return;
@@ -12295,6 +12480,13 @@ function qaDateLine(ds){
   if(g>0)parts.push(`酒${g.toFixed(0)}g${drinkNames?`[${drinkNames}]`:''}`);
   if((d.foods||[]).length)parts.push(`食事[${d.foods.join(',')}]`);
   if(acts)parts.push(`行動[${acts}]`);
+  // 生活モード（その日の時間の使い方）
+  try{
+    const mt=modeTotalsForDay(ds);
+    const ms=Object.entries(mt).filter(([,v])=>v>0).sort((a,b)=>b[1]-a[1])
+      .map(([k,v])=>{ const def=lifeModeDef(k); return `${def?def.label:k}${(v/3600000).toFixed(1)}h`; }).join(',');
+    if(ms) parts.push(`モード[${ms}]`);
+  }catch(_){}
   return parts.length?`${ds}(${wd}${shift}) ${parts.join(' ')}`:null;
 }
 function buildQAContext(){
@@ -12311,7 +12503,7 @@ function buildQAContext(){
   try{ wk=allWorkouts().slice(0,20).map(w=>`${w.date} ${w.name} ${w.weight!=null?w.weight+'kg':''}${w.reps!=null?'×'+w.reps:''}${w.sets!=null?'×'+w.sets+'set':''}`).join('\n')||'なし'; }catch(_){}
   try{ cd=allCardio().slice(0,15).map(w=>`${w.date} ${w.name} ${w.distance!=null?w.distance+'km':''}${w.minutes!=null?' '+Math.round(w.minutes)+'分':''}`).join('\n')||'なし'; }catch(_){}
   const goals=[]; const walk=ns=>(ns||[]).forEach(n=>{ if(n.text)goals.push(`${n.text}${n.done?'(達成)':''}`); if(n.children)walk(n.children); }); walk(state.goalTree);
-  return `【1日ごとの記録（過去約120日・記録がある日のみ）】\n${lines||'記録なし'}\n\n【今後3週間の予定】\n${up.join('\n')||'なし'}\n\n【体組成（最近）】\n${bc}\n\n【ワークアウト（最近）】\n${wk}\n\n【有酸素（最近）】\n${cd}\n\n【目標】\n${goals.slice(0,30).join(' / ')||'なし'}\n\n※日付はYYYY-MM-DD形式。今日は${todayStr()}。`;
+  return `【1日ごとの記録（過去約120日・記録がある日のみ）】\n${lines||'記録なし'}\n\n${buildModeContext(30)}\n\n【今後3週間の予定】\n${up.join('\n')||'なし'}\n\n【体組成（最近）】\n${bc}\n\n【ワークアウト（最近）】\n${wk}\n\n【有酸素（最近）】\n${cd}\n\n【目標】\n${goals.slice(0,30).join(' / ')||'なし'}\n\n※日付はYYYY-MM-DD形式。今日は${todayStr()}。`;
 }
 async function aiQAChatSend(){
   const msg=(state.aiQAInput||"").trim();
