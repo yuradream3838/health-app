@@ -221,7 +221,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.07"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.08"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -2165,6 +2165,17 @@ function nudgeBanner(){
 function modeTotalsForDay(ds){ const dayStart=parseDS(ds).getTime(), dayEnd=dayStart+86400000, now=Date.now(), tot={}; getModeLog().forEach(s=>{ const st=Math.max(s.start,dayStart), en=Math.min(s.end||now,dayEnd); if(en>st) tot[s.key]=(tot[s.key]||0)+(en-st); }); return tot; }
 // 複数日のモード別時間を合算（キー→ミリ秒）
 function modeTotalsForRange(dsList){ const tot={}; dsList.forEach(ds=>{ const t=modeTotalsForDay(ds); for(const k in t) tot[k]=(tot[k]||0)+t[k]; }); return tot; }
+// その日(0〜24時)を、選択していたモードで切り出したセグメント。予定タブの色帯と日別集計で共用。
+function modeSegmentsForDay(ds){
+  const dayStart=parseDS(ds).getTime(), dayEnd=dayStart+86400000, now=Date.now(), out=[];
+  getModeLog().forEach(sess=>{
+    const st=Math.max(sess.start,dayStart), en=Math.min(sess.end||now,dayEnd);
+    if(en<=st) return;
+    const def=lifeModeDef(sess.key); if(!def) return;
+    out.push({key:sess.key,def,startMin:(st-dayStart)/60000,endMin:(en-dayStart)/60000});
+  });
+  return out.sort((a,b)=>a.startMin-b.startMin);
+}
 // 指定した時刻(ミリ秒)に選択していたモードのキーを返す（モードバンド用）
 function modeKeyAt(ts){ const l=getModeLog(); for(let i=l.length-1;i>=0;i--){ const s=l[i]; if(s.start<=ts && (s.end==null||ts<s.end)) return s.key; } return null; }
 // ルーティン項目の当日の計測秒（タイマー式：セッション/開始終了の合計。実行中は現在まで加算）
@@ -7275,13 +7286,10 @@ function renderDaySchedule(vd,ds,isToday){
   //   実績ブロックの上（z4）に重ねるので、実績がたくさんあってもモード色が見える。中央は透明でブロックを隠さない。
   //   pointer-events:none なのでタップは下の実績ブロック／空きレイヤーへ通る。
   (function(){
-    const dayStart=parseDS(vd).getTime(), dayEnd=dayStart+86400000, now=Date.now();
     const EDGE=6; // 色帯の幅（左右それぞれ）
-    getModeLog().forEach(sess=>{
-      const st=Math.max(sess.start,dayStart), en=Math.min(sess.end||now,dayEnd);
-      if(en<=st) return;
-      const def=lifeModeDef(sess.key); if(!def) return;
-      const sMin=(st-dayStart)/60000, eMin=(en-dayStart)/60000;
+    modeSegmentsForDay(vd).forEach(sg=>{
+      const def=sg.def;
+      const sMin=sg.startMin, eMin=sg.endMin;
       const top=((sMin/60)-START_H)*HOUR_H, height=Math.max(2,((eMin-sMin)/60)*HOUR_H);
       if(top+height<0||top>(END_H-START_H)*HOUR_H) return;
       const band=div({style:{position:"absolute",top:`${Math.max(0,top)}px`,left:"calc(50% + 2px)",width:"calc(50% - 6px)",height:`${height}px`,
@@ -11208,15 +11216,73 @@ function renderModeStatCard(){
   entries.forEach(([k,ms])=>{ const def=lifeModeDef(k); bar.appendChild(div({style:{width:`${(ms/grand*100).toFixed(3)}%`,background:def?def.color:"#64748b"}})); });
   card.appendChild(bar);
   // 一覧
+  // 前の同じ期間との比較（7日/30日のみ）
+  const prevTot=days>1?(()=>{ const pl=[]; for(let i=days;i<days*2;i++) pl.push(addDays(todayStr(),-i)); return modeTotalsForRange(pl); })():null;
   entries.forEach(([k,ms])=>{ const def=lifeModeDef(k); const row=div({style:{display:"flex",alignItems:"center",gap:"9px",padding:"5px 0",borderBottom:"1px solid #1e293b"}});
     row.appendChild(div({style:{width:"18px",fontSize:"17px",textAlign:"center",flexShrink:0}},def?def.icon:"🕒"));
-    row.appendChild(div({style:{flex:1,minWidth:0,fontSize:"13px",color:"#e2e8f0",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},def?def.label:k));
+    const lbl=div({style:{flex:1,minWidth:0}});
+    lbl.appendChild(div({style:{fontSize:"13px",color:"#e2e8f0",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},def?def.label:k));
+    if(prevTot){ const d=ms-(prevTot[k]||0);
+      if(Math.abs(d)>=60000) lbl.appendChild(div({style:{fontSize:"9px",color:d>0?"#4ade80":"#f97316"}},`${d>0?"↑":"↓"} 前の${days}日比 ${fmtDur(Math.abs(d))}`));
+    }
+    row.appendChild(lbl);
     row.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:def?def.color:"#cbd5e1",flexShrink:0}},fmtDur(ms)));
     row.appendChild(div({style:{fontSize:"11px",color:"#64748b",width:"36px",textAlign:"right",flexShrink:0}},`${Math.round(ms/grand*100)}%`));
     card.appendChild(row);
   });
   if(days>1) card.appendChild(div({style:{fontSize:"10px",color:"#475569",marginTop:"9px",textAlign:"center"}},`直近${days}日間・記録のある時間の合計 ${fmtDur(grand)}（1日あたり平均 ${fmtDur(grand/days)}）`));
+  card.appendChild(renderModeDaySection(list));
   return card;
+}
+// 日別セクション：1日1行の24時間帯（いつどのモードだったか）。タップでその日の内訳を展開。
+function renderModeDaySection(dsList){
+  const wrap=div({style:{marginTop:"14px",paddingTop:"10px",borderTop:"1px solid #1e293b"}});
+  wrap.appendChild(div({style:{fontSize:"12px",fontWeight:700,color:"#e2e8f0",marginBottom:"2px"}},"📅 日別（24時間の使い方）"));
+  wrap.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"8px"}},"タップでその日の内訳を表示"));
+  // 時刻の目盛り
+  const axis=div({style:{display:"flex",alignItems:"center",gap:"6px",marginBottom:"3px"}});
+  axis.appendChild(div({style:{width:"58px",flexShrink:0}}));
+  const ax=div({style:{flex:1,display:"flex",justifyContent:"space-between",fontSize:"8px",color:"#475569"}});
+  ["0","6","12","18","24"].forEach(t=>ax.appendChild(span({},t)));
+  axis.appendChild(ax);
+  axis.appendChild(div({style:{width:"42px",flexShrink:0}}));
+  wrap.appendChild(axis);
+
+  const dayLabel=ds=>{ const p=ds.split('-'); const d=new Date(+p[0],+p[1]-1,+p[2]); return `${+p[1]}/${+p[2]}(${"日月火水木金土"[d.getDay()]})`; };
+  dsList.forEach(ds=>{
+    const segs=modeSegmentsForDay(ds);
+    const tot=modeTotalsForDay(ds);
+    const sum=Object.values(tot).reduce((a,b)=>a+b,0);
+    const open=state.modeStatOpenDay===ds;
+    const row=div({style:{display:"flex",alignItems:"center",gap:"6px",padding:"3px 0",cursor:"pointer"}});
+    const isToday=ds===todayStr();
+    row.appendChild(div({style:{width:"58px",flexShrink:0,fontSize:"10px",color:isToday?"var(--mode)":"#94a3b8",fontWeight:isToday?700:400}},dayLabel(ds)));
+    // 24時間の帯
+    const strip=div({style:{position:"relative",flex:1,height:"16px",borderRadius:"4px",overflow:"hidden",background:"#0f172a"}});
+    segs.forEach(sg=>{ strip.appendChild(div({style:{position:"absolute",top:0,bottom:0,left:`${(sg.startMin/1440*100).toFixed(3)}%`,width:`${((sg.endMin-sg.startMin)/1440*100).toFixed(3)}%`,background:sg.def.color}})); });
+    row.appendChild(strip);
+    row.appendChild(div({style:{width:"42px",flexShrink:0,textAlign:"right",fontSize:"10px",color:sum?"#cbd5e1":"#334155"}}, sum?fmtDur(sum):"—"));
+    row.addEventListener('click',(()=>{const d=ds;return()=>{ state.modeStatOpenDay=(state.modeStatOpenDay===d)?null:d; render(); };})());
+    wrap.appendChild(row);
+    if(open){
+      const det=div({style:{margin:"4px 0 8px 58px",padding:"8px 10px",background:"#0f172a",borderRadius:"8px"}});
+      const ents=Object.entries(tot).filter(([,ms])=>ms>0).sort((a,b)=>b[1]-a[1]);
+      if(!ents.length) det.appendChild(div({style:{fontSize:"11px",color:"#64748b"}},"この日のモード記録はありません。"));
+      else{
+        ents.forEach(([k,ms])=>{ const def=lifeModeDef(k);
+          const r=div({style:{display:"flex",alignItems:"center",gap:"7px",padding:"2px 0"}});
+          r.appendChild(div({style:{width:"16px",fontSize:"13px",textAlign:"center",flexShrink:0}},def?def.icon:"🕒"));
+          r.appendChild(div({style:{flex:1,minWidth:0,fontSize:"11px",color:"#cbd5e1",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},def?def.label:k));
+          r.appendChild(div({style:{fontSize:"11px",fontWeight:700,color:def?def.color:"#cbd5e1",flexShrink:0}},fmtDur(ms)));
+          r.appendChild(div({style:{fontSize:"10px",color:"#64748b",width:"32px",textAlign:"right",flexShrink:0}},`${Math.round(ms/sum*100)}%`));
+          det.appendChild(r);
+        });
+        det.appendChild(div({style:{fontSize:"10px",color:"#475569",marginTop:"5px"}},`切替 ${segs.length}回・記録 ${fmtDur(sum)}（未記録 ${fmtDur(Math.max(0,86400000-sum))}）`));
+      }
+      wrap.appendChild(det);
+    }
+  });
+  return wrap;
 }
 function renderLog(){
   const wrap=div({style:{maxWidth:"600px",margin:"0 auto",padding:"12px 16px 60px"}});
