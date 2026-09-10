@@ -221,7 +221,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.04"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.05"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -2001,10 +2001,13 @@ function gohomeComplete(vd){ const items=routineGroupItems('gohome'); if(!items.
 function endLifeMode(){ const cur=currentModeSession(); if(cur){ cur.end=Date.now(); saveModeLog(); } }
 // 生活モードを開始して、その画面を開く（朝/飲み=リッチなセルフ画面、睡眠前=睡眠前モード、他=汎用画面）
 function openLifeMode(key){
+  // すでにそのモードが進行中なら「開き直し」＝経過時間やチェック・タイマーを引き継ぐ
+  const prev=currentModeSession();
+  const resuming = !!(prev && prev.key===key);
   switchLifeMode(key); state.modeSwitcher=false; state.lifeScreen=null;
   const def=lifeModeDef(key);
   if(def&&def.screen==='sleep'){ state.sleepMode=true; render(); }
-  else if(def&&def.screen&&def.screen.indexOf('self:')===0){ enterSelfMode(def.screen.slice(5)); } // enterSelfMode 内で render()
+  else if(def&&def.screen&&def.screen.indexOf('self:')===0){ enterSelfMode(def.screen.slice(5), resuming); } // enterSelfMode 内で render()
   else { state.lifeScreen=key; render(); }
 }
 // ── 自動切替（勤務シフト起点。手動切替は次の境界まで優先）──
@@ -2489,10 +2492,24 @@ function selfChecklistCard(modeKey,accent){
 }
 function getSelfModeLog(){ if(!Array.isArray(state.selfModeLog))state.selfModeLog=[]; return state.selfModeLog; }
 function saveSelfModeLog(){ try{localStorage.setItem(STORAGE_KEY+"_selfmodelog",JSON.stringify(getSelfModeLog().slice(-300)));}catch(_){} }
-function enterSelfMode(key){ state.selfMode=key; state.selfModeStart=Date.now(); state.selfMoodBefore=null; state.selfMoodCur=null; state.selfDelayUntil=null; state.selfNote=""; state.selfChecks={}; state.selfBreathing=false; state.selfEditChecks=null; render(); }
+// resume=true（既に進行中のモードを開き直した）のときは、経過時間・チェック・待ちタイマー・メモ・気分を引き継ぐ
+function enterSelfMode(key,resume){
+  state.selfMode=key;
+  if(!resume){ state.selfModeStart=Date.now(); state.selfMoodBefore=null; state.selfMoodCur=null; state.selfDelayUntil=null; state.selfNote=""; state.selfChecks={}; }
+  else if(state.selfModeStart==null){ state.selfModeStart=Date.now(); }
+  state.selfBreathing=false; state.selfEditChecks=null; render();
+}
+// セルフモード画面の経過時間の起点。飲み・朝は生活モードとして時間を持つので、
+// 開き直しやアプリ再起動でもリセットされないようモードセッションの開始時刻を使う。
+function selfModeStartAt(){
+  const s=currentModeSession();
+  if(s && state.selfMode && s.key===state.selfMode) return s.start;
+  return state.selfModeStart||Date.now();
+}
 function exitSelfMode(recordIt){
   if(recordIt && state.selfMode){
-    getSelfModeLog().push({t:new Date(state.selfModeStart||Date.now()).toISOString(), mode:state.selfMode, durSec:Math.round((Date.now()-(state.selfModeStart||Date.now()))/1000), before:state.selfMoodBefore, after:state.selfMoodCur, note:(state.selfNote||"").trim()||null}); saveSelfModeLog();
+    const _st=selfModeStartAt();
+    getSelfModeLog().push({t:new Date(_st).toISOString(), mode:state.selfMode, durSec:Math.round((Date.now()-_st)/1000), before:state.selfMoodBefore, after:state.selfMoodCur, note:(state.selfNote||"").trim()||null}); saveSelfModeLog();
     // afterの気分を日次の体調記録「心の調子（メンタル）」に反映（1〜5 → 1〜10）。AI分析・週次ふりかえりから使えるようにする
     if(state.selfMoodCur!=null){
       const ds=activeDay(), hour=new Date().getHours(), ex=getLog(ds,hour)||{};
@@ -2510,7 +2527,7 @@ function exitSelfMode(recordIt){
   state.selfMode=null; if(window._selfTick){clearInterval(window._selfTick);window._selfTick=null;}
 }
 function selfModeTick(){ if(!state.selfMode){ if(window._selfTick){clearInterval(window._selfTick);window._selfTick=null;} return; }
-  const el=document.getElementById('selfmode-elapsed'); if(el)el.textContent=fmtSecMS(Math.round((Date.now()-(state.selfModeStart||Date.now()))/1000));
+  const el=document.getElementById('selfmode-elapsed'); if(el)el.textContent=fmtSecMS(Math.round((Date.now()-selfModeStartAt())/1000));
   const de=document.getElementById('selfmode-delay'); if(de){ const left=Math.round(((state.selfDelayUntil||0)-Date.now())/1000); de.textContent=left>0?fmtSecMS(left):"OK ✓"; }
 }
 function breathingGuide(accent){
@@ -2554,7 +2571,7 @@ function renderSelfMode(){
     const dd=getDaily(vd); const g=Math.round(pureAlcoholG(vd)); const drinks=(dd.drinks||[]).length; const water=dd.water||0; const dl=alcLimitDay();
     const grid=div({style:{display:"flex",gap:"7px",textAlign:"center",marginBottom:"12px"}});
     const cell=(v,l,id)=>div({style:{flex:1,padding:"8px 4px",borderRadius:"10px",background:"#ffffff0d",border:"1px solid #ffffff14"}},[div(id?{id}:{},v),div({style:{fontSize:"9px",color:"#a89e8c",marginTop:"2px"}},l)]);
-    grid.appendChild(cell(div({id:"selfmode-elapsed",style:{fontSize:"17px",fontWeight:800,color:"#f0e9dd"}},fmtSecMS(Math.round((Date.now()-(state.selfModeStart||Date.now()))/1000))),"経過"));
+    grid.appendChild(cell(div({id:"selfmode-elapsed",style:{fontSize:"17px",fontWeight:800,color:"#f0e9dd"}},fmtSecMS(Math.round((Date.now()-selfModeStartAt())/1000))),"経過"));
     grid.appendChild(cell(div({style:{fontSize:"17px",fontWeight:800,color:g>=dl?"#f87171":M.accent}},`${g}g`),`純ｱﾙｺｰﾙ/${dl}`));
     grid.appendChild(cell(div({style:{fontSize:"17px",fontWeight:800,color:"#f0e9dd"}},`${drinks}`),"杯数"));
     grid.appendChild(cell(div({style:{fontSize:"17px",fontWeight:800,color:"#7dd3fc"}},`${water}L`),"💧水分"));
