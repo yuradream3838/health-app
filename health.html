@@ -221,7 +221,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.96"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.97"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -7128,8 +7128,8 @@ function renderDaySchedule(vd,ds,isToday){
       const band=div({style:{position:"absolute",top:`${Math.max(0,top)}px`,left:"calc(50% + 2px)",width:"calc(50% - 6px)",height:`${height}px`,
         borderLeft:`${EDGE}px solid ${def.color}`,borderRight:`${EDGE}px solid ${def.color}`,background:def.color+"14",
         borderRadius:"3px",zIndex:4,pointerEvents:"none",boxSizing:"border-box",overflow:"hidden"}});
-      // モード識別用の小さなアイコンチップ（ブロックの上でも読めるよう半透明の下地付き）
-      if(height>=20) band.appendChild(div({style:{position:"absolute",top:"1px",left:`${EDGE+1}px`,fontSize:"10px",lineHeight:1.2,padding:"1px 4px",borderRadius:"6px",
+      // モード識別用の小さなアイコンチップ（実績名を隠さないよう右寄せ・ブロックの上でも読めるよう半透明の下地付き）
+      if(height>=20) band.appendChild(div({style:{position:"absolute",top:"1px",right:"2px",fontSize:"10px",lineHeight:1.2,padding:"1px 4px",borderRadius:"6px",
         background:"#0b1120cc",color:def.color,fontWeight:700,whiteSpace:"nowrap"}}, `${def.icon}${height>=40?" "+def.label:""}`));
       tl.appendChild(band);
     });
