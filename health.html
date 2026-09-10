@@ -221,7 +221,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.01"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.02"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -1215,15 +1215,11 @@ function render(){
   if(state.selfMode){ content.appendChild(renderSelfMode());
     // 飲みモードから「飲み物を追加」＝アルコールタブと同じモーダルをセルフモードの上に重ねる
     if(state.modal==="addDrink"){ const mo=renderAddDrinkModal(activeDay()); mo.style.zIndex="10000"; content.appendChild(mo); }
-    // モード内でルーティンの内容メモを記録するモーダルを重ねる
-    if(state.modal==="modeRoutineMemo"){ const mo=renderModeRoutineMemoModal(); mo.style.zIndex="10000"; content.appendChild(mo); }
     tintSurfaces(content); return; }
   if(state.modeSwitcher){ content.appendChild(renderModeSwitcher()); tintSurfaces(content); return; }
   if(state.lifeScreen){ content.appendChild(renderLifeScreen());
     // 食事モードから「食べたものを記録」＝食事モーダルをライフモード画面の上に重ねる
     if(state.modal==="food"){ const mo=renderFoodModal(todayStr()); mo.style.zIndex="10000"; content.appendChild(mo); }
-    // モード内でルーティンの内容メモを記録するモーダルを重ねる
-    if(state.modal==="modeRoutineMemo"){ const mo=renderModeRoutineMemoModal(); mo.style.zIndex="10000"; content.appendChild(mo); }
     tintSurfaces(content); return; }
 
   const ds=todayStr(), vd=state.viewDate, curH=new Date().getHours();
@@ -1253,7 +1249,6 @@ function render(){
   if(state.modal==="editMed")  content.appendChild(renderAddMedModal(vd,true));
   if(state.modal==="temptation")content.appendChild(renderTemptationModal(vd));
   if(state.modal==="routineActualEdit")content.appendChild(renderRoutineActualEditModal());
-  if(state.modal==="modeRoutineMemo")content.appendChild(renderModeRoutineMemoModal());
   if(state.modal==="addEvent") content.appendChild(renderAddEventModal(vd));
   if(state.modal==="addActual") content.appendChild(renderActualModal());
   if(state.modal==="actualMemo") content.appendChild(renderActualMemoModal());
@@ -2167,7 +2162,39 @@ function routineItemRow(vd,item,accent,forceTimer){
   row.appendChild(b);
   row.appendChild(div({style:{flex:1,fontSize:'14px',color:doneMark&&!running?'#94a3b8':'#e2e8f0'}},item.label));
   row.appendChild(div({'data-rtid':item.id,'data-rtmulti':(item.multi&&item.type==='timer')?'1':'',style:{fontSize:'12px',fontWeight:700,color:running?'#f97316':'#94a3b8',flexShrink:0}}, (sec>0||running)?fmtDur(sec*1000):''));
-  return row;
+  // マルチ計測（インプット/アウトプット/トレーニング等）は、ルーティン画面と同じ
+  // 「セッションごとの内容欄」をここにも出す。編集先は同じ s.note なので双方が常に同期する。
+  const sessions=(t.sessions||[]);
+  if(!multi || !sessions.length) return row;
+  const wrap=div({style:{borderBottom:'1px solid #ffffff10'}});
+  row.style.borderBottom='none';
+  wrap.appendChild(row);
+  const list=div({style:{display:'flex',flexDirection:'column',gap:'4px',padding:'0 0 8px 34px'}});
+  sessions.forEach((s,i)=>{
+    const sT=s.startTime?new Date(s.startTime):null, eT=s.endTime?new Date(s.endTime):null;
+    const mn=(sT&&eT)?Math.floor((eT-sT)/60000):0;
+    const dur=s.endTime?(mn>=60?`${Math.floor(mn/60)}h${mn%60}m`:`${mn}m`):null;
+    const hm=d=>d?`${d.getHours()}:${String(d.getMinutes()).padStart(2,'0')}`:'—';
+    const sw=div({style:{background:'#ffffff0d',borderRadius:'7px',padding:'5px 8px'}});
+    sw.appendChild(div({style:{display:'flex',alignItems:'center',gap:'6px'}},[
+      span({style:{fontSize:'10px',color:'#94a3b8'}},`${i+1}.`),
+      span({style:{fontSize:'11px',color:'#cbd5e1'}},`${hm(sT)} 〜 ${hm(eT)}`),
+      dur?span({style:{fontSize:'11px',fontWeight:700,color:accent}},dur):null
+    ]));
+    const ni=document.createElement('input'); ni.type='text';
+    ni.placeholder='何をしますか？（内容）'; ni.value=s.note||'';
+    ni.style.cssText='width:100%;margin-top:4px;padding:6px 8px;background:#00000038;border:1px solid #ffffff22;border-radius:6px;color:#e2e8f0;font-size:12px;font-family:inherit;box-sizing:border-box';
+    ni.addEventListener('click',e=>e.stopPropagation());
+    ni.addEventListener('change',(()=>{const sid=s.uid,iid=item.id;return e=>{
+      const v=e.target.value.trim();
+      const cur=(state.todos[vd]||{})[iid]||{};
+      setTodo(vd,iid,{...cur,sessions:(cur.sessions||[]).map(x=>x.uid===sid?{...x,note:v}:x)});
+    };})());
+    sw.appendChild(ni);
+    list.appendChild(sw);
+  });
+  wrap.appendChild(list);
+  return wrap;
 }
 // 現在モードバー（ウィジェット上部に常設）
 function currentModeBar(){
@@ -2301,23 +2328,10 @@ function lifeRoutineChecklist(groupKey,title,color,vd,forceTimer){
   const done=items.filter(isDone).length;
   const showTime = forceTimer || items.some(it=>it.type==='timer');
   const secTot=showTime?routineGroupSec(vd,groupKey):0;
-  const head=div({style:{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'8px',marginBottom:'5px'}});
-  head.appendChild(div({style:{fontSize:'12px',fontWeight:700,color:'#e2e8f0',minWidth:0}},`${title}${items.length?` ${done}/${items.length}`:''}${secTot?` ・計 ${fmtDur(secTot*1000)}`:''}`));
-  head.appendChild(routineMemoBtn(vd,groupKey,title,color));
-  cc.appendChild(head);
-  const note=routineMemoOf(vd,groupKey).trim();
-  if(note) cc.appendChild(div({style:{fontSize:'11px',color:'#cbd5e1',lineHeight:1.5,margin:'0 0 6px',padding:'6px 9px',background:'#ffffff0d',borderRadius:'8px',borderLeft:`2px solid ${color}`,whiteSpace:'pre-wrap',wordBreak:'break-word'}},'📝 '+note));
+  cc.appendChild(div({style:{fontSize:'12px',fontWeight:700,color:'#e2e8f0',marginBottom:'5px'}},`${title}${items.length?` ${done}/${items.length}`:''}${secTot?` ・計 ${fmtDur(secTot*1000)}`:''}`));
   if(!items.length){ cc.appendChild(div({style:{fontSize:'11px',color:'#94a3b8',lineHeight:1.6}},'この区分のルーティン項目がありません。設定→ルーティン設定で項目をこの区分に割り当てると表示されます。')); }
   else items.forEach(it=> cc.appendChild(routineItemRow(vd,it,color,forceTimer)));
   return cc;
-}
-// モード内でルーティンの「内容メモ」を編集するボタン。実績タイムラインには出さず記録として保持（routineMemos）。
-function routineMemoBtn(vd,groupKey,title,color){
-  const has=!!routineMemoOf(vd,groupKey).trim();
-  const b=btn({style:{flexShrink:0,fontSize:'11px',padding:'4px 9px',borderRadius:'7px',cursor:'pointer',fontFamily:'inherit',whiteSpace:'nowrap',
-    border:`1px solid ${has?color:'#ffffff2e'}`,background:has?color+'22':'transparent',color:has?color:'#94a3b8'}}, has?'📝 メモ':'📝 メモ＋');
-  b.addEventListener('click',()=>{ openModeRoutineMemo(vd,groupKey,title); });
-  return b;
 }
 function renderLifeScreen(){
   const key=state.lifeScreen, def=lifeModeDef(key)||{icon:'🕒',label:'モード',color:'#64748b',content:'time'};
@@ -2573,12 +2587,7 @@ function renderSelfMode(){
     const mItems=routineGroupItems("morning");
     const mDone=mItems.filter(it=>isTodoDone(vd,it)).length;
     const cc=div({style:{background:"#ffffff0d",border:"1px solid #ffffff14",borderRadius:"11px",padding:"8px 12px",marginBottom:"10px"}});
-    const mhead=div({style:{display:"flex",alignItems:"center",justifyContent:"space-between",gap:"8px",marginBottom:"4px"}});
-    mhead.appendChild(div({style:{fontSize:"11px",color:"#a89e8c",minWidth:0}},mItems.length?`起床チェック（モーニングルーティン） ${mDone}/${mItems.length}`:"起床チェック"));
-    mhead.appendChild(routineMemoBtn(vd,"morning","🌅モーニングルーティン",M.accent));
-    cc.appendChild(mhead);
-    const mNote=routineMemoOf(vd,"morning").trim();
-    if(mNote) cc.appendChild(div({style:{fontSize:"11px",color:"#e6dccb",lineHeight:1.5,margin:"0 0 6px",padding:"6px 9px",background:"#ffffff0d",borderRadius:"8px",borderLeft:`2px solid ${M.accent}`,whiteSpace:"pre-wrap",wordBreak:"break-word"}},"📝 "+mNote));
+    cc.appendChild(div({style:{fontSize:"11px",color:"#a89e8c",marginBottom:"4px"}},mItems.length?`起床チェック（モーニングルーティン） ${mDone}/${mItems.length}`:"起床チェック"));
     if(!mItems.length){
       cc.appendChild(div({style:{fontSize:"11px",color:"#a89e8c",lineHeight:1.6}},"🌅モーニングルーティンの項目がありません。設定→ルーティン設定で、項目のグループを「🌅モーニングルーティン」にすると、ここに表示されます。"));
     } else {
@@ -4731,30 +4740,6 @@ function goalActualsForDate(vd){
 }
 // ルーティン実績ブロックの「その日だけの表示名・メモ」上書き（所有日DD＋グループキーで管理）
 function getRoutineOverride(dd,key){ const o=(getDaily(dd).routineOverrides||{})[key]; return (o&&typeof o==="object")?o:{}; }
-// モード内で記録するルーティンの「内容メモ」。実績タイムラインには出さず、記録として保持（日付＋グループキー）。
-function routineMemoOf(vd,key){ return ((getDaily(vd).routineMemos||{})[key])||""; }
-function setRoutineMemo(vd,key,val){ const d=getDaily(vd); const m={...(d.routineMemos||{})}; const v=(val||"").trim(); if(v)m[key]=v; else delete m[key]; setDaily(vd,{routineMemos:m}); }
-// その日にモードで記録したルーティンの内容メモ一覧（デイリールーティン画面等に反映）。{key,title,color,note}[]
-function routineMemosForDay(vd){ const m=getDaily(vd).routineMemos||{}; const groups=state.routines||[]; const out=[]; Object.keys(m).forEach(key=>{ const note=(m[key]||'').trim(); if(!note)return; const g=groups.find(x=>x.key===key); out.push({key,title:g?g.title:key,color:(g&&g.color)||'#38bdf8',note}); }); return out; }
-function openModeRoutineMemo(vd,key,label){ state.mrmVd=vd; state.mrmKey=key; state.mrmLabel=label||"ルーティン"; state.mrmText=routineMemoOf(vd,key); state.modal="modeRoutineMemo"; render(); }
-function renderModeRoutineMemoModal(){
-  const bg=div({className:"modal-center"});
-  const m=div({className:"modal-box"});
-  bg.addEventListener('click',()=>{state.modal=null;render();});
-  m.addEventListener('click',e=>e.stopPropagation());
-  m.appendChild(div({style:{fontSize:"15px",fontWeight:700,color:"#e2e8f0",marginBottom:"3px"}},"📝 ルーティンのメモ"));
-  m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"12px",lineHeight:1.5}},`${state.mrmVd?mdLabel(state.mrmVd)+"の":""}「${state.mrmLabel||""}」の内容メモとして記録します（実績タイムラインには表示されません）。`));
-  const nt=document.createElement('textarea');nt.value=state.mrmText||"";nt.placeholder="今日の内容・気づきをメモ...";nt.rows=4;
-  nt.style.cssText="width:100%;box-sizing:border-box;padding:9px 11px;margin-bottom:16px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit;resize:vertical";
-  nt.addEventListener('input',e=>{state.mrmText=e.target.value;});
-  m.appendChild(nt);
-  m.appendChild(div({style:{display:"flex",gap:"8px"}},[
-    btn({className:"btn-ghost",style:{flex:1},onClick:()=>{state.modal=null;render();}},"キャンセル"),
-    btn({style:{flex:2,padding:"10px",background:"var(--mode)",border:"none",borderRadius:"8px",color:"#0b1120",fontSize:"13px",fontWeight:700,cursor:"pointer",fontFamily:"inherit"},
-      onClick:()=>{ setRoutineMemo(state.mrmVd,state.mrmKey,state.mrmText); state.modal=null; showToast("📝 メモを記録しました"); render(); }},"✅ 記録")
-  ]));
-  bg.appendChild(m);return bg;
-}
 function setRoutineOverride(dd,key,upd){ const cur=getDaily(dd).routineOverrides||{}; const next={...cur,[key]:{...(cur[key]||{}),...upd}}; setDaily(dd,{routineOverrides:next}); }
 function clearRoutineOverride(dd,key){ const cur={...(getDaily(dd).routineOverrides||{})}; delete cur[key]; setDaily(dd,{routineOverrides:cur}); }
 function routineOverrideTitle(dd,key,base){ const o=getRoutineOverride(dd,key); const t=(o.title&&o.title.trim())?o.title.trim():base; const n=(o.note&&o.note.trim())?`：${o.note.trim()}`:""; return t+n; }
@@ -9688,23 +9673,6 @@ function renderTodo(vd, ds, isToday){
     })()
   ]));
 
-  // 📝 モードで記録したルーティンの内容メモ（各モードの📝メモ＝routineMemos をここにも反映）
-  {
-    const memos=routineMemosForDay(vd);
-    if(memos.length){
-      const mc=div({className:"card"});
-      mc.appendChild(div({style:{fontSize:"12px",fontWeight:700,color:"#e2e8f0",marginBottom:"8px"}},"📝 モードで記録したメモ"));
-      memos.forEach(mm=>{
-        const row=div({style:{marginBottom:"9px",paddingLeft:"9px",borderLeft:`3px solid ${mm.color}`,cursor:"pointer"}});
-        row.appendChild(div({style:{fontSize:"11px",fontWeight:700,color:mm.color,marginBottom:"2px"}},mm.title));
-        row.appendChild(div({style:{fontSize:"12px",color:"#cbd5e1",lineHeight:1.5,whiteSpace:"pre-wrap",wordBreak:"break-word"}},mm.note));
-        row.addEventListener('click',(()=>{const k=mm.key,t=mm.title;return()=>openModeRoutineMemo(vd,k,t);})());
-        mc.appendChild(row);
-      });
-      wrap.appendChild(mc);
-    }
-  }
-
   // TODOリスト（カスタム並び順）
   const orderedItems=getOrderedTodoItems();
   orderedItems.forEach((item, itemIdx) => {
@@ -9860,7 +9828,7 @@ function renderTodo(vd, ds, isToday){
           noteInp.placeholder="何をしますか？（内容）";noteInp.value=s.note||"";
           noteInp.style.cssText="width:100%;margin-top:4px;padding:5px 8px;background:#1e293b;border:1px solid #334155;border-radius:6px;color:#e2e8f0;font-size:12px;font-family:inherit;box-sizing:border-box";
           noteInp.addEventListener('click',e=>e.stopPropagation());
-          noteInp.addEventListener('change',(()=>{const sid=s.uid;const allSessions=sessions;return e=>{ const v=e.target.value.trim(); const ns=allSessions.map(x=>x.uid===sid?{...x,note:v}:x); setTodo(vd,item.id,{sessions:ns}); };})());
+          noteInp.addEventListener('change',(()=>{const sid=s.uid;const iid=item.id;return e=>{ const v=e.target.value.trim(); const cur=(state.todos[vd]||{})[iid]||{}; setTodo(vd,iid,{...cur,sessions:(cur.sessions||[]).map(x=>x.uid===sid?{...x,note:v}:x)}); };})());
           sWrap.appendChild(noteInp);
           sessionList.appendChild(sWrap);
         });
