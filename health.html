@@ -221,7 +221,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.00"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.01"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -2080,7 +2080,7 @@ function evalNudges(now){
   // R3 飲み過ぎ（飲みモード開始から90分経過）
   if(nudgeActive('drink',now) && curMode==='drink'){ const ses=currentModeSession(); const el=ses?(now-ses.start):0; if(el>=90*60000){ const g=Math.round(pureAlcoholG(vd)), lim=alcLimitDay(), over=g>=lim; cands.push({pri:1,id:'drink',icon:'🍶',title:over?`今日 ${g}g（上限${lim}g）`:'飲みモードが90分',sub:'そろそろ切り上げませんか？',act:()=>{ state.modeSwitcher=true; }}); } }
   // R2 寝坊（目標起床時刻・シフト別）
-  if(nudgeActive('wake',now) && curMode!=='sleep' && curMode!=='sleepprep'){ const wg=wakeGoalMinsFor(vd); if(wg!=null && nowMin>=wg && nowMin<=wg+180 && getDaily(vd).wakeTime==null){ cands.push({pri:2,id:'wake',icon:'☀️',title:'起きる時間です',sub:'朝モードで一日を始めましょう',act:()=>openLifeMode('morning')}); } }
+  if(nudgeActive('wake',now) && curMode!=='sleep' && curMode!=='sleepprep'){ const wg=wakeGoalMinsFor(vd); if(wg!=null && nowMin>=wg && nowMin<=wg+120 && getDaily(vd).wakeTime==null){ cands.push({pri:2,id:'wake',icon:'☀️',title:'起きる時間です',sub:'朝モードで一日を始めましょう',act:()=>openLifeMode('morning')}); } }
   // R1 夜更かし（就寝リズムのリード時間と同じ）
   if(nudgeActive('sleep',now) && curMode!=='sleep' && curMode!=='sleepprep'){ const cd=bedCountdownMin(now); if(cd!=null && cd<=cdLeadMin() && cd>-120 && getDaily(sleepNightDay()).bedTime==null){ cands.push({pri:3,id:'sleep',icon:'🌙',title:cd>0?'そろそろ寝る準備':'まだ起きています',sub:'睡眠前モードに切り替える？',act:()=>openLifeMode('sleepprep')}); } }
   // R4 夕方の気分チェック（バナー内で気分入力）
@@ -2088,7 +2088,7 @@ function evalNudges(now){
   // R5 食事
   if(nudgeActive('meal',now) && curMode!=='meal'){ const meal=currentMealDue(vd,nowMin); if(meal){ cands.push({pri:5,id:'meal',icon:'🍚',title:`${meal.label}の時間`,sub:'食事モードで記録しませんか？',act:()=>openLifeMode('meal')}); } }
   // R6 停滞
-  if(nudgeActive('stall',now) && (curMode==='hobby'||curMode==='rest')){ const s=currentModeSession(); if(s && now-s.start>=2*3600000){ const def=lifeModeDef(curMode); cands.push({pri:6,id:'stall',icon:'🔀',title:`${def?def.label:''}モードが2時間`,sub:'切り替えますか？',act:()=>{ state.modeSwitcher=true; }}); } }
+  if(nudgeActive('stall',now) && (curMode==='hobby'||curMode==='rest')){ const s=currentModeSession(); if(s && now-s.start>=3*3600000){ const def=lifeModeDef(curMode); cands.push({pri:6,id:'stall',icon:'🔀',title:`${def?def.label:''}モードが3時間`,sub:'切り替えますか？',act:()=>{ state.modeSwitcher=true; }}); } }
   cands.sort((a,b)=>a.pri-b.pri);
   return cands[0]||null;
 }
@@ -4734,6 +4734,8 @@ function getRoutineOverride(dd,key){ const o=(getDaily(dd).routineOverrides||{})
 // モード内で記録するルーティンの「内容メモ」。実績タイムラインには出さず、記録として保持（日付＋グループキー）。
 function routineMemoOf(vd,key){ return ((getDaily(vd).routineMemos||{})[key])||""; }
 function setRoutineMemo(vd,key,val){ const d=getDaily(vd); const m={...(d.routineMemos||{})}; const v=(val||"").trim(); if(v)m[key]=v; else delete m[key]; setDaily(vd,{routineMemos:m}); }
+// その日にモードで記録したルーティンの内容メモ一覧（デイリールーティン画面等に反映）。{key,title,color,note}[]
+function routineMemosForDay(vd){ const m=getDaily(vd).routineMemos||{}; const groups=state.routines||[]; const out=[]; Object.keys(m).forEach(key=>{ const note=(m[key]||'').trim(); if(!note)return; const g=groups.find(x=>x.key===key); out.push({key,title:g?g.title:key,color:(g&&g.color)||'#38bdf8',note}); }); return out; }
 function openModeRoutineMemo(vd,key,label){ state.mrmVd=vd; state.mrmKey=key; state.mrmLabel=label||"ルーティン"; state.mrmText=routineMemoOf(vd,key); state.modal="modeRoutineMemo"; render(); }
 function renderModeRoutineMemoModal(){
   const bg=div({className:"modal-center"});
@@ -9685,6 +9687,23 @@ function renderTodo(vd, ds, isToday){
       return b;
     })()
   ]));
+
+  // 📝 モードで記録したルーティンの内容メモ（各モードの📝メモ＝routineMemos をここにも反映）
+  {
+    const memos=routineMemosForDay(vd);
+    if(memos.length){
+      const mc=div({className:"card"});
+      mc.appendChild(div({style:{fontSize:"12px",fontWeight:700,color:"#e2e8f0",marginBottom:"8px"}},"📝 モードで記録したメモ"));
+      memos.forEach(mm=>{
+        const row=div({style:{marginBottom:"9px",paddingLeft:"9px",borderLeft:`3px solid ${mm.color}`,cursor:"pointer"}});
+        row.appendChild(div({style:{fontSize:"11px",fontWeight:700,color:mm.color,marginBottom:"2px"}},mm.title));
+        row.appendChild(div({style:{fontSize:"12px",color:"#cbd5e1",lineHeight:1.5,whiteSpace:"pre-wrap",wordBreak:"break-word"}},mm.note));
+        row.addEventListener('click',(()=>{const k=mm.key,t=mm.title;return()=>openModeRoutineMemo(vd,k,t);})());
+        mc.appendChild(row);
+      });
+      wrap.appendChild(mc);
+    }
+  }
 
   // TODOリスト（カスタム並び順）
   const orderedItems=getOrderedTodoItems();
