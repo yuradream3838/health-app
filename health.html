@@ -221,7 +221,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.03"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.04"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -297,50 +297,50 @@ const SYMPTOMS = [
 ];
 
 const EJAC_TAGS = ["自慰","セックス"];
+// mode: この項目を表示する生活モード（ルーティン設定で項目ごとに変更可・""ならどのモードにも出さない）
 const TODO_ITEMS = [
-  {id:"meditation_am", label:"朝瞑想",               type:"check"},
-  {id:"bedmaking",     label:"ベッドメイク",          type:"check"},
-  {id:"grooming",      label:"洗顔・寝癖直し・髭剃り",type:"check"},
-  {id:"water_am",      label:"朝飲水",                type:"check"},
-  {id:"stretch_am",    label:"朝ストレッチ",          type:"check"},
-  {id:"dressing",      label:"着替え",                type:"check"},
-  {id:"toothbrush_am", label:"朝歯磨き",              type:"check"},
-  {id:"goal_setting",  label:"目標設定",              type:"check"},
-  {id:"reading",       label:"インプット",            type:"timer", multi:true},
-  {id:"side_job",      label:"アウトプット",          type:"timer", multi:true},
-  {id:"breakfast_prep",label:"朝食準備",              type:"check"},
-  {id:"breakfast",     label:"朝食・片付け",          type:"timer"},
-  {id:"lunch_prep",    label:"昼食準備",              type:"check"},
-  {id:"lunch",         label:"昼食・片付け",          type:"timer"},
-  {id:"dinner_prep",   label:"夕食準備",              type:"check"},
-  {id:"dinner",        label:"夕食・片付け",          type:"timer"},
-  {id:"return_home",   label:"帰宅",                  type:"timer"},
-  {id:"training",      label:"トレーニング",          type:"timer", multi:true},
-  {id:"shower",        label:"シャワー・スキンケア・体重測定", type:"check"},
-  {id:"kakeibo",       label:"家計簿入力",            type:"check"},
-  {id:"diary",         label:"日記",                  type:"check"},
-  {id:"toothbrush_pm", label:"夜歯磨き",              type:"check"},
-  {id:"stretch_pm",    label:"夜ストレッチ",          type:"check"},
-  {id:"meditation_pm", label:"夜瞑想",                type:"check"},
+  {id:"meditation_am", label:"朝瞑想",               type:"check", mode:"morning"},
+  {id:"bedmaking",     label:"ベッドメイク",          type:"check", mode:"morning"},
+  {id:"grooming",      label:"洗顔・寝癖直し・髭剃り",type:"check", mode:"morning"},
+  {id:"water_am",      label:"朝飲水",                type:"check", mode:"morning"},
+  {id:"stretch_am",    label:"朝ストレッチ",          type:"check", mode:"morning"},
+  {id:"dressing",      label:"着替え",                type:"check", mode:"morning"},
+  {id:"toothbrush_am", label:"朝歯磨き",              type:"check", mode:"morning"},
+  {id:"goal_setting",  label:"目標設定",              type:"check", mode:""},
+  {id:"reading",       label:"インプット",            type:"timer", multi:true, mode:"invest"},
+  {id:"side_job",      label:"アウトプット",          type:"timer", multi:true, mode:"invest"},
+  {id:"breakfast_prep",label:"朝食準備",              type:"check", mode:"meal"},
+  {id:"breakfast",     label:"朝食・片付け",          type:"timer", mode:"meal"},
+  {id:"lunch_prep",    label:"昼食準備",              type:"check", mode:"meal"},
+  {id:"lunch",         label:"昼食・片付け",          type:"timer", mode:"meal"},
+  {id:"dinner_prep",   label:"夕食準備",              type:"check", mode:"meal"},
+  {id:"dinner",        label:"夕食・片付け",          type:"timer", mode:"meal"},
+  {id:"return_home",   label:"帰宅",                  type:"timer", mode:"work"},
+  {id:"training",      label:"トレーニング",          type:"timer", multi:true, mode:"train"},
+  {id:"shower",        label:"シャワー・スキンケア・体重測定", type:"check", mode:""},
+  {id:"kakeibo",       label:"家計簿入力",            type:"check", mode:""},
+  {id:"diary",         label:"日記",                  type:"check", mode:""},
+  {id:"toothbrush_pm", label:"夜歯磨き",              type:"check", mode:"sleepprep"},
+  {id:"stretch_pm",    label:"夜ストレッチ",          type:"check", mode:"sleepprep"},
+  {id:"meditation_pm", label:"夜瞑想",                type:"check", mode:"sleepprep"},
 ];
+// まとめ→既定モード（既存データの項目モードを補完するときの参照元）
+const GROUP_DEFAULT_MODE={morning:"morning",breakfast:"meal",lunch:"meal",dinner:"meal",night:"sleepprep",input:"invest",output:"invest",gohome:"work"};
 // ルーティン項目はユーザーが編集可能（追加・改名・種類変更・削除）。既定はTODO_ITEMS。
 function getTodoItems(){ if(!Array.isArray(state.todoItems)||!state.todoItems.length){ state.todoItems=JSON.parse(JSON.stringify(TODO_ITEMS)); } return state.todoItems; }
 function saveTodoItems(){ try{localStorage.setItem(STORAGE_KEY+"_todoitems",JSON.stringify(getTodoItems()));}catch{} }
 
 // 予定タブ「実際」列で1つにまとめて表示するルーティン群（アプリ内で編集可能・初期値）
-// mode: このまとめを表示する生活モード（ルーティン設定で変更可・""ならどのモードにも出さない）
 const DEFAULT_ROUTINES = [
-  {key:"morning",   title:"🌅モーニングルーティン", color:"#fb923c", mode:"morning",   ids:["meditation_am","bedmaking","grooming","water_am","stretch_am","dressing","toothbrush_am"]},
-  {key:"breakfast", title:"🍳朝食",                 color:"#fbbf24", mode:"meal",      ids:["breakfast_prep","breakfast"]},
-  {key:"lunch",     title:"🍱昼食",                 color:"#84cc16", mode:"meal",      ids:["lunch_prep","lunch"]},
-  {key:"dinner",    title:"🍽夕食",                 color:"#f97316", mode:"meal",      ids:["dinner_prep","dinner"]},
-  {key:"night",     title:"🌙ナイトルーティン",     color:"#a78bfa", mode:"sleepprep", ids:["stretch_pm","meditation_pm"]},
-  {key:"input",     title:"📥インプット",           color:"#38bdf8", mode:"invest",    ids:[]},
-  {key:"output",    title:"📤アウトプット",         color:"#f472b6", mode:"invest",    ids:[]},
-  {key:"gohome",    title:"🏠帰宅ルーティン",       color:"#3b82f6", mode:"work",      ids:[]},
+  {key:"morning",   title:"🌅モーニングルーティン", color:"#fb923c", ids:["meditation_am","bedmaking","grooming","water_am","stretch_am","dressing","toothbrush_am"]},
+  {key:"breakfast", title:"🍳朝食",                 color:"#fbbf24", ids:["breakfast_prep","breakfast"]},
+  {key:"lunch",     title:"🍱昼食",                 color:"#84cc16", ids:["lunch_prep","lunch"]},
+  {key:"dinner",    title:"🍽夕食",                 color:"#f97316", ids:["dinner_prep","dinner"]},
+  {key:"night",     title:"🌙ナイトルーティン",     color:"#a78bfa", ids:["stretch_pm","meditation_pm"]},
+  {key:"input",     title:"📥インプット",           color:"#38bdf8", ids:[]},
+  {key:"output",    title:"📤アウトプット",         color:"#f472b6", ids:[]},
+  {key:"gohome",    title:"🏠帰宅ルーティン",       color:"#3b82f6", ids:[]},
 ];
-// あるモードに割り当てられたルーティンのまとめ（ルーティン設定の「表示するモード」）
-function routineGroupsForMode(modeKey){ return (state.routines||[]).filter(g=>g.mode===modeKey); }
 const cloneRoutines = () => DEFAULT_ROUTINES.map(g=>({...g, ids:[...g.ids]}));
 // 既存ユーザーに不足しているルーティン群（朝食/昼食/夕食など）を追加する一度きりの移行。
 // 既存の割り当ては変更せず、他グループに未割り当ての項目だけを新グループへ入れる。
@@ -354,13 +354,16 @@ function migrateRoutines(){
   state.routines = nightIdx>=0 ? [...cur.slice(0,nightIdx),...additions,...cur.slice(nightIdx)] : [...cur,...additions];
   saveRoutines();
 }
-// 既存ユーザーのまとめに「表示するモード」を補完（未設定のものだけ既定値を入れる。従来の表示と同じになる）
+// 既存ユーザーのルーティン項目に「表示するモード」を補完。
+// 未設定の項目は、その項目が属するまとめの既定モードから引き継ぐ（従来の表示と同じになる）。
 function migrateRoutineModes(){
   let changed=false;
-  (state.routines||[]).forEach(g=>{
-    if(g.mode===undefined){ const d=DEFAULT_ROUTINES.find(x=>x.key===g.key); g.mode=d?d.mode:""; changed=true; }
+  const modeOfItem={};
+  (state.routines||[]).forEach(g=>{ const m=GROUP_DEFAULT_MODE[g.key]; if(m)(g.ids||[]).forEach(id=>{ modeOfItem[id]=m; }); });
+  getTodoItems().forEach(it=>{
+    if(it.mode===undefined){ const d=TODO_ITEMS.find(x=>x.id===it.id); it.mode = modeOfItem[it.id] || (d?(d.mode||""):""); changed=true; }
   });
-  if(changed) saveRoutines();
+  if(changed) saveTodoItems();
 }
 function saveRoutines(){ safeSet(STORAGE_KEY+"_routines",JSON.stringify(state.routines)); }
 // 既存ユーザーに「朝歯磨き（着替えの後）」「夜歯磨き（日記の後）」を一度だけ補完する移行。
@@ -1782,10 +1785,25 @@ function routineGroupItems(key){
   const gids=new Set((g&&Array.isArray(g.ids))?g.ids:[]);
   return getOrderedTodoItems().filter(it=>gids.has(it.id));
 }
-// 睡眠前モードに割り当てたまとめの項目（ルーティン設定の「表示するモード」で変更）
+// そのモードに割り当てられたルーティン項目（ルーティン設定で項目ごとに「表示するモード」を選択）
 function routineItemsForMode(modeKey){
-  const ids=new Set(); routineGroupsForMode(modeKey).forEach(g=>(g.ids||[]).forEach(id=>ids.add(id)));
-  return ids.size?getOrderedTodoItems().filter(it=>ids.has(it.id)):[];
+  if(!modeKey) return [];
+  return getOrderedTodoItems().filter(it=>(it.mode||"")===modeKey);
+}
+// モードに割り当てられた項目を、所属するまとめ（グループ）ごとにまとめて返す。
+// 未所属の項目は最後に「その他」としてまとめる。 -> [{key,title,color,items}]
+function routineModeSections(modeKey){
+  const items=routineItemsForMode(modeKey);
+  if(!items.length) return [];
+  const groups=state.routines||[];
+  const secs=[], byKey={};
+  items.forEach(it=>{
+    const g=groups.find(r=>(r.ids||[]).includes(it.id));
+    const key=g?g.key:"__other";
+    if(!byKey[key]){ byKey[key]={key,title:g?g.title:"🔁 その他のルーティン",color:(g&&g.color)||null,items:[]}; secs.push(byKey[key]); }
+    byKey[key].items.push(it);
+  });
+  return secs;
 }
 function windDownChecklistItems(){ return routineItemsForMode("sleepprep"); }
 // 汎用の「完了/未完了」トグル（チェック式・タイマー式の両対応。睡眠前モード用の簡易版）
@@ -2148,7 +2166,6 @@ function modeTotalsForRange(dsList){ const tot={}; dsList.forEach(ds=>{ const t=
 function modeKeyAt(ts){ const l=getModeLog(); for(let i=l.length-1;i>=0;i--){ const s=l[i]; if(s.start<=ts && (s.end==null||ts<s.end)) return s.key; } return null; }
 // ルーティン項目の当日の計測秒（タイマー式：セッション/開始終了の合計。実行中は現在まで加算）
 function routineItemSec(vd,item){ const t=(state.todos[vd]||{})[item.id]||{}; let sec=0; const nowISO=new Date().toISOString(); const add=(a,b)=>{ if(a&&b)sec+=Math.max(0,(Date.parse(b)-Date.parse(a))/1000); }; if(item.multi){ (t.sessions||[]).forEach(s=>{ if(s.startTime) add(s.startTime,s.endTime||nowISO); }); } else if(t.startTime){ add(t.startTime,t.endTime||nowISO); } return Math.round(sec); }
-function routineGroupSec(vd,groupKey){ return routineGroupItems(groupKey).reduce((a,it)=> a + routineItemSec(vd,it), 0); }
 // ルーティン項目1件の行（チェック式＝✓トグル／タイマー式＝▶開始・⏹停止＋経過表示）。既存のルーティン記録(setTodo)に連動
 function routineItemRow(vd,item,accent,forceTimer){
   const t=(state.todos[vd]||{})[item.id]||{};
@@ -2338,17 +2355,27 @@ function renderNudgeConfig(inSettings){
 }
 // フルスクリーン：各生活モードの画面
 function lifeActionBtn(label,color,onClick){ const b=btn({style:{width:'100%',padding:'12px',borderRadius:'11px',border:`1px solid ${color}66`,background:color+'1a',color:'#e2e8f0',fontSize:'14px',fontWeight:700,cursor:'pointer',fontFamily:'inherit',marginBottom:'7px',textAlign:'left'}},label); b.addEventListener('click',onClick); return b; }
-function lifeRoutineChecklist(groupKey,title,color,vd,forceTimer){
-  const items=routineGroupItems(groupKey);
+// 指定した項目リストを1枚のチェックリストカードとして描画（見出し・達成数・合計時間つき）
+function lifeRoutineChecklist(title,items,color,vd,forceTimer){
   const cc=div({style:{background:'#ffffff0d',border:'1px solid #ffffff14',borderRadius:'11px',padding:'10px 12px',marginBottom:'10px'}});
   const isDone=it=> forceTimer ? !!(((state.todos[vd]||{})[it.id]||{}).startTime&&((state.todos[vd]||{})[it.id]||{}).endTime) : isTodoDone(vd,it);
   const done=items.filter(isDone).length;
   const showTime = forceTimer || items.some(it=>it.type==='timer');
-  const secTot=showTime?routineGroupSec(vd,groupKey):0;
+  const secTot=showTime?items.reduce((a,it)=>a+routineItemSec(vd,it),0):0;
   cc.appendChild(div({style:{fontSize:'12px',fontWeight:700,color:'#e2e8f0',marginBottom:'5px'}},`${title}${items.length?` ${done}/${items.length}`:''}${secTot?` ・計 ${fmtDur(secTot*1000)}`:''}`));
-  if(!items.length){ cc.appendChild(div({style:{fontSize:'11px',color:'#94a3b8',lineHeight:1.6}},'このまとめに項目がありません。設定→ルーティン設定で、項目のグループをこのまとめにすると表示されます。')); }
-  else items.forEach(it=> cc.appendChild(routineItemRow(vd,it,color,forceTimer)));
+  items.forEach(it=> cc.appendChild(routineItemRow(vd,it,color,forceTimer)));
   return cc;
+}
+// そのモードに割り当てられたルーティンを、まとめごとのカードにして inner に追加する
+function appendModeRoutines(inner,modeKey,defColor,vd,forceTimer){
+  const secs=routineModeSections(modeKey);
+  if(!secs.length){
+    const m=lifeModeDef(modeKey);
+    inner.appendChild(div({style:{background:'#ffffff0d',border:'1px solid #ffffff14',borderRadius:'11px',padding:'10px 12px',marginBottom:'10px',fontSize:'11px',color:'#94a3b8',lineHeight:1.6}},
+      `このモードに表示するルーティンがありません。設定→ルーティン設定で、項目の「表示するモード」を「${m?m.icon+' '+m.label:'このモード'}」にすると、ここに表示されます。`));
+    return;
+  }
+  secs.forEach(s=> inner.appendChild(lifeRoutineChecklist(s.title,s.items,s.color||defColor,vd,forceTimer)));
 }
 function renderLifeScreen(){
   const key=state.lifeScreen, def=lifeModeDef(key)||{icon:'🕒',label:'モード',color:'#64748b',content:'time'};
@@ -2365,9 +2392,8 @@ function renderLifeScreen(){
     div({style:{fontSize:'11px',color:'#94a3b8'}}, s?`${hhmm(new Date(s.start).getHours(),new Date(s.start).getMinutes())} 開始`:'')
   ]));
   const c=def.content;
-  // ルーティン設定で「このモードに表示」と指定されたまとめを描画（食事モードは計測扱い）
-  const assignedGroups=routineGroupsForMode(key);
-  const addAssigned=()=>{ assignedGroups.forEach(g=> inner.appendChild(lifeRoutineChecklist(g.key,g.title,g.color||def.color,vd,c==='meal'))); };
+  // ルーティン設定で「表示するモード」にこのモードを指定した項目を描画（食事モードは計測扱い）
+  const addAssigned=()=>{ appendModeRoutines(inner,key,def.color,vd,c==='meal'); };
   if(c==='invest'){
     inner.appendChild(div({style:{fontSize:'11px',color:'#94a3b8',textAlign:'center',marginBottom:'8px'}},'ルーティンと連動（タイマー式は時間を記録）'));
     addAssigned();
@@ -2607,15 +2633,8 @@ function renderSelfMode(){
     // 起床を記録するを一番上に
     inner.appendChild(selfActionBtn("🌅 起床を記録する（今の時刻）",M.accent,()=>{ const n=new Date(); setDaily(vd,{wakeTime:n.getHours()+n.getMinutes()/60}); showToast(`🌅 起床 ${hhmm(n.getHours(),n.getMinutes())} を記録`); render(); }));
     inner.appendChild(div({style:{fontSize:"13px",color:"#e6dccb",lineHeight:1.7,textAlign:"center",margin:"4px 0 12px",whiteSpace:"pre-line"}},"あせらず、一つずつ。\n体を起こすスイッチを入れよう。"));
-    // 朝モードに割り当てたルーティンのまとめ（ルーティン設定の「表示するモード」で変更）
-    const mGroups=routineGroupsForMode("morning");
-    if(!mGroups.length){
-      const cc=div({style:{background:"#ffffff0d",border:"1px solid #ffffff14",borderRadius:"11px",padding:"8px 12px",marginBottom:"10px"}});
-      cc.appendChild(div({style:{fontSize:"11px",color:"#a89e8c",lineHeight:1.6}},"このモードに表示するルーティンがありません。設定→ルーティン設定で、まとめの「表示するモード」を「☀️ 朝」にすると、ここに表示されます。"));
-      inner.appendChild(cc);
-    } else {
-      mGroups.forEach(g=> inner.appendChild(lifeRoutineChecklist(g.key,g.title,g.color||M.accent,vd)));
-    }
+    // 朝モードに割り当てたルーティン（ルーティン設定で項目ごとに「表示するモード」を選択）
+    appendModeRoutines(inner,"morning",M.accent,vd);
     // 今日の予定・目標をひと目
     let goalN=0; try{ goalN=gtCollectDaily(vd).length; }catch(_){}
     inner.appendChild(div({style:{fontSize:"12px",color:"#a89e8c",textAlign:"center",marginBottom:"10px"}},`☀️ 今日の目標 ${goalN}件${goalN?"。まず一番簡単なひとつから。":""}`));
@@ -6032,7 +6051,7 @@ function renderRoutinePanel(){
   const card=div({className:"card"});
   card.appendChild(div({style:{fontSize:"14px",fontWeight:700,color:"#e2e8f0",marginBottom:"4px"}},"⚙ ルーティン設定"));
   card.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"12px",lineHeight:1.6}},
-    "毎日のルーティン項目を編集できます。名前・種類（チェック/タイマー）・並び順・所属グループ（実際列でまとめる先）を変更、追加・削除も可能です。グループごとに「表示するモード」を選ぶと、そのモードの画面から記録できます（下の「📦 まとめの設定」）。"));
+    "毎日のルーティン項目を編集できます。名前・種類（チェック/タイマー）・並び順・所属グループ（実際列でまとめる先）を変更、追加・削除も可能です。項目ごとに「表示するモード」を選ぶと、そのモードの画面に表示され、チェック・時間記録・内容の入力ができます。"));
   const groupOf=id=>{const g=(state.routines||[]).find(r=>(r.ids||[]).includes(id));return g?g.key:"";};
   const items=getOrderedTodoItems();
   items.forEach((item,i)=>{
@@ -6068,6 +6087,14 @@ function renderRoutinePanel(){
     swatch.addEventListener('click',(()=>{const id=item.id;return()=>{ state.itemColorEdit=state.itemColorEdit===id?null:id; render(); };})());
     r2.appendChild(swatch);
     box.appendChild(r2);
+    // 表示するモード（このルーティンをどのモードの画面に出すか）
+    { const r3=div({style:{display:"flex",alignItems:"center",gap:"6px",marginTop:"5px",paddingLeft:"28px"}});
+      const msel=document.createElement('select');msel.className='sel';msel.style.cssText="flex:1;min-width:0";
+      const mo0=document.createElement('option');mo0.value="";mo0.textContent="表示するモード：なし";if(!item.mode)mo0.selected=true;msel.appendChild(mo0);
+      getLifeModes().forEach(m=>{const o=document.createElement('option');o.value=m.key;o.textContent=`表示するモード：${m.icon} ${m.label}`;if(item.mode===m.key)o.selected=true;msel.appendChild(o);});
+      msel.addEventListener('change',(()=>{const id=item.id;return e=>{ const v=e.target.value; getTodoItems().forEach(x=>{if(x.id===id)x.mode=v;}); saveTodoItems(); render(); };})());
+      r3.appendChild(msel); box.appendChild(r3);
+    }
     if(state.itemColorEdit===item.id){
       const cp=div({style:{marginTop:"6px",paddingLeft:"28px",display:"flex",flexWrap:"wrap",gap:"6px",alignItems:"center"}});
       cp.appendChild(colorPickerRow(item.color,(()=>{const id=item.id;return c=>{ getTodoItems().forEach(x=>{if(x.id===id)x.color=c;}); saveTodoItems(); render(); };})()));
@@ -6086,27 +6113,18 @@ function renderRoutinePanel(){
     [["check","✓"],["timer","⏱"],["multi","⏱複"]].forEach(([v,l])=>{const o=document.createElement('option');o.value=v;o.textContent=l;if((state.newRoutineType||"check")===v)o.selected=true;tsel.appendChild(o);});
     tsel.addEventListener('change',e=>{state.newRoutineType=e.target.value;});
     const b=btn({style:{padding:"7px 14px",background:"#22c55e18",border:"1px solid #22c55e",borderRadius:"7px",color:"#4ade80",fontSize:"14px",fontWeight:700,cursor:"pointer",flexShrink:0}},"＋");
-    b.addEventListener('click',()=>{ const l=(state.newRoutineItem||"").trim(); if(!l)return; const t=state.newRoutineType||"check"; const it={id:"ti"+Date.now(),label:l,type:t==="check"?"check":"timer"}; if(t==="multi")it.multi=true; getTodoItems().push(it); saveTodoItems(); state.newRoutineItem=""; showToast(`＋ ${l}`); render(); });
+    b.addEventListener('click',()=>{ const l=(state.newRoutineItem||"").trim(); if(!l)return; const t=state.newRoutineType||"check"; const it={id:"ti"+Date.now(),label:l,type:t==="check"?"check":"timer",mode:""}; if(t==="multi")it.multi=true; getTodoItems().push(it); saveTodoItems(); state.newRoutineItem=""; showToast(`＋ ${l}`); render(); });
     add.appendChild(ni);add.appendChild(tsel);add.appendChild(b); card.appendChild(add);
   }
-  // 📦 まとめ（グループ）：表示するモード＋色
+  // 🎨 まとめ（グループ）の色
   if((state.routines||[]).length){
-    card.appendChild(div({style:{fontSize:"12px",fontWeight:700,color:"#94a3b8",margin:"14px 0 4px",paddingTop:"10px",borderTop:"1px solid #1e3a5f33"}},"📦 まとめの設定"));
-    card.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"8px",lineHeight:1.6}},
-      "「表示するモード」を選ぶと、そのモードの画面にこのまとめのルーティンが表示され、チェック・時間記録・内容の入力ができます。色は予定タブの実績ブロックに使われます。"));
+    card.appendChild(div({style:{fontSize:"12px",fontWeight:700,color:"#94a3b8",margin:"14px 0 6px",paddingTop:"10px",borderTop:"1px solid #1e3a5f33"}},"🎨 まとめの色（実績ブロック）"));
     (state.routines||[]).forEach(g=>{
-      const row=div({style:{marginBottom:"10px"}});
+      const row=div({style:{marginBottom:"8px"}});
       row.appendChild(div({style:{display:"flex",alignItems:"center",gap:"7px",marginBottom:"5px"}},[
         span({style:{width:"14px",height:"14px",borderRadius:"4px",background:g.color||"#38bdf8",flexShrink:0,display:"inline-block"}}),
-        span({style:{fontSize:"12px",color:"#e2e8f0"}},g.title||g.key),
-        span({style:{fontSize:"10px",color:"#475569"}},`${(g.ids||[]).length}項目`)
+        span({style:{fontSize:"12px",color:"#e2e8f0"}},g.title||g.key)
       ]));
-      // 表示するモード
-      const msel=document.createElement('select'); msel.className='sel'; msel.style.cssText="width:100%;margin-bottom:6px";
-      const mo0=document.createElement('option'); mo0.value=""; mo0.textContent="表示するモード：なし"; if(!g.mode)mo0.selected=true; msel.appendChild(mo0);
-      getLifeModes().forEach(m=>{ const o=document.createElement('option'); o.value=m.key; o.textContent=`表示するモード：${m.icon} ${m.label}`; if(g.mode===m.key)o.selected=true; msel.appendChild(o); });
-      msel.addEventListener('change',(()=>{const key=g.key;return e=>{ const v=e.target.value; state.routines=(state.routines||[]).map(r=>r.key===key?{...r,mode:v}:r); saveRoutines(); render(); };})());
-      row.appendChild(msel);
       row.appendChild(colorPickerRow(g.color,(()=>{const key=g.key;return c=>{ state.routines=(state.routines||[]).map(r=>r.key===key?{...r,color:c}:r); saveRoutines(); render(); };})()));
       card.appendChild(row);
     });
