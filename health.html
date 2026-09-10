@@ -221,7 +221,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "13.91"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "13.92"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -2123,18 +2123,22 @@ function routineItemRow(vd,item,accent,forceTimer){
 // 現在モードバー（ウィジェット上部に常設）
 function currentModeBar(){
   const s=currentModeSession(), def=s?lifeModeDef(s.key):null;
-  const bar=div({className:'card',style:{padding:'10px 12px',marginBottom:'10px',display:'flex',alignItems:'center',gap:'11px',cursor:'pointer',borderLeft:`4px solid ${def?def.color:'#475569'}`}});
-  bar.appendChild(div({style:{fontSize:'22px'}}, def?def.icon:'🕒'));
+  const bar=div({className:'card',style:{padding:'10px 12px',marginBottom:'10px',display:'flex',alignItems:'center',gap:'11px',borderLeft:`4px solid ${def?def.color:'#475569'}`}});
+  const left=div({style:{flex:1,minWidth:0,display:'flex',alignItems:'center',gap:'11px',cursor:'pointer'}});
+  left.appendChild(div({style:{fontSize:'22px'}}, def?def.icon:'🕒'));
   const mid=div({style:{flex:1,minWidth:0}});
-  mid.appendChild(div({style:{fontSize:'13px',fontWeight:700,color:def?def.color:'#e2e8f0'}}, def?`${def.label}モード`:'モード未設定'));
-  mid.appendChild(div({id:'modebar-sub',style:{fontSize:'10px',color:'#64748b'}}, s?`経過 ${fmtDur(Date.now()-s.start)}・タップで切替`:'タップでモードを選ぶ'));
-  bar.appendChild(mid);
-  bar.appendChild(div({style:{fontSize:'12px',color:'#64748b',whiteSpace:'nowrap'}},'切替 ▸'));
-  bar.addEventListener('click',()=>{ state.modeSwitcher=true; render(); });
+  mid.appendChild(div({style:{fontSize:'13px',fontWeight:700,color:def?def.color:'#e2e8f0'}}, def?`${def.label}モード`:'モード'));
+  mid.appendChild(div({id:'modebar-sub',style:{fontSize:'10px',color:'#64748b'}}, s?`経過 ${fmtDur(Date.now()-s.start)}・タップで開く`:'タップで開く'));
+  left.appendChild(mid);
+  left.addEventListener('click',()=>{ if(s) openLifeMode(s.key); else { state.modeSwitcher=true; render(); } });
+  bar.appendChild(left);
+  const sw=btn({style:{fontSize:'12px',color:'#cbd5e1',whiteSpace:'nowrap',background:'transparent',border:'1px solid #ffffff22',borderRadius:'9px',padding:'7px 11px',cursor:'pointer',fontFamily:'inherit'}},'🔀 切替');
+  sw.addEventListener('click',(e)=>{ e.stopPropagation(); state.modeSwitcher=true; render(); });
+  bar.appendChild(sw);
   if(!window._lifeTick) window._lifeTick=setInterval(lifeTick,1000);
   return bar;
 }
-function lifeTick(){ const el=document.getElementById('lifescreen-elapsed'); const bs=document.getElementById('modebar-sub'); const rt=document.querySelectorAll('[data-rtid]'); if(!el&&!bs&&!rt.length){ if(window._lifeTick){clearInterval(window._lifeTick);window._lifeTick=null;} return; } const s=currentModeSession(); if(s){ const t=fmtDur(Date.now()-s.start); if(el)el.textContent=t; if(bs)bs.textContent=`経過 ${t}・タップで切替`; } if(rt.length){ const vd=todayStr(); rt.forEach(e=>{ const id=e.getAttribute('data-rtid'); const multi=e.getAttribute('data-rtmulti')==='1'; const sec=routineItemSec(vd,{id,multi,type:'timer'}); e.textContent=sec>0?fmtDur(sec*1000):''; }); } }
+function lifeTick(){ const el=document.getElementById('lifescreen-elapsed'); const bs=document.getElementById('modebar-sub'); const rt=document.querySelectorAll('[data-rtid]'); if(!el&&!bs&&!rt.length){ if(window._lifeTick){clearInterval(window._lifeTick);window._lifeTick=null;} return; } const s=currentModeSession(); if(s){ const t=fmtDur(Date.now()-s.start); if(el)el.textContent=t; if(bs)bs.textContent=`経過 ${t}・タップで開く`; } if(rt.length){ const vd=todayStr(); rt.forEach(e=>{ const id=e.getAttribute('data-rtid'); const multi=e.getAttribute('data-rtmulti')==='1'; const sec=routineItemSec(vd,{id,multi,type:'timer'}); e.textContent=sec>0?fmtDur(sec*1000):''; }); } }
 // フルスクリーン：モード切替画面（生活モード＋ケアモード＋編集）
 function renderModeSwitcher(){
   const wrap=div({style:{position:'fixed',inset:'0',zIndex:'9997',overflowY:'auto',background:'#0b1120',color:'#e2e8f0',WebkitTapHighlightColor:'transparent',padding:'calc(env(safe-area-inset-top,0px) + 22px) 16px calc(env(safe-area-inset-bottom,0px) + 40px)'}});
@@ -2164,25 +2168,14 @@ function renderModeSwitcher(){
   const careList=['low','hype'].map(k=>({icon:SELF_MODES[k].icon,label:SELF_MODES[k].title.replace('モード',''),fn:()=>{ state.modeSwitcher=false; enterSelfMode(k); }}));
   careList.forEach(c=>{ const b=btn({style:{padding:'11px 8px',borderRadius:'10px',border:'1px solid #334155',background:'#111827',color:'#cbd5e1',fontSize:'13px',fontWeight:600,cursor:'pointer',fontFamily:'inherit'}},`${c.icon} ${c.label}`); b.addEventListener('click',c.fn); cgrid.appendChild(b); });
   inner.appendChild(cgrid);
-  // 自動切替トグル（勤務シフト時間→仕事、終了→休息。手動切替は次の境界まで優先）
-  const autoOn=state.autoModeOn!==false;
-  const at=btn({style:{width:'100%',padding:'11px',borderRadius:'10px',border:`1px solid ${autoOn?'#22c55e':'#334155'}`,background:autoOn?'#22c55e18':'transparent',color:autoOn?'#4ade80':'#94a3b8',fontSize:'12px',fontWeight:600,cursor:'pointer',fontFamily:'inherit',marginBottom:'8px'}},`⚙️ 自動切替：${autoOn?'ON':'OFF'}（勤務シフトで仕事へ／終了で休息へ）`);
-  at.addEventListener('click',()=>{ state.autoModeOn=!autoOn; saveAutoState(); render(); });
-  inner.appendChild(at);
-  const nOn=!state.nudgesOff;
-  const nt=btn({style:{width:'100%',padding:'11px',borderRadius:'10px',border:`1px solid ${nOn?'#38bdf8':'#334155'}`,background:nOn?'#38bdf818':'transparent',color:nOn?'#7dd3fc':'#94a3b8',fontSize:'12px',fontWeight:600,cursor:'pointer',fontFamily:'inherit',marginBottom:'8px'}},`🔔 切り替え提案（ナッジ）：${nOn?'ON':'OFF'}`);
-  nt.addEventListener('click',()=>{ state.nudgesOff=!nOn; saveNudgeCfg(); render(); });
-  inner.appendChild(nt);
-  const nc=btn({style:{width:'100%',padding:'11px',borderRadius:'10px',border:'1px solid #334155',background:'transparent',color:'#94a3b8',fontSize:'12px',cursor:'pointer',fontFamily:'inherit',marginBottom:'8px'}},'🌅 目標起床時刻・気分チェックの設定');
-  nc.addEventListener('click',()=>{ state.nudgeCfgOpen=true; render(); });
-  inner.appendChild(nc);
-  const eb=btn({style:{width:'100%',padding:'11px',borderRadius:'10px',border:'1px solid #334155',background:'transparent',color:'#94a3b8',fontSize:'12px',cursor:'pointer',fontFamily:'inherit'}},'🎨 モードの色を変更');
-  eb.addEventListener('click',()=>{ state.modeEditMode=true; render(); });
+  // モードの各種設定（色・既定・自動切替・提案・通知など）は設定画面へ
+  const eb=btn({style:{width:'100%',padding:'11px',borderRadius:'10px',border:'1px solid #334155',background:'transparent',color:'#94a3b8',fontSize:'12px',cursor:'pointer',fontFamily:'inherit'}},'⚙️ モードの設定（色・既定・自動切替・提案）→ 設定へ');
+  eb.addEventListener('click',()=>{ state.modeSwitcher=false; state.modeEditMode=false; state.nudgeCfgOpen=false; state.widget=false; state.tab='設定'; state.settingsModeCfg=true; render(); });
   inner.appendChild(eb);
   wrap.appendChild(inner);
   return wrap;
 }
-function renderModeEditor(){
+function renderModeEditor(inSettings){
   const box=div({});
   // 既定モード（未選択時に自動で入る）
   const drow=div({style:{background:'#111827',border:'1px solid #1e293b',borderRadius:'11px',padding:'10px',marginBottom:'12px'}});
@@ -2202,12 +2195,11 @@ function renderModeEditor(){
     card.appendChild(colorPickerRow(m.color,(()=>{const i=idx;return c=>{ getLifeModes()[i].color=c; saveLifeModes(); render(); };})()));
     box.appendChild(card);
   });
-  const done=btn({style:{width:'100%',padding:'11px',borderRadius:'10px',border:'none',background:'#334155',color:'#e2e8f0',fontSize:'13px',fontWeight:700,cursor:'pointer',fontFamily:'inherit'}},'完了');
-  done.addEventListener('click',()=>{ saveLifeModes(); state.modeEditMode=false; render(); });
-  box.appendChild(done);
+  if(!inSettings){ const done=btn({style:{width:'100%',padding:'11px',borderRadius:'10px',border:'none',background:'#334155',color:'#e2e8f0',fontSize:'13px',fontWeight:700,cursor:'pointer',fontFamily:'inherit'}},'完了');
+    done.addEventListener('click',()=>{ saveLifeModes(); state.modeEditMode=false; render(); }); box.appendChild(done); }
   return box;
 }
-function renderNudgeConfig(){
+function renderNudgeConfig(inSettings){
   const box=div({});
   box.appendChild(div({style:{fontSize:'13px',fontWeight:700,color:'#e2e8f0',marginBottom:'4px'}},'🌅 目標起床時刻（シフト別）'));
   box.appendChild(div({style:{fontSize:'11px',color:'#64748b',marginBottom:'9px',lineHeight:1.6}},'この時刻を過ぎて起床未記録なら「起きる時間です」と提案します。'));
@@ -2247,9 +2239,8 @@ function renderNudgeConfig(){
     on.addEventListener('click',()=>requestNotify());
     box.appendChild(on);
   }
-  const done=btn({style:{width:'100%',marginTop:'14px',padding:'11px',borderRadius:'10px',border:'none',background:'#334155',color:'#e2e8f0',fontSize:'13px',fontWeight:700,cursor:'pointer',fontFamily:'inherit'}},'完了');
-  done.addEventListener('click',()=>{ saveWakeGoal(); saveNudgeCfg(); state.nudgeCfgOpen=false; render(); });
-  box.appendChild(done);
+  if(!inSettings){ const done=btn({style:{width:'100%',marginTop:'14px',padding:'11px',borderRadius:'10px',border:'none',background:'#334155',color:'#e2e8f0',fontSize:'13px',fontWeight:700,cursor:'pointer',fontFamily:'inherit'}},'完了');
+    done.addEventListener('click',()=>{ saveWakeGoal(); saveNudgeCfg(); state.nudgeCfgOpen=false; render(); }); box.appendChild(done); }
   return box;
 }
 // フルスクリーン：各生活モードの画面
@@ -6402,9 +6393,31 @@ function renderFeatureIndexPanel(){
   });
   return card;
 }
+function renderModeSettingsPanel(){
+  const card=div({className:"card"});
+  card.appendChild(div({style:{fontSize:"14px",fontWeight:700,color:"#e2e8f0",marginBottom:"4px"}},"🕒 セルフモード・切り替えの設定"));
+  card.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"12px",lineHeight:1.6}},"モードの色・既定モード・自動切替・切り替え提案（ナッジ）・端末通知・目標起床時刻など。"));
+  // 自動切替トグル
+  const autoOn=state.autoModeOn!==false;
+  const at=btn({style:{width:"100%",padding:"11px",borderRadius:"10px",border:`1px solid ${autoOn?"#22c55e":"#334155"}`,background:autoOn?"#22c55e18":"transparent",color:autoOn?"#4ade80":"#94a3b8",fontSize:"12px",fontWeight:600,cursor:"pointer",fontFamily:"inherit",marginBottom:"8px"}},`⚙️ 自動切替：${autoOn?"ON":"OFF"}（勤務シフトで仕事へ／帰宅ルーティン後に休息へ）`);
+  at.addEventListener('click',()=>{ state.autoModeOn=!autoOn; saveAutoState(); render(); });
+  card.appendChild(at);
+  // ナッジトグル
+  const nOn=!state.nudgesOff;
+  const nt=btn({style:{width:"100%",padding:"11px",borderRadius:"10px",border:`1px solid ${nOn?"#38bdf8":"#334155"}`,background:nOn?"#38bdf818":"transparent",color:nOn?"#7dd3fc":"#94a3b8",fontSize:"12px",fontWeight:600,cursor:"pointer",fontFamily:"inherit",marginBottom:"12px"}},`🔔 切り替え提案（ナッジ）：${nOn?"ON":"OFF"}`);
+  nt.addEventListener('click',()=>{ state.nudgesOff=!nOn; saveNudgeCfg(); render(); });
+  card.appendChild(nt);
+  // 既定モード＋色の変更
+  card.appendChild(renderModeEditor(true));
+  card.appendChild(div({style:{height:"1px",background:"#1e3a5f",margin:"6px 0 14px"}}));
+  // 目標起床時刻・気分チェック・端末通知・基準日
+  card.appendChild(renderNudgeConfig(true));
+  return card;
+}
 function renderSettingsHub(){
   const wrap=div({style:{maxWidth:"600px",margin:"0 auto",padding:"12px 16px 60px"}});
   wrap.appendChild(renderFeatureIndexPanel());
+  wrap.appendChild(renderModeSettingsPanel());
   wrap.appendChild(renderDisplayPanel());
   wrap.appendChild(renderColorLegendPanel());
   wrap.appendChild(renderShiftPanel());
