@@ -222,7 +222,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.21"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.22"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -2026,7 +2026,15 @@ const DEFAULT_LIFE_MODES=[
   {key:'drink',    label:'飲み',    icon:'🍶', color:'#f97316', content:'time', screen:'self:drink'}, // 飲酒ブレーキ（リッチ画面）
   {key:'sleepprep',label:'睡眠前',  icon:'🌙', color:'#a855f7', content:'time', screen:'sleep'}, // 寝支度（睡眠前モード画面）
   {key:'sleep',    label:'睡眠',    icon:'😴', color:'#6366f1', content:'sleep'},
+  // 🩹 ケアモード：状態を立て直す一時介入。生活モードとして時間も計測するが、
+  //    切替画面では「🩹ケア」欄に分けて並べる（care:true）。終了すると直前のモードへ戻る。
+  {key:'low',      label:'落ち込み',icon:'🌧',  color:'#60a5fa', content:'time', screen:'self:low',    care:true},
+  {key:'hype',     label:'たかぶり',icon:'⚡',  color:'#e879f9', content:'time', screen:'self:hype',   care:true},
+  {key:'urge',     label:'エロ',    icon:'🔥', color:'#fb7185', content:'time', screen:'self:urge',   care:true},
+  {key:'lonely',   label:'さみしい',icon:'🕯',  color:'#a78bfa', content:'time', screen:'self:lonely', care:true},
 ];
+// ケアモード（時間は計測するが「いつもの生活」ではないモード）かどうか
+function isCareMode(key){ const d=lifeModeDef(key); return !!(d&&d.care); }
 function getLifeModes(){ if(!Array.isArray(state.lifeModes)||!state.lifeModes.length) state.lifeModes=JSON.parse(JSON.stringify(DEFAULT_LIFE_MODES)); return state.lifeModes; }
 // 旧版の「＋モード追加」で作った自作モード「生活」を、正式な life モードへ統合する（一度きり）。
 // 記録を失わないよう、モード時間ログ・既定モード・ルーティンの割り当て・目標時間の参照もすべて付け替える。
@@ -2083,7 +2091,9 @@ function getModeGoals(){ if(!state.modeGoals||typeof state.modeGoals!=='object')
 function saveModeGoals(){ try{localStorage.setItem(STORAGE_KEY+'_modegoals',JSON.stringify(getModeGoals()));}catch(_){} }
 function modeGoalMin(key){ const v=getModeGoals()[key]; return (v>0)?v:0; }
 function setModeGoalMin(key,min){ const g=getModeGoals(); if(min>0)g[key]=min; else delete g[key]; saveModeGoals(); }
-function getDefaultMode(){ const dm=state.defaultMode||'life'; return lifeModeDef(dm)?dm:(getLifeModes()[0]||{key:'life'}).key; }
+// 既定モードにできるのは「いつもの生活」側のモードだけ（ケアは除く）
+function nonCareModes(){ return getLifeModes().filter(m=>!m.care); }
+function getDefaultMode(){ const dm=state.defaultMode||'life'; const d=lifeModeDef(dm); return (d&&!d.care)?dm:(nonCareModes()[0]||{key:'life'}).key; }
 function setDefaultMode(k){ state.defaultMode=k; try{localStorage.setItem(STORAGE_KEY+'_defaultmode',k);}catch(_){} }
 function ensureActiveMode(){ if(!currentModeSession()){ switchLifeMode(getDefaultMode(),true); return true; } return false; }
 // 帰宅ルーティン（gohomeグループ）が全て完了しているか。項目が無ければ完了扱い
@@ -2092,8 +2102,20 @@ function endLifeMode(){ const cur=currentModeSession(); if(cur){ cur.end=Date.no
 // そのモードを「終了」したとき、自動で次に入る生活モード
 //   😴睡眠 →（起床したら）☀️朝 ／ 🍶飲み →（飲み終わったら）🛋休息
 const MODE_AFTER_FINISH={ sleep:"morning", drink:"rest" };
+// 進行中セッションより前にいた「ケアでない」モード（ケアを終えたら元いた生活へ戻すために使う）
+function prevNonCareSession(){
+  const l=getModeLog();
+  for(let i=l.length-2;i>=0;i--){ const d=lifeModeDef(l[i].key); if(d&&!d.care) return l[i]; }
+  return null;
+}
 // モードを終了する。次モードが決まっていればそこへ自動で切り替える（決まっていなければ既定モードへ戻る）
 function finishLifeMode(key){
+  // ケアモードは一時的な介入なので、終えたら「直前にいた生活モード」へ戻す
+  if(isCareMode(key)){
+    // 自動で入っていたモードへ戻る場合は auto フラグも引き継ぐ（帰宅ルーティン完了→休息 などの自動判定を壊さないため）
+    const ps=prevNonCareSession(), back=ps?ps.key:getDefaultMode();
+    switchLifeMode(back, ps?!!ps.auto:true); return back;
+  }
   const nxt=MODE_AFTER_FINISH[key];
   if(nxt && lifeModeDef(nxt)){ switchLifeMode(nxt,true); return nxt; }
   endLifeMode(); return null;
@@ -2228,8 +2250,8 @@ function answerMood(v){
   const ds=activeDay(), hour=new Date().getHours(), ex=getLog(ds,hour)||{};
   setLog(ds,hour,{...ex,mental:Math.max(1,Math.min(10,v*2))});
   nudgeR('mood').answered=true; saveNudges();
-  if(v<=2){ enterSelfMode('low'); }
-  else if(v>=5){ enterSelfMode('hype'); }
+  if(v<=2){ openLifeMode('low'); }
+  else if(v>=5){ openLifeMode('hype'); }
   else { showToast('気分を記録しました 🫧','#38bdf8'); render(); }
 }
 function nudgeBanner(){
@@ -2358,7 +2380,7 @@ function renderModeSwitcher(){
   const curKey=currentLifeModeKey();
   inner.appendChild(div({style:{fontSize:'11px',color:'#64748b',marginBottom:'7px'}},'いまの生活モード（タップで切替・時間が記録されます）'));
   const grid=div({style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'9px',marginBottom:'18px'}});
-  getLifeModes().forEach(m=>{ const on=curKey===m.key;
+  nonCareModes().forEach(m=>{ const on=curKey===m.key;
     const b=btn({style:{padding:'16px 10px',borderRadius:'13px',border:`2px solid ${on?m.color:'#1e293b'}`,background:on?m.color+'22':'#111827',cursor:'pointer',fontFamily:'inherit',textAlign:'center'}},[
       div({style:{fontSize:'26px'}},m.icon),
       div({style:{fontSize:'13px',fontWeight:700,color:on?m.color:'#e2e8f0',marginTop:'3px'}},m.label),
@@ -2368,10 +2390,12 @@ function renderModeSwitcher(){
     grid.appendChild(b);
   });
   inner.appendChild(grid);
-  inner.appendChild(div({style:{fontSize:'11px',color:'#64748b',marginBottom:'7px'}},'🩹 ケア（今の状態を立て直す・一時的に重ねる。時間は占有しない）'));
+  inner.appendChild(div({style:{fontSize:'11px',color:'#64748b',marginBottom:'7px'}},'🩹 ケア（今の状態を立て直す。時間も記録され、終えると直前のモードへ戻ります）'));
   const cgrid=div({style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'8px',marginBottom:'18px'}});
-  const careList=['low','hype','urge','lonely'].map(k=>({icon:SELF_MODES[k].icon,label:SELF_MODES[k].title.replace('モード',''),fn:()=>{ state.modeSwitcher=false; enterSelfMode(k); }}));
-  careList.forEach(c=>{ const b=btn({style:{padding:'11px 8px',borderRadius:'10px',border:'1px solid #334155',background:'#111827',color:'#cbd5e1',fontSize:'13px',fontWeight:600,cursor:'pointer',fontFamily:'inherit'}},`${c.icon} ${c.label}`); b.addEventListener('click',c.fn); cgrid.appendChild(b); });
+  const careList=getLifeModes().filter(m=>m.care).map(m=>({icon:m.icon,label:m.label,key:m.key,on:curKey===m.key,fn:(()=>{const k=m.key;return()=>{ openLifeMode(k); };})()}));
+  careList.forEach(c=>{ const cm=lifeModeDef(c.key)||{color:'#334155'};
+    const b=btn({style:{padding:'11px 8px',borderRadius:'10px',border:`1px solid ${c.on?cm.color:'#334155'}`,background:c.on?cm.color+'22':'#111827',color:c.on?cm.color:'#cbd5e1',fontSize:'13px',fontWeight:600,cursor:'pointer',fontFamily:'inherit'}},`${c.icon} ${c.label}${c.on?' ●':''}`);
+    b.addEventListener('click',c.fn); cgrid.appendChild(b); });
   inner.appendChild(cgrid);
   // モードの各種設定（色・既定・自動切替・提案・通知など）は設定画面へ
   const eb=btn({style:{width:'100%',padding:'11px',borderRadius:'10px',border:'1px solid #334155',background:'transparent',color:'#94a3b8',fontSize:'12px',cursor:'pointer',fontFamily:'inherit'}},'⚙️ モードの設定（色・既定・自動切替・提案）→ 設定へ');
@@ -2387,7 +2411,7 @@ function renderModeEditor(inSettings){
   drow.appendChild(div({style:{fontSize:'12px',fontWeight:700,color:'#e2e8f0',marginBottom:'3px'}},'🏠 既定モード'));
   drow.appendChild(div({style:{fontSize:'11px',color:'#64748b',marginBottom:'7px',lineHeight:1.5}},'他のモードを終えた後に自動で入る、いつもの生活モード。'));
   const sel=document.createElement('select'); sel.className='sel'; sel.style.cssText='width:100%;padding:8px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:13px;color-scheme:dark;font-family:inherit';
-  getLifeModes().forEach(m=>{ const o=document.createElement('option'); o.value=m.key; o.textContent=`${m.icon} ${m.label}`; if(m.key===getDefaultMode())o.selected=true; sel.appendChild(o); });
+  nonCareModes().forEach(m=>{ const o=document.createElement('option'); o.value=m.key; o.textContent=`${m.icon} ${m.label}`; if(m.key===getDefaultMode())o.selected=true; sel.appendChild(o); });
   sel.addEventListener('change',e=>{ setDefaultMode(e.target.value); });
   drow.appendChild(sel); box.appendChild(drow);
   box.appendChild(div({style:{fontSize:'11px',color:'#64748b',marginBottom:'9px',lineHeight:1.6}},'各モードの色と「1日の目標時間」を設定できます。目標を入れると分析の「モード別の時間」に達成ゲージが出ます（空欄・0で目標なし）。'));
@@ -2395,10 +2419,11 @@ function renderModeEditor(inSettings){
     const card=div({style:{background:'#111827',border:'1px solid #1e293b',borderRadius:'11px',padding:'10px',marginBottom:'9px'}});
     card.appendChild(div({style:{display:'flex',alignItems:'center',gap:'9px',marginBottom:'8px'}},[
       div({style:{fontSize:'20px'}},m.icon),
-      div({style:{fontSize:'13px',fontWeight:700,color:m.color}},m.label)
+      div({style:{fontSize:'13px',fontWeight:700,color:m.color}},m.label),
+      m.care?div({style:{fontSize:'10px',color:'#64748b',border:'1px solid #334155',borderRadius:'6px',padding:'1px 6px'}},'🩹 ケア'):null
     ]));
-    // 1日の目標時間（時間・分）
-    { const g=modeGoalMin(m.key);
+    // 1日の目標時間（時間・分）。ケアモードは「長くいたい時間」ではないので目標を出さない
+    if(!m.care){ const g=modeGoalMin(m.key);
       const row=div({style:{display:'flex',alignItems:'center',gap:'6px',marginBottom:'8px'}});
       row.appendChild(span({style:{fontSize:'11px',color:'#94a3b8',flexShrink:0}},'1日の目標'));
       const mk=(val,max,ph,onCh)=>{ const i=document.createElement('input'); i.type='number'; i.min='0'; i.max=String(max); i.placeholder=ph; i.value=val?String(val):'';
@@ -2865,6 +2890,13 @@ function renderSelfMode(){
   const back=btn({style:{padding:"6px 12px",borderRadius:"8px",border:"1px solid #ffffff22",background:"transparent",color:"#cdc3b2",fontSize:"11px",cursor:"pointer",fontFamily:"inherit"}},"閉じる");
   back.addEventListener('click',()=>{ exitSelfMode(false); render(); });
   top.appendChild(back); inner.appendChild(top);
+  // ケアモードも生活モードとして時間を計測しているので、経過時間を出しておく
+  if(isCareMode(key) && currentLifeModeKey()===key){
+    inner.appendChild(div({style:{display:"flex",alignItems:"center",justifyContent:"center",gap:"7px",padding:"7px",borderRadius:"10px",background:"#ffffff0d",border:"1px solid #ffffff14",marginBottom:"10px"}},[
+      div({style:{fontSize:"10px",color:"#a89e8c"}},"このモードの経過"),
+      div({id:"selfmode-elapsed",style:{fontSize:"17px",fontWeight:800,color:M.accent}},fmtSecMS(Math.round((Date.now()-selfModeStartAt())/1000)))
+    ]));
+  }
   // いまの体調（体調記録と同じ項目・同じ保存先）。すでにこの時間の記録があれば入力欄は出さない
   { const _cds=activeDay(), _ch=selfCondHour();
     if(selfCondRecorded(_cds,_ch) && !state.selfCondEdit) inner.appendChild(selfCondDoneRow(M.accent));
@@ -3011,7 +3043,8 @@ function renderSelfMode(){
   if(!window._selfTick) window._selfTick=setInterval(selfModeTick,1000);
   return wrap;
 }
-function bigExitBtn(label,accent){ const b=btn({style:{width:"100%",padding:"15px",borderRadius:"13px",border:"none",color:"#1a1408",fontSize:"15px",fontWeight:800,cursor:"pointer",background:accent,marginTop:"4px"}},label); b.addEventListener('click',()=>{ exitSelfMode(true); showToast("記録しました","#a5b4fc"); render(); }); return b; }
+function bigExitBtn(label,accent){ const b=btn({style:{width:"100%",padding:"15px",borderRadius:"13px",border:"none",color:"#1a1408",fontSize:"15px",fontWeight:800,cursor:"pointer",background:accent,marginTop:"4px"}},label); b.addEventListener('click',()=>{ const was=state.selfMode, care=isCareMode(was); exitSelfMode(true); const bd=care?lifeModeDef(currentLifeModeKey()):null;
+  showToast(bd?`記録しました → ${bd.icon}${bd.label}へ戻りました`:"記録しました","#a5b4fc"); render(); }); return b; }
 // セルフモードのランチャー（ウィジェット等から）
 // ── ウィジェット（今日の予定＋ルーティンをまとめて素早く確認・チェック）──
 // URLハッシュ #widget で直接起動でき、ホーム画面ショートカットから開ける。
@@ -11594,10 +11627,62 @@ function renderModeDaySection(dsList,alwaysOpen){
   });
   return wrap;
 }
+// 🩹 ケア（セルフモード）の履歴カード。_selfmodelog を期間で集計して分析タブに出す。
+//   回数・合計/平均の所要時間・心の調子の before→after・直近のメモを表示する。
+function renderSelfLogCard(){
+  const log=getSelfModeLog();
+  if(!log.length) return null;
+  const ranges=[["w","7日",7],["m","30日",30],["all","全期間",0]];
+  if(!ranges.some(r=>r[0]===state.selfLogRange)) state.selfLogRange="m";
+  const days=ranges.find(r=>r[0]===state.selfLogRange)[2];
+  const from=days?new Date(Date.now()-days*86400000).getTime():0;
+  const rows=log.filter(x=>{ const t=Date.parse(x.t); return !isNaN(t)&&t>=from; });
+  const card=div({className:"card"});
+  const head=div({style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"10px",gap:"8px",flexWrap:"wrap"}});
+  head.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0"}},"🩹 ケアの履歴"));
+  const seg=div({style:{display:"flex",gap:"4px"}});
+  ranges.forEach(([k,label])=>{ const on=state.selfLogRange===k;
+    const b=btn({style:{padding:"4px 11px",borderRadius:"7px",border:`1px solid ${on?"var(--mode)":"#334155"}`,background:on?"var(--mode-soft)":"transparent",color:on?"var(--mode)":"#94a3b8",fontSize:"11px",fontWeight:600,cursor:"pointer",fontFamily:"inherit"}},label);
+    b.addEventListener('click',(()=>{const kk=k;return()=>{ state.selfLogRange=kk; render(); };})()); seg.appendChild(b); });
+  head.appendChild(seg); card.appendChild(head);
+  if(!rows.length){ card.appendChild(div({style:{fontSize:"12px",color:"#64748b",lineHeight:1.6}},"この期間の記録はありません。")); return card; }
+  // モード別に集計
+  const agg={};
+  rows.forEach(x=>{ const a=agg[x.mode]||(agg[x.mode]={n:0,sec:0,dn:0,dsum:0});
+    a.n++; a.sec+=x.durSec||0;
+    if(x.before!=null&&x.after!=null){ a.dn++; a.dsum+=(x.after-x.before); } });
+  const keys=Object.keys(agg).sort((a,b)=>agg[b].n-agg[a].n);
+  keys.forEach(k=>{ const a=agg[k], d=lifeModeDef(k)||{}, M=SELF_MODES[k]||{};
+    const icon=d.icon||M.icon||"🩹", label=d.label||(M.title||k).replace("モード",""), col=d.color||M.accent||"#94a3b8";
+    const row=div({style:{display:"flex",alignItems:"center",gap:"9px",padding:"7px 0",borderBottom:"1px solid #1e293b"}});
+    row.appendChild(div({style:{fontSize:"18px",width:"24px",textAlign:"center",flexShrink:0}},icon));
+    row.appendChild(div({style:{flex:1,minWidth:0}},[
+      div({style:{fontSize:"12px",fontWeight:700,color:col}},label),
+      div({style:{fontSize:"10px",color:"#64748b"}},`${a.n}回・合計 ${fmtDur(a.sec*1000)}・平均 ${fmtDur(Math.round(a.sec/a.n)*1000)}`)
+    ]));
+    if(a.dn){ const av=a.dsum/a.dn, up=av>0.05, dw=av<-0.05;
+      row.appendChild(div({style:{fontSize:"11px",fontWeight:700,color:up?"#86efac":(dw?"#f87171":"#64748b"),flexShrink:0,textAlign:"right"}},[
+        div({},`${up?"↑":(dw?"↓":"→")}${Math.abs(av).toFixed(1)}`),
+        div({style:{fontSize:"9px",color:"#475569",fontWeight:400}},"心の調子")
+      ]));
+    }
+    card.appendChild(row); });
+  // 直近のメモ（きっかけ・気持ち）
+  const notes=rows.filter(x=>x.note).slice(-5).reverse();
+  if(notes.length){
+    card.appendChild(div({style:{fontSize:"10px",color:"#64748b",margin:"9px 0 4px"}},"📝 直近のメモ"));
+    notes.forEach(x=>{ const d=lifeModeDef(x.mode)||{}, M=SELF_MODES[x.mode]||{}, t=new Date(Date.parse(x.t));
+      card.appendChild(div({style:{fontSize:"11px",color:"#94a3b8",lineHeight:1.5,padding:"3px 0"}},
+        `${d.icon||M.icon||"🩹"} ${t.getMonth()+1}/${t.getDate()} ${hhmm(t.getHours(),t.getMinutes())}　${x.note}`)); });
+  }
+  card.appendChild(div({style:{fontSize:"10px",color:"#475569",marginTop:"8px",lineHeight:1.5}},"ケアの時間は「🕒 モード別の時間」にも生活モードとして入っています。"));
+  return card;
+}
 function renderLog(){
   const wrap=div({style:{maxWidth:"600px",margin:"0 auto",padding:"12px 16px 60px"}});
   wrap.appendChild(renderModeStatCard());
   { const ic=renderModeInsightCard(); if(ic) wrap.appendChild(ic); }
+  { const sc=renderSelfLogCard(); if(sc) wrap.appendChild(sc); }
 
   // ── 月間体調ヒートマップ ──
   if(state.heatmapMonth===undefined){
