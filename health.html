@@ -222,7 +222,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.17"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.18"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -2443,11 +2443,12 @@ function lifeRoutineChecklist(title,items,color,vd,forceTimer){
   items.forEach(it=> cc.appendChild(routineItemRow(vd,it,color,forceTimer)));
   return cc;
 }
-// そのモードに割り当てた「定期ルーティン」（その日に該当し、除外していないもの）
+// 定期ルーティンは「既定モード（いつもの生活モード）」にまとめて表示する。
+// その日に該当し、除外していないものを時刻順で返す。
 function customTodosForMode(modeKey,vd){
-  if(!modeKey) return [];
+  if(!modeKey||modeKey!==getDefaultMode()) return [];
   let due=[]; try{ due=dueCustomTodos(vd)||[]; }catch(_){ return []; }
-  return due.filter(ct=>(ct.lifeMode||"")===modeKey && !((state.todos[vd]||{})[ct.uid]||{}).excluded)
+  return due.filter(ct=>!((state.todos[vd]||{})[ct.uid]||{}).excluded)
     .map(ct=>{ const tt=customTodoTimeFor(ct,vd); return {ct,tt,sort: tt?((tt.sn?1440:0)+tt.h*60+(tt.m||0)):1e9}; })
     .sort((a,b)=>a.sort-b.sort);
 }
@@ -2499,7 +2500,7 @@ function appendModeCustomTodos(inner,modeKey,defColor,vd){
   if(!list.length) return;
   const done=list.filter(x=>!!((state.todos[vd]||{})[x.ct.uid]||{}).checked).length;
   const cc=div({style:{background:'#ffffff0d',border:'1px solid #ffffff14',borderRadius:'11px',padding:'10px 12px',marginBottom:'10px'}});
-  cc.appendChild(div({style:{fontSize:'12px',fontWeight:700,color:'#e2e8f0',marginBottom:'5px'}},`🔁 定期ルーティン ${done}/${list.length}`));
+  cc.appendChild(div({style:{fontSize:'12px',fontWeight:700,color:'#e2e8f0',marginBottom:'5px'}},`🔁 今日の定期ルーティン ${done}/${list.length}`));
   list.forEach(({ct,tt})=> cc.appendChild(modeCustomTodoRow(vd,ct,tt,defColor)));
   inner.appendChild(cc);
 }
@@ -13253,16 +13254,6 @@ function renderCustomTodoModal(){
     mrow.appendChild(mk(!isTimer,"✓ チェック式",()=>{m0.mode='check';render();}));
     mrow.appendChild(mk(isTimer,"⏱ 時間計測式",()=>{m0.mode='timer';render();}));
     m.appendChild(mrow);
-  }
-  // 表示する生活モード（そのモードの画面にこの定期ルーティンを出す）
-  {
-    m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"5px",marginTop:"4px"}},"表示するモード"));
-    const sel=document.createElement('select'); sel.className='sel'; sel.style.cssText="width:100%;margin-bottom:4px";
-    const o0=document.createElement('option'); o0.value=""; o0.textContent="表示するモード：なし"; if(!m0.lifeMode)o0.selected=true; sel.appendChild(o0);
-    getLifeModes().forEach(x=>{ const o=document.createElement('option'); o.value=x.key; o.textContent=`表示するモード：${x.icon} ${x.label}`; if(m0.lifeMode===x.key)o.selected=true; sel.appendChild(o); });
-    sel.addEventListener('change',e=>{ m0.lifeMode=e.target.value; });
-    m.appendChild(sel);
-    m.appendChild(div({style:{fontSize:"10px",color:"#475569",marginBottom:"12px",lineHeight:1.5}},"選ぶと、そのモードの画面でチェック・時間計測ができます。"));
     m.appendChild(div({style:{fontSize:"10px",color:"#475569",marginTop:"-6px",marginBottom:"12px",lineHeight:1.5}},isTimer?"▶開始／⏹終了で所要時間を計測します。":"タップで完了チェックします。"));
   }
   // 間隔
@@ -13478,7 +13469,7 @@ function renderCustomTodoModal(){
     btn({style:{flex:2,padding:"10px",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:600,cursor:"pointer"},
       onClick:()=>{
         if(!(m0.label||"").trim()){alert("名前を入力してください");return;}
-        const data={uid:m0.uid||Date.now(),label:m0.label.trim(),mode:m0.mode==='timer'?'timer':'check',lifeMode:m0.lifeMode||"",itype:m0.itype||"week",n:Math.max(1,m0.n||1),startDate:m0.startDate||todayStr(),timeH:m0.timeH!=null?m0.timeH:null,timeM:m0.timeH!=null?(m0.timeM||0):0,endH:m0.timeH!=null&&m0.endH!=null?m0.endH:null,endM:m0.timeH!=null&&m0.endH!=null?(m0.endM||0):null,endNextDay:!!(m0.timeH!=null&&m0.endH!=null&&m0.endNextDay),startNextDay:!!(m0.timeH!=null&&m0.startNextDay),color:m0.color||"#38bdf8",weekdays:(m0.itype==="week"&&m0.weekdays)?[...m0.weekdays]:[],shifts:m0.shifts?[...m0.shifts]:[],weekdayTimes:(m0.weekdayTimes&&Object.keys(m0.weekdayTimes).length)?JSON.parse(JSON.stringify(m0.weekdayTimes)):undefined,byShiftSchedule:!!m0.byShiftSchedule,shiftSchedule:(m0.byShiftSchedule&&m0.shiftSchedule)?JSON.parse(JSON.stringify(m0.shiftSchedule)):undefined,reschedules:(Array.isArray(m0.reschedules)&&m0.reschedules.length)?JSON.parse(JSON.stringify(m0.reschedules)):undefined};
+        const data={uid:m0.uid||Date.now(),label:m0.label.trim(),mode:m0.mode==='timer'?'timer':'check',itype:m0.itype||"week",n:Math.max(1,m0.n||1),startDate:m0.startDate||todayStr(),timeH:m0.timeH!=null?m0.timeH:null,timeM:m0.timeH!=null?(m0.timeM||0):0,endH:m0.timeH!=null&&m0.endH!=null?m0.endH:null,endM:m0.timeH!=null&&m0.endH!=null?(m0.endM||0):null,endNextDay:!!(m0.timeH!=null&&m0.endH!=null&&m0.endNextDay),startNextDay:!!(m0.timeH!=null&&m0.startNextDay),color:m0.color||"#38bdf8",weekdays:(m0.itype==="week"&&m0.weekdays)?[...m0.weekdays]:[],shifts:m0.shifts?[...m0.shifts]:[],weekdayTimes:(m0.weekdayTimes&&Object.keys(m0.weekdayTimes).length)?JSON.parse(JSON.stringify(m0.weekdayTimes)):undefined,byShiftSchedule:!!m0.byShiftSchedule,shiftSchedule:(m0.byShiftSchedule&&m0.shiftSchedule)?JSON.parse(JSON.stringify(m0.shiftSchedule)):undefined,reschedules:(Array.isArray(m0.reschedules)&&m0.reschedules.length)?JSON.parse(JSON.stringify(m0.reschedules)):undefined};
         if(m0.uid){
           const prev=(state.customTodos||[]).find(x=>x.uid===m0.uid);
           // 既存の編集は「今日以降のみ」反映：変更前の定義を昨日までの過去バージョンとして凍結
