@@ -222,7 +222,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.19"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.20"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -841,6 +841,7 @@ function loadStorage(){
     const lmd=localStorage.getItem(STORAGE_KEY+"_lifemodes");
     if(lmd){try{const a=JSON.parse(lmd); if(Array.isArray(a)&&a.length)state.lifeModes=a;}catch{}}
     migrateLifeModes(); // 朝/飲み/睡眠前などの新しい生活モードを既存データに補完
+    migrateSeikatsuMode(); // 自作の「生活」モードを正式な life モードへ統合
     const dfm=localStorage.getItem(STORAGE_KEY+"_defaultmode"); if(dfm)state.defaultMode=dfm;
     const mgl=localStorage.getItem(STORAGE_KEY+"_modegoals");
     if(mgl){try{const o=JSON.parse(mgl); if(o&&typeof o==="object")state.modeGoals=o;}catch{}}
@@ -2010,6 +2011,7 @@ const SELF_MODES={
 //   ケアモード（睡眠前/飲み/落ち込み/たかぶり/朝）は上に重ねる一時ツール。
 // ════════════════════════════════════════════════════
 const DEFAULT_LIFE_MODES=[
+  {key:'life',     label:'生活',    icon:'🏠', color:'#38bdf8', content:'time'}, // いつもの生活（既定モード）
   {key:'morning',  label:'朝',      icon:'☀️', color:'#fbbf24', content:'time', screen:'self:morning'}, // 起床支援（リッチ画面）
   {key:'work',     label:'仕事',    icon:'🏢', color:'#3b82f6', content:'time'},
   {key:'side',     label:'副業',    icon:'💻', color:'#8b5cf6', content:'time'},
@@ -2024,6 +2026,34 @@ const DEFAULT_LIFE_MODES=[
   {key:'sleep',    label:'睡眠',    icon:'😴', color:'#6366f1', content:'sleep'},
 ];
 function getLifeModes(){ if(!Array.isArray(state.lifeModes)||!state.lifeModes.length) state.lifeModes=JSON.parse(JSON.stringify(DEFAULT_LIFE_MODES)); return state.lifeModes; }
+// 旧版の「＋モード追加」で作った自作モード「生活」を、正式な life モードへ統合する（一度きり）。
+// 記録を失わないよう、モード時間ログ・既定モード・ルーティンの割り当て・目標時間の参照もすべて付け替える。
+function migrateSeikatsuMode(){
+  const modes=state.lifeModes;
+  if(!Array.isArray(modes)||!modes.length) return;
+  const defKeys=new Set(DEFAULT_LIFE_MODES.map(m=>m.key));
+  const target=modes.find(m=>!defKeys.has(m.key) && String(m.label||'').trim()==='生活');
+  if(!target) return;
+  const oldKey=target.key;
+  const base=DEFAULT_LIFE_MODES.find(m=>m.key==='life');
+  const existing=modes.find(m=>m.key==='life');
+  if(existing){
+    // すでに life がある：自作モードの色を引き継いで取り除く
+    if(target.color) existing.color=target.color;
+    state.lifeModes=modes.filter(m=>m.key!==oldKey);
+  } else {
+    // 自作モードがあった位置をそのまま life に置き換える（並び順を保つ）
+    modes[modes.indexOf(target)]={...base, color:target.color||base.color, icon:target.icon||base.icon};
+  }
+  // 参照の付け替え
+  (state.modeLog||[]).forEach(x=>{ if(x.key===oldKey) x.key='life'; });
+  if(state.defaultMode===oldKey) state.defaultMode='life';
+  if(state.autoLastKey===oldKey) state.autoLastKey='life';
+  try{ getTodoItems().forEach(it=>{ if(it.mode===oldKey) it.mode='life'; }); saveTodoItems(); }catch(_){}
+  try{ const g=getModeGoals(); if(g[oldKey]!=null){ g['life']=g[oldKey]; delete g[oldKey]; saveModeGoals(); } }catch(_){}
+  saveLifeModes(); saveModeLog();
+  try{ localStorage.setItem(STORAGE_KEY+'_defaultmode', state.defaultMode||'life'); }catch(_){}
+}
 function saveLifeModes(){ try{localStorage.setItem(STORAGE_KEY+'_lifemodes',JSON.stringify(getLifeModes()));}catch(_){} }
 function lifeModeDef(key){ return getLifeModes().find(m=>m.key===key)||null; }
 // 既存の保存済みモード一覧に、新しい既定モード（朝/飲み/睡眠前など）を不足分だけ補完
@@ -2049,7 +2079,7 @@ function getModeGoals(){ if(!state.modeGoals||typeof state.modeGoals!=='object')
 function saveModeGoals(){ try{localStorage.setItem(STORAGE_KEY+'_modegoals',JSON.stringify(getModeGoals()));}catch(_){} }
 function modeGoalMin(key){ const v=getModeGoals()[key]; return (v>0)?v:0; }
 function setModeGoalMin(key,min){ const g=getModeGoals(); if(min>0)g[key]=min; else delete g[key]; saveModeGoals(); }
-function getDefaultMode(){ const dm=state.defaultMode||'rest'; return lifeModeDef(dm)?dm:(getLifeModes()[0]||{key:'rest'}).key; }
+function getDefaultMode(){ const dm=state.defaultMode||'life'; return lifeModeDef(dm)?dm:(getLifeModes()[0]||{key:'life'}).key; }
 function setDefaultMode(k){ state.defaultMode=k; try{localStorage.setItem(STORAGE_KEY+'_defaultmode',k);}catch(_){} }
 function ensureActiveMode(){ if(!currentModeSession()){ switchLifeMode(getDefaultMode(),true); return true; } return false; }
 // 帰宅ルーティン（gohomeグループ）が全て完了しているか。項目が無ければ完了扱い
