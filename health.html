@@ -222,7 +222,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.32"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.33"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -1954,6 +1954,9 @@ function renderSleepMode(){
   }
   if(w){ const wd=new Date(w); inner.appendChild(div({style:{textAlign:"center",fontSize:"11px",color:"#8f83ab",marginTop:"-8px",marginBottom:"16px"}},`🛏 寝支度スタート ${hhmm(wd.getHours(),wd.getMinutes())}`)); }
 
+  // いまの体調（どのモード画面でも同じ内容・同じ保存先）
+  appendModeCondition(inner,"#c4b5fd");
+
   // ② 夜のルーティンに集中（チェックリスト）
   const items=windDownChecklistItems();
   const doneN=items.filter(it=>isTodoDone(nd,it)).length;
@@ -2751,6 +2754,8 @@ function renderLifeScreen(){
     div(peek?{style:{fontSize:'40px',fontWeight:800,color:'#475569'}}:{id:'lifescreen-elapsed',style:{fontSize:'40px',fontWeight:800,color:'#f1f5f9'}}, s?fmtDur(Date.now()-s.start):'—'),
     div({style:{fontSize:'11px',color:'#94a3b8'}}, s?`${hhmm(new Date(s.start).getHours(),new Date(s.start).getMinutes())} 開始`:'')
   ]));
+  // いまの体調（どのモード画面でも同じ内容・同じ保存先）
+  appendModeCondition(inner,def.color,SELF_COND_PAL_LIFE);
   const c=def.content;
   // ルーティン設定で「表示するモード」にこのモードを指定した項目を描画（食事モードは計測扱い）
   const addAssigned=()=>{ appendModeRoutines(inner,key,def.color,vd,c==='meal'); };
@@ -2942,6 +2947,14 @@ function selfCondBuf(ds,hour){
 // 体調入力カードの配色。既定はモード画面（暖色の全画面）、appはウィジェット/通常画面の配色。
 const SELF_COND_PAL={bg:"#ffffff0d",border:"#ffffff14",text:"#f0e9dd",dim:"#a89e8c",ink:"#1a1408",field:"#0000002e",fieldBorder:"#ffffff22",chip:"#cdc3b2",chipBorder:"#ffffff2e",off:"#00000038",offText:"#8a8172"};
 const SELF_COND_PAL_APP={bg:"#0f172a",border:"#1e293b",text:"#e2e8f0",dim:"#94a3b8",ink:"#0b1120",field:"#0b1220",fieldBorder:"#334155",chip:"#cbd5e1",chipBorder:"#334155",off:"#0b1220",offText:"#64748b"};
+// 生活モード画面（半透明カード＋寒色の文字）用
+const SELF_COND_PAL_LIFE={bg:"#ffffff0d",border:"#ffffff14",text:"#e2e8f0",dim:"#94a3b8",ink:"#0b1120",field:"#00000038",fieldBorder:"#ffffff22",chip:"#cbd5e1",chipBorder:"#ffffff2e",off:"#00000038",offText:"#64748b"};
+// どのモード画面でも同じ体調記録カードを出す。その時間に記録があれば1行の記録済み表示にする。
+function appendModeCondition(inner,accent,pal){
+  const opts=pal?{pal}:undefined;
+  if(selfCondRecorded(selfCondDay(),selfCondHour()) && !state.selfCondEdit) inner.appendChild(selfCondDoneRow(accent,opts));
+  else inner.appendChild(selfConditionCard(accent,opts));
+}
 // 記録済みの時間は入力欄を出さず、1行の記録済み表示（✏️で修正できる）
 function selfCondDoneRow(accent,opts){
   const P=(opts&&opts.pal)||SELF_COND_PAL;
@@ -3107,9 +3120,7 @@ function renderSelfMode(){
     ]));
   }
   // いまの体調（体調記録と同じ項目・同じ保存先）。すでにこの時間の記録があれば入力欄は出さない
-  { const _cds=selfCondDay(), _ch=selfCondHour();
-    if(selfCondRecorded(_cds,_ch) && !state.selfCondEdit) inner.appendChild(selfCondDoneRow(M.accent));
-    else inner.appendChild(selfConditionCard(M.accent)); }
+  appendModeCondition(inner,M.accent);
 
   const vd=activeDay();
   // ── モード別の中身 ──
