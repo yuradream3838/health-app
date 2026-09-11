@@ -222,7 +222,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.24"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.25"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -842,6 +842,8 @@ function loadStorage(){
     if(lmd){try{const a=JSON.parse(lmd); if(Array.isArray(a)&&a.length)state.lifeModes=a;}catch{}}
     migrateLifeModes(); // 朝/飲み/睡眠前などの新しい生活モードを既存データに補完
     const dfm=localStorage.getItem(STORAGE_KEY+"_defaultmode"); if(dfm)state.defaultMode=dfm;
+    const mtg=localStorage.getItem(STORAGE_KEY+"_modetags");
+    if(mtg){try{const o=JSON.parse(mtg); if(o&&typeof o==="object")state.modeTags=o;}catch{}}
     const mgl=localStorage.getItem(STORAGE_KEY+"_modegoals");
     if(mgl){try{const o=JSON.parse(mgl); if(o&&typeof o==="object")state.modeGoals=o;}catch{}}
     const mlg=localStorage.getItem(STORAGE_KEY+"_modelog");
@@ -2103,6 +2105,34 @@ function setModeGoalMin(key,min){ const g=getModeGoals(); if(min>0)g[key]=min; e
 // 既定モードにできるのは「いつもの生活」側のモードだけ（ケアは除く）
 function nonCareModes(){ return getLifeModes().filter(m=>!m.care); }
 function getDefaultMode(){ const dm=state.defaultMode||'life'; const d=lifeModeDef(dm); return (d&&!d.care)?dm:(nonCareModes()[0]||{key:'life'}).key; }
+// 🏷 モードのタグ：セッションごとに「何の時間だったか」を残し、タグ別に時間を集計する。
+//    いまは🫂交流モードで使う（誰との交流かを分けたい）。タグは自分で編集できる。
+const MODE_TAG_DEFAULTS={ social:["家族","友人","恋人","職場","オンライン"] };
+function modeUsesTags(key){ return Object.prototype.hasOwnProperty.call(MODE_TAG_DEFAULTS,key) || Array.isArray((state.modeTags||{})[key]); }
+function getModeTags(key){
+  if(!state.modeTags||typeof state.modeTags!=="object") state.modeTags={};
+  if(!Array.isArray(state.modeTags[key])) state.modeTags[key]=[...(MODE_TAG_DEFAULTS[key]||[])];
+  return state.modeTags[key];
+}
+function saveModeTags(){ try{localStorage.setItem(STORAGE_KEY+'_modetags',JSON.stringify(state.modeTags||{}));}catch(_){} }
+function currentModeTag(){ const s=currentModeSession(); return s?(s.tag||null):null; }
+// タグを付ける。同じタグをもう一度押したら外す。別のタグに付け替えるときは、
+// そこまでの時間を前のタグのまま残すため、セッションをその場で区切って新しく始める。
+function setCurrentModeTag(tag){
+  const s=currentModeSession(); if(!s) return null;
+  if(s.tag===tag){ delete s.tag; saveModeLog(); return null; }
+  if(!s.tag){ s.tag=tag; saveModeLog(); return tag; }
+  const now=Date.now();
+  if(now-s.start<60000){ s.tag=tag; saveModeLog(); return tag; } // 1分未満なら付け替えだけ
+  s.end=now; getModeLog().push({key:s.key,start:now,tag}); saveModeLog(); return tag;
+}
+function modeTagTotalsForDay(ds,key){
+  const dayStart=parseDS(ds).getTime(), dayEnd=dayStart+86400000, now=Date.now(), tot={};
+  getModeLog().forEach(s=>{ if(s.key!==key) return; const st=Math.max(s.start,dayStart), en=Math.min(s.end||now,dayEnd);
+    if(en>st){ const t=(s.tag||"").trim()||"__none__"; tot[t]=(tot[t]||0)+(en-st); } });
+  return tot;
+}
+function modeTagTotalsForRange(dsList,key){ const tot={}; dsList.forEach(ds=>{ const t=modeTagTotalsForDay(ds,key); for(const k in t) tot[k]=(tot[k]||0)+t[k]; }); return tot; }
 function setDefaultMode(k){ state.defaultMode=k; try{localStorage.setItem(STORAGE_KEY+'_defaultmode',k);}catch(_){} }
 function ensureActiveMode(){ if(!currentModeSession()){ switchLifeMode(getDefaultMode(),true); return true; } return false; }
 // 帰宅ルーティン（gohomeグループ）が全て完了しているか。項目が無ければ完了扱い
@@ -2606,6 +2636,46 @@ function appendModeCustomTodos(inner,modeKey,defColor,vd){
   list.forEach(({ct,tt,carry})=> cc.appendChild(modeCustomTodoRow(vd,ct,tt,defColor,carry)));
   inner.appendChild(cc);
 }
+// 🏷 モードのタグを選ぶカード（交流モードなど）。その場で追加・改名・削除もできる。
+function modeTagPicker(key,accent){
+  const tags=getModeTags(key), cur=currentModeTag(), editing=state.modeTagEdit===key;
+  const box=div({style:{background:'#ffffff0d',border:'1px solid #ffffff14',borderRadius:'11px',padding:'10px 12px',marginBottom:'10px'}});
+  const head=div({style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'6px'}});
+  head.appendChild(div({style:{fontSize:'11px',color:'#94a3b8'}},editing?'✏️ タグを編集':`🏷 タグ${cur?`：${cur}`:'（未選択）'}`));
+  const ed=btn({style:{fontSize:'11px',color:accent,background:'transparent',border:'none',cursor:'pointer',fontFamily:'inherit'}},editing?'完了':'✏️ 編集');
+  ed.addEventListener('click',()=>{ if(editing){ saveModeTags(); state.modeTagEdit=null; } else state.modeTagEdit=key; render(); });
+  head.appendChild(ed); box.appendChild(head);
+  if(editing){
+    tags.forEach((label,idx)=>{
+      const row=div({style:{display:'flex',gap:'6px',alignItems:'center',margin:'4px 0'}});
+      const inp=document.createElement('input'); inp.type='text'; inp.value=label;
+      inp.style.cssText='flex:1;box-sizing:border-box;padding:7px 9px;background:#0000002e;border:1px solid #ffffff22;border-radius:8px;color:#f0e9dd;font-size:13px;font-family:inherit';
+      inp.addEventListener('input',(()=>{const i=idx,k=key;return e=>{ getModeTags(k)[i]=e.target.value; };})());
+      inp.addEventListener('blur',()=>saveModeTags());
+      row.appendChild(inp);
+      const del=btn({style:{padding:'6px 9px',borderRadius:'8px',border:'1px solid #ffffff22',background:'transparent',color:'#e0a0a0',fontSize:'13px',cursor:'pointer'}},'✕');
+      del.addEventListener('click',(()=>{const i=idx,k=key;return()=>{ getModeTags(k).splice(i,1); saveModeTags(); render(); };})());
+      row.appendChild(del); box.appendChild(row);
+    });
+    const bar=div({style:{display:'flex',gap:'7px',marginTop:'7px'}});
+    const add=btn({style:{flex:1,padding:'8px',borderRadius:'8px',border:`1px dashed ${accent}66`,background:'transparent',color:accent,fontSize:'12px',cursor:'pointer',fontFamily:'inherit'}},'＋ タグを追加');
+    add.addEventListener('click',(()=>{const k=key;return()=>{ getModeTags(k).push(''); saveModeTags(); render(); };})());
+    bar.appendChild(add);
+    const rst=btn({style:{padding:'8px 10px',borderRadius:'8px',border:'1px solid #ffffff22',background:'transparent',color:'#a89e8c',fontSize:'12px',cursor:'pointer',fontFamily:'inherit'}},'初期化');
+    rst.addEventListener('click',(()=>{const k=key;return()=>{ if(confirm('タグを初期設定に戻しますか？')){ state.modeTags[k]=[...(MODE_TAG_DEFAULTS[k]||[])]; saveModeTags(); render(); } };})());
+    bar.appendChild(rst); box.appendChild(bar);
+    return box;
+  }
+  const chips=div({style:{display:'flex',flexWrap:'wrap',gap:'6px'}});
+  tags.filter(t=>String(t||'').trim()).forEach(t=>{ const on=cur===t;
+    const b=btn({style:{padding:'6px 12px',borderRadius:'999px',border:`1px solid ${on?accent:'#ffffff22'}`,background:on?accent+'2e':'transparent',color:on?accent:'#cbd5e1',fontSize:'12px',fontWeight:on?700:500,cursor:'pointer',fontFamily:'inherit'}},t);
+    b.addEventListener('click',(()=>{const tt=t;return()=>{ const r=setCurrentModeTag(tt); showToast(r?`🏷 ${r}`:'🏷 タグを外しました','#a5b4fc'); render(); };})());
+    chips.appendChild(b); });
+  if(!chips.childNodes.length) chips.appendChild(div({style:{fontSize:'11px',color:'#94a3b8'}},'タグがありません。「✏️ 編集」から追加できます。'));
+  box.appendChild(chips);
+  box.appendChild(div({style:{fontSize:'10px',color:'#64748b',marginTop:'7px',lineHeight:1.5}},'タグはこのモードの時間に記録され、分析の「🕒 モード別の時間」でタグ別に集計されます。別のタグに変えると、そこで区切って新しく計測します。'));
+  return box;
+}
 function renderLifeScreen(){
   const key=state.lifeScreen, def=lifeModeDef(key)||{icon:'🕒',label:'モード',color:'#64748b',content:'time'};
   const s=currentModeSession(), vd=activeDay();
@@ -2647,6 +2717,7 @@ function renderLifeScreen(){
     inner.appendChild(lifeActionBtn('🏋️ トレーニングを記録する',def.color,()=>{ state.lifeScreen=null; state.tab='日記'; state.diarySubTab='トレーニング'; state.widget=false; state.viewDate=activeDay(); render(); }));
   } else if(c==='social'){
     inner.appendChild(div({style:{textAlign:'center',fontSize:'13px',color:'#cbd5e1',lineHeight:1.7,marginBottom:'14px'}},'人とのつながりを大切に。'));
+    inner.appendChild(modeTagPicker(key,def.color));
     addAssigned();
     inner.appendChild(lifeActionBtn('🫂 つながりを開く（連絡・記録）',def.color,()=>{ state.lifeScreen=null; state.tab='達成'; state.achieveSubTab='つながり'; state.widget=false; render(); }));
   } else if(c==='sleep'){
@@ -11443,10 +11514,41 @@ function renderAnalysisHub(vd, ds, curH, isToday){
   return wrap;
 }
 
-// 分析：モード別の時間集計カード（今日/7日/30日）
+// 分析「モード別の時間」の対象期間。1日／1週間（月〜日）／1ヶ月（暦月）。過去へも移動できる。
+// 未来の日は含めない（1日あたり平均が薄まらないようにするため）。
+function modeStatPeriod(rangeKey){
+  const today=todayStr();
+  const clip=a=>a.filter(ds=>ds<=today);
+  if(rangeKey==="w"){
+    const off=Math.max(0,state.modeStatWeekOff||0);
+    const wd=parseDS(today).getDay();
+    const mon=addDays(addDays(today, wd===0?-6:1-wd), -off*7), sun=addDays(mon,6);
+    const week=m=>clip(Array.from({length:7},(_,i)=>addDays(m,i)));
+    const a=parseDS(mon), b=parseDS(sun);
+    return {list:week(mon), prevList:week(addDays(mon,-7)), cmpLabel:"前週比", isCurrent:off===0, backLabel:"今週に戻る",
+      title:`${a.getMonth()+1}/${a.getDate()}〜${b.getMonth()+1}/${b.getDate()}${off===0?" 今週":""}`,
+      prev:()=>{ state.modeStatWeekOff=off+1; }, next:off>0?()=>{ state.modeStatWeekOff=off-1; }:null, reset:()=>{ state.modeStatWeekOff=0; }};
+  }
+  if(rangeKey==="m"){
+    const off=Math.max(0,state.modeStatMonthOff||0);
+    const n=new Date(), base=new Date(n.getFullYear(), n.getMonth()-off, 1);
+    const y=base.getFullYear(), m=base.getMonth();
+    const month=(yy,mm)=>clip(Array.from({length:new Date(yy,mm+1,0).getDate()},(_,i)=>`${yy}-${String(mm+1).padStart(2,'0')}-${String(i+1).padStart(2,'0')}`));
+    const pb=new Date(y,m-1,1);
+    return {list:month(y,m), prevList:month(pb.getFullYear(),pb.getMonth()), cmpLabel:"前月比", isCurrent:off===0, backLabel:"今月に戻る",
+      title:`${y}年${m+1}月${off===0?" 今月":""}`,
+      prev:()=>{ state.modeStatMonthOff=off+1; }, next:off>0?()=>{ state.modeStatMonthOff=off-1; }:null, reset:()=>{ state.modeStatMonthOff=0; }};
+  }
+  if(!state.modeStatDay||state.modeStatDay>today) state.modeStatDay=today;
+  const d=state.modeStatDay, dObj=parseDS(d), isT=d===today;
+  return {list:[d], prevList:[addDays(d,-1)], cmpLabel:"前日比", isCurrent:isT, backLabel:"今日に戻る",
+    title:`${dObj.getMonth()+1}/${dObj.getDate()}(${"日月火水木金土"[dObj.getDay()]})${isT?" 今日":""}`,
+    prev:()=>{ state.modeStatDay=addDays(d,-1); }, next:isT?null:()=>{ state.modeStatDay=addDays(d,1); }, reset:()=>{ state.modeStatDay=today; }};
+}
+// 分析：モード別の時間集計カード（1日／1週間／1ヶ月・過去へ移動可）
 function renderModeStatCard(){
   const card=div({className:"card"});
-  const ranges=[["day","1日",1],["w","7日",7],["m","30日",30]];
+  const ranges=[["day","1日"],["w","1週間"],["m","1ヶ月"]];
   if(state.modeStatRange==="today") state.modeStatRange="day"; // 旧値の移行
   if(!ranges.some(r=>r[0]===state.modeStatRange)) state.modeStatRange="day";
   const head=div({style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"10px",gap:"8px",flexWrap:"wrap"}});
@@ -11454,28 +11556,22 @@ function renderModeStatCard(){
   const seg=div({style:{display:"flex",gap:"4px"}});
   ranges.forEach(([k,label])=>{ const on=state.modeStatRange===k; const b=btn({style:{padding:"4px 11px",borderRadius:"7px",border:`1px solid ${on?"var(--mode)":"#334155"}`,background:on?"var(--mode-soft)":"transparent",color:on?"var(--mode)":"#94a3b8",fontSize:"11px",fontWeight:600,cursor:"pointer",fontFamily:"inherit"}},label); b.addEventListener('click',(()=>{const kk=k;return()=>{ state.modeStatRange=kk; render(); };})()); seg.appendChild(b); });
   head.appendChild(seg); card.appendChild(head);
-  const days=ranges.find(r=>r[0]===state.modeStatRange)[2];
   const isDay=state.modeStatRange==="day";
-  // 1日表示：前日・翌日へ1日ずつ移動できる（未来へは進めない）
-  let anchor=todayStr();
-  if(isDay){
-    if(!state.modeStatDay||state.modeStatDay>todayStr()) state.modeStatDay=todayStr();
-    anchor=state.modeStatDay;
-    const p=anchor.split('-'), dObj=new Date(+p[0],+p[1]-1,+p[2]);
-    const isToday=anchor===todayStr();
+  // 期間ナビ（‹ ›）。1日は前後1日、1週間は前後1週、1ヶ月は前後1ヶ月。未来へは進めない。
+  const per=modeStatPeriod(state.modeStatRange);
+  const list=per.list, days=Math.max(1,list.length);
+  {
     const nav=div({style:{display:"flex",alignItems:"center",justifyContent:"space-between",gap:"8px",marginBottom:"10px"}});
     const mk=(lbl,enabled,fn)=>{ const b=btn({style:{padding:"4px 12px",borderRadius:"7px",border:"1px solid #334155",background:"transparent",color:enabled?"#94a3b8":"#1e3a5f",fontSize:"15px",cursor:enabled?"pointer":"default",fontFamily:"inherit"}},lbl); if(enabled)b.addEventListener('click',fn); return b; };
-    nav.appendChild(mk("‹",true,()=>{ state.modeStatDay=addDays(anchor,-1); render(); }));
+    nav.appendChild(mk("‹",true,()=>{ per.prev(); render(); }));
     const mid=div({style:{textAlign:"center",flex:1,minWidth:0}});
-    mid.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:isToday?"var(--mode)":"#e2e8f0"}},
-      `${+p[1]}/${+p[2]}(${"日月火水木金土"[dObj.getDay()]})${isToday?" 今日":""}`));
-    if(!isToday){ const t=btn({style:{marginTop:"2px",fontSize:"10px",color:"var(--mode)",background:"transparent",border:"none",cursor:"pointer",fontFamily:"inherit"}},"今日に戻る");
-      t.addEventListener('click',()=>{ state.modeStatDay=todayStr(); render(); }); mid.appendChild(t); }
+    mid.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:per.isCurrent?"var(--mode)":"#e2e8f0"}},per.title));
+    if(!per.isCurrent){ const t=btn({style:{marginTop:"2px",fontSize:"10px",color:"var(--mode)",background:"transparent",border:"none",cursor:"pointer",fontFamily:"inherit"}},per.backLabel);
+      t.addEventListener('click',()=>{ per.reset(); render(); }); mid.appendChild(t); }
     nav.appendChild(mid);
-    nav.appendChild(mk("›",!isToday,()=>{ state.modeStatDay=addDays(anchor,1); render(); }));
+    nav.appendChild(mk("›",!!per.next,()=>{ per.next&&per.next(); render(); }));
     card.appendChild(nav);
   }
-  const list=[]; for(let i=0;i<days;i++) list.push(addDays(anchor,-i));
   const tot=modeTotalsForRange(list);
   const entries=Object.entries(tot).filter(([,ms])=>ms>0).sort((a,b)=>b[1]-a[1]);
   const grand=entries.reduce((a,[,ms])=>a+ms,0);
@@ -11486,8 +11582,8 @@ function renderModeStatCard(){
   card.appendChild(bar);
   // 一覧
   // 直前の同じ長さの期間との比較（1日なら前日比）
-  const prevTot=(()=>{ const pl=[]; for(let i=days;i<days*2;i++) pl.push(addDays(anchor,-i)); return modeTotalsForRange(pl); })();
-  const cmpLabel=isDay?"前日比":`前の${days}日比`;
+  const prevTot=modeTotalsForRange(per.prevList);
+  const cmpLabel=per.cmpLabel;
   entries.forEach(([k,ms])=>{ const def=lifeModeDef(k); const row=div({style:{display:"flex",alignItems:"center",gap:"9px",padding:"5px 0",borderBottom:"1px solid #1e293b"}});
     row.appendChild(div({style:{width:"18px",fontSize:"17px",textAlign:"center",flexShrink:0}},def?def.icon:"🕒"));
     const lbl=div({style:{flex:1,minWidth:0}});
@@ -11513,6 +11609,21 @@ function renderModeStatCard(){
       g.appendChild(track);
       card.appendChild(g);
     }
+    // 🏷 タグ別の内訳（交流モードなど、タグを使うモードだけ）
+    if(modeUsesTags(k)){
+      const te=Object.entries(modeTagTotalsForRange(list,k)).filter(([,v])=>v>0).sort((a,b)=>b[1]-a[1]);
+      if(te.length && !(te.length===1 && te[0][0]==="__none__")){
+        const tb=div({style:{margin:"0 0 7px 27px"}});
+        te.forEach(([t,v])=>{
+          const r=div({style:{display:"flex",alignItems:"center",gap:"7px",fontSize:"11px",padding:"2px 0"}});
+          r.appendChild(div({style:{flex:1,minWidth:0,color:t==="__none__"?"#64748b":"#cbd5e1",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},t==="__none__"?"（タグなし）":`🏷 ${t}`));
+          r.appendChild(div({style:{color:"#94a3b8",flexShrink:0}},fmtDur(v)));
+          r.appendChild(div({style:{color:"#475569",width:"34px",textAlign:"right",flexShrink:0}},`${Math.round(v/ms*100)}%`));
+          tb.appendChild(r);
+        });
+        card.appendChild(tb);
+      }
+    }
   });
   // 目標はあるがこの期間まったく記録が無いモードも、未達として出す
   getLifeModes().forEach(m=>{
@@ -11523,7 +11634,7 @@ function renderModeStatCard(){
     g.appendChild(div({style:{fontSize:"11px",color:"#f97316",flexShrink:0}},`目標 ${fmtDur(goal*60000)}/日・記録なし`));
     card.appendChild(g);
   });
-  if(days>1) card.appendChild(div({style:{fontSize:"10px",color:"#475569",marginTop:"9px",textAlign:"center"}},`直近${days}日間・記録のある時間の合計 ${fmtDur(grand)}（1日あたり平均 ${fmtDur(grand/days)}）`));
+  if(days>1) card.appendChild(div({style:{fontSize:"10px",color:"#475569",marginTop:"9px",textAlign:"center"}},`この期間 ${days}日分・記録のある時間の合計 ${fmtDur(grand)}（1日あたり平均 ${fmtDur(grand/days)}）`));
   card.appendChild(renderModeDaySection(list,isDay));
   return card;
 }
@@ -12909,6 +13020,7 @@ function exportData(){
     selfChecksCfg:state.selfChecksCfg,
     lifeModes:state.lifeModes,
     modeLog:state.modeLog,
+    modeTags:state.modeTags,
     wakeGoal:state.wakeGoal,
     decisBalance:state.decisBalance,
     miValues:state.miValues,
@@ -12994,6 +13106,7 @@ function importData(e){
       if(p.selfChecksCfg&&typeof p.selfChecksCfg==="object"){state.selfChecksCfg=p.selfChecksCfg;saveSelfChecksCfg();}
       if(Array.isArray(p.lifeModes)&&p.lifeModes.length){state.lifeModes=p.lifeModes;saveLifeModes();}
       if(Array.isArray(p.modeLog)){state.modeLog=p.modeLog;saveModeLog();}
+      if(p.modeTags&&typeof p.modeTags==="object"){state.modeTags=p.modeTags;saveModeTags();}
       if(p.wakeGoal&&typeof p.wakeGoal==="object"){state.wakeGoal=p.wakeGoal;saveWakeGoal();}
       if(p.decisBalance&&typeof p.decisBalance==="object"){state.decisBalance=p.decisBalance;saveDecisBalance();}
       if(p.miValues&&typeof p.miValues==="object"){state.miValues=p.miValues;saveMIValues();}
