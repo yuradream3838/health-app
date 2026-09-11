@@ -222,7 +222,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.20"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.21"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -2002,6 +2002,8 @@ const SELF_MODES={
   drink:  {icon:"🍶",title:"飲みモード",sub:"ペースを落として、ブレーキを",accent:"#f59e0b",bg:"radial-gradient(130% 90% at 50% -10%,#3a2a10 0%,#241a12 45%,#0d0a08 100%)"},
   low:    {icon:"🌧",title:"落ち込みモード",sub:"無理しなくて大丈夫",accent:"#60a5fa",bg:"radial-gradient(130% 90% at 50% -10%,#1a2740 0%,#141c2e 45%,#0a0d14 100%)"},
   hype:   {icon:"⚡",title:"たかぶりモード",sub:"少し落ち着こう",accent:"#e879f9",bg:"radial-gradient(130% 90% at 50% -10%,#3a1030 0%,#26142a 45%,#0e0912 100%)"},
+  urge:   {icon:"🔥",title:"エロモード",sub:"衝動は波。少し待てば引いていく",accent:"#fb7185",bg:"radial-gradient(130% 90% at 50% -10%,#3d1420 0%,#281019 45%,#0f0a0c 100%)"},
+  lonely: {icon:"🕯",title:"さみしいモード",sub:"ひとりで抱えなくて大丈夫",accent:"#a78bfa",bg:"radial-gradient(130% 90% at 50% -10%,#241a3d 0%,#1a1529 45%,#0b0910 100%)"},
   morning:{icon:"☀️",title:"朝モード",sub:"ゆっくり起きよう",accent:"#fbbf24",bg:"radial-gradient(130% 90% at 50% -10%,#3a3416 0%,#2a2a18 45%,#0f0f0a 100%)"},
 };
 
@@ -2368,7 +2370,7 @@ function renderModeSwitcher(){
   inner.appendChild(grid);
   inner.appendChild(div({style:{fontSize:'11px',color:'#64748b',marginBottom:'7px'}},'🩹 ケア（今の状態を立て直す・一時的に重ねる。時間は占有しない）'));
   const cgrid=div({style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'8px',marginBottom:'18px'}});
-  const careList=['low','hype'].map(k=>({icon:SELF_MODES[k].icon,label:SELF_MODES[k].title.replace('モード',''),fn:()=>{ state.modeSwitcher=false; enterSelfMode(k); }}));
+  const careList=['low','hype','urge','lonely'].map(k=>({icon:SELF_MODES[k].icon,label:SELF_MODES[k].title.replace('モード',''),fn:()=>{ state.modeSwitcher=false; enterSelfMode(k); }}));
   careList.forEach(c=>{ const b=btn({style:{padding:'11px 8px',borderRadius:'10px',border:'1px solid #334155',background:'#111827',color:'#cbd5e1',fontSize:'13px',fontWeight:600,cursor:'pointer',fontFamily:'inherit'}},`${c.icon} ${c.label}`); b.addEventListener('click',c.fn); cgrid.appendChild(b); });
   inner.appendChild(cgrid);
   // モードの各種設定（色・既定・自動切替・提案・通知など）は設定画面へ
@@ -2638,6 +2640,8 @@ const SELF_CHECK_DEFAULTS={
   drink:["水を1杯はさんだ","何か食べた","ゆっくり味わった","次の1杯を待てた"],
   low: ["深呼吸した","水を飲んだ","5分だけ動いた","気持ちを書き出した","誰かに連絡した"],
   hype:["本当に今すぐ必要？","お金は大丈夫？","明日の自分は後悔しない？","一晩おいてから決める"],
+  urge:["10分だけ待てた","深呼吸した","スマホ・画面から離れた","体を動かした／シャワーを浴びた","別のことを始めた"],
+  lonely:["深呼吸した","気持ちを書き出した","誰かに連絡した","外の空気を吸った","好きなものに触れた"],
 };
 function getSelfChecksCfg(){
   if(!state.selfChecksCfg||typeof state.selfChecksCfg!=="object") state.selfChecksCfg={};
@@ -2945,6 +2949,40 @@ function renderSelfMode(){
     inner.appendChild(div({style:{fontSize:"10px",color:"#a89e8c",margin:"2px 2px 4px"}},"⏳ 24時間ルール — その前に自問"));
     inner.appendChild(selfChecklistCard("hype",M.accent));
     inner.appendChild(selfActionBtn("🔀 if-thenプランを見る",M.accent,()=>{ exitSelfMode(true); state.tab="達成"; state.achieveSubTab="if-then"; state.widget=false; render(); }));
+    inner.appendChild(bigExitBtn("✅ 記録して終了",M.accent));
+  }
+  else if(key==="urge"){
+    // 衝動そのものを否定せず、「波が引くまで待つ」を支えるモード（アルコールのブレーキと同じ考え方）
+    inner.appendChild(div({style:{fontSize:"13px",color:"#e6dccb",lineHeight:1.7,textAlign:"center",marginBottom:"12px",whiteSpace:"pre-line"}},"衝動は波。だいたい10〜20分で小さくなる。\n消そうとしなくていい、通り過ぎるのを待とう。"));
+    if(state.selfBreathing) inner.appendChild(breathingGuide(M.accent));
+    if(state.selfDelayUntil&&state.selfDelayUntil>Date.now()){
+      inner.appendChild(div({style:{textAlign:"center",padding:"12px",borderRadius:"12px",background:M.accent+"1a",border:`1px solid ${M.accent}55`,marginBottom:"10px"}},[
+        div({style:{fontSize:"11px",color:"#a89e8c"}},"波が引くまで"),
+        div({id:"selfmode-delay",style:{fontSize:"26px",fontWeight:800,color:M.accent}},fmtSecMS(Math.round((state.selfDelayUntil-Date.now())/1000))),
+        (()=>{const b=btn({style:{marginTop:"6px",fontSize:"11px",color:"#a89e8c",background:"transparent",border:"none",cursor:"pointer"}},"やめる"); b.addEventListener('click',()=>{state.selfDelayUntil=null;render();}); return b;})()
+      ]));
+    } else {
+      inner.appendChild(selfActionBtn("⏳ 10分だけ待つ",M.accent,()=>{ state.selfDelayUntil=Date.now()+10*60000; showToast("⏳ 10分タイマー開始"); render(); }));
+    }
+    inner.appendChild(selfActionBtn(state.selfBreathing?"🫁 呼吸をやめる":"🫁 深呼吸する（4-7-8）",M.accent,()=>{state.selfBreathing=!state.selfBreathing;render();}));
+    inner.appendChild(selfActionBtn("🚿 体を動かす／シャワー（5分）",M.accent,()=>{ state.selfDelayUntil=Date.now()+5*60000; showToast("🚿 5分タイマー開始"); render(); }));
+    inner.appendChild(selfActionBtn("🎮 別のことに切り替える（趣味モードへ）",M.accent,()=>{ exitSelfMode(true); openLifeMode("hobby"); }));
+    // きっかけを書き出す（あとで if-then プランの材料になる）
+    { const ta=document.createElement('textarea'); ta.placeholder="きっかけ・状況を書き出す（任意）"; ta.value=state.selfNote||""; ta.rows=2; ta.style.cssText="width:100%;box-sizing:border-box;padding:9px 11px;background:#0000002e;border:1px solid #ffffff22;border-radius:10px;color:#f0e9dd;font-size:13px;font-family:inherit;resize:vertical;margin-bottom:7px"; ta.addEventListener('input',e=>{state.selfNote=e.target.value;}); inner.appendChild(ta); }
+    inner.appendChild(div({style:{fontSize:"11px",color:"#a89e8c",textAlign:"center",lineHeight:1.6,margin:"4px 0 10px"}},"💡 きっかけが分かったら、達成タブの if-then プランに登録しておくと次が楽になります。"));
+    inner.appendChild(selfChecklistCard("urge",M.accent));
+    inner.appendChild(bigExitBtn("✅ 記録して終了",M.accent));
+  }
+  else if(key==="lonely"){
+    inner.appendChild(div({style:{fontSize:"13px",color:"#e6dccb",lineHeight:1.7,textAlign:"center",marginBottom:"12px",whiteSpace:"pre-line"}},"さみしさは、つながりたいというサイン。\n小さく一歩だけ、外に向けてみよう。"));
+    if(state.selfBreathing) inner.appendChild(breathingGuide(M.accent));
+    inner.appendChild(selfActionBtn("🫂 誰かに連絡する",M.accent,()=>{ exitSelfMode(true); state.tab="達成"; state.achieveSubTab="つながり"; state.widget=false; render(); }));
+    inner.appendChild(selfActionBtn(state.selfBreathing?"🫁 呼吸をやめる":"🫁 深呼吸する（4-7-8）",M.accent,()=>{state.selfBreathing=!state.selfBreathing;render();}));
+    inner.appendChild(selfActionBtn("🚶 5分だけ外の空気を吸う",M.accent,()=>{ state.selfDelayUntil=Date.now()+5*60000; showToast("🚶 5分タイマー開始"); render(); }));
+    { const ta=document.createElement('textarea'); ta.placeholder="今の気持ちを書き出す（任意）"; ta.value=state.selfNote||""; ta.rows=2; ta.style.cssText="width:100%;box-sizing:border-box;padding:9px 11px;background:#0000002e;border:1px solid #ffffff22;border-radius:10px;color:#f0e9dd;font-size:13px;font-family:inherit;resize:vertical;margin-bottom:7px"; ta.addEventListener('input',e=>{state.selfNote=e.target.value;}); inner.appendChild(ta); }
+    if((state.selfDelayUntil&&state.selfDelayUntil>Date.now())) inner.appendChild(div({style:{textAlign:"center",marginBottom:"8px"}},[div({style:{fontSize:"10px",color:"#a89e8c"}},"のこり"),div({id:"selfmode-delay",style:{fontSize:"22px",fontWeight:800,color:M.accent}},fmtSecMS(Math.round((state.selfDelayUntil-Date.now())/1000)))]));
+    inner.appendChild(div({style:{fontSize:"11px",color:"#a89e8c",textAlign:"center",lineHeight:1.6,margin:"4px 0 10px"}},"💡 お酒でまぎらわせたくなったら、まず水か呼吸を。連絡は一言でも十分です。"));
+    inner.appendChild(selfChecklistCard("lonely",M.accent));
     inner.appendChild(bigExitBtn("✅ 記録して終了",M.accent));
   }
   else { // morning
