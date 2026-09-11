@@ -222,7 +222,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.30"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.31"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -326,7 +326,7 @@ const TODO_ITEMS = [
   {id:"meditation_pm", label:"夜瞑想",                type:"check", mode:"sleepprep"},
 ];
 // まとめ→既定モード（既存データの項目モードを補完するときの参照元）
-const GROUP_DEFAULT_MODE={morning:"morning",breakfast:"meal",lunch:"meal",dinner:"meal",night:"sleepprep",input:"invest",output:"invest",gohome:"work"};
+const GROUP_DEFAULT_MODE={morning:"morning",breakfast:"meal",lunch:"meal",dinner:"meal",shower:"rest",night:"sleepprep",input:"invest",output:"invest",gohome:"work"};
 // ルーティン項目はユーザーが編集可能（追加・改名・種類変更・削除）。既定はTODO_ITEMS。
 function getTodoItems(){ if(!Array.isArray(state.todoItems)||!state.todoItems.length){ state.todoItems=JSON.parse(JSON.stringify(TODO_ITEMS)); } return state.todoItems; }
 function saveTodoItems(){ try{localStorage.setItem(STORAGE_KEY+"_todoitems",JSON.stringify(getTodoItems()));}catch{} }
@@ -337,6 +337,7 @@ const DEFAULT_ROUTINES = [
   {key:"breakfast", title:"🍳朝食",                 color:"#fbbf24", ids:["breakfast_prep","breakfast"]},
   {key:"lunch",     title:"🍱昼食",                 color:"#84cc16", ids:["lunch_prep","lunch"]},
   {key:"dinner",    title:"🍽夕食",                 color:"#f97316", ids:["dinner_prep","dinner"]},
+  {key:"shower",    title:"🚿シャワー",             color:"#22d3ee", ids:["shower"]},
   {key:"night",     title:"🌙ナイトルーティン",     color:"#a78bfa", ids:["stretch_pm","meditation_pm"]},
   {key:"input",     title:"📥インプット",           color:"#38bdf8", ids:[]},
   {key:"output",    title:"📤アウトプット",         color:"#f472b6", ids:[]},
