@@ -222,7 +222,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.25"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.26"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -851,6 +851,7 @@ function loadStorage(){
     const amd=localStorage.getItem(STORAGE_KEY+"_automode");
     if(amd){try{const o=JSON.parse(amd); if(o&&typeof o==="object"){ state.autoModeOn=o.on!==false; if('lastKey' in o)state.autoLastKey=o.lastKey; }}catch{}}
     migrateSeikatsuMode(); // 自作の「生活」モードを正式な life モードへ統合（既定モード/記録/目標の読込後に実行）
+    migrateModeOrder();    // 保存済みの並びを既定の並びに揃える（1回だけ）
     const wgl=localStorage.getItem(STORAGE_KEY+"_wakegoal");
     if(wgl){try{const o=JSON.parse(wgl); if(o&&typeof o==="object")state.wakeGoal=o;}catch{}}
     const ncf=localStorage.getItem(STORAGE_KEY+"_nudgecfg");
@@ -2023,18 +2024,19 @@ const SELF_MODES={
 //   仕事/副業/自己投資/趣味/食事/休息/睡眠。切替でタイムラインを作る。
 //   ケアモード（睡眠前/飲み/落ち込み/たかぶり/朝）は上に重ねる一時ツール。
 // ════════════════════════════════════════════════════
+// 並び順は切替画面の並び（2列）と同じ。先頭の🏠生活は1行使って一番上に出す。
 const DEFAULT_LIFE_MODES=[
   {key:'life',     label:'生活',    icon:'🏠', color:'#38bdf8', content:'time'}, // いつもの生活（既定モード）
-  {key:'morning',  label:'朝',      icon:'☀️', color:'#fbbf24', content:'time', screen:'self:morning'}, // 起床支援（リッチ画面）
-  {key:'work',     label:'仕事',    icon:'🏢', color:'#3b82f6', content:'time'},
-  {key:'side',     label:'副業',    icon:'💻', color:'#8b5cf6', content:'time'},
-  {key:'invest',   label:'自己投資',icon:'📚', color:'#22c55e', content:'invest'},
-  {key:'train',    label:'トレーニング',icon:'🏋️', color:'#f43f5e', content:'train'},
-  {key:'hobby',    label:'趣味',    icon:'🎮', color:'#ec4899', content:'hobby'},
-  {key:'social',   label:'交流',    icon:'🫂', color:'#06b6d4', content:'social'},
   {key:'meal',     label:'食事',    icon:'🍚', color:'#f59e0b', content:'meal'},
   {key:'rest',     label:'休息',    icon:'🛋️', color:'#14b8a6', content:'rest'},
+  {key:'invest',   label:'自己投資',icon:'📚', color:'#22c55e', content:'invest'},
+  {key:'train',    label:'トレーニング',icon:'🏋️', color:'#f43f5e', content:'train'},
   {key:'drink',    label:'飲み',    icon:'🍶', color:'#f97316', content:'time', screen:'self:drink'}, // 飲酒ブレーキ（リッチ画面）
+  {key:'social',   label:'交流',    icon:'🫂', color:'#06b6d4', content:'social'},
+  {key:'work',     label:'仕事',    icon:'🏢', color:'#3b82f6', content:'time'},
+  {key:'side',     label:'副業',    icon:'💻', color:'#8b5cf6', content:'time'},
+  {key:'hobby',    label:'趣味',    icon:'🎮', color:'#ec4899', content:'hobby'},
+  {key:'morning',  label:'朝',      icon:'☀️', color:'#fbbf24', content:'time', screen:'self:morning'}, // 起床支援（リッチ画面）
   {key:'sleepprep',label:'睡眠前',  icon:'🌙', color:'#a855f7', content:'time', screen:'sleep'}, // 寝支度（睡眠前モード画面）
   {key:'sleep',    label:'睡眠',    icon:'😴', color:'#6366f1', content:'sleep'},
   // 🩹 ケアモード：状態を立て直す一時介入。生活モードとして時間も計測するが、
@@ -2049,6 +2051,21 @@ function isCareMode(key){ const d=lifeModeDef(key); return !!(d&&d.care); }
 function getLifeModes(){ if(!Array.isArray(state.lifeModes)||!state.lifeModes.length) state.lifeModes=JSON.parse(JSON.stringify(DEFAULT_LIFE_MODES)); return state.lifeModes; }
 // 旧版の「＋モード追加」で作った自作モード「生活」を、正式な life モードへ統合する（一度きり）。
 // 記録を失わないよう、モード時間ログ・既定モード・ルーティンの割り当て・目標時間の参照もすべて付け替える。
+// 保存済みのモード一覧を既定の並び（DEFAULT_LIFE_MODES の順）に揃える。
+// 並べ替えのUIは無いので1回だけ実行する（_modeorder に実行済みの版を記録）。
+const MODE_ORDER_VER='1';
+function migrateModeOrder(){
+  if(!Array.isArray(state.lifeModes)||!state.lifeModes.length) return;
+  let done=null; try{ done=localStorage.getItem(STORAGE_KEY+'_modeorder'); }catch(_){}
+  if(done===MODE_ORDER_VER) return;
+  const idx={}; DEFAULT_LIFE_MODES.forEach((m,i)=>{ idx[m.key]=i; });
+  const N=DEFAULT_LIFE_MODES.length;
+  state.lifeModes=state.lifeModes
+    .map((m,i)=>({m, k:(idx[m.key]!=null?idx[m.key]:N+i)})) // 既定にないモードは末尾へ（元の順のまま）
+    .sort((a,b)=>a.k-b.k).map(x=>x.m);
+  saveLifeModes();
+  try{ localStorage.setItem(STORAGE_KEY+'_modeorder',MODE_ORDER_VER); }catch(_){}
+}
 function migrateSeikatsuMode(){
   const modes=state.lifeModes;
   if(!Array.isArray(modes)||!modes.length) return;
@@ -2419,8 +2436,9 @@ function renderModeSwitcher(){
   const curKey=currentLifeModeKey();
   inner.appendChild(div({style:{fontSize:'11px',color:'#64748b',marginBottom:'7px'}},'いまの生活モード（タップで切替・時間が記録されます）'));
   const grid=div({style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'9px',marginBottom:'18px'}});
-  nonCareModes().forEach(m=>{ const on=curKey===m.key;
-    const b=btn({style:{padding:'16px 10px',borderRadius:'13px',border:`2px solid ${on?m.color:'#1e293b'}`,background:on?m.color+'22':'#111827',cursor:'pointer',fontFamily:'inherit',textAlign:'center'}},[
+  nonCareModes().forEach((m,mi)=>{ const on=curKey===m.key;
+    const b=btn({style:{padding:'16px 10px',borderRadius:'13px',border:`2px solid ${on?m.color:'#1e293b'}`,background:on?m.color+'22':'#111827',cursor:'pointer',fontFamily:'inherit',textAlign:'center',
+      ...(mi===0?{gridColumn:'1 / -1'}:{})}},[
       div({style:{fontSize:'26px'}},m.icon),
       div({style:{fontSize:'13px',fontWeight:700,color:on?m.color:'#e2e8f0',marginTop:'3px'}},m.label),
       on?div({style:{fontSize:'9px',color:m.color,marginTop:'2px'}},'● 進行中'):null
