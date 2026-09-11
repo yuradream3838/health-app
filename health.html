@@ -222,7 +222,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.37"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.38"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -1388,6 +1388,8 @@ function render(){
   if(state.lifeScreen){ content.appendChild(renderLifeScreen());
     // 食事モードから「食べたものを記録」＝食事モーダルをライフモード画面の上に重ねる
     if(state.modal==="food"){ const mo=renderFoodModal(todayStr()); mo.style.zIndex="10000"; content.appendChild(mo); }
+    // トレーニングモードの体組成記録（写真からの入力を含む）も上に重ねる
+    if(state.modal==="bodyComp"){ const mo=renderBodyCompModal(); mo.style.zIndex="10000"; content.appendChild(mo); }
     tintSurfaces(content); return; }
 
   const ds=todayStr(), vd=state.viewDate, curH=new Date().getHours();
@@ -2927,7 +2929,11 @@ function renderLifeScreen(){
   } else if(c==='train'){
     inner.appendChild(div({style:{textAlign:'center',fontSize:'13px',color:'#cbd5e1',lineHeight:1.7,marginBottom:'14px'}},'体を動かそう。記録して積み上げ。'));
     addAssigned();
-    inner.appendChild(lifeActionBtn('🏋️ トレーニングを記録する',def.color,()=>{ state.lifeScreen=null; state.tab='日記'; state.diarySubTab='トレーニング'; state.widget=false; state.viewDate=activeDay(); render(); }));
+    // 日記→トレーニングの記録機能をまるごと表示（同じ関数・同じデータなので操作も結果も同じ）
+    { const tp=renderTrainingPanel(vd,todayStr(),vd===todayStr());
+      tp.style.maxWidth='none'; tp.style.margin='0'; tp.style.padding='0 0 2px';
+      inner.appendChild(tp); }
+    inner.appendChild(lifeActionBtn('📔 日記のトレーニングを開く（他の日を見る）',def.color,()=>{ state.lifeScreen=null; state.tab='日記'; state.diarySubTab='トレーニング'; state.widget=false; state.viewDate=activeDay(); render(); }));
   } else if(c==='social'){
     inner.appendChild(div({style:{textAlign:'center',fontSize:'13px',color:'#cbd5e1',lineHeight:1.7,marginBottom:'14px'}},'人とのつながりを大切に。'));
     inner.appendChild(modeTagPicker(key,def.color));
