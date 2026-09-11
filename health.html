@@ -222,7 +222,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.22"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.23"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -5234,27 +5234,38 @@ function getActualActivities(vd){
   // 完了時刻の日付が vd のものだけ集約。※所有日(DD)ごとに別ブロックにする
   //   → 前日のナイトルーティンが0時をまたいで当日に完了しても、当日のナイトルーティンと
   //     まとまらず、別々のブロックとして表示される。
+  const itemLabelById={}; getTodoItems().forEach(it=>{ itemLabelById[it.id]=it.label; });
   routines.forEach(g=>{
     scanDays.forEach(DD=>{
       const t=state.todos[DD]||{};
       // 各項目を「区間（開始〜終了）」として集める。1件の計測が長くても内部では割らない。
-      const intervals=[]; // {s,e}
+      // まとめても内容（セッションのメモ）が分かるよう、区間ごとに「項目名：メモ」を持たせる。
+      const intervals=[]; // {s,e,note}
       (g.ids||[]).forEach(id=>{
         const d=t[id];
         if(!d||d.excluded)return;
-        (d.sessions||[]).forEach(s=>{ if(s.startTime&&onVd(s.startTime)) intervals.push({s:mm(s.startTime), e:s.endTime?mm(s.endTime):mm(s.startTime)}); });
-        if(d.startTime&&onVd(d.startTime)) intervals.push({s:mm(d.startTime), e:d.endTime?mm(d.endTime):mm(d.startTime)});
-        else if(d.checked&&d.time&&onVd(d.time)){ const m=mm(d.time); intervals.push({s:m,e:m}); }
+        const lbl=itemLabelById[id]||"";
+        const nt=v=>{ const x=(v||"").trim(); return x?{label:lbl,note:x}:null; };
+        (d.sessions||[]).forEach(s=>{ if(s.startTime&&onVd(s.startTime)) intervals.push({s:mm(s.startTime), e:s.endTime?mm(s.endTime):mm(s.startTime), note:nt(s.note)}); });
+        if(d.startTime&&onVd(d.startTime)) intervals.push({s:mm(d.startTime), e:d.endTime?mm(d.endTime):mm(d.startTime), note:nt(d.note)});
+        else if(d.checked&&d.time&&onVd(d.time)){ const m=mm(d.time); intervals.push({s:m,e:m, note:nt(d.note)}); }
       });
       if(intervals.length){
         // 区間どうしの「空き」が30分以上なら別ブロックに分割（1つの計測時間内の経過は含めない）
         const GAP=30;
         intervals.sort((a,b)=>a.s-b.s);
-        let cur={s:intervals[0].s, e:intervals[0].e};
+        // 同じ項目のメモは「項目名：メモ1・メモ2」とまとめ、ブロックのタイトルが長くなりすぎないようにする
+        const addNote=(c,iv)=>{ if(!iv.note) return; const g=c.notes.find(x=>x.label===iv.note.label);
+          if(!g) c.notes.push({label:iv.note.label,list:[iv.note.note]});
+          else if(g.list.indexOf(iv.note.note)<0) g.list.push(iv.note.note); };
+        let cur={s:intervals[0].s, e:intervals[0].e, notes:[]}; addNote(cur,intervals[0]);
         const merged=[cur];
-        for(let i=1;i<intervals.length;i++){ const iv=intervals[i]; if(iv.s-cur.e<GAP){ cur.e=Math.max(cur.e,iv.e); } else { cur={s:iv.s,e:iv.e}; merged.push(cur); } }
+        for(let i=1;i<intervals.length;i++){ const iv=intervals[i]; if(iv.s-cur.e<GAP){ cur.e=Math.max(cur.e,iv.e); } else { cur={s:iv.s,e:iv.e,notes:[]}; merged.push(cur); } addNote(cur,iv); }
         merged.forEach(cl=>{
-          acts.push({title:routineOverrideTitle(DD,g.key,g.title), startMin:cl.s, endMin:Math.max(cl.e, cl.s+16), color:g.color, routineKey:g.key, routineBase:g.title, ownDay:DD});
+          // まとめのタイトルに、そのブロックに含まれる項目のメモを続けて表示する
+          const title=routineOverrideTitle(DD,g.key,g.title)
+            +cl.notes.map(n=>`／${n.label?n.label+"：":""}${n.list.join("・")}`).join("");
+          acts.push({title, startMin:cl.s, endMin:Math.max(cl.e, cl.s+16), color:g.color, routineKey:g.key, routineBase:g.title, ownDay:DD});
         });
       }
     });
