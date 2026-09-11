@@ -222,7 +222,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.33"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.34"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -552,6 +552,34 @@ function mixHex(a,b,t){ const p=h=>{const c=(h||'').replace('#','');return [pars
 // 描画後：インラインで直接指定された暗い面色（rgb化される）をモード色トーンへ一括置換する。
 // カード等はCSS変数で追従するが、コード内で個別に #1e293b 等を書いた細かいサブパネルはここで拾う。
 // canvas は fillStyle をJSで持つのでインラインstyleに出ず、影響しない。
+// ユーザーが選べる色には黒(#000000)などの暗い色があり、暗い背景に文字として置くと読めない。
+// 描画後に「文字色が極端に暗い／下地も暗い」箇所だけを拾い、白い縁取りを足して読めるようにする。
+// 色そのものは変えないので、どの色を選んだかは見た目で分かったまま。
+const TEXT_OUTLINE='0 1px 0 #e2e8f0, 0 -1px 0 #e2e8f0, 1px 0 0 #e2e8f0, -1px 0 0 #e2e8f0';
+function outlineDarkText(root){
+  try{
+    if(!root) return;
+    const lum=c=>0.299*c[0]+0.587*c[1]+0.114*c[2];
+    const parse=v=>{
+      if(!v) return null;
+      const m=/rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)/.exec(v);
+      if(m) return [+m[1],+m[2],+m[3]];
+      const h=/^#([0-9a-fA-F]{6})$/.exec(v.trim());
+      if(h){ const c=h[1]; return [parseInt(c.slice(0,2),16),parseInt(c.slice(2,4),16),parseInt(c.slice(4,6),16)]; }
+      return null;
+    };
+    root.querySelectorAll('[style*="color"]').forEach(el=>{
+      const st=el.style;
+      if(!st || !st.color || st.textShadow) return;
+      const fg=parse(st.color);
+      if(!fg || lum(fg)>=40) return;            // 黒に近い色だけが対象（薄いグレーの文字は対象外）
+      let bg=null, p=el;
+      while(p && p!==root){ const c=parse(p.style&&p.style.background); if(c){ bg=c; break; } p=p.parentElement; }
+      if(bg && lum(bg)>=120) return;            // 明るいブロックの上の濃い文字はそのままで読める
+      st.textShadow=TEXT_OUTLINE;
+    });
+  }catch(_){}
+}
 function tintSurfaces(root){
   try{
     const map=window.__tintMap; if(!root||!map||!map.length) return;
@@ -563,6 +591,7 @@ function tintSurfaces(root){
       if(changed) el.setAttribute('style',s);
     }
   }catch(_){}
+  outlineDarkText(root);
 }
 const scoreLabel = s => !s?"—":s<=2?"最悪":s<=4?"悪い":s<=6?"普通":s<=8?"良好":"絶好調";
 
@@ -1608,7 +1637,7 @@ function bedStreak(){ if(!getSleepGoal())return 0; const tol=sleepTol(); let n=0
 // 今夜の就寝までの分（負=超過）。今日のシフトの目標で
 function bedCountdownMin(now){ const t=bedTargetNightMin(sleepNightDay()); if(t==null)return null; const d=now?new Date(now):new Date(); const nowN=toNightMin(d.getHours()*60+d.getMinutes()); return t-nowN; }
 function windDownAt(){ return getDaily(sleepNightDay()).windDownAt||null; }
-function goToSleepSettings(){ exitWidget&&exitWidget(); state.tab="設定"; state.sgDraft=null; render(); setTimeout(()=>{ try{ const el=document.getElementById('sleep-settings'); if(el)el.scrollIntoView({block:"start",behavior:"smooth"}); }catch(_){} },80); }
+function goToSleepSettings(){ exitWidget&&exitWidget(); state.tab="設定"; state.sgDraft=null; openSetting('sleep',true); render(); setTimeout(()=>{ try{ const el=document.getElementById('sleep-settings'); if(el)el.scrollIntoView({block:"start",behavior:"smooth"}); }catch(_){} },80); }
 // 就寝リズムの設定カード（設定画面に配置）。目標の入力フォーム
 function sleepRhythmSettingsCard(){
   const g=getSleepGoal();
@@ -7164,16 +7193,53 @@ function renderModeSettingsPanel(){
   card.appendChild(renderNudgeConfig(true));
   return card;
 }
+// ── 設定画面：各項目をたためるようにする ──
+// 各パネルは「1つ目の子＝見出し」「2つ目以降＝中身」という同じ形なので、
+// 見出しをタップで開閉できるようにし、閉じているときは中身を外す。開閉状態は保存する。
+function getSettingsOpen(){
+  if(!state.setOpen||typeof state.setOpen!=='object'){
+    state.setOpen={};
+    try{ const v=localStorage.getItem(STORAGE_KEY+'_setopen'); if(v){ const o=JSON.parse(v); if(o&&typeof o==='object')state.setOpen=o; } }catch(_){}
+  }
+  return state.setOpen;
+}
+function saveSettingsOpen(){ try{ localStorage.setItem(STORAGE_KEY+'_setopen',JSON.stringify(getSettingsOpen())); }catch(_){} }
+function isSettingOpen(key){ return !!getSettingsOpen()[key]; }
+function openSetting(key,on){ getSettingsOpen()[key]=(on!==false); saveSettingsOpen(); }
+function collapsibleSetting(key,card){
+  const open=isSettingOpen(key);
+  const kids=[...card.childNodes];
+  if(!kids.length) return card;
+  const head=kids[0];
+  const row=div({style:{display:'flex',alignItems:'center',gap:'8px',cursor:'pointer'}});
+  card.insertBefore(row,head); card.removeChild(head);
+  if(head.style) head.style.marginBottom='0';
+  row.appendChild(div({style:{flex:1,minWidth:0}},[head]));
+  row.appendChild(div({style:{fontSize:'13px',color:'#64748b',flexShrink:0,width:'16px',textAlign:'center'}},open?'▼':'▶'));
+  row.addEventListener('click',(()=>{const k=key,o=open;return()=>{ openSetting(k,!o); render(); };})());
+  if(!open) kids.slice(1).forEach(n=>{ if(n.parentNode===card) card.removeChild(n); });
+  else if(row.style) row.style.marginBottom='6px';
+  return card;
+}
 function renderSettingsHub(){
   const wrap=div({style:{maxWidth:"600px",margin:"0 auto",padding:"12px 16px 60px"}});
+  // モード設定から飛んできたときはその項目を開いておく
+  if(state.settingsModeCfg){ openSetting('mode',true); state.settingsModeCfg=false; }
+  // すべて開く／閉じる
+  { const keys=['mode','display','colors','shift','pattern','sleep','routine','data'];
+    const anyOpen=keys.some(isSettingOpen);
+    const bar=div({style:{display:"flex",justifyContent:"flex-end",marginBottom:"8px"}});
+    const b=btn({style:{padding:"5px 11px",borderRadius:"8px",border:"1px solid #334155",background:"transparent",color:"#94a3b8",fontSize:"11px",cursor:"pointer",fontFamily:"inherit"}},anyOpen?"⊖ すべて閉じる":"⊕ すべて開く");
+    b.addEventListener('click',()=>{ keys.forEach(k=>openSetting(k,!anyOpen)); render(); });
+    bar.appendChild(b); wrap.appendChild(bar); }
   wrap.appendChild(renderFeatureIndexPanel());
-  wrap.appendChild(renderModeSettingsPanel());
-  wrap.appendChild(renderDisplayPanel());
-  wrap.appendChild(renderColorLegendPanel());
-  wrap.appendChild(renderShiftPanel());
-  wrap.appendChild(renderPlanPatternPanel());
-  wrap.appendChild(sleepRhythmSettingsCard());
-  wrap.appendChild(renderRoutinePanel());
+  wrap.appendChild(collapsibleSetting('mode',renderModeSettingsPanel()));
+  wrap.appendChild(collapsibleSetting('display',renderDisplayPanel()));
+  wrap.appendChild(collapsibleSetting('colors',renderColorLegendPanel()));
+  wrap.appendChild(collapsibleSetting('shift',renderShiftPanel()));
+  wrap.appendChild(collapsibleSetting('pattern',renderPlanPatternPanel()));
+  wrap.appendChild(collapsibleSetting('sleep',sleepRhythmSettingsCard()));
+  wrap.appendChild(collapsibleSetting('routine',renderRoutinePanel()));
   const dataCard=div({className:"card"});
   dataCard.appendChild(div({style:{fontSize:"14px",fontWeight:700,color:"#e2e8f0",marginBottom:"4px"}},"💾 データ管理"));
   dataCard.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"10px",lineHeight:1.6}},"全データをJSONで出力・読込できます（機種変更やバックアップに）。"));
@@ -7202,7 +7268,7 @@ function renderSettingsHub(){
   viewLbl.appendChild(document.createTextNode("👁 バックアップを閲覧（上書きしない）"));
   dataCard.appendChild(viewLbl);
   dataCard.appendChild(div({style:{fontSize:"10px",color:"#475569",marginTop:"6px",lineHeight:1.6}},"「閲覧」は現在のデータを変更せず、バックアップの内容をアプリと同じ画面で確認できます。"));
-  wrap.appendChild(dataCard);
+  wrap.appendChild(collapsibleSetting('data',dataCard));
   return wrap;
 }
 
