@@ -222,7 +222,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.35"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.36"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -255,8 +255,53 @@ function persistAll(){
   safeSet(STORAGE_KEY+"_goals",JSON.stringify(state.goals));
   safeSet(STORAGE_KEY+"_todo",JSON.stringify(state.todos));
 }
+// ── 🕘 保存の履歴（直前10件・設定画面から1つずつ戻せる）──
+// 変更「前」の状態（UNDO_FIELDS のスナップショット）を持ち、戻すとその時点へ復元する。
+// データ量が大きいので localStorage には保存せず、アプリを開いている間だけ保持する。
+const SAVE_HIST_MAX=10;
+let _histReady=false;   // 起動時の読み込み・移行処理は履歴に載せない
+let _histBusy=false;    // 復元中の書き込みを履歴に載せない
+function getSaveHist(){ if(!Array.isArray(state.saveHist))state.saveHist=[]; return state.saveHist; }
+// key が同じ保存が短時間に続いたときは1件にまとめる（連打・微修正で履歴が埋まらないように）
+function recordSave(label,detail,key){
+  if(!_histReady||_histBusy) return;
+  if(state&&state.viewingBackup) return;
+  const h=getSaveHist(), now=Date.now(), top=h[0];
+  if(top&&key&&top.key===key&&now-top.ts<8000){ top.ts=now; top.label=label; top.detail=detail; return; }
+  h.unshift({id:String(now)+'-'+Math.random().toString(36).slice(2,7),ts:now,label,detail:detail||'',key:key||null,snap:snapshotData()});
+  if(h.length>SAVE_HIST_MAX) h.length=SAVE_HIST_MAX;
+}
+// 1件だけ戻す。スナップショットは全体なので、戻せるのは「いちばん新しい保存」だけ。
+// 押すたびに1つずつさかのぼれる。
+function restoreSave(id){
+  const h=getSaveHist();
+  if(!h.length||h[0].id!==id) return false;
+  const e=h.shift();
+  _histBusy=true;
+  try{
+    UNDO_FIELDS.forEach(k=>{ if(e.snap[k]!==undefined) state[k]=e.snap[k]; });
+    persistAll();
+  } finally { _histBusy=false; }
+  return true;
+}
+// 保存内容から人が読めるラベルを作る
+const DAILY_SAVE_LABELS=[["drinks","🍺 飲酒"],["cravings","🍺 飲酒欲求"],["ejaculations","💧 射精"],["foods","🍽 食事"],
+  ["water","💧 水分"],["bedTime","😴 睡眠"],["wakeTime","😴 起床"],["naps","💤 昼寝"],["awakenings","😴 中途覚醒"],
+  ["actuals","📌 実績"],["actualNotes","📌 実績のメモ"],["meds","💊 服薬"],["routineOverrides","🔁 まとめの実績"],
+  ["windDownAt","🛏 寝支度"],["bodyComps","🏋️ 体組成"],["score","📔 生活記録"]];
+function dailySaveLabel(upd){
+  const ks=Object.keys(upd||{});
+  for(const [k,l] of DAILY_SAVE_LABELS){ if(ks.indexOf(k)>=0) return l; }
+  return "📔 生活記録";
+}
+function todoSaveLabel(id){
+  try{ const it=getTodoItems().find(x=>x.id===id); if(it) return `✅ ${it.label}`; }catch(_){}
+  try{ const ct=(state.customTodos||[]).find(c=>String(c.uid)===String(id)); if(ct) return `🔁 ${ct.label}`; }catch(_){}
+  return "✅ ルーティン";
+}
 function pushUndo(label){
   undoSnapshot=snapshotData();
+  recordSave("🗑 "+(label||"削除").replace(/しました$/,""),"",null);
   showUndoBar(label||"削除しました");
 }
 function doUndo(){
@@ -984,6 +1029,7 @@ function getDaily(dateStr){
   return state.dailies.find(d=>d.dateStr===dateStr)||{dateStr};
 }
 function setDaily(dateStr,upd){
+  recordSave(dailySaveLabel(upd),mdLabel(dateStr),"daily:"+dateStr+":"+Object.keys(upd||{}).sort().join(","));
   const nd=state.dailies.filter(d=>d.dateStr!==dateStr);
   nd.push({...getDaily(dateStr),...upd,dateStr});
   state.dailies=nd;saveStorage();
@@ -992,6 +1038,7 @@ function getLog(dateStr,hour){
   return state.logs.find(l=>l.dateStr===dateStr&&l.hour===hour)||null;
 }
 function setLog(dateStr,hour,data){
+  recordSave("🩺 体調記録",`${mdLabel(dateStr)} ${hour}時`,"log:"+dateStr+":"+hour);
   const nl=state.logs.filter(l=>!(l.dateStr===dateStr&&l.hour===hour));
   nl.push({dateStr,hour,...data});
   state.logs=nl;saveStorage();
@@ -5291,9 +5338,11 @@ function colorPickerRow(current, onPick){
 const WEEKDAYS_JP=["日","月","火","水","木","金","土"];
 
 function saveSchedule(){
+  recordSave("📅 予定","","schedule");
   safeSet(STORAGE_KEY+"_schedule",JSON.stringify(state.schedule));
 }
 function saveRepeatEvents(){
+  recordSave("🔁 繰り返し予定","","repeat");
   safeSet(STORAGE_KEY+"_repeat",JSON.stringify(state.repeatEvents));
 }
 function saveTasks(){
@@ -7242,18 +7291,50 @@ function collapsibleSetting(key,card){
   else if(row.style) row.style.marginBottom='6px';
   return card;
 }
+// 🕘 最近の保存（直前10件）。いちばん新しいものから1つずつ戻せる。
+function renderSaveHistoryPanel(){
+  const h=getSaveHist();
+  const card=div({className:"card"});
+  card.appendChild(div({style:{fontSize:"14px",fontWeight:700,color:"#e2e8f0",marginBottom:"4px"}},`🕘 最近の保存（${h.length}件）`));
+  card.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"10px",lineHeight:1.6}},
+    "予定・実績・体調記録など、直前に保存した内容を新しい順に最大10件表示します。戻せるのは「いちばん新しい1件」だけで、押すたびに1つずつさかのぼれます。アプリを開いている間だけの記録なので、読み込み直すと消えます。"));
+  if(!h.length){ card.appendChild(div({style:{fontSize:"12px",color:"#475569",textAlign:"center",padding:"8px 0"}},"まだ保存の記録がありません。")); return card; }
+  h.forEach((e,i)=>{
+    const t=new Date(e.ts), newest=(i===0);
+    const row=div({style:{display:"flex",alignItems:"center",gap:"9px",padding:"8px 0",borderBottom:"1px solid #1e293b",opacity:newest?1:0.65}});
+    row.appendChild(div({style:{fontSize:"10px",color:"#64748b",width:"42px",flexShrink:0,textAlign:"right"}},hhmm(t.getHours(),t.getMinutes())));
+    row.appendChild(div({style:{flex:1,minWidth:0}},[
+      div({style:{fontSize:"13px",color:"#e2e8f0",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},e.label),
+      e.detail?div({style:{fontSize:"10px",color:"#64748b"}},e.detail):null
+    ]));
+    if(newest){
+      const b=btn({style:{flexShrink:0,padding:"6px 12px",borderRadius:"8px",border:"1px solid #22c55e",background:"#22c55e18",color:"#4ade80",fontSize:"12px",fontWeight:700,cursor:"pointer",fontFamily:"inherit"}},"↩ 戻す");
+      b.addEventListener('click',(()=>{const id=e.id,lb=e.label;return()=>{
+        if(!confirm(`「${lb}」を保存する前の状態に戻します。よろしいですか？`)) return;
+        if(restoreSave(id)) showToast("↩ 1つ前の状態に戻しました","#4ade80"); else showToast("戻せませんでした");
+        render();
+      };})());
+      row.appendChild(b);
+    } else {
+      row.appendChild(div({style:{flexShrink:0,fontSize:"10px",color:"#475569",textAlign:"right",lineHeight:1.3,width:"74px"}},"新しい方から順に"));
+    }
+    card.appendChild(row);
+  });
+  return card;
+}
 function renderSettingsHub(){
   const wrap=div({style:{maxWidth:"600px",margin:"0 auto",padding:"12px 16px 60px"}});
   // モード設定から飛んできたときはその項目を開いておく
   if(state.settingsModeCfg){ openSetting('mode',true); state.settingsModeCfg=false; }
   // すべて開く／閉じる
-  { const keys=['mode','display','colors','shift','pattern','sleep','routine','data'];
+  { const keys=['hist','mode','display','colors','shift','pattern','sleep','routine','data'];
     const anyOpen=keys.some(isSettingOpen);
     const bar=div({style:{display:"flex",justifyContent:"flex-end",marginBottom:"8px"}});
     const b=btn({style:{padding:"5px 11px",borderRadius:"8px",border:"1px solid #334155",background:"transparent",color:"#94a3b8",fontSize:"11px",cursor:"pointer",fontFamily:"inherit"}},anyOpen?"⊖ すべて閉じる":"⊕ すべて開く");
     b.addEventListener('click',()=>{ keys.forEach(k=>openSetting(k,!anyOpen)); render(); });
     bar.appendChild(b); wrap.appendChild(bar); }
   wrap.appendChild(renderFeatureIndexPanel());
+  wrap.appendChild(collapsibleSetting('hist',renderSaveHistoryPanel()));
   wrap.appendChild(collapsibleSetting('mode',renderModeSettingsPanel()));
   wrap.appendChild(collapsibleSetting('display',renderDisplayPanel()));
   wrap.appendChild(collapsibleSetting('colors',renderColorLegendPanel()));
@@ -10005,6 +10086,7 @@ function getTodo(dateStr){
   return state.todos[dateStr] || {};
 }
 function setTodo(dateStr, id, data){
+  recordSave(todoSaveLabel(id),mdLabel(dateStr),"todo:"+dateStr+":"+id);
   if(!state.todos[dateStr]) state.todos[dateStr]={};
   state.todos[dateStr][id] = data;
   safeSet(STORAGE_KEY+"_todo", JSON.stringify(state.todos));
@@ -14151,6 +14233,7 @@ function renderEditTimerModal(vd){
 // 起動
 // ═══════════════════════════════════════════════════
 loadStorage();
+setTimeout(()=>{ _histReady=true; },0); // 起動時の読み込み・移行が終わってから履歴を取り始める
 state.forecast=genForecast();
 state.viewDate = todayStr();
 // 夜更かし対応：日付をまたいでも、前日の就寝(睡眠開始)が未記録のうちは前日を既定表示にする。
