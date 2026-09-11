@@ -222,7 +222,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.28"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.29"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -1252,6 +1252,8 @@ function render(){
   if(state.selfMode){ content.appendChild(renderSelfMode());
     // 飲みモードから「飲み物を追加」＝アルコールタブと同じモーダルをセルフモードの上に重ねる
     if(state.modal==="addDrink"){ const mo=renderAddDrinkModal(activeDay()); mo.style.zIndex="10000"; content.appendChild(mo); }
+    // エロモードから「射精を記録」＝生活記録と同じモーダルをセルフモードの上に重ねる
+    if(state.modal==="addEjac"){ const mo=renderAddEjacModal(activeDay()); mo.style.zIndex="10000"; content.appendChild(mo); }
     tintSurfaces(content); return; }
   if(state.modeSwitcher){ content.appendChild(renderModeSwitcher()); tintSurfaces(content); return; }
   if(state.lifeScreen){ content.appendChild(renderLifeScreen());
@@ -2986,6 +2988,57 @@ function selfConditionCard(accent,opts){
   return box;
 }
 function selfActionBtn(label,accent,onClick){ const b=btn({style:{width:"100%",padding:"12px",borderRadius:"11px",border:`1px solid ${accent}66`,background:accent+"1a",color:"#f0e9dd",fontSize:"14px",fontWeight:700,cursor:"pointer",marginBottom:"7px",textAlign:"left"}},label); b.addEventListener('click',onClick); return b; }
+// 💧 射精の記録：一覧の取得と、記録/編集モーダルの起動・削除。生活記録とエロモードで共用。
+function ejacRows(vd){
+  return [...(getDaily(vd).ejaculations||[])]
+    .sort((a,b)=>(a.hour*60+(a.min||0)+(a.startNextDay?1440:0))-(b.hour*60+(b.min||0)+(b.startNextDay?1440:0)));
+}
+function openEjacModal(rec){
+  const n=new Date();
+  state.newEjacH=rec?rec.hour:n.getHours();
+  state.newEjacM=rec?(rec.min||0):n.getMinutes();
+  state.newEjacTag=rec?(rec.tag||null):null;
+  state.newEjacNextDay=rec?!!rec.startNextDay:false;
+  state.newEjacUid=rec?(rec.uid!=null?rec.uid:null):null;
+  state.modal="addEjac"; render();
+}
+function deleteEjac(vd,rec){
+  pushUndo("記録を削除しました");
+  const nd={...getDaily(vd)}, list=[...(nd.ejaculations||[])];
+  // 並び替え後の位置ではなく uid（無ければ時刻+タグ）で対象を特定する
+  const j=rec.uid!=null?list.findIndex(x=>x.uid===rec.uid):list.findIndex(x=>x.hour===rec.hour&&x.min===rec.min&&x.tag===rec.tag);
+  if(j>=0) list.splice(j,1);
+  nd.ejaculations=list; setDaily(vd,nd);
+}
+// 🔥エロモード内の「射精の記録」セクション（記録画面を開く／一覧／編集・削除）
+function ejacSectionForMode(vd,accent){
+  const rows=ejacRows(vd);
+  const box=div({style:{background:"#ffffff0d",border:"1px solid #ffffff14",borderRadius:"11px",padding:"9px 10px",marginBottom:"10px"}});
+  const head=div({style:{display:"flex",justifyContent:"space-between",alignItems:"center",gap:"8px",marginBottom:"6px"}});
+  head.appendChild(div({style:{fontSize:"11px",color:"#a89e8c"}},`💧 射精の記録${rows.length?`（${rows.length}回）`:""}`));
+  const add=btn({style:{flexShrink:0,fontSize:"11px",padding:"5px 11px",borderRadius:"8px",cursor:"pointer",fontFamily:"inherit",border:`1px solid ${accent}66`,background:accent+"1a",color:"#f0e9dd",fontWeight:700}},"＋ 記録する");
+  add.addEventListener('click',()=>openEjacModal(null));
+  head.appendChild(add); box.appendChild(head);
+  if(!rows.length){ box.appendChild(div({style:{fontSize:"11px",color:"#a89e8c",textAlign:"center",padding:"6px 0"}},"この日の記録はまだありません")); }
+  else rows.forEach(e=>{
+    const row=div({style:{display:"flex",alignItems:"center",gap:"7px",padding:"6px 8px",borderRadius:"8px",background:"#ffffff08",marginBottom:"4px"}});
+    const t=div({style:{flex:1,minWidth:0,cursor:"pointer"}},[
+      div({style:{fontSize:"13px",color:"#f0e9dd"}},`${e.startNextDay?"翌":""}${hhmm(e.hour,e.min||0)}`),
+      e.tag?div({style:{fontSize:"10px",color:"#a89e8c"}},e.tag):null
+    ]);
+    t.addEventListener('click',(()=>{const rec=e;return()=>openEjacModal(rec);})());
+    row.appendChild(t);
+    const ed=btn({style:{flexShrink:0,padding:"5px 9px",borderRadius:"7px",border:"1px solid #ffffff22",background:"transparent",color:"#cdc3b2",fontSize:"11px",cursor:"pointer",fontFamily:"inherit"}},"✏️ 編集");
+    ed.addEventListener('click',(()=>{const rec=e;return()=>openEjacModal(rec);})());
+    row.appendChild(ed);
+    const del=btn({style:{flexShrink:0,padding:"5px 9px",borderRadius:"7px",border:"1px solid #ffffff22",background:"transparent",color:"#e0a0a0",fontSize:"11px",cursor:"pointer",fontFamily:"inherit"}},"削除");
+    del.addEventListener('click',(()=>{const rec=e;return()=>{ deleteEjac(vd,rec); showToast("削除しました","#a5b4fc"); render(); };})());
+    row.appendChild(del);
+    box.appendChild(row);
+  });
+  box.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginTop:"5px",lineHeight:1.5}},"日記→生活記録の「💧 射精」と同じ記録です。行をタップすると時刻・タグを直せます。"));
+  return box;
+}
 function renderSelfMode(){
   const key=state.selfMode; const M=SELF_MODES[key]||SELF_MODES.low;
   const wrap=div({style:{position:"fixed",inset:"0",zIndex:"9998",overflowY:"auto",background:M.bg,color:"#ecdfc9",display:"flex",flexDirection:"column",alignItems:"center",padding:"calc(env(safe-area-inset-top,0px) + 26px) 18px calc(env(safe-area-inset-bottom,0px) + 34px)",WebkitTapHighlightColor:"transparent"}});
@@ -3104,6 +3157,8 @@ function renderSelfMode(){
     inner.appendChild(selfActionBtn(state.selfBreathing?"🫁 呼吸をやめる":"🫁 深呼吸する（4-7-8）",M.accent,()=>{state.selfBreathing=!state.selfBreathing;render();}));
     inner.appendChild(selfActionBtn("🚿 体を動かす／シャワー（5分）",M.accent,()=>{ state.selfDelayUntil=Date.now()+5*60000; showToast("🚿 5分タイマー開始"); render(); }));
     inner.appendChild(selfActionBtn("🎮 別のことに切り替える（趣味モードへ）",M.accent,()=>{ exitSelfMode(true); openLifeMode("hobby"); }));
+    // 💧 射精の記録（生活記録と同じデータ。ここから記録画面を開き、一覧・編集もできる）
+    inner.appendChild(ejacSectionForMode(vd,M.accent));
     // きっかけを書き出す（あとで if-then プランの材料になる）
     { const ta=document.createElement('textarea'); ta.placeholder="きっかけ・状況を書き出す（任意）"; ta.value=state.selfNote||""; ta.rows=2; ta.style.cssText="width:100%;box-sizing:border-box;padding:9px 11px;background:#0000002e;border:1px solid #ffffff22;border-radius:10px;color:#f0e9dd;font-size:13px;font-family:inherit;resize:vertical;margin-bottom:7px"; ta.addEventListener('input',e=>{state.selfNote=e.target.value;}); inner.appendChild(ta); }
     inner.appendChild(div({style:{fontSize:"11px",color:"#a89e8c",textAlign:"center",lineHeight:1.6,margin:"4px 0 10px"}},"💡 きっかけが分かったら、達成タブの if-then プランに登録しておくと次が楽になります。"));
@@ -3260,7 +3315,7 @@ function renderWidgetView(vd,ds){
     grid.appendChild(qbtn(`💗 体調（今）${nowScore!=null?`：${nowScore}`:""}`,"#f43f5e","#f43f5e18","#fb7185",()=>{ openScoreModal(vd,curH); }));
     grid.appendChild(qbtn(`🍺 アルコール${drN?`（${drN}）`:""}`,"#f59e0b","#f59e0b18","#fbbf24",()=>{ const now=new Date(); state.modal="addDrink"; state.newDrink={typeId:"beer",ml:350,hour:now.getHours(),min:now.getMinutes(),pct:5,startNextDay:false}; render(); }));
     grid.appendChild(qbtn(`🍽️ 食べたもの${foodN?`（${foodN}）`:""}`,"#0ea5e9","#0ea5e918","#38bdf8",()=>{ state.modal="food"; state.foodSelected=[...(d.foods||[])]; state.foodOpenCat=null; render(); }));
-    grid.appendChild(qbtn(`💧 射精${ejN?`（${ejN}）`:""}`,"#6366f1","#6366f118","#a5b4fc",()=>{ state.modal="addEjac"; state.newEjacH=new Date().getHours(); state.newEjacM=new Date().getMinutes(); state.newEjacTag=null; state.newEjacNextDay=false; render(); }));
+    grid.appendChild(qbtn(`💧 射精${ejN?`（${ejN}）`:""}`,"#6366f1","#6366f118","#a5b4fc",()=>openEjacModal(null)));
     c.appendChild(grid);
     secNodes.quick=c;
   }
@@ -3791,15 +3846,7 @@ function renderDailyPanel(vd){
           (d.ejaculations||[]).length>0?span({style:{fontSize:"11px",color:"#64748b",marginLeft:"6px"}},`${(d.ejaculations||[]).length}回`):null
         ]),
         btn({style:{fontSize:"11px",padding:"3px 10px",background:"#0ea5e918",border:"1px solid #0ea5e9",borderRadius:"8px",color:"#38bdf8",cursor:"pointer",fontWeight:600},
-          onClick:()=>{
-            // 時刻入力モーダルを開く
-            state.modal="addEjac";
-            state.newEjacH=new Date().getHours();
-            state.newEjacM=new Date().getMinutes();
-            state.newEjacTag=null;
-            state.newEjacNextDay=false;
-            render();
-          }},"+ 記録")
+          onClick:()=>openEjacModal(null)},"+ 記録")
       ]),
       (d.ejaculations||[]).length===0
         ?div({style:{fontSize:"11px",color:"#475569",textAlign:"center",padding:"6px 0"}},"まだ記録がありません")
@@ -3807,8 +3854,12 @@ function renderDailyPanel(vd){
           ...[...(d.ejaculations||[])].sort((a,b)=>(a.hour*60+(a.min||0)+(a.startNextDay?1440:0))-(b.hour*60+(b.min||0)+(b.startNextDay?1440:0))).map((e,i)=>{
             const timeLabel=`${e.startNextDay?"翌":""}${String(e.hour).padStart(2,'0')}:${String(e.min||0).padStart(2,'0')}`;
             const item=div({style:{display:"flex",alignItems:"center",gap:"5px",padding:"3px 10px",background:"#0f172a",borderRadius:"20px",border:"1px solid #1e3a5f"}});
-            item.appendChild(span({style:{fontSize:"12px",color:"#94a3b8"}},timeLabel));
-            if(e.tag) item.appendChild(span({style:{fontSize:"10px",padding:"1px 7px",borderRadius:"10px",background:"#6366f122",color:"#818cf8",border:"1px solid #6366f133"}},e.tag));
+            // 時刻・タグの部分をタップすると編集モーダルが開く
+            const tap=div({style:{display:"flex",alignItems:"center",gap:"5px",cursor:"pointer"}});
+            tap.appendChild(span({style:{fontSize:"12px",color:"#94a3b8"}},timeLabel));
+            if(e.tag) tap.appendChild(span({style:{fontSize:"10px",padding:"1px 7px",borderRadius:"10px",background:"#6366f122",color:"#818cf8",border:"1px solid #6366f133"}},e.tag));
+            tap.addEventListener('click',(()=>{const rec=e;return()=>openEjacModal(rec);})());
+            item.appendChild(tap);
             const delBtn=btn({style:{background:"transparent",border:"none",color:"#334155",cursor:"pointer",fontSize:"14px",padding:"0",lineHeight:"1"}},"×");
             delBtn.addEventListener('click',(()=>{const rec=e;return()=>{
               pushUndo("記録を削除しました");
@@ -13497,9 +13548,10 @@ function renderTemptationModal(vd){
 function renderAddEjacModal(vd){
   const bg=div({className:"modal-center"});
   const m=div({className:"modal-box"});
-  bg.addEventListener('click',()=>{state.modal=null;render();});
+  bg.addEventListener('click',()=>{state.modal=null;state.newEjacUid=null;render();});
   m.addEventListener('click',e=>e.stopPropagation());
-  m.appendChild(div({style:{fontSize:"15px",fontWeight:700,color:"#e2e8f0",marginBottom:"16px"}},"💧 射精を記録"));
+  const editUid=(state.newEjacUid!=null)?state.newEjacUid:null; // 既存の記録を編集中なら uid
+  m.appendChild(div({style:{fontSize:"15px",fontWeight:700,color:"#e2e8f0",marginBottom:"16px"}},editUid!=null?"💧 射精を編集":"💧 射精を記録"));
 
   // 時刻
   m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"5px"}},"時刻"));
@@ -13533,14 +13585,25 @@ function renderAddEjacModal(vd){
   m.appendChild(div({style:{height:"18px"}}));
 
   m.appendChild(div({style:{display:"flex",gap:"8px"}},[
-    btn({className:"btn-ghost",style:{flex:1},onClick:()=>{state.modal=null;render();}},"キャンセル"),
+    btn({className:"btn-ghost",style:{flex:1},onClick:()=>{state.modal=null;state.newEjacUid=null;render();}},"キャンセル"),
     btn({style:{flex:2,padding:"10px",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:600,cursor:"pointer"},
       onClick:()=>{
-        const nd={...getDaily(vd)};
-        nd.ejaculations=[...(nd.ejaculations||[]),{hour:state.newEjacH,min:state.newEjacM,tag:state.newEjacTag,uid:Date.now(),...(state.newEjacNextDay?{startNextDay:true}:{})}];
-        setDaily(vd,nd);state.modal=null;render();
-      }},"記録する")
+        const nd={...getDaily(vd)}, list=[...(nd.ejaculations||[])];
+        const rec={hour:state.newEjacH,min:state.newEjacM,tag:state.newEjacTag,uid:editUid!=null?editUid:Date.now(),...(state.newEjacNextDay?{startNextDay:true}:{})};
+        const j=editUid!=null?list.findIndex(x=>x.uid===editUid):-1;
+        if(j>=0) list[j]=rec; else list.push(rec);
+        nd.ejaculations=list; setDaily(vd,nd);
+        state.modal=null; state.newEjacUid=null;
+        showToast(editUid!=null?"💧 記録を更新しました":"💧 記録しました","#a5b4fc");
+        render();
+      }},editUid!=null?"保存する":"記録する")
   ]));
+  // 編集中は削除もできる
+  if(editUid!=null){
+    const del=btn({style:{width:"100%",marginTop:"8px",padding:"9px",background:"transparent",border:"1px solid #7f1d1d",borderRadius:"8px",color:"#f87171",fontSize:"12px",cursor:"pointer",fontFamily:"inherit"}},"この記録を削除");
+    del.addEventListener('click',()=>{ deleteEjac(vd,{uid:editUid}); state.modal=null; state.newEjacUid=null; showToast("削除しました","#a5b4fc"); render(); });
+    m.appendChild(del);
+  }
   bg.appendChild(m);return bg;
 }
 
