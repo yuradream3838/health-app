@@ -222,7 +222,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.18"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.19"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -2444,16 +2444,49 @@ function lifeRoutineChecklist(title,items,color,vd,forceTimer){
   return cc;
 }
 // 定期ルーティンは「既定モード（いつもの生活モード）」にまとめて表示する。
-// その日に該当し、除外していないものを時刻順で返す。
+// ・その日に該当するもの（除外した回は除く）
+// ・過去に該当したのに未実施のもの（繰り越し）も表示
+// ・完了したものは非表示
 function customTodosForMode(modeKey,vd){
   if(!modeKey||modeKey!==getDefaultMode()) return [];
   let due=[]; try{ due=dueCustomTodos(vd)||[]; }catch(_){ return []; }
-  return due.filter(ct=>!((state.todos[vd]||{})[ct.uid]||{}).excluded)
-    .map(ct=>{ const tt=customTodoTimeFor(ct,vd); return {ct,tt,sort: tt?((tt.sn?1440:0)+tt.h*60+(tt.m||0)):1e9}; })
-    .sort((a,b)=>a.sort-b.sort);
+  const todo=id=>((state.todos[vd]||{})[id]||{});
+  const dueAll=due.filter(ct=>!todo(ct.uid).excluded);
+  const dueIds=new Set(dueAll.map(ct=>ct.uid));
+  // 当日分：未完了のみ
+  const rows=dueAll.filter(ct=>!todo(ct.uid).checked)
+    .map(ct=>{ const tt=customTodoTimeFor(ct,vd); return {ct,tt,carry:null,sort: tt?((tt.sn?1440:0)+tt.h*60+(tt.m||0)):1e9}; });
+  // 繰り越し：過去に該当したが未実施（未来日では出さない。ウィジェット／旧・予定タブと同じ判定）
+  if(vd<=todayStr()){
+    (state.customTodos||[]).forEach(ct=>{
+      if(dueIds.has(ct.uid)) return;
+      let occ=null; try{ occ=customTodoOccurrence(ct,vd); }catch(_){ return; }
+      if(!occ||!occ.overdue||occ.checked) return;
+      rows.push({ct,tt:null,carry:occ,sort:-1}); // 繰り越しは先頭へ
+    });
+  }
+  return rows.sort((a,b)=>a.sort-b.sort);
 }
 // 定期ルーティンの1行（チェック式＝✓トグル／時間計測式＝▶開始・⏹停止）。予定タブにあったものと同じ操作。
-function modeCustomTodoRow(vd,ct,tt,accent){
+function modeCustomTodoRow(vd,ct,tt,accent,carry){
+  // 繰り越し分：ラベルは該当日の上書きを使い、チェックすると当日の実施として記録する
+  if(carry){
+    const lbl=((state.todos[carry.dueDate]||{})[ct.uid]||{}).labelOverride||ct.label||"定期ルーティン";
+    const snt=carry.snToday?customTodoTimeFor(ct,carry.dueDate):null;
+    const sub=carry.snToday
+      ? `🌙 開始翌日${snt?`（${String(snt.h).padStart(2,'0')}:${String(snt.m||0).padStart(2,'0')}）`:""}`
+      : `🔴 繰越${carry.daysAgo?`${carry.daysAgo}日前`:""}・未実施`;
+    const row=div({style:{display:'flex',alignItems:'center',gap:'9px',padding:'7px 0',borderBottom:'1px solid #ffffff10'}});
+    const cb=btn({style:{width:'24px',height:'24px',borderRadius:'6px',flexShrink:0,border:'2px solid #ffffff3d',background:'transparent',cursor:'pointer'}},'');
+    cb.addEventListener('click',(()=>{const c2={...ct},label=lbl;return()=>{ dismissPastUnchecked(c2,vd); const cur=(state.todos[vd]||{})[c2.uid]||{}; setTodo(vd,c2.uid,{...cur,checked:true,time:new Date().toISOString()}); showToast(`✅ ${label}`); };})());
+    row.appendChild(cb);
+    const lw=div({style:{flex:1,minWidth:0,cursor:'pointer'}});
+    lw.appendChild(div({style:{fontSize:'14px',color:'#e2e8f0',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}},lbl));
+    lw.appendChild(div({style:{fontSize:'10px',color:carry.snToday?'#94a3b8':'#f87171'}},sub));
+    lw.addEventListener('click',(()=>{const uid=ct.uid,l=lbl,dd=carry.dueDate;return()=>{ state.planCustomTodo={uid,label:l,vd:dd,editMode:true}; state.modal='planCustomTodo'; render(); };})());
+    row.appendChild(lw);
+    return row;
+  }
   const rec=(state.todos[vd]||{})[ct.uid]||{}, done=!!rec.checked;
   const isTimer=ct.mode==='timer';
   const running=isTimer && rec.startTime && !rec.endTime;
@@ -2498,10 +2531,11 @@ function appendModeRoutines(inner,modeKey,defColor,vd,forceTimer){
 function appendModeCustomTodos(inner,modeKey,defColor,vd){
   const list=customTodosForMode(modeKey,vd);
   if(!list.length) return;
-  const done=list.filter(x=>!!((state.todos[vd]||{})[x.ct.uid]||{}).checked).length;
+  const carryN=list.filter(x=>x.carry).length, todayN=list.length-carryN;
   const cc=div({style:{background:'#ffffff0d',border:'1px solid #ffffff14',borderRadius:'11px',padding:'10px 12px',marginBottom:'10px'}});
-  cc.appendChild(div({style:{fontSize:'12px',fontWeight:700,color:'#e2e8f0',marginBottom:'5px'}},`🔁 今日の定期ルーティン ${done}/${list.length}`));
-  list.forEach(({ct,tt})=> cc.appendChild(modeCustomTodoRow(vd,ct,tt,defColor)));
+  cc.appendChild(div({style:{fontSize:'12px',fontWeight:700,color:'#e2e8f0',marginBottom:'5px'}},
+    `🔁 定期ルーティン 残り${todayN}件${carryN?`　＋繰越${carryN}件`:''}`));
+  list.forEach(({ct,tt,carry})=> cc.appendChild(modeCustomTodoRow(vd,ct,tt,defColor,carry)));
   inner.appendChild(cc);
 }
 function renderLifeScreen(){
