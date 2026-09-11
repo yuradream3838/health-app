@@ -741,7 +741,7 @@ const state = {
   windEditOpen:false, windEditH:22, windEditM:0, // 寝支度スイッチの開始時刻編集
   sleepMode:false, // 🌙 睡眠前モード（寝支度を始めると全画面で起動）
   lifeModes:null, modeLog:null, // 🕒 ライフモード定義・タイムライン（常に1つの生活モードに属する）
-  modeSwitcher:false, modeEditMode:false, lifeScreen:null, lifeBreathing:false, defaultMode:'rest', // ライフモードの切替画面・編集・各モード画面・既定モード
+  modeSwitcher:false, modeEditMode:false, lifeScreen:null, lifeBreathing:false, defaultMode:'life', // ライフモードの切替画面・編集・各モード画面・既定モード
   autoModeOn:true, autoLastKey:undefined, // ライフモードの自動切替（勤務シフト起点）
   nudges:null, nudgesOff:false, notifyOn:false, wakeGoal:null, moodCheckH:18, moodCheckM:0, // セルフスイッチ・ナッジ
   dayCutoffH:12, // 就寝未記録時のフォールバック切替時刻（既定12:00＝正午）
@@ -841,7 +841,6 @@ function loadStorage(){
     const lmd=localStorage.getItem(STORAGE_KEY+"_lifemodes");
     if(lmd){try{const a=JSON.parse(lmd); if(Array.isArray(a)&&a.length)state.lifeModes=a;}catch{}}
     migrateLifeModes(); // 朝/飲み/睡眠前などの新しい生活モードを既存データに補完
-    migrateSeikatsuMode(); // 自作の「生活」モードを正式な life モードへ統合
     const dfm=localStorage.getItem(STORAGE_KEY+"_defaultmode"); if(dfm)state.defaultMode=dfm;
     const mgl=localStorage.getItem(STORAGE_KEY+"_modegoals");
     if(mgl){try{const o=JSON.parse(mgl); if(o&&typeof o==="object")state.modeGoals=o;}catch{}}
@@ -849,6 +848,7 @@ function loadStorage(){
     if(mlg){try{const a=JSON.parse(mlg); if(Array.isArray(a))state.modeLog=a;}catch{}}
     const amd=localStorage.getItem(STORAGE_KEY+"_automode");
     if(amd){try{const o=JSON.parse(amd); if(o&&typeof o==="object"){ state.autoModeOn=o.on!==false; if('lastKey' in o)state.autoLastKey=o.lastKey; }}catch{}}
+    migrateSeikatsuMode(); // 自作の「生活」モードを正式な life モードへ統合（既定モード/記録/目標の読込後に実行）
     const wgl=localStorage.getItem(STORAGE_KEY+"_wakegoal");
     if(wgl){try{const o=JSON.parse(wgl); if(o&&typeof o==="object")state.wakeGoal=o;}catch{}}
     const ncf=localStorage.getItem(STORAGE_KEY+"_nudgecfg");
@@ -2038,21 +2038,23 @@ function migrateSeikatsuMode(){
   const base=DEFAULT_LIFE_MODES.find(m=>m.key==='life');
   const existing=modes.find(m=>m.key==='life');
   if(existing){
-    // すでに life がある：自作モードの色を引き継いで取り除く
+    // すでに life がある：自作モードの色・並び順を引き継いで取り除く
     if(target.color) existing.color=target.color;
-    state.lifeModes=modes.filter(m=>m.key!==oldKey);
+    const pos=modes.indexOf(target);
+    const rest=modes.filter(m=>m.key!==oldKey && m.key!=='life');
+    rest.splice(Math.min(pos,rest.length),0,existing);
+    state.lifeModes=rest;
   } else {
     // 自作モードがあった位置をそのまま life に置き換える（並び順を保つ）
     modes[modes.indexOf(target)]={...base, color:target.color||base.color, icon:target.icon||base.icon};
   }
   // 参照の付け替え
   (state.modeLog||[]).forEach(x=>{ if(x.key===oldKey) x.key='life'; });
-  if(state.defaultMode===oldKey) state.defaultMode='life';
-  if(state.autoLastKey===oldKey) state.autoLastKey='life';
+  if(state.defaultMode===oldKey){ state.defaultMode='life'; try{ localStorage.setItem(STORAGE_KEY+'_defaultmode','life'); }catch(_){} }
+  if(state.autoLastKey===oldKey){ state.autoLastKey='life'; try{ localStorage.setItem(STORAGE_KEY+'_automode',JSON.stringify({on:state.autoModeOn!==false,lastKey:'life'})); }catch(_){} }
   try{ getTodoItems().forEach(it=>{ if(it.mode===oldKey) it.mode='life'; }); saveTodoItems(); }catch(_){}
   try{ const g=getModeGoals(); if(g[oldKey]!=null){ g['life']=g[oldKey]; delete g[oldKey]; saveModeGoals(); } }catch(_){}
   saveLifeModes(); saveModeLog();
-  try{ localStorage.setItem(STORAGE_KEY+'_defaultmode', state.defaultMode||'life'); }catch(_){}
 }
 function saveLifeModes(){ try{localStorage.setItem(STORAGE_KEY+'_lifemodes',JSON.stringify(getLifeModes()));}catch(_){} }
 function lifeModeDef(key){ return getLifeModes().find(m=>m.key===key)||null; }
