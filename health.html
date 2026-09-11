@@ -222,7 +222,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.29"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.30"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -2297,7 +2297,7 @@ function evalNudges(now){
   if(nudgeActive('sleep',now) && curMode!=='sleep' && curMode!=='sleepprep'){ const cd=bedCountdownMin(now); if(cd!=null && cd<=cdLeadMin() && cd>-120 && getDaily(sleepNightDay()).bedTime==null){ cands.push({pri:3,id:'sleep',icon:'🌙',title:cd>0?'そろそろ寝る準備':'まだ起きています',sub:'睡眠前モードに切り替える？',act:()=>openLifeMode('sleepprep')}); } }
   // R4 夕方の気分チェック（バナー内で気分入力）
   if(nudgeActive('mood',now) && !nudgeR('mood').answered && nowMin>=moodCheckMin()
-     && !selfCondRecorded(activeDay(),selfCondHour())){ // 同じ時間に体調の記録があれば出さない
+     && !selfCondRecorded(selfCondDay(),selfCondHour())){ // 同じ時間に体調の記録があれば出さない
     cands.push({pri:4,id:'mood',icon:'🫧',title:'今日の気分は？',sub:'体調記録と同じ内容で登録できます',mood:true}); }
   // R5 食事
   if(nudgeActive('meal',now) && curMode!=='meal'){ const meal=currentMealDue(vd,nowMin); if(meal){ cands.push({pri:5,id:'meal',icon:'🍚',title:`${meal.label}の時間`,sub:'食事モードで記録しませんか？',act:()=>openLifeMode('meal')}); } }
@@ -2823,7 +2823,7 @@ function enterSelfMode(key,resume){
   if(!resume){
     state.selfModeStart=Date.now(); state.selfDelayUntil=null; state.selfNote=""; state.selfChecks={}; state.selfCondEdit=false; state.selfCond=null;
     // 開始時点の「心の調子」を before として控える（体調記録から取得。以降の変更が after になる）
-    const _ex=getLog(activeDay(),new Date().getHours())||{};
+    const _ex=getLog(selfCondDay(),selfCondHour())||{};
     state.selfMoodBefore=_ex.mental!=null?_ex.mental:null; state.selfMoodCur=state.selfMoodBefore;
   }
   else if(state.selfModeStart==null){ state.selfModeStart=Date.now(); }
@@ -2843,7 +2843,7 @@ function exitSelfMode(recordIt){
     // 体調（体の調子・心の調子・症状・メモ）はモード内で体調記録へ即時保存済みなので、ここでは
     // どのモードで記録したかが後から分かるようにメモへモード名だけ追記する。
     {
-      const ds=activeDay(), hour=new Date().getHours(), ex=getLog(ds,hour)||{};
+      const ds=selfCondDay(), hour=selfCondHour(), ex=getLog(ds,hour)||{};
       const hasCond = ex.score!=null || ex.mental!=null || (ex.symptoms||[]).length || (ex.note||"").trim();
       if(hasCond){
         const M=SELF_MODES[state.selfMode], tag=M?`🧭${M.title}`:"🧭セルフモード";
@@ -2876,6 +2876,10 @@ function breathingGuide(accent){
 // 入力中は state.selfCond に溜め、「記録する」で体調記録へ保存する（保存先が同じなので体調記録タブと同期）。
 // 記録先は基準日(activeDay)の「現在の時刻」。
 function selfCondHour(){ return new Date().getHours(); }
+// 体調記録（logs／飲酒欲求cravings）は「カレンダー日付 ＋ その日の0〜23時」で持つ。
+// 基準日 activeDay() は深夜に前日を指すことがあり、それを使うと 0時すぎの記録が
+// 「前日の同じ時刻」（＝24時間前）に入ってしまうため、ここでは必ず実際の日付を使う。
+function selfCondDay(){ return todayStr(); }
 // その時間に体調の記録があるか（体調記録タブで入れた分も含む）
 function selfCondRecorded(ds,hour){
   const ex=getLog(ds,hour)||{};
@@ -2898,7 +2902,7 @@ const SELF_COND_PAL_APP={bg:"#0f172a",border:"#1e293b",text:"#e2e8f0",dim:"#94a3
 // 記録済みの時間は入力欄を出さず、1行の記録済み表示（✏️で修正できる）
 function selfCondDoneRow(accent,opts){
   const P=(opts&&opts.pal)||SELF_COND_PAL;
-  const ds=activeDay(), hour=selfCondHour();
+  const ds=selfCondDay(), hour=selfCondHour();
   const ex=getLog(ds,hour)||{}, cr=((getDaily(ds).cravings||{})[hour])||null;
   const parts=[];
   if(ex.score!=null)parts.push(`体調${ex.score}`);
@@ -2917,7 +2921,7 @@ function selfCondDoneRow(accent,opts){
 }
 function selfConditionCard(accent,opts){
   const P=(opts&&opts.pal)||SELF_COND_PAL;
-  const ds=activeDay(), hour=selfCondHour();
+  const ds=selfCondDay(), hour=selfCondHour();
   const b=selfCondBuf(ds,hour);
   const box=div({style:{background:P.bg,border:`1px solid ${P.border}`,borderRadius:"12px",padding:"11px 13px",marginBottom:"10px"}});
   box.appendChild(div({style:{display:"flex",justifyContent:"space-between",alignItems:"baseline",gap:"8px",marginBottom:"8px"}},[
@@ -2993,12 +2997,14 @@ function ejacRows(vd){
   return [...(getDaily(vd).ejaculations||[])]
     .sort((a,b)=>(a.hour*60+(a.min||0)+(a.startNextDay?1440:0))-(b.hour*60+(b.min||0)+(b.startNextDay?1440:0)));
 }
-function openEjacModal(rec){
+// opts.nextDay: 新規記録の「翌日」の初期値。モード画面のように基準日(activeDay)へ書く場合は、
+// 0時を過ぎていると今の時刻は基準日の「翌日」にあたるので ON にして渡す（飲み物の追加と同じ扱い）。
+function openEjacModal(rec,opts){
   const n=new Date();
   state.newEjacH=rec?rec.hour:n.getHours();
   state.newEjacM=rec?(rec.min||0):n.getMinutes();
   state.newEjacTag=rec?(rec.tag||null):null;
-  state.newEjacNextDay=rec?!!rec.startNextDay:false;
+  state.newEjacNextDay=rec?!!rec.startNextDay:!!(opts&&opts.nextDay);
   state.newEjacUid=rec?(rec.uid!=null?rec.uid:null):null;
   state.modal="addEjac"; render();
 }
@@ -3017,7 +3023,7 @@ function ejacSectionForMode(vd,accent){
   const head=div({style:{display:"flex",justifyContent:"space-between",alignItems:"center",gap:"8px",marginBottom:"6px"}});
   head.appendChild(div({style:{fontSize:"11px",color:"#a89e8c"}},`💧 射精の記録${rows.length?`（${rows.length}回）`:""}`));
   const add=btn({style:{flexShrink:0,fontSize:"11px",padding:"5px 11px",borderRadius:"8px",cursor:"pointer",fontFamily:"inherit",border:`1px solid ${accent}66`,background:accent+"1a",color:"#f0e9dd",fontWeight:700}},"＋ 記録する");
-  add.addEventListener('click',()=>openEjacModal(null));
+  add.addEventListener('click',()=>openEjacModal(null,{nextDay:todayStr()!==vd}));
   head.appendChild(add); box.appendChild(head);
   if(!rows.length){ box.appendChild(div({style:{fontSize:"11px",color:"#a89e8c",textAlign:"center",padding:"6px 0"}},"この日の記録はまだありません")); }
   else rows.forEach(e=>{
@@ -3056,7 +3062,7 @@ function renderSelfMode(){
     ]));
   }
   // いまの体調（体調記録と同じ項目・同じ保存先）。すでにこの時間の記録があれば入力欄は出さない
-  { const _cds=activeDay(), _ch=selfCondHour();
+  { const _cds=selfCondDay(), _ch=selfCondHour();
     if(selfCondRecorded(_cds,_ch) && !state.selfCondEdit) inner.appendChild(selfCondDoneRow(M.accent));
     else inner.appendChild(selfConditionCard(M.accent)); }
 
