@@ -222,7 +222,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.42"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.43"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -2526,6 +2526,23 @@ function nudgeBanner(){
 function modeTotalsForDay(ds){ const dayStart=parseDS(ds).getTime(), dayEnd=dayStart+86400000, now=Date.now(), tot={}; getModeLog().forEach(s=>{ const st=Math.max(s.start,dayStart), en=Math.min(s.end||now,dayEnd); if(en>st) tot[s.key]=(tot[s.key]||0)+(en-st); }); return tot; }
 // 複数日のモード別時間を合算（キー→ミリ秒）
 function modeTotalsForRange(dsList){ const tot={}; dsList.forEach(ds=>{ const t=modeTotalsForDay(ds); for(const k in t) tot[k]=(tot[k]||0)+t[k]; }); return tot; }
+// 期間内で「そのモードだった時間帯」をセッション単位（古い順）で返す。
+// 日をまたぐモードは1本のまま返し、期間の端でだけ切る（切った側は clipS/clipE で分かる）。
+// 合計は modeTotalsForRange と一致する。
+function modeSessionsForRange(dsList,key){
+  if(!dsList||!dsList.length) return [];
+  const from=parseDS(dsList[0]).getTime(), to=parseDS(dsList[dsList.length-1]).getTime()+86400000;
+  const now=Date.now(), out=[];
+  getModeLog().forEach(s=>{
+    if(s.key!==key) return;
+    const rawEnd=(s.end||now);
+    const st=Math.max(s.start,from), en=Math.min(rawEnd,to);
+    if(en<=st) return;
+    out.push({start:st,end:en,ms:en-st,tag:s.tag||null,
+      running:!s.end && rawEnd<=to, clipS:s.start<from, clipE:rawEnd>to});
+  });
+  return out.sort((a,b)=>a.start-b.start);
+}
 // その日(0〜24時)を、選択していたモードで切り出したセグメント。予定タブの色帯と日別集計で共用。
 function modeSegmentsForDay(ds){
   const dayStart=parseDS(ds).getTime(), dayEnd=dayStart+86400000, now=Date.now(), out=[];
@@ -12002,6 +12019,34 @@ function periodNavRow(per){
   return nav;
 }
 // 分析：モード別の時間集計カード（1日／1週間／1ヶ月・過去へ移動可）
+// モード別の時間をタップしたときに開く「何時から何時まで」の一覧。
+//  期間の端で切れたセッションは（前から）／（先へ）を添えて、途中で切れていることが分かるようにする。
+function modeSessionListBox(dsList,key,totalMs,def,isDay){
+  const box=div({style:{margin:"2px 0 9px 27px",padding:"8px 10px",background:"#0f172a",borderRadius:"8px"}});
+  const ss=modeSessionsForRange(dsList,key);
+  if(!ss.length){ box.appendChild(div({style:{fontSize:"11px",color:"#64748b"}},"時間帯の記録がありません。")); return box; }
+  const two=n=>String(n).padStart(2,'0');
+  const tLab=ts=>{ const d=new Date(ts); return `${d.getHours()}:${two(d.getMinutes())}`; };
+  const dLab=ts=>{ const d=new Date(ts); return `${d.getMonth()+1}/${d.getDate()}`; };
+  const sameD=(a,b)=>{ const x=new Date(a),y=new Date(b); return x.getFullYear()===y.getFullYear()&&x.getMonth()===y.getMonth()&&x.getDate()===y.getDate(); };
+  const MAX=30;
+  const shown=ss.length>MAX?ss.slice(ss.length-MAX):ss;
+  if(ss.length>MAX) box.appendChild(div({style:{fontSize:"10px",color:"#475569",marginBottom:"4px"}},`古い ${ss.length-MAX}件は省略`));
+  shown.forEach(s=>{
+    const r=div({style:{display:"flex",alignItems:"center",gap:"7px",padding:"3px 0",fontSize:"11px"}});
+    r.appendChild(div({style:{width:"8px",height:"8px",borderRadius:"2px",flexShrink:0,background:def?def.color:"#64748b"}}));
+    // 1日表示では日付を省く（同じ日なので）。日をまたいだ終了だけ日付を添える
+    const sTxt=`${isDay?"":dLab(s.start)+" "}${tLab(s.start)}`;
+    const eTxt=s.running?"いま":`${sameD(s.start,s.end)?"":dLab(s.end)+" "}${tLab(s.end)}`;
+    r.appendChild(div({style:{flex:1,minWidth:0,color:"#cbd5e1",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},
+      `${s.clipS?"（前から）":""}${sTxt} 〜 ${eTxt}${s.clipE?"（先へ）":""}`));
+    if(s.tag) r.appendChild(div({style:{flexShrink:0,fontSize:"9px",color:"#94a3b8",background:"#1e293b",borderRadius:"7px",padding:"1px 6px"}},`🏷 ${s.tag}`));
+    r.appendChild(div({style:{flexShrink:0,color:"#94a3b8",fontWeight:700}},fmtDur(s.ms)));
+    box.appendChild(r);
+  });
+  box.appendChild(div({style:{fontSize:"10px",color:"#475569",marginTop:"5px"}},`${ss.length}回・合計 ${fmtDur(totalMs)}`));
+  return box;
+}
 function renderModeStatCard(){
   const card=div({className:"card"});
   if(state.modeStatRange==="today") state.modeStatRange="day"; // 旧値の移行
@@ -12023,21 +12068,27 @@ function renderModeStatCard(){
   const bar=div({style:{display:"flex",height:"14px",borderRadius:"7px",overflow:"hidden",marginBottom:"12px",background:"#0f172a"}});
   entries.forEach(([k,ms])=>{ const def=lifeModeDef(k); bar.appendChild(div({style:{width:`${(ms/grand*100).toFixed(3)}%`,background:def?def.color:"#64748b"}})); });
   card.appendChild(bar);
+  card.appendChild(div({style:{fontSize:"10px",color:"#475569",marginTop:"-6px",marginBottom:"8px"}},"モード名をタップすると、何時から何時までだったかを表示"));
   // 一覧
   // 直前の同じ長さの期間との比較（1日なら前日比）
   const prevTot=modeTotalsForRange(per.prevList);
   const cmpLabel=per.cmpLabel;
-  entries.forEach(([k,ms])=>{ const def=lifeModeDef(k); const row=div({style:{display:"flex",alignItems:"center",gap:"9px",padding:"5px 0",borderBottom:"1px solid #1e293b"}});
+  entries.forEach(([k,ms])=>{ const def=lifeModeDef(k);
+    const openK=state.modeStatOpenKey===k;
+    const row=div({style:{display:"flex",alignItems:"center",gap:"9px",padding:"5px 0",borderBottom:"1px solid #1e293b",cursor:"pointer"}});
     row.appendChild(div({style:{width:"18px",fontSize:"17px",textAlign:"center",flexShrink:0}},def?def.icon:"🕒"));
     const lbl=div({style:{flex:1,minWidth:0}});
-    lbl.appendChild(div({style:{fontSize:"13px",color:"#e2e8f0",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},def?def.label:k));
+    lbl.appendChild(div({style:{fontSize:"13px",color:"#e2e8f0",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},`${openK?"▾":"▸"} ${def?def.label:k}`));
     if(prevTot){ const d=ms-(prevTot[k]||0);
       if(Math.abs(d)>=60000) lbl.appendChild(div({style:{fontSize:"9px",color:d>0?"#4ade80":"#f97316"}},`${d>0?"↑":"↓"} ${cmpLabel} ${fmtDur(Math.abs(d))}`));
     }
     row.appendChild(lbl);
     row.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:def?def.color:"#cbd5e1",flexShrink:0}},fmtDur(ms)));
     row.appendChild(div({style:{fontSize:"11px",color:"#64748b",width:"36px",textAlign:"right",flexShrink:0}},`${Math.round(ms/grand*100)}%`));
+    row.addEventListener('click',(()=>{const kk=k;return()=>{ state.modeStatOpenKey=(state.modeStatOpenKey===kk)?null:kk; render(); };})());
     card.appendChild(row);
+    // タップで「何時から何時まで」を展開（この期間のセッション一覧）
+    if(openK) card.appendChild(modeSessionListBox(list,k,ms,def,isDay));
     // 目標時間の達成ゲージ（1日あたりで比較）
     const goal=modeGoalMin(k);
     if(goal>0){
