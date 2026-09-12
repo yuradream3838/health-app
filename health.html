@@ -222,7 +222,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.46"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.47"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -676,14 +676,22 @@ function outlineDarkText(root){
     };
     root.querySelectorAll('[style*="color"]').forEach(el=>{
       const st=el.style;
-      if(!st || !st.color || st.textShadow) return;
+      if(!st || !st.color) return;
+      // 自分で付けた縁取りには印を残し、条件が変わったら外せるようにする。
+      // （ヘッダーは render() で作り直さないので、モードの色が明るくなっても
+      //   外さないと縁取りが残り続ける）
+      const mine=el.dataset && el.dataset.outlined==='1';
+      if(st.textShadow && !mine) return;         // 自前以外の影には触らない
       // var(--mode) などの変数も対象にする（モードの色を黒にすると文字が見えなくなるため）
       const fg=st.color.indexOf('var(')>=0 ? parse(getComputedStyle(el).color) : parse(st.color);
-      if(!fg || lum(fg)>=40) return;            // 黒に近い色だけが対象（薄いグレーの文字は対象外）
-      let bg=null, p=el;
-      while(p && p!==root){ const c=parse(p.style&&p.style.background); if(c){ bg=c; break; } p=p.parentElement; }
-      if(bg && lum(bg)>=120) return;            // 明るいブロックの上の濃い文字はそのままで読める
-      st.textShadow=TEXT_OUTLINE;
+      let want = !!fg && lum(fg)<40;             // 黒に近い色だけが対象（薄いグレーの文字は対象外）
+      if(want){
+        let bg=null, p=el;
+        while(p && p!==root){ const c=parse(p.style&&p.style.background); if(c){ bg=c; break; } p=p.parentElement; }
+        if(bg && lum(bg)>=120) want=false;       // 明るいブロックの上の濃い文字はそのままで読める
+      }
+      if(want){ st.textShadow=TEXT_OUTLINE; if(el.dataset) el.dataset.outlined='1'; }
+      else if(mine){ st.textShadow=''; delete el.dataset.outlined; }
     });
   }catch(_){}
 }
@@ -7756,7 +7764,8 @@ function renderDaySchedule(vd,ds,isToday){
   // 前日の「翌日」射精は当日(vd)の早朝として表示
   const prevEjacTails=(getDaily(addDays(vd,-1)).ejaculations||[]).filter(ej=>ej.startNextDay).map(ej=>{
     const s=(ej.hour||0)*60+(ej.min||0); const tagAbbr=ej.tag==="自慰"?"ON":ej.tag==="セックス"?"SE":(ej.tag||"");
-    return {title:`💧${tagAbbr?" "+tagAbbr:""}`,startMin:s,endMin:s+12,isPoint:true,color:"#ec4899"};
+    // 色は設定した表示色を使う（当日分と同じ。ここだけ固定色だと「翌日」の記録だけ色が変わらない）
+    return {title:`💧${tagAbbr?" "+tagAbbr:""}`,startMin:s,endMin:s+12,isPoint:true,color:getEjacColor()};
   });
   const actuals=[...getActualActivities(vd), ...prevActuals, ...prevEjacTails];
 
