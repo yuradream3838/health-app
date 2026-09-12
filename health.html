@@ -222,7 +222,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.45"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.46"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -2404,6 +2404,28 @@ function peekDisabled(el){
   c.addEventListener('click',()=>showToast('👁 プレビュー中：ボタンの確認だけです','#a5b4fc'));
   return c;
 }
+// 🩹 ケアをその場で呼べる行。生活モード／飲みモードの画面の上部に出す。
+//   つらくなったときに切替画面まで戻らなくていいように、いちばん上に置く。
+//   ケアを終えると直前のモードへ自動で戻るので、押しても居場所は失われない。
+function careQuickRow(peek){
+  const cur=currentLifeModeKey();
+  const box=div({style:{marginBottom:'14px'}});
+  box.appendChild(div({style:{fontSize:'10px',color:'#94a3b8',marginBottom:'5px',textAlign:'center'}},'🩹 つらくなったら（終えると元のモードへ戻ります）'));
+  const g=div({style:{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:'6px'}});
+  getLifeModes().filter(m=>m.care).forEach(m=>{
+    const on=cur===m.key;
+    let b=btn({style:{padding:'8px 3px',borderRadius:'10px',border:`1px solid ${on?m.color:'#ffffff26'}`,background:on?m.color+'22':'#ffffff0d',
+      color:on?m.color:'#cbd5e1',fontSize:'10px',fontWeight:600,cursor:'pointer',fontFamily:'inherit',lineHeight:1.3}},[
+      div({style:{fontSize:'17px'}},m.icon),
+      div({style:{marginTop:'2px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}},m.label+(on?' ●':''))
+    ]);
+    b.addEventListener('click',(()=>{const k=m.key;return()=>openLifeMode(k);})());
+    if(peek) b=peekDisabled(b);   // プレビュー中はボタンの有無だけ見せる
+    g.appendChild(b);
+  });
+  box.appendChild(g);
+  return box;
+}
 function peekBanner(key){
   const def=lifeModeDef(key)||{}, cur=lifeModeDef(currentLifeModeKey())||{};
   const box=div({style:{background:'#ffffff12',border:'1px dashed #ffffff3d',borderRadius:'11px',padding:'9px 11px',marginBottom:'12px'}});
@@ -2987,6 +3009,8 @@ function renderLifeScreen(){
       el.appendChild(sb);
     } else el.appendChild(div({style:{fontSize:'11px',color:'#94a3b8'}},''));
     inner.appendChild(el); }
+  // 🩹 ケアは生活モードの画面からすぐ呼べるように上に置く
+  if(key==='life') inner.appendChild(careQuickRow(peek));
   // いまの体調（どのモード画面でも同じ内容・同じ保存先）
   appendModeCondition(inner,def.color,SELF_COND_PAL_LIFE);
   const c=def.content;
@@ -3355,6 +3379,8 @@ function renderSelfMode(){
       div({id:"selfmode-elapsed",style:{fontSize:"17px",fontWeight:800,color:M.accent}},fmtSecMS(Math.round((Date.now()-selfModeStartAt())/1000)))
     ]));
   }
+  // 🩹 ケアは飲みモードの画面からもすぐ呼べるように上に置く（ケア画面自身には出さない）
+  if(key==='drink') inner.appendChild(careQuickRow(peek));
   // いまの体調（体調記録と同じ項目・同じ保存先）。すでにこの時間の記録があれば入力欄は出さない
   appendModeCondition(inner,M.accent);
 
