@@ -222,7 +222,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.43"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.44"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -5740,6 +5740,7 @@ function getActualActivities(vd){
   [addDays(vd,-1), vd].forEach(DD=>{
     (state.customTodos||[]).forEach(ct=>{
       const rec=(state.todos[DD]||{})[ct.uid];
+      if(rec&&rec.excluded)return;      // 除外した回は実績にも出さない（予定側・ルーティンと同じ扱い）
       const cE=customTodoCfgFor(ct,DD); // その日の有効な定義（過去は変更前のまま）
       const ctLbl=(rec&&rec.labelOverride)||cE.label; // その日だけ名前変更を実績にも反映
       const ctNote=(rec&&rec.noteOverride)?`：${rec.noteOverride}`:"";
@@ -5760,7 +5761,7 @@ function getActualActivities(vd){
   //  完了時刻の記録がない（チェックのみ）当日該当分は、予定時刻の位置に表示
   (state.customTodos||[]).forEach(ct=>{
     const rec=(state.todos[vd]||{})[ct.uid];
-    if(rec&&rec.checked&&!rec.time){ const ctLbl=rec.labelOverride||ct.label; const ctNote=rec.noteOverride?`：${rec.noteOverride}`:""; const tt=customTodoTimeFor(ct,vd); if(tt){ const sp=customTodoSpan(tt); if(sp.s<1440) acts.push({title:"✓"+ctLbl+ctNote,startMin:sp.s,endMin:Math.min(1440,sp.e),isPoint:(sp.e-sp.s)<=12,color:ct.color||"#22c55e",ctUid:ct.uid,ownDay:vd}); } }
+    if(rec&&rec.checked&&!rec.excluded&&!rec.time){ const ctLbl=rec.labelOverride||ct.label; const ctNote=rec.noteOverride?`：${rec.noteOverride}`:""; const tt=customTodoTimeFor(ct,vd); if(tt){ const sp=customTodoSpan(tt); if(sp.s<1440) acts.push({title:"✓"+ctLbl+ctNote,startMin:sp.s,endMin:Math.min(1440,sp.e),isPoint:(sp.e-sp.s)<=12,color:ct.color||"#22c55e",ctUid:ct.uid,ownDay:vd}); } }
   });
   // 手動登録した実績（予定外・突発的な行動を含む）。日跨ぎは当日側を末尾までクリップ
   (daily.actuals||[]).forEach(a=>{
