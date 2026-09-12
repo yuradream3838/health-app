@@ -222,7 +222,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.40"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.41"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -7997,20 +7997,35 @@ function renderDaySchedule(vd,ds,isToday){
   //   モードのセッション記録(modeLog)を当日0〜24時に切り出す。左右両端に色帯を出し、
   //   実績ブロックの上（z4）に重ねるので、実績がたくさんあってもモード色が見える。中央は透明でブロックを隠さない。
   //   pointer-events:none なのでタップは下の実績ブロック／空きレイヤーへ通る。
+  //   実績列の幅は「いま」の前後で変わるので、色帯もそれに合わせる。
+  //   いまをまたぐモードは境目で切って左右幅を変えるため、実績ブロックと段の位置が揃う。
   (function(){
     const EDGE=6; // 色帯の幅（左右それぞれ）
+    const TLH=(END_H-START_H)*HOUR_H;
+    const nm=nowMinForSplit;
     modeSegmentsForDay(vd).forEach(sg=>{
       const def=sg.def;
-      const sMin=sg.startMin, eMin=sg.endMin;
-      const top=((sMin/60)-START_H)*HOUR_H, height=Math.max(2,((eMin-sMin)/60)*HOUR_H);
-      if(top+height<0||top>(END_H-START_H)*HOUR_H) return;
-      const band=div({style:{position:"absolute",top:`${Math.max(0,top)}px`,left:"calc(50% + 2px)",width:"calc(50% - 6px)",height:`${height}px`,
-        borderLeft:`${EDGE}px solid ${def.color}`,borderRight:`${EDGE}px solid ${def.color}`,background:def.color+"14",
-        borderRadius:"3px",zIndex:4,pointerEvents:"none",boxSizing:"border-box",overflow:"hidden"}});
-      // モード識別用の小さなアイコンチップ（実績名を隠さないよう右寄せ・ブロックの上でも読めるよう半透明の下地付き）
-      if(height>=20) band.appendChild(div({style:{position:"absolute",top:"1px",right:"2px",fontSize:"10px",lineHeight:1.2,padding:"1px 4px",borderRadius:"6px",
-        background:"#0b1120cc",color:def.color,fontWeight:700,whiteSpace:"nowrap"}}, `${def.icon}${height>=40?" "+def.label:""}`));
-      tl.appendChild(band);
+      // 「いま」で分割（またがないモードはそのまま1つ）
+      const parts=(nm===Infinity||nm===-Infinity||sg.endMin<=nm||sg.startMin>=nm)
+        ? [[sg.startMin,sg.endMin]]
+        : [[sg.startMin,nm],[nm,sg.endMin]];
+      const drawn=parts.map(([sMin,eMin])=>{
+        const top=((sMin/60)-START_H)*HOUR_H, height=Math.max(2,((eMin-sMin)/60)*HOUR_H);
+        return {sMin,eMin,top,height,f:splitAt((sMin+eMin)/2)};
+      }).filter(p=>!(p.top+p.height<0||p.top>TLH));
+      if(!drawn.length) return;
+      // アイコンチップは一番高い段にだけ出す（分割しても二重に出さない）
+      const chipAt=drawn.reduce((a,b)=>b.height>a.height?b:a, drawn[0]);
+      drawn.forEach(p=>{
+        const first=p===drawn[0], last=p===drawn[drawn.length-1];
+        const band=div({style:{position:"absolute",top:`${Math.max(0,p.top)}px`,left:`calc(${pct(p.f)} + 2px)`,width:`calc(${pct(1-p.f)} - 6px)`,height:`${p.height}px`,
+          borderLeft:`${EDGE}px solid ${def.color}`,borderRight:`${EDGE}px solid ${def.color}`,background:def.color+"14",
+          borderRadius:`${first?"3px 3px":"0 0"} ${last?"3px 3px":"0 0"}`,zIndex:4,pointerEvents:"none",boxSizing:"border-box",overflow:"hidden"}});
+        // モード識別用の小さなアイコンチップ（実績名を隠さないよう右寄せ・ブロックの上でも読めるよう半透明の下地付き）
+        if(p===chipAt && p.height>=20) band.appendChild(div({style:{position:"absolute",top:"1px",right:"2px",fontSize:"10px",lineHeight:1.2,padding:"1px 4px",borderRadius:"6px",
+          background:"#0b1120cc",color:def.color,fontWeight:700,whiteSpace:"nowrap"}}, `${def.icon}${p.height>=40?" "+def.label:""}`));
+        tl.appendChild(band);
+      });
     });
   })();
   blockArea(actuals,"actual","#22c55e",(ev)=>{ if(ev._tail){ state.viewDate=addDays(vd,-1); render(); return; } if(ev.manualUid) openActualEdit(vd, ev.manualUid); else if(ev.ctUid){ const ctx=(state.customTodos||[]).find(c=>c.uid===ev.ctUid); state.planCustomTodo={uid:ev.ctUid,label:(ctx&&ctx.label)||"定期ルーティン",vd:ev.ownDay||vd,editMode:true}; state.modal="planCustomTodo"; render(); } else if(ev.routineKey) openRoutineActualEdit(ev.ownDay||vd, ev.routineKey, ev.routineBase); else if(ev.noteKey) openActualMemo(vd, ev.noteKey, ev.title); });
