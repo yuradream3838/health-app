@@ -222,7 +222,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.47"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.48"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -7278,19 +7278,25 @@ function renderPlanPatternPanel(){
     const lkRow=div({style:{marginTop:"8px",display:"flex",alignItems:"center",gap:"6px",flexWrap:"wrap"}});
     lkRow.appendChild(span({style:{fontSize:"10px",color:"#64748b",flexShrink:0}},"🔗 連動ルーティン"));
     const lkSel=document.createElement('select');lkSel.className='sel';lkSel.style.cssText="flex:1;min-width:120px;font-size:12px;padding:4px 2px";
-    const lkVal=lk=>!lk?"":(lk.t==="set"?"set:"+lk.key:lk.t==="item"?"item:"+lk.id:lk.t);
+    const lkVal=lk=>!lk?"":(lk.t==="set"?"set:"+lk.key:lk.t==="item"?"item:"+lk.id:lk.t==="off"?"none":lk.t);
     const curLk=lkVal(p.linkRoutine);
     const addOpt=(val,label)=>{const o=document.createElement('option');o.value=val;o.textContent=label;if(val===curLk)o.selected=true;lkSel.appendChild(o);};
-    addOpt("","なし");
+    // 未設定のときは「名前が同じまとめ／項目」に自動で連動するので、それを見えるようにする
+    const auto=p.linkRoutine?null:autoLinkRoutine(p);
+    const autoName=!auto?null:(auto.t==="set"
+      ?((state.routines||[]).find(g=>g.key===auto.key)||{}).title
+      :(getTodoItems().find(i=>i.id===auto.id)||{}).label);
+    addOpt("", auto?`自動（${autoName||""} と連動）`:"なし（名前が同じものに自動連動）");
+    addOpt("none","連動しない");
     addOpt("wake","🌅 起床時刻を入力");
     addOpt("bed","🌙 就寝時刻を入力");
     addOpt("work","💼 シフトの時間を入力");
     (state.routines||[]).forEach(g=>addOpt("set:"+g.key,"セット: "+(g.title||g.key)));
     getTodoItems().forEach(it=>addOpt("item:"+it.id,"単体: "+it.label));
-    lkSel.addEventListener('change',e=>{ const v=e.target.value; let lk=null; if(v==="wake"||v==="bed"||v==="work")lk={t:v}; else if(v.indexOf("set:")===0)lk={t:"set",key:v.slice(4)}; else if(v.indexOf("item:")===0)lk={t:"item",id:v.slice(5)}; upd(p.uid,{linkRoutine:lk}); });
+    lkSel.addEventListener('change',e=>{ const v=e.target.value; let lk=null; if(v==="none")lk={t:"off"}; else if(v==="wake"||v==="bed"||v==="work")lk={t:v}; else if(v.indexOf("set:")===0)lk={t:"set",key:v.slice(4)}; else if(v.indexOf("item:")===0)lk={t:"item",id:v.slice(5)}; upd(p.uid,{linkRoutine:lk}); });
     lkRow.appendChild(lkSel);
     body.appendChild(lkRow);
-    body.appendChild(div({style:{fontSize:"9px",color:"#475569",marginTop:"3px"}},"連動先が完了すると、予定タブでこの予定がグレーアウトします"));
+    body.appendChild(div({style:{fontSize:"9px",color:"#475569",marginTop:"3px"}},"連動先が完了すると、予定タブでこの予定がグレーアウトします。未設定なら名前が同じまとめ／項目に自動で連動します"));
     card.appendChild(box);
   });
   const templates=[{t:"😴 睡眠",c:"#60a5fa",s:[23,0],e:[7,0]},{t:"🏋️ 運動",c:"#22c55e",s:[19,0],e:[20,0]},{t:"🍽️ 食事",c:"#fb923c",s:[12,0],e:[13,0]}];
@@ -7702,8 +7708,21 @@ function routineSetAllDone(setObj, vd){
   if(!ids.length)return false;
   return ids.every(id=>{ const item=getTodoItems().find(x=>x.id===id); return item?isTodoDone(vd,item):true; });
 }
+// 🔗 連動ルーティンが未設定でも、**名前が同じ**「ルーティンのまとめ」や項目があれば自動で連動する。
+//    （🍳朝食 のパターン予定 ↔ 🍳朝食 のまとめ。設定を忘れていても完了でグレーアウトする）
+//    絵文字・記号・空白は無視して、文字と数字だけで完全一致を見る。
+function normLinkName(s){ try{ return String(s||"").replace(/[^\p{L}\p{N}]/gu,""); }catch(_){ return String(s||"").replace(/[^0-9A-Za-z぀-ヿ一-鿿]/g,""); } }
+function autoLinkRoutine(p){
+  const n=normLinkName(p&&p.title); if(!n) return null;
+  const g=(state.routines||[]).find(x=>normLinkName(x.title)===n && (x.ids||[]).length);
+  if(g) return {t:"set",key:g.key,auto:true};
+  const it=getTodoItems().find(x=>normLinkName(x.label)===n);
+  if(it) return {t:"item",id:it.id,auto:true};
+  return null;
+}
 function patternLinkDone(p, vd){
-  const lk=p&&p.linkRoutine; if(!lk)return false;
+  const lk=(p&&p.linkRoutine)||autoLinkRoutine(p); if(!lk)return false;
+  if(lk.t==="off")return false;                                   // 「連動しない」を明示した場合
   if(lk.t==="set"){ const s=(state.routines||[]).find(g=>g.key===lk.key); return s?routineSetAllDone(s,vd):false; }
   if(lk.t==="item"){ const item=getTodoItems().find(x=>x.id===lk.id); return item?isTodoDone(vd,item):false; }
   if(lk.t==="wake"){ return getDaily(vd).wakeTime!=null; }        // 起床時刻を入力したら
