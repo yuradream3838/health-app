@@ -222,7 +222,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.44"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.45"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -275,7 +275,7 @@ const SAVE_TARGETS=[
 ];
 // 戻す（元に戻す／最近の保存）で復元する state フィールド。
 const UNDO_FIELDS=(()=>{
-  const base=["logs","dailies","todos"];                 // 体調記録・日次記録・ルーティンの実施
+  const base=["logs","dailies","todos","modeLog"];        // 体調記録・日次記録・ルーティンの実施・モードの時間
   const set=new Set(base);
   SAVE_TARGETS.forEach(t=>{ (Array.isArray(t[1])?t[1]:[t[1]]).forEach(f=>set.add(f)); });
   return [...set];
@@ -290,6 +290,7 @@ function persistAll(){
   saveStorage();
   SAVE_TARGETS.forEach(t=>{ const f=window[t[0]]; if(typeof f==='function'){ try{ f(); }catch(_){} } });
   safeSet(STORAGE_KEY+"_todo",JSON.stringify(state.todos));
+  try{ saveModeLog(); }catch(_){}   // モードの時間（SAVE_TARGETSには入れていないので個別に）
 }
 function saveGoals(){ safeSet(STORAGE_KEY+"_goals",JSON.stringify(state.goals)); }
 // ── 🕘 保存の履歴（直前10件・設定画面から1つずつ戻せる）──
@@ -312,6 +313,19 @@ function recordSave(label,detail,key){
     h.unshift({id:String(now)+'-'+Math.random().toString(36).slice(2,7),ts:now,label,detail:detail||'',key:key||null,snap:before});
     if(h.length>SAVE_HIST_MAX) h.length=SAVE_HIST_MAX;
   }
+  _prevSnap=snapshotData();
+}
+// モードの切替は自動でも起きるので履歴には載せない。ただし modeLog も戻す対象なので、
+// 切り替わるたびに「前」の基準だけ更新しておかないと、別の保存を戻したときに
+// 切り替えまで巻き戻ってしまう。手で時間を直したときだけ _modeEditLabel を立てて履歴に残す。
+let _modeEditLabel=null;
+function touchSnapBaseline(){
+  if(!_histReady||_histBusy) return;
+  if(state&&state.viewingBackup) return;
+  // 既に積んである履歴の「前」にも、いまの切替ログを写しておく。
+  // こうしないと、8秒以内にまとめられた保存を戻したときにモードの切替まで巻き戻る。
+  // （手で直した履歴＝key==='modeLog' はその時点へ戻すためのものなので触らない）
+  try{ getSaveHist().forEach(e=>{ if(e.key!=='modeLog'&&e.snap) e.snap.modeLog=JSON.parse(JSON.stringify(state.modeLog)); }); }catch(_){}
   _prevSnap=snapshotData();
 }
 // 1件だけ戻す。スナップショットは全体なので、戻せるのは「いちばん新しい保存」だけ。
@@ -1390,6 +1404,8 @@ function render(){
     if(state.modal==="food"){ const mo=renderFoodModal(todayStr()); mo.style.zIndex="10000"; content.appendChild(mo); }
     // トレーニングモードの体組成記録（写真からの入力を含む）も上に重ねる
     if(state.modal==="bodyComp"){ const mo=renderBodyCompModal(); mo.style.zIndex="10000"; content.appendChild(mo); }
+    // 「◯:◯◯ 開始」をタップ＝モードの時間を直す（切り替え忘れの修正）
+    if(state.modal==="modeTime"){ const mo=renderModeTimeModal(); mo.style.zIndex="10000"; content.appendChild(mo); }
     tintSurfaces(content); return; }
 
   const ds=todayStr(), vd=state.viewDate, curH=new Date().getHours();
@@ -1409,6 +1425,7 @@ function render(){
   if(state.modal==="editEnd")  content.appendChild(renderEditEndModal(vd));
   if(state.modal==="editTimer")content.appendChild(renderEditTimerModal(vd));
   if(state.modal==="editCheckTime")content.appendChild(renderEditCheckTimeModal(vd));
+  if(state.modal==="modeTime") content.appendChild(renderModeTimeModal());
   if(state.customTodoModal)content.appendChild(renderCustomTodoModal());
   if(state.modal==="editSession")content.appendChild(renderEditSessionModal(vd));
   if(state.modal==="addEjac")  content.appendChild(renderAddEjacModal(vd));
@@ -2293,6 +2310,50 @@ function ensureActiveMode(){ if(!currentModeSession()){ switchLifeMode(getDefaul
 // 帰宅ルーティン（gohomeグループ）が全て完了しているか。項目が無ければ完了扱い
 function gohomeComplete(vd){ const items=routineGroupItems('gohome'); if(!items.length) return true; return items.every(it=>isTodoDone(vd,it)); }
 function endLifeMode(){ const cur=currentModeSession(); if(cur){ cur.end=Date.now(); saveModeLog(); } }
+// ── 🕒 モードの時間を直す ──────────────────────────────
+// モードの記録は「隙間も重なりもない鎖」（切り替えのたびに前を同じ瞬間に閉じる）。
+// なので編集するのは**境目ひとつ**で、開始を動かせば前のセッションの終わりも一緒に動く。
+// 両側には最低1分残す。隣と離れている（アプリを使っていなかった空白がある）場合は、
+// 空白の中でだけ動かせる＝隣を侵食しない。
+const MODE_MIN_MS=60000;
+// その境目を動かせる範囲と、一緒に動く隣のセッションを返す
+function modeSessionBounds(sess,which){
+  const log=getModeLog(), i=log.indexOf(sess);
+  if(i<0) return null;
+  const now=Date.now(), prev=log[i-1], next=log[i+1];
+  const near=(a,b)=>Math.abs(a-b)<1000; // 同じ瞬間＝鎖でつながっている
+  if(which==='start'){
+    const contig=!!(prev && near(prev.end||now, sess.start));
+    let lo=sess.start-7*86400000;                        // 隣が無いときの安全な下限
+    if(prev) lo = contig ? prev.start+MODE_MIN_MS : (prev.end||now);
+    return {lo, hi:(sess.end||now)-MODE_MIN_MS, other:contig?prev:null, prev, next};
+  }
+  if(sess.end==null) return null;                        // 進行中は終了を変えられない
+  const contig=!!(next && near(next.start, sess.end));
+  let hi=now;
+  if(next) hi = contig ? ((next.end||now)-MODE_MIN_MS) : next.start;
+  return {lo:sess.start+MODE_MIN_MS, hi:Math.min(hi,now), other:contig?next:null, prev, next};
+}
+// 実際に動かす。範囲外なら理由を返して何も変えない
+function setModeSessionTime(sess,which,ts){
+  const b=modeSessionBounds(sess,which);
+  if(!b) return {ok:false,msg:which==='end'?"進行中のモードは終了時刻を変えられません":"この記録は編集できません"};
+  if(!(ts>=b.lo&&ts<=b.hi)) return {ok:false,msg:"前後のモードと重なるので、その時刻にはできません"};
+  if(which==='start'){ if(b.other) b.other.end=ts; sess.start=ts; }
+  else { if(b.other) b.other.start=ts; sess.end=ts; }
+  return {ok:true};
+}
+// 入力された時刻(h:m)を、動かせる範囲に収まる日付へ自動で合わせる。
+// 0時をまたぐモード（睡眠など）でも「前日にする」のような操作が要らない。
+function resolveModeTime(sess,which,h,mi){
+  const b=modeSessionBounds(sess,which); if(!b) return null;
+  const orig=(which==='start'?sess.start:sess.end), base=new Date(orig);
+  const cands=[-1,0,1]
+    .map(off=>new Date(base.getFullYear(),base.getMonth(),base.getDate()+off,h,mi,0,0).getTime())
+    .filter(ts=>ts>=b.lo&&ts<=b.hi);
+  if(!cands.length) return null;
+  return cands.sort((x,y)=>Math.abs(x-orig)-Math.abs(y-orig))[0];
+}
 // そのモードを「終了」したとき、自動で次に入る生活モード
 //   😴睡眠 →（起床したら）☀️朝 ／ 🍶飲み →（飲み終わったら）🛋休息
 const MODE_AFTER_FINISH={ sleep:"morning", drink:"rest", sleepprep:"sleep" };
@@ -2538,7 +2599,7 @@ function modeSessionsForRange(dsList,key){
     const rawEnd=(s.end||now);
     const st=Math.max(s.start,from), en=Math.min(rawEnd,to);
     if(en<=st) return;
-    out.push({start:st,end:en,ms:en-st,tag:s.tag||null,
+    out.push({start:st,end:en,ms:en-st,tag:s.tag||null,ref:s,
       running:!s.end && rawEnd<=to, clipS:s.start<from, clipE:rawEnd>to});
   });
   return out.sort((a,b)=>a.start-b.start);
@@ -2915,11 +2976,17 @@ function renderLifeScreen(){
   back.addEventListener('click',()=>{ state.lifeScreen=null; state.peekMode=null; render(); });
   top.appendChild(back); inner.appendChild(top);
   if(peek) inner.appendChild(peekBanner(key));
-  inner.appendChild(div({style:{textAlign:'center',margin:'6px 0 18px'}},[
+  { const el=div({style:{textAlign:'center',margin:'6px 0 18px'}});
     // プレビュー中は他のモードの経過を出さないよう、毎秒更新のidは付けない
-    div(peek?{style:{fontSize:'40px',fontWeight:800,color:'#475569'}}:{id:'lifescreen-elapsed',style:{fontSize:'40px',fontWeight:800,color:'#f1f5f9'}}, s?fmtDur(Date.now()-s.start):'—'),
-    div({style:{fontSize:'11px',color:'#94a3b8'}}, s?`${hhmm(new Date(s.start).getHours(),new Date(s.start).getMinutes())} 開始`:'')
-  ]));
+    el.appendChild(div(peek?{style:{fontSize:'40px',fontWeight:800,color:'#475569'}}:{id:'lifescreen-elapsed',style:{fontSize:'40px',fontWeight:800,color:'#f1f5f9'}}, s?fmtDur(Date.now()-s.start):'—'));
+    if(s){
+      // 開始時刻をタップして直せる（切り替え忘れたときに遡る）
+      const sb=btn({style:{background:'transparent',border:'1px solid #ffffff1f',borderRadius:'8px',padding:'3px 10px',color:'#94a3b8',fontSize:'11px',cursor:'pointer',fontFamily:'inherit'}},
+        `${hhmm(new Date(s.start).getHours(),new Date(s.start).getMinutes())} 開始 ✏️`);
+      sb.addEventListener('click',()=>openModeTimeEdit(s));
+      el.appendChild(sb);
+    } else el.appendChild(div({style:{fontSize:'11px',color:'#94a3b8'}},''));
+    inner.appendChild(el); }
   // いまの体調（どのモード画面でも同じ内容・同じ保存先）
   appendModeCondition(inner,def.color,SELF_COND_PAL_LIFE);
   const c=def.content;
@@ -12034,18 +12101,20 @@ function modeSessionListBox(dsList,key,totalMs,def,isDay){
   const shown=ss.length>MAX?ss.slice(ss.length-MAX):ss;
   if(ss.length>MAX) box.appendChild(div({style:{fontSize:"10px",color:"#475569",marginBottom:"4px"}},`古い ${ss.length-MAX}件は省略`));
   shown.forEach(s=>{
-    const r=div({style:{display:"flex",alignItems:"center",gap:"7px",padding:"3px 0",fontSize:"11px"}});
+    const r=div({style:{display:"flex",alignItems:"center",gap:"7px",padding:"3px 0",fontSize:"11px",cursor:"pointer"}});
     r.appendChild(div({style:{width:"8px",height:"8px",borderRadius:"2px",flexShrink:0,background:def?def.color:"#64748b"}}));
     // 1日表示では日付を省く（同じ日なので）。日をまたいだ終了だけ日付を添える
     const sTxt=`${isDay?"":dLab(s.start)+" "}${tLab(s.start)}`;
     const eTxt=s.running?"いま":`${sameD(s.start,s.end)?"":dLab(s.end)+" "}${tLab(s.end)}`;
     r.appendChild(div({style:{flex:1,minWidth:0,color:"#cbd5e1",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},
-      `${s.clipS?"（前から）":""}${sTxt} 〜 ${eTxt}${s.clipE?"（先へ）":""}`));
+      `${s.clipS?"（前から）":""}${sTxt} 〜 ${eTxt}${s.clipE?"（先へ）":""} ✏️`));
+    // タップで時間を直す（期間の端で切れていても、直すのは元のセッション）
+    r.addEventListener('click',(()=>{const ref=s.ref;return()=>openModeTimeEdit(ref);})());
     if(s.tag) r.appendChild(div({style:{flexShrink:0,fontSize:"9px",color:"#94a3b8",background:"#1e293b",borderRadius:"7px",padding:"1px 6px"}},`🏷 ${s.tag}`));
     r.appendChild(div({style:{flexShrink:0,color:"#94a3b8",fontWeight:700}},fmtDur(s.ms)));
     box.appendChild(r);
   });
-  box.appendChild(div({style:{fontSize:"10px",color:"#475569",marginTop:"5px"}},`${ss.length}回・合計 ${fmtDur(totalMs)}`));
+  box.appendChild(div({style:{fontSize:"10px",color:"#475569",marginTop:"5px"}},`${ss.length}回・合計 ${fmtDur(totalMs)}　時間帯をタップで修正`));
   return box;
 }
 function renderModeStatCard(){
@@ -14319,6 +14388,97 @@ function renderEditCheckTimeModal(vd){
   bg.appendChild(m);return bg;
 }
 
+// ── 🕒 モードの時間を直すモーダル ──────────────────────
+// 入口は2つ：モード画面の「◯:◯◯ 開始 ✏️」と、分析→モード別の時間→時間帯の一覧。
+// どちらも同じ画面を開く。編集するのは境目なので、前後のモードの時間も一緒に動く。
+function openModeTimeEdit(sess){
+  const i=getModeLog().indexOf(sess);
+  if(i<0){ showToast("この記録は編集できません"); return; }
+  state.modeEditIdx=i;
+  state.modeEditStart=sess.start;
+  state.modeEditEnd=(sess.end!=null?sess.end:null);
+  state.modal="modeTime"; render();
+}
+function renderModeTimeModal(){
+  const log=getModeLog(), sess=log[state.modeEditIdx];
+  const bg=div({className:"modal-center"});
+  const m=div({className:"modal-box",style:{maxHeight:"85vh",overflowY:"auto"}});
+  bg.addEventListener('click',()=>{state.modal=null;render();});
+  m.addEventListener('click',e=>e.stopPropagation());
+  const close=()=>{ state.modal=null; render(); };
+  if(!sess){ m.appendChild(div({style:{fontSize:"13px",color:"#94a3b8"}},"この記録は見つかりませんでした。"));
+    m.appendChild(btn({className:"btn-ghost",style:{width:"100%",marginTop:"10px"},onClick:close},"閉じる")); bg.appendChild(m); return bg; }
+  const def=lifeModeDef(sess.key)||{icon:"🕒",label:sess.key,color:"#64748b"};
+  const running=(sess.end==null);
+  const bS=modeSessionBounds(sess,'start'), bE=modeSessionBounds(sess,'end');
+  const two=n=>String(n).padStart(2,'0');
+  const tv=ts=>{ const d=new Date(ts); return `${two(d.getHours())}:${two(d.getMinutes())}`; };
+  const dLab=ts=>{ const d=new Date(ts); return `${d.getMonth()+1}/${d.getDate()}(${"日月火水木金土"[d.getDay()]})`; };
+  const nb=s=>{ if(!s) return null; const d=lifeModeDef(s.key); return d?`${d.icon} ${d.label}`:s.key; };
+
+  m.appendChild(div({style:{fontSize:"15px",fontWeight:700,color:"#e2e8f0",marginBottom:"2px"}},`${def.icon} ${def.label} の時間を直す`));
+  m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"12px"}},dLab(sess.start)));
+
+  // 時刻の入力欄（前後のモードと重ならない範囲に入る日付へ自動で合わせる）
+  const timeField=(which,label,val,onSet)=>{
+    const w=div({style:{marginBottom:"12px"}});
+    const nbTxt = which==='start' ? nb(bS&&bS.other) : nb(bE&&bE.other);
+    w.appendChild(div({style:{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:"5px"}},[
+      span({style:{fontSize:"11px",color:"#64748b"}},label),
+      nbTxt?span({style:{fontSize:"10px",color:"#475569"}},`${which==='start'?"前":"次"}は ${nbTxt}（一緒に動きます）`):null
+    ]));
+    const inp=document.createElement('input'); inp.type='time'; inp.value=tv(val);
+    inp.style.cssText="width:100%;padding:10px 12px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:16px;font-family:inherit;box-sizing:border-box;color-scheme:dark";
+    inp.addEventListener('change',e=>{
+      const p=(e.target.value||"").split(':'), h=Number(p[0]), mi=Number(p[1]);
+      if(isNaN(h)||isNaN(mi)) return;
+      const ts=resolveModeTime(sess,which,h,mi);
+      if(ts==null){ showToast("前後のモードと重なります"); render(); return; }
+      onSet(ts); render();
+    });
+    w.appendChild(inp);
+    return w;
+  };
+
+  // 開始（＋「切り替え忘れ」用に、まとめて遡れるボタン）
+  m.appendChild(timeField('start',"開始",state.modeEditStart,ts=>{state.modeEditStart=ts;}));
+  { const row=div({style:{display:"flex",gap:"6px",marginTop:"-6px",marginBottom:"14px"}});
+    [["−15分",15],["−30分",30],["−1時間",60]].forEach(([lbl,mins])=>{
+      const b=btn({style:{flex:1,padding:"7px",borderRadius:"8px",border:"1px solid #334155",background:"transparent",color:"#94a3b8",fontSize:"11px",fontWeight:600,cursor:"pointer",fontFamily:"inherit"}},lbl);
+      b.addEventListener('click',()=>{
+        const ts=state.modeEditStart-mins*60000;
+        if(bS && ts<bS.lo){ showToast("これ以上さかのぼれません"); return; }
+        state.modeEditStart=ts; render();
+      });
+      row.appendChild(b);
+    });
+    m.appendChild(row);
+    m.appendChild(div({style:{fontSize:"10px",color:"#475569",marginTop:"-9px",marginBottom:"12px"}},"切り替え忘れはここでまとめて遡れます")); }
+
+  // 終了（進行中は変えられない）
+  if(running) m.appendChild(div({style:{fontSize:"11px",color:"#64748b",padding:"9px 11px",borderRadius:"8px",background:"#0f172a",marginBottom:"12px"}},"終了：進行中（まだ終わっていないので変えられません）"));
+  else m.appendChild(timeField('end',"終了",state.modeEditEnd,ts=>{state.modeEditEnd=ts;}));
+
+  // いまの設定でどうなるか
+  { const len=(running?Date.now():state.modeEditEnd)-state.modeEditStart;
+    m.appendChild(div({style:{fontSize:"12px",color:def.color,fontWeight:700,textAlign:"center",padding:"8px",background:"#0f172a",borderRadius:"8px",marginBottom:"14px"}},
+      `${tv(state.modeEditStart)} 〜 ${running?"いま":tv(state.modeEditEnd)}　${fmtDur(Math.max(0,len))}`)); }
+
+  m.appendChild(div({style:{display:"flex",gap:"8px"}},[
+    btn({className:"btn-ghost",style:{flex:1},onClick:close},"キャンセル"),
+    btn({style:{flex:2,padding:"10px",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:600,cursor:"pointer"},
+      onClick:()=>{
+        // 開始 → 終了 の順に適用（終了の下限は新しい開始を見る）
+        if(state.modeEditStart!==sess.start){ const r=setModeSessionTime(sess,'start',state.modeEditStart); if(!r.ok){ showToast(r.msg); return; } }
+        if(!running && state.modeEditEnd!==sess.end){ const r=setModeSessionTime(sess,'end',state.modeEditEnd); if(!r.ok){ showToast(r.msg); return; } }
+        _modeEditLabel=`${def.label} ${tv(sess.start)}〜`;
+        saveModeLog();
+        state.modal=null; showToast(`🕒 ${def.label}の時間を直しました`); render();
+      }},"保存")
+  ]));
+  bg.appendChild(m); return bg;
+}
+
 function renderEditTimerModal(vd){
   const item=getTodoItems().find(i=>i.id===state.editTimerItemId);
   const bg=div({className:"modal-center"});
@@ -14379,6 +14539,14 @@ SAVE_TARGETS.forEach(t=>{
   if(typeof orig!=='function') return;
   window[name]=function(){ const r=orig.apply(this,arguments); recordSave(label,"",name); return r; };
 });
+// モードの切替ログは自動でも書かれるので、履歴には載せず「前」の基準だけ更新する
+{ const origSML=window.saveModeLog;
+  if(typeof origSML==='function') window.saveModeLog=function(){
+    const r=origSML.apply(this,arguments);
+    if(_modeEditLabel){ recordSave("🕒 モードの時間",_modeEditLabel,"modeLog"); _modeEditLabel=null; }
+    else touchSnapBaseline();
+    return r;
+  }; }
 setTimeout(()=>{ _histReady=true; _prevSnap=snapshotData(); },0); // 起動時の読み込み・移行が終わってから取り始める
 state.forecast=genForecast();
 state.viewDate = todayStr();
