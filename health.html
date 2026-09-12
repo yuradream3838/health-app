@@ -222,7 +222,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.39"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.40"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -7802,17 +7802,41 @@ function renderDaySchedule(vd,ds,isToday){
   zoomCtl.appendChild(zBtn("＋",8));
   zoomRow.appendChild(zoomCtl);
   tlCard.appendChild(zoomRow);
-  tlCard.appendChild(div({style:{display:"flex",marginBottom:"6px"}},[
-    div({style:{width:"34px"}},""),
-    div({style:{flex:1,fontSize:"10px",fontWeight:700,color:"#38bdf8",textAlign:"center"}},"📅 予定"),
-    div({style:{flex:1,fontSize:"10px",fontWeight:700,color:"#22c55e",textAlign:"center"}},"✔ 実際（TODO・睡眠・仕事・飲酒）")
-  ]));
+  // 予定列と実績列の境界は、いまより前／後で位置を変える。
+  //   これから：予定を見たいので予定列を広く。すんだこと：実績を見たいので実績列を広く。
+  const SPLIT_PAST=0.35, SPLIT_FUTURE=0.65, SPLIT_EVEN=0.5;
+  const nowMinForSplit=(()=>{
+    if(vd<ds) return Infinity;   // 過去の日はすべて「すんだこと」
+    if(vd>ds) return -Infinity;  // 未来の日はすべて「これから」
+    const n=new Date(); return n.getHours()*60+n.getMinutes();
+  })();
+  const splitAt=min=>{
+    if(nowMinForSplit===Infinity) return SPLIT_PAST;
+    if(nowMinForSplit===-Infinity) return SPLIT_FUTURE;
+    return min<nowMinForSplit?SPLIT_PAST:SPLIT_FUTURE;
+  };
+  const pct=f=>`${(f*100).toFixed(3)}%`;
+  { const fTop=splitAt(START_H*60); // 見出しは表の上端の比率に合わせる
+    tlCard.appendChild(div({style:{display:"flex",marginBottom:"6px"}},[
+      div({style:{width:"34px"}},""),
+      div({style:{flex:String(fTop),fontSize:"10px",fontWeight:700,color:"#38bdf8",textAlign:"center"}},"📅 予定"),
+      div({style:{flex:String(1-fTop),fontSize:"10px",fontWeight:700,color:"#22c55e",textAlign:"center"}},"✔ 実際（TODO・睡眠・仕事・飲酒）")
+    ])); }
 
   const tl=div({style:{position:"relative",height:`${(END_H-START_H)*HOUR_H}px`}});
   for(let h2=START_H;h2<END_H;h2++){
     tl.appendChild(div({style:{position:"absolute",top:`${(h2-START_H)*HOUR_H}px`,left:0,right:0,borderTop:"1px solid #1e3a5f55",display:"flex"}},[
       div({style:{width:"34px",fontSize:"11px",color:"#64748b",marginTop:"-7px"}},`${h2}:00`)
     ]));
+  }
+  // 予定列と実績列の境目。いまの前後で段差が付くので、幅が違う理由が見て分かる
+  { const H=(END_H-START_H)*HOUR_H;
+    const nm=nowMinForSplit;
+    const segs = (nm===Infinity||nm===-Infinity)
+      ? [[0,H,splitAt(0)]]
+      : (()=>{ const y=Math.max(0,Math.min(H,((nm/60)-START_H)*HOUR_H));
+               return [[0,y,SPLIT_PAST],[y,H,SPLIT_FUTURE]].filter(([a,b])=>b>a); })();
+    segs.forEach(([a,b,f])=>{ tl.appendChild(div({style:{position:"absolute",top:`${a}px`,height:`${b-a}px`,left:`calc(${pct(f)} - 1px)`,width:"1px",background:"#1e3a5f88",zIndex:2}})); });
   }
   // 時間経過ではグレーアウトしない。予定のグレーは完了ベース（実績反映／チェック／連動ルーティン完了）で各ブロックに適用。
   if(isToday){
@@ -7861,8 +7885,12 @@ function renderDaySchedule(vd,ds,isToday){
     flush();
     return arr;
   };
-  const blockArea=(items,leftBase,widthArea,defaultColor,onTap,onMove)=>{
+  const blockArea=(items,side,defaultColor,onTap,onMove)=>{
     layoutLanes(items).forEach(({ev,s:sMin,e:eMin,lane,lanes,topPx,heightPx})=>{
+      // 帯の真ん中がいまより前か後かで、その列の幅を決める
+      const f=splitAt((sMin+eMin)/2);
+      const leftBase = side==='plan' ? '36px' : `${pct(f)} + 2px`;
+      const widthArea= side==='plan' ? `${pct(f)} - 40px` : `${pct(1-f)} - 6px`;
       const color=ev.color||defaultColor;
       // タイマー式は開始が上・終了が下の帯。チェック式（点）は完了時刻を下端にして上へ伸ばす。
       // レイアウトと同じ topPx/heightPx を使うので、実績ごとに表示位置がずれたりかぶったりしない。
@@ -7921,16 +7949,17 @@ function renderDaySchedule(vd,ds,isToday){
       tl.appendChild(block);
     });
   };
-  // 空き時間タップで作成（左半分=予定 / 右半分=実績）。ブロック(z3)の下(z1)に敷く
+  // 空き時間タップで作成（左＝予定 / 右＝実績）。境界はその時刻の列の境目に合わせる
   const tapLayer=div({style:{position:"absolute",inset:"0",zIndex:1,cursor:"pointer"}});
   tapLayer.addEventListener('click',e=>{
     const rect=tapLayer.getBoundingClientRect();
     const y=e.clientY-rect.top, x=e.clientX-rect.left;
     const hour=Math.max(0,Math.min(23,Math.floor(y/HOUR_H)+START_H));
-    if(x > rect.width*0.5) openActualEdit(vd,null,hour); else openAddEvent(vd,hour);
+    const minAt=(y/HOUR_H+START_H)*60;
+    if(x > rect.width*splitAt(minAt)) openActualEdit(vd,null,hour); else openAddEvent(vd,hour);
   });
   tl.appendChild(tapLayer);
-  blockArea(events,"36px","50% - 40px",EV_DEFAULT,ev=>{
+  blockArea(events,"plan",EV_DEFAULT,ev=>{
     if(ev._tail){ state.viewDate=addDays(vd,-1); render(); return; } // 前日の予定 → 前日へ移動して編集
     if(ev.customTodo){ state.planCustomTodo={uid:ev.ctUid,label:ev.ctLabel||ev.title,vd:ev.ctDate||vd}; state.modal="planCustomTodo"; render(); return; }
     if(ev.isPattern){ openPatternEdit(ev,vd); return; }
@@ -7984,7 +8013,7 @@ function renderDaySchedule(vd,ds,isToday){
       tl.appendChild(band);
     });
   })();
-  blockArea(actuals,"50% + 2px","50% - 6px","#22c55e",(ev)=>{ if(ev._tail){ state.viewDate=addDays(vd,-1); render(); return; } if(ev.manualUid) openActualEdit(vd, ev.manualUid); else if(ev.ctUid){ const ctx=(state.customTodos||[]).find(c=>c.uid===ev.ctUid); state.planCustomTodo={uid:ev.ctUid,label:(ctx&&ctx.label)||"定期ルーティン",vd:ev.ownDay||vd,editMode:true}; state.modal="planCustomTodo"; render(); } else if(ev.routineKey) openRoutineActualEdit(ev.ownDay||vd, ev.routineKey, ev.routineBase); else if(ev.noteKey) openActualMemo(vd, ev.noteKey, ev.title); });
+  blockArea(actuals,"actual","#22c55e",(ev)=>{ if(ev._tail){ state.viewDate=addDays(vd,-1); render(); return; } if(ev.manualUid) openActualEdit(vd, ev.manualUid); else if(ev.ctUid){ const ctx=(state.customTodos||[]).find(c=>c.uid===ev.ctUid); state.planCustomTodo={uid:ev.ctUid,label:(ctx&&ctx.label)||"定期ルーティン",vd:ev.ownDay||vd,editMode:true}; state.modal="planCustomTodo"; render(); } else if(ev.routineKey) openRoutineActualEdit(ev.ownDay||vd, ev.routineKey, ev.routineBase); else if(ev.noteKey) openActualMemo(vd, ev.noteKey, ev.title); });
 
   tlCard.appendChild(tl);
   wrap.appendChild(tlCard);
