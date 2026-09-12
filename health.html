@@ -222,7 +222,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.38"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.39"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -833,7 +833,7 @@ const state = {
   aiCoach:null, aiCoachLoading:null, rewards:[], newRewardDays:7, newRewardText:"",
   actEditUid:null, actTitle:"", actNote:"", actSH:9, actSM:0, actEH:10, actEM:0, actStartNextDay:false, actEndNextDay:false, actColor:"#f472b6", actUnplanned:true, actDate:null,
   actMemoKey:null, actMemoLabel:"", actMemoVd:null, actMemoText:"", // 実績（睡眠・飲酒等）へのメモ
-  analysisSubTab:"日次ログ", diarySubTab:"生活記録", taskSubTab:"ルーティン",
+  analysisSubTab:"日次・週次", diarySubTab:"生活記録", taskSubTab:"ルーティン",
   storageAlert:false, storageExportYear:null,
   weather:[], weatherCity:null, weatherLoading:false, weatherError:null,
   editHour:null, editDate:null, editScore:null, editMental:null, editSymptoms:[], editNote:"", editCraving:null,
@@ -7262,7 +7262,7 @@ const FEATURE_INDEX=[
     {label:"if-then",desc:"「もし〇〇なら〇〇する」プラン",go:()=>{state.tab="達成";state.achieveSubTab="if-then";}},
   ]},
   {group:"📊 分析",items:[
-    {label:"日次ログ／週次／総合分析",desc:"AI分析を含む振り返り",go:()=>{state.tab="分析";state.analysisSubTab="日次ログ";}},
+    {label:"日次・週次／総合分析",desc:"AI分析を含む振り返り",go:()=>{state.tab="分析";state.analysisSubTab="日次・週次";}},
   ]},
   {group:"⚙ 設定",items:[
     {label:"シフト・パターン予定",desc:"勤務シフトと定型スケジュール",go:()=>{state.tab="設定";}},
@@ -11292,7 +11292,7 @@ function renderEditEndModal(vd){
 }
 
 // ── ログタブ ──────────────────────────────────────
-// ── 分析ハブ（サブタブ：日次ログ・週次分析・総合分析） ──
+// ── 分析ハブ（サブタブ：日次・週次／総合分析／AIに質問） ──
 // その日のルーティン達成状況（除外を除いた実達成率）
 function dayRoutineStats(ds){
   const todo=state.todos[ds]||{};
@@ -11852,7 +11852,8 @@ function renderAchievement(vd){
 }
 
 function renderAnalysisHub(vd, ds, curH, isToday){
-  const SUB_TABS=["日次ログ","週次分析","総合分析","AIに質問"];
+  const SUB_TABS=["日次・週次","総合分析","AIに質問"];
+  if(state.analysisSubTab==="日次ログ"||state.analysisSubTab==="週次分析") state.analysisSubTab="日次・週次"; // 旧値の移行
   const wrap=div({style:{maxWidth:"600px",margin:"0 auto"}});
 
   // サブタブバー
@@ -11870,9 +11871,8 @@ function renderAnalysisHub(vd, ds, curH, isToday){
   wrap.appendChild(subBar);
 
   const inner=div({style:{padding:"0"}});
-  if(!SUB_TABS.includes(state.analysisSubTab))state.analysisSubTab="日次ログ";
-  if(state.analysisSubTab==="日次ログ")  inner.appendChild(renderLog());
-  if(state.analysisSubTab==="週次分析")  inner.appendChild(renderWeekly());
+  if(!SUB_TABS.includes(state.analysisSubTab))state.analysisSubTab="日次・週次";
+  if(state.analysisSubTab==="日次・週次") inner.appendChild(renderLog());
   if(state.analysisSubTab==="総合分析")  inner.appendChild(renderAnalysis());
   if(state.analysisSubTab==="AIに質問")  inner.appendChild(renderAIQA());
   wrap.appendChild(inner);
@@ -12194,6 +12194,8 @@ function renderLog(){
   wrap.appendChild(renderModeStatCard());
   { const ic=renderModeInsightCard(); if(ic) wrap.appendChild(ic); }
   { const sc=renderSelfLogCard(); if(sc) wrap.appendChild(sc); }
+  // ── 📅 週の推移（旧・週次分析を統合）──
+  wrap.appendChild(renderWeekly());
 
   // ── 月間体調ヒートマップ ──
   if(state.heatmapMonth===undefined){
@@ -12290,49 +12292,12 @@ function renderLog(){
   return wrap;
 }
 
-// 週次分析：その週のモード別時間（帯グラフ＋一覧＋前週比＋日別の24時間帯）
-function renderModeWeekCard(days,prevDays){
-  const tot=modeTotalsForRange(days);
-  const entries=Object.entries(tot).filter(([,ms])=>ms>0).sort((a,b)=>b[1]-a[1]);
-  const grand=entries.reduce((a,[,ms])=>a+ms,0);
-  const card=div({className:"card"});
-  card.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0",marginBottom:"8px"}},"🕒 モード別の時間"));
-  if(!grand){ card.appendChild(div({style:{fontSize:"12px",color:"#64748b",textAlign:"center",padding:"6px 0"}},"この週のモード記録はありません。")); return card; }
-  const prevTot=prevDays?modeTotalsForRange(prevDays):null;
-  const bar=div({style:{display:"flex",height:"14px",borderRadius:"7px",overflow:"hidden",marginBottom:"10px",background:"#0f172a"}});
-  entries.forEach(([k,ms])=>{ const def=lifeModeDef(k); bar.appendChild(div({style:{width:`${(ms/grand*100).toFixed(3)}%`,background:def?def.color:"#64748b"}})); });
-  card.appendChild(bar);
-  entries.forEach(([k,ms])=>{ const def=lifeModeDef(k);
-    const row=div({style:{display:"flex",alignItems:"center",gap:"9px",padding:"4px 0",borderBottom:"1px solid #1e293b"}});
-    row.appendChild(div({style:{width:"18px",fontSize:"16px",textAlign:"center",flexShrink:0}},def?def.icon:"🕒"));
-    const lbl=div({style:{flex:1,minWidth:0}});
-    lbl.appendChild(div({style:{fontSize:"12px",color:"#e2e8f0",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},def?def.label:k));
-    if(prevTot){ const d=ms-(prevTot[k]||0);
-      if(Math.abs(d)>=60000) lbl.appendChild(div({style:{fontSize:"9px",color:d>0?"#4ade80":"#f97316"}},`${d>0?"↑":"↓"} 前週比 ${fmtDur(Math.abs(d))}`));
-    }
-    row.appendChild(lbl);
-    row.appendChild(div({style:{fontSize:"12px",fontWeight:700,color:def?def.color:"#cbd5e1",flexShrink:0}},fmtDur(ms)));
-    row.appendChild(div({style:{fontSize:"10px",color:"#64748b",width:"32px",textAlign:"right",flexShrink:0}},`${Math.round(ms/grand*100)}%`));
-    card.appendChild(row);
-    const goal=modeGoalMin(k);
-    if(goal>0){ const perDay=ms/days.length, pct=Math.min(200,Math.round(perDay/(goal*60000)*100));
-      const g=div({style:{margin:"0 0 5px 27px"}});
-      g.appendChild(div({style:{display:"flex",justifyContent:"space-between",fontSize:"9px",color:"#64748b",marginBottom:"2px"}},[
-        span({},`目標 ${fmtDur(goal*60000)}/日・1日平均 ${fmtDur(perDay)}`),
-        span({style:{color:pct>=100?"#4ade80":"#94a3b8",fontWeight:700}},`${pct}%`)]));
-      const tr=div({style:{height:"5px",borderRadius:"3px",background:"#0f172a",overflow:"hidden"}});
-      tr.appendChild(div({style:{height:"100%",width:`${Math.min(100,pct)}%`,background:pct>=100?"#22c55e":(def?def.color:"#38bdf8"),borderRadius:"3px"}}));
-      g.appendChild(tr); card.appendChild(g);
-    }
-  });
-  card.appendChild(div({style:{fontSize:"10px",color:"#475569",margin:"8px 0 4px",textAlign:"center"}},`合計 ${fmtDur(grand)}（1日平均 ${fmtDur(grand/days.length)}）`));
-  card.appendChild(renderModeDaySection([...days].reverse()));
-  return card;
-}
 // ── 分析タブ ──────────────────────────────────────
 // ── 週次レポート ──────────────────────────────────
+// 週の推移（元・週次分析）。日次ログに統合したので、外枠の余白は持たせない。
 function renderWeekly(){
-  const wrap=div({style:{maxWidth:"600px",margin:"0 auto",padding:"10px 16px 60px"}});
+  const wrap=div({});
+  wrap.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0",margin:"14px 2px 8px"}},"📅 週の推移"));
 
   // 今週の月曜日を起点に週を生成（過去8週分）
   const getMonday = dateStr => {
@@ -12394,10 +12359,7 @@ function renderWeekly(){
     return {d, label:DAY_LABELS[i], daily, logs, avgScore, alcG, sleepH, todoDone, isFuture};
   });
 
-  // ── 🕒 モード別の時間（この週・前週比） ──
-  { const prev=weeks[state.weeklyIdx+1];
-    const mc=renderModeWeekCard(week.days, prev?prev.days:null);
-    if(mc) wrap.appendChild(mc); }
+  // 🕒 モード別の時間は日次ログの「🕒 モード別の時間」で1週間を選べば見られるため、ここには出さない（重複回避）
 
   // ── 体調スコアグラフ ──
   wrap.appendChild(div({className:"card"},[
