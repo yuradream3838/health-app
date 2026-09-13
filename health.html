@@ -222,7 +222,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.51"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.52"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -2275,7 +2275,32 @@ function activeDay(now){
   if(getDaily(prev).bedTime==null) return prev;        // 前夜の就寝が未記録＝まだ「その夜」の続き
   return cal;                                          // 就寝記録済み＝翌日へ
 }
-function switchLifeMode(key,auto){ const cur=currentModeSession(), now=Date.now(); if(cur){ if(cur.key===key)return; cur.end=now; } const s={key,start:now}; if(auto)s.auto=true; getModeLog().push(s); saveModeLog(); }
+function switchLifeMode(key,auto){ const cur=currentModeSession(), now=Date.now();
+  if(cur){ if(cur.key===key)return; cur.end=now; recordSleepAwakening(cur,key); }
+  const s={key,start:now}; if(auto)s.auto=true; getModeLog().push(s); saveModeLog(); }
+// 😴睡眠 → 🩹ケア → 😴睡眠 と戻ったら、そのケアの時間を「中途覚醒」として記録する。
+// 夜中に目が覚めて落ち込み・さみしいモードを使った時間は、眠れていない時間だから。
+function recordSleepAwakening(careSess,nextKey){
+  try{
+    if(nextKey!=='sleep') return;                 // 睡眠へ戻るときだけ（朝へ出るのは起床）
+    if(!isCareMode(careSess.key)) return;         // ケアの時間だけ
+    const log=getModeLog(), i=log.indexOf(careSess);
+    const prev=i>0?log[i-1]:null;
+    if(!prev || prev.key!=='sleep') return;       // 睡眠から入ったものだけ
+    const s=new Date(careSess.start), e=new Date(careSess.end||Date.now());
+    const mins=Math.round((e-s)/60000);
+    if(mins<1) return;                            // 1分未満は押し間違い扱い
+    // 中途覚醒は「その夜の朝の日」に持つ（0〜12時はその日、12時以降は翌日）
+    const day=s.getHours()<12?fmtDS(s):addDays(fmtDS(s),1);
+    const list=[...(getDaily(day).awakenings||[])];
+    if(list.some(x=>x.hour===s.getHours()&&x.min===s.getMinutes())) return; // 同じ時刻は二重に入れない
+    const def=lifeModeDef(careSess.key)||{};
+    list.push({uid:Date.now(),hour:s.getHours(),min:s.getMinutes(),endHour:e.getHours(),endMin:e.getMinutes(),mins,
+      fromMode:careSess.key, modeLabel:`${def.icon||'🩹'}${def.label||''}`});
+    setDaily(day,{awakenings:list});
+    showToast(`🌙 中途覚醒に記録（${def.icon||''}${def.label||''} ${mins}分）`,'#a5b4fc');
+  }catch(_){}
+}
 // 常に1つの生活モードに属する：進行中セッションが無ければ既定モードを開始（モード未選択を無くす）
 // モード別の「1日の目標時間（分）」。0/未設定なら目標なし
 function getModeGoals(){ if(!state.modeGoals||typeof state.modeGoals!=='object')state.modeGoals={}; return state.modeGoals; }
@@ -3987,6 +4012,8 @@ function buildSleepSections(vd){
           const durL=n.mins>=60?`${Math.floor(n.mins/60)}h${n.mins%60}m`:`${n.mins||0}m`;
           const item=div({style:{display:"flex",alignItems:"center",gap:"5px",padding:"3px 10px",background:"#0f172a",borderRadius:"20px",border:"1px solid #1e3a5f",cursor:"pointer"}});
           item.appendChild(span({style:{fontSize:"11px",color:"#a5b4fc"}},eL?`${tL}〜${eL} (${durL})`:`${tL} ${durL}`));
+          // ケアモードから自動で入った分は、どのケアだったか分かるようにする
+          if(n.modeLabel) item.appendChild(span({style:{fontSize:"9px",color:"#64748b",whiteSpace:"nowrap"}},n.modeLabel));
           item.addEventListener('click',(()=>{const aw=n;return()=>{ state.modal="editAwake"; state.editAwakeUid=aw.uid; state.newAwakeH=aw.hour; state.newAwakeM=aw.min||0; state.newAwakeEndH=aw.endHour!=null?aw.endHour:aw.hour; state.newAwakeEndM=aw.endHour!=null?(aw.endMin||0):aw.min||0; render(); };})());
           const del=btn({style:{background:"transparent",border:"none",color:"#334155",cursor:"pointer",fontSize:"14px",padding:"0"}},"×");
           del.addEventListener('click',(()=>{const uid=n.uid;return(e)=>{e.stopPropagation(); pushUndo("中途覚醒を削除しました");const nd={...getDaily(vd)};nd.awakenings=(nd.awakenings||[]).filter(x=>x.uid!==uid);setDaily(vd,nd);render();};})());
