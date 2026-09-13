@@ -222,7 +222,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.48"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.49"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -345,7 +345,7 @@ function restoreSave(id){
 // 保存内容から人が読めるラベルを作る
 const DAILY_SAVE_LABELS=[["drinks","🍺 飲酒"],["cravings","🍺 飲酒欲求"],["ejaculations","💧 射精"],["foods","🍽 食事"],
   ["water","💧 水分"],["bedTime","😴 睡眠"],["wakeTime","😴 起床"],["naps","💤 昼寝"],["awakenings","😴 中途覚醒"],
-  ["actuals","📌 実績"],["actualNotes","📌 実績のメモ"],["meds","💊 服薬"],["routineOverrides","🔁 まとめの実績"],
+  ["actuals","📌 実績"],["actualNotes","📌 実績のメモ"],["planDone","✓ 予定の完了"],["meds","💊 服薬"],["routineOverrides","🔁 まとめの実績"],
   ["windDownAt","🛏 寝支度"],["bodyComps","🏋️ 体組成"],["score","📔 生活記録"]];
 function dailySaveLabel(upd){
   const ks=Object.keys(upd||{});
@@ -6295,6 +6295,14 @@ function renderPatternEditModal(vd){
       // 実際に行った（実績へ反映）：その日だけ変更した名前で実績化
       m.appendChild(btn({style:{width:"100%",padding:"11px",marginTop:"4px",marginBottom:"8px",background:"linear-gradient(135deg,#22c55e,#0ea5e9)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:700,cursor:"pointer"},
         onClick:()=>{ const nt=(ovI.noteOverride||"").trim(); state.modal=null; openActualEdit(D); state.actTitle=nameI; state.actNote=nt; state.actSH=pe.startH; state.actSM=pe.startM||0; state.actEH=pe.endH; state.actEM=pe.endM||0; state.actEndNextDay=!!pe.nextDay; state.actStartNextDay=false; state.actColor=(p&&p.color)||"#f472b6"; state.actUnplanned=false; render(); }},"✓ 実際に行った（実績に反映）"));
+      // ✓ 実績には出さずに完了だけ付ける
+      { const evRef={isPattern:true,patternUid:pe.uid,ovDate:D};
+        const on=isPlanMarkedDone(evRef,vd);
+        const b=btn({style:{width:"100%",padding:"9px",marginBottom:"8px",borderRadius:"8px",cursor:"pointer",fontSize:"12px",fontWeight:700,
+          border:`1px solid ${on?"#22c55e":"#334155"}`,background:on?"#22c55e1f":"transparent",color:on?"#4ade80":"#94a3b8"}},
+          on?"✓ 完了（実績には出していません）— 取り消す":"✓ やった（実績には出さない・グレーにするだけ）");
+        b.addEventListener('click',()=>{ setPlanMarkedDone(evRef,vd,!on); state.modal=null; showToast(on?"完了を取り消しました":"✓ 完了にしました"); render(); });
+        m.appendChild(b); }
       m.appendChild(btn({className:"btn-ghost",style:{width:"100%",marginTop:"2px"},onClick:()=>{state.modal=null;render();}},"閉じる"));
       bg.appendChild(m);return bg;
     }
@@ -6332,6 +6340,14 @@ function renderPatternEditModal(vd){
       m.appendChild(btn({style:{width:"100%",padding:"8px",marginBottom:"12px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#94a3b8",cursor:"pointer",fontSize:"12px"},
         onClick:()=>{const d=getDaily(D);const ov={...(d.patternOv||{})};delete ov[pe.uid];setDaily(D,{patternOv:ov});state.modal=null;showToast("この日をパターンに戻しました");render();}},"↩ この日の変更をすべて元に戻す"));
     m.appendChild(div({style:{borderTop:"1px solid #1e293b",margin:"4px 0 10px"}}));
+    // ✓ 実績には出さずに完了だけ付ける（連動ルーティンを使っていない予定でもグレーにできる）
+    { const evRef={isPattern:true,patternUid:pe.uid,ovDate:D};
+      const on=isPlanMarkedDone(evRef,vd);
+      const b=btn({style:{width:"100%",padding:"10px",marginBottom:"8px",borderRadius:"8px",cursor:"pointer",fontSize:"13px",fontWeight:700,
+        border:`1px solid ${on?"#22c55e":"#334155"}`,background:on?"#22c55e1f":"transparent",color:on?"#4ade80":"#94a3b8"}},
+        on?"✓ 完了（実績には出していません）— 取り消す":"✓ やった（実績には出さない・グレーにするだけ）");
+      b.addEventListener('click',()=>{ setPlanMarkedDone(evRef,vd,!on); state.modal=null; showToast(on?"完了を取り消しました":"✓ 完了にしました"); render(); });
+      m.appendChild(b); }
     // その他の操作
     m.appendChild(btn({style:{width:"100%",padding:"10px",marginBottom:"8px",background:"#7f1d1d33",border:"1px solid #ef4444",borderRadius:"8px",color:"#fca5a5",fontSize:"13px",fontWeight:700,cursor:"pointer"},
       onClick:()=>{const d=getDaily(D);const ov={...(d.patternOv||{})};ov[pe.uid]={hidden:true};setDaily(D,{patternOv:ov});state.modal=null;showToast("この日は非表示にしました");render();}},"🚫 この日は非表示"));
@@ -7730,6 +7746,28 @@ function patternLinkDone(p, vd){
   if(lk.t==="work"){ const d=getDaily(vd); return d.workStart!=null && d.workEnd!=null; } // シフト（出勤・退勤）を入力したら
   return false;
 }
+// ── ✓ 実績に出さずに「やった」印だけ付ける ──────────────
+// 予定を実績へ反映すると実績列にも帯が出るが、同じ内容が二重に並ぶのが邪魔なこともある。
+// そこで「実績には出さないが完了（グレーアウト）」の印を、日ごとの planDone に持つ。
+//   通常の予定＝uid、パターン予定＝所有日(ovDate)に patternUid を記録する。
+function planDoneKey(ev){
+  if(!ev) return null;
+  if(ev.isPattern && ev.patternUid!=null) return "p"+ev.patternUid;
+  if(ev.uid!=null && !ev._tail) return "e"+ev.uid;
+  return null;
+}
+function planDoneDay(ev,vd){ return (ev&&ev.isPattern)?(ev.ovDate||vd):vd; }
+function isPlanMarkedDone(ev,vd){
+  const k=planDoneKey(ev); if(!k) return false;
+  return !!((getDaily(planDoneDay(ev,vd)).planDone||{})[k]);
+}
+function setPlanMarkedDone(ev,vd,on){
+  const k=planDoneKey(ev); if(!k) return false;
+  const D=planDoneDay(ev,vd), m={...(getDaily(D).planDone||{})};
+  if(on) m[k]=true; else delete m[k];
+  setDaily(D,{planDone:m});
+  return true;
+}
 // 通常の予定が実績に反映済みか（実績に fromEventUid=この予定 のレコードがあるか）
 function eventReflected(ev, vd){
   if(!ev||ev.uid==null)return false;
@@ -7738,6 +7776,7 @@ function eventReflected(ev, vd){
 // 予定ブロックが「完了」しているか（グレーアウト判定を一元化）：
 //  定期ルーティン=所有日でチェック済み／シフト=勤務時間入力／パターン=連動ルーティン完了／通常の予定=実績に反映済み
 function planBlockDone(ev, vd){
+  if(isPlanMarkedDone(ev,vd)) return true;   // 実績に出さずに付けた「やった」印
   if(ev.customTodo) return !!(((state.todos[ev.ctDate||vd]||{})[ev.ctUid])||{}).checked;
   if(ev.shiftBlock){ const d=getDaily(vd); return d.workStart!=null && d.workEnd!=null; }
   if(ev.isPattern){ const pp=(state.planPatterns||[]).find(x=>x.uid===ev.patternUid); if(!pp)return false;
@@ -8718,6 +8757,16 @@ function renderAddEventModal(vd){
         state.actColor=state.newEvColor||"#f472b6"; state.actUnplanned=false;
         state.actFromEventUid=state.editEventUid; state.actFromTask=state.newEvFromTask||null; state.actDate=vd; state.modal="addActual"; render();
       }},"✓ 実際に行った（実績に反映）"));
+    // ✓ 実績には出さずに完了だけ付ける（同じ内容が実績列に二重に並ぶのを避けたいとき）
+    if(!state.newEvRefOnly){
+      const evRef={uid:state.editEventUid};
+      const on=isPlanMarkedDone(evRef,vd);
+      const b=btn({style:{width:"100%",padding:"9px",borderRadius:"8px",cursor:"pointer",fontSize:"12px",fontWeight:700,marginTop:"-8px",marginBottom:"14px",
+        border:`1px solid ${on?"#22c55e":"#334155"}`,background:on?"#22c55e1f":"transparent",color:on?"#4ade80":"#94a3b8"}},
+        on?"✓ 完了（実績には出していません）— 取り消す":"✓ やった（実績には出さない・グレーにするだけ）");
+      b.addEventListener('click',()=>{ setPlanMarkedDone(evRef,vd,!on); showToast(on?"完了を取り消しました":"✓ 完了にしました"); state.modal=null; render(); });
+      m.appendChild(b);
+    }
     // 情報行
     const infoRow=(label,val)=> val?div({style:{marginBottom:"11px"}},[
       div({style:{fontSize:"10px",color:"#64748b",marginBottom:"2px"}},label),
