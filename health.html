@@ -222,7 +222,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.50"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.51"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -7407,7 +7407,8 @@ const FEATURE_INDEX=[
     {label:"if-then",desc:"「もし〇〇なら〇〇する」プラン",go:()=>{state.tab="達成";state.achieveSubTab="if-then";}},
   ]},
   {group:"📊 分析",items:[
-    {label:"日次・週次／総合分析",desc:"AI分析を含む振り返り",go:()=>{state.tab="分析";state.analysisSubTab="日次・週次";}},
+    {label:"日次・週次／総合分析",desc:"モード時間・週の推移・相関の振り返り",go:()=>{state.tab="分析";state.analysisSubTab="日次・週次";}},
+    {label:"AI分析",desc:"AI総合分析とAIへの質問",go:()=>{state.tab="分析";state.analysisSubTab="AI分析";}},
   ]},
   {group:"⚙ 設定",items:[
     {label:"シフト・パターン予定",desc:"勤務シフトと定型スケジュール",go:()=>{state.tab="設定";}},
@@ -12168,8 +12169,9 @@ function renderAchievement(vd){
 }
 
 function renderAnalysisHub(vd, ds, curH, isToday){
-  const SUB_TABS=["日次・週次","総合分析","AIに質問"];
+  const SUB_TABS=["日次・週次","総合分析","AI分析"];
   if(state.analysisSubTab==="日次ログ"||state.analysisSubTab==="週次分析") state.analysisSubTab="日次・週次"; // 旧値の移行
+  if(state.analysisSubTab==="AIに質問") state.analysisSubTab="AI分析";                                     // 旧値の移行
   const wrap=div({style:{maxWidth:"600px",margin:"0 auto"}});
 
   // サブタブバー
@@ -12190,7 +12192,7 @@ function renderAnalysisHub(vd, ds, curH, isToday){
   if(!SUB_TABS.includes(state.analysisSubTab))state.analysisSubTab="日次・週次";
   if(state.analysisSubTab==="日次・週次") inner.appendChild(renderLog());
   if(state.analysisSubTab==="総合分析")  inner.appendChild(renderAnalysis());
-  if(state.analysisSubTab==="AIに質問")  inner.appendChild(renderAIQA());
+  if(state.analysisSubTab==="AI分析")    inner.appendChild(renderAIHub());
   wrap.appendChild(inner);
   return wrap;
 }
@@ -13407,8 +13409,8 @@ function renderAnalysis(){
     }
   }
 
-  // AI分析（結果は state に保持し、再描画で消えないようにする）
-  wrap.appendChild(renderAIAnalysisCard(scored));
+  // ※ ✨AI総合分析は「AI分析」タブへ移した（AIを使うものを1か所にまとめるため）。
+  //    このタブは記録から自動計算する統計だけを載せる。
   return wrap;
 }
 
@@ -13621,8 +13623,15 @@ async function aiQAChatSend(){
   }catch(e){ state.aiQAChat=[...state.aiQAChat,{role:"ai",text:`（エラー: ${e.message}）`}]; }
   state.aiQAChatLoading=false; render();
 }
-function renderAIQA(){
+// 🤖 AI分析タブ：AIを使うものをまとめる（✨AI総合分析 → 💬AIに質問）。
+//   ✨は蓄積データからの総括、💬は個別の疑問。順に並べると「まず全体、次に深掘り」で読める。
+function renderAIHub(){
   const wrap=div({style:{maxWidth:"600px",margin:"0 auto",padding:"12px 16px 60px"}});
+  wrap.appendChild(renderAIAnalysisCard(state.logs.filter(l=>l.score!=null)));
+  wrap.appendChild(renderAIQACard());
+  return wrap;
+}
+function renderAIQACard(){
   const card=div({className:"card"});
   card.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0",marginBottom:"4px"}},"💬 AIに質問"));
   card.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"8px",lineHeight:1.6}},"アプリの記録（体調・睡眠・飲酒・食事・行動・予定・トレーニング・目標）について自由に質問できます。例：「ジムに行ったのはいつ？」「頭痛を記録した日の睡眠は？」（無料・1日20回まで）"));
@@ -13632,8 +13641,7 @@ function renderAIQA(){
   card.appendChild(chipRow);
   card.appendChild(renderAIChat(state.aiQAChat, state.aiQAChatLoading, "aiQAInput", aiQAChatSend, "例: ○○をやったのはいつ？"));
   if((state.aiQAChat||[]).length){ const clr=btn({style:{marginTop:"8px",fontSize:"11px",color:"#475569",background:"transparent",border:"none",cursor:"pointer"}},"🗑 会話をクリア"); clr.addEventListener('click',()=>{ state.aiQAChat=[]; render(); }); card.appendChild(clr); }
-  wrap.appendChild(card);
-  return wrap;
+  return card;
 }
 // AIチャットUI（分析・スケジュール共用）
 function renderAIChat(chat, loading, inputKey, onSend, placeholder){
