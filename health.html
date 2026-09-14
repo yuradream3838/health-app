@@ -222,7 +222,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.52"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.53"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -1414,6 +1414,7 @@ function render(){
     if(state.modal==="bodyComp"){ const mo=renderBodyCompModal(); mo.style.zIndex="10000"; content.appendChild(mo); }
     // 「◯:◯◯ 開始」をタップ＝モードの時間を直す（切り替え忘れの修正）
     if(state.modal==="modeTime"){ const mo=renderModeTimeModal(); mo.style.zIndex="10000"; content.appendChild(mo); }
+    if(state.modal==="modeInsert"){ const mo=renderModeInsertModal(); mo.style.zIndex="10000"; content.appendChild(mo); }
     tintSurfaces(content); return; }
 
   const ds=todayStr(), vd=state.viewDate, curH=new Date().getHours();
@@ -1434,6 +1435,7 @@ function render(){
   if(state.modal==="editTimer")content.appendChild(renderEditTimerModal(vd));
   if(state.modal==="editCheckTime")content.appendChild(renderEditCheckTimeModal(vd));
   if(state.modal==="modeTime") content.appendChild(renderModeTimeModal());
+  if(state.modal==="modeInsert") content.appendChild(renderModeInsertModal());
   if(state.customTodoModal)content.appendChild(renderCustomTodoModal());
   if(state.modal==="editSession")content.appendChild(renderEditSessionModal(vd));
   if(state.modal==="addEjac")  content.appendChild(renderAddEjacModal(vd));
@@ -2375,6 +2377,56 @@ function setModeSessionTime(sess,which,ts){
   if(which==='start'){ if(b.other) b.other.end=ts; sess.start=ts; }
   else { if(b.other) b.other.start=ts; sess.end=ts; }
   return {ok:true};
+}
+// 🕒 モードの挿入：指定した時間帯を、そのモードで塗り替える。
+//   ・空白（アプリを使っていなかった時間）を埋める
+//   ・長いセッションの途中に差し込む（元のモードが前後に分かれる）
+//   ・またいでいる両隣は、その時刻まで縮める
+//  鎖（隙間も重なりもない）を壊さないよう、重なりはすべて新しい1本に譲る。
+//  終わりが「いま」に届くときは、その挿入が進行中のモードになる。
+function insertModeSession(key,startTs,endTs){
+  if(!lifeModeDef(key)) return {ok:false,msg:"モードが見つかりません"};
+  const now=Date.now();
+  let s=Math.min(startTs,endTs), e=Math.max(startTs,endTs);
+  if(s>=now) return {ok:false,msg:"これから先の時間には入れられません"};
+  if(e>now) e=now;                                     // 終わりだけ「いま」で切る
+  if(e-s<MODE_MIN_MS) return {ok:false,msg:"1分以上の長さにしてください"};
+  const out=[];
+  getModeLog().forEach(x=>{
+    const running=(x.end==null), xs=x.start, xe=running?now:x.end;
+    if(xe<=s || xs>=e){ out.push(x); return; }          // 重ならない → そのまま
+    if(xs<s && xe>e){                                    // まるごと含む → 前後に割る
+      out.push({...x,end:s});
+      const tail={...x,start:e}; if(running) delete tail.end; else tail.end=x.end;
+      out.push(tail); return;
+    }
+    if(xs<s){ out.push({...x,end:s}); return; }          // 前が重なる → 縮める
+    if(xe>e){ const t={...x,start:e}; if(running) delete t.end; else t.end=x.end; out.push(t); return; }
+    // まるごと中に入る → 消える
+  });
+  // 終わりが「いま」に届き、そのあとに何も残らないときだけ進行中にする
+  //（あとに続きが残っているのに進行中にすると、その続きと重なってしまう）
+  const toNow=(e>=now-1000) && !out.some(x=>x.start>=e-1000);
+  const ins={key,start:s}; if(!toNow) ins.end=e;
+  out.push(ins);
+  out.sort((a,b)=>a.start-b.start);
+  // 短すぎる切れ端は捨て、隣が同じモードになったらつなげる（無駄な切り替えを残さない）
+  const merged=[];
+  out.forEach(x=>{
+    const len=((x.end==null?now:x.end)-x.start);
+    if(len<1000 && x.end!=null) return;
+    const last=merged[merged.length-1];
+    if(last && last.key===x.key && last.end!=null && Math.abs(last.end-x.start)<1000
+       && (last.tag||null)===(x.tag||null)){
+      if(x.end==null) delete last.end; else last.end=x.end;
+      return;
+    }
+    merged.push(x);
+  });
+  state.modeLog=merged;
+  _modeEditLabel=`${(lifeModeDef(key)||{}).label||key} を挿入`;
+  saveModeLog();
+  return {ok:true,count:merged.length};
 }
 // 入力された時刻(h:m)を、動かせる範囲に収まる日付へ自動で合わせる。
 // 0時をまたぐモード（睡眠など）でも「前日にする」のような操作が要らない。
@@ -12328,7 +12380,13 @@ function renderModeStatCard(){
   const bar=div({style:{display:"flex",height:"14px",borderRadius:"7px",overflow:"hidden",marginBottom:"12px",background:"#0f172a"}});
   entries.forEach(([k,ms])=>{ const def=lifeModeDef(k); bar.appendChild(div({style:{width:`${(ms/grand*100).toFixed(3)}%`,background:def?def.color:"#64748b"}})); });
   card.appendChild(bar);
-  card.appendChild(div({style:{fontSize:"10px",color:"#475569",marginTop:"-6px",marginBottom:"8px"}},"モード名をタップすると、何時から何時までだったかを表示"));
+  { const row=div({style:{display:"flex",alignItems:"center",gap:"8px",marginTop:"-6px",marginBottom:"8px"}});
+    row.appendChild(div({style:{flex:1,minWidth:0,fontSize:"10px",color:"#475569"}},"モード名をタップすると、何時から何時までだったかを表示"));
+    // 記録し忘れた時間を後から埋める／途中に差し込む
+    const ib=btn({style:{flexShrink:0,fontSize:"10px",padding:"4px 9px",borderRadius:"7px",border:"1px solid #334155",background:"transparent",color:"#94a3b8",cursor:"pointer",fontFamily:"inherit"}},"＋ 時間を挿入");
+    ib.addEventListener('click',()=>openModeInsert({}));
+    row.appendChild(ib);
+    card.appendChild(row); }
   // 一覧
   // 直前の同じ長さの期間との比較（1日なら前日比）
   const prevTot=modeTotalsForRange(per.prevList);
@@ -14587,6 +14645,108 @@ function renderEditCheckTimeModal(vd){
 // ── 🕒 モードの時間を直すモーダル ──────────────────────
 // 入口は2つ：モード画面の「◯:◯◯ 開始 ✏️」と、分析→モード別の時間→時間帯の一覧。
 // どちらも同じ画面を開く。編集するのは境目なので、前後のモードの時間も一緒に動く。
+// ── 🕒 モードの時間を挿入するモーダル ──────────────────
+// 記録し忘れた時間を後から埋めたり、長いモードの途中に別のモードを差し込む。
+function openModeInsert(opts){
+  const o=opts||{};
+  const base=o.start!=null?new Date(o.start):new Date();
+  const end=o.end!=null?new Date(o.end):new Date(base.getTime()+3600000);
+  state.modeIns={
+    key:o.key||getDefaultMode(),
+    day:fmtDS(base),
+    sH:base.getHours(), sM:base.getMinutes(),
+    eH:end.getHours(),  eM:end.getMinutes(),
+  };
+  state.modal="modeInsert"; render();
+}
+function renderModeInsertModal(){
+  const mi=state.modeIns||{};
+  const bg=div({className:"modal-center"});
+  const m=div({className:"modal-box",style:{maxHeight:"85vh",overflowY:"auto"}});
+  bg.addEventListener('click',()=>{state.modal=null;render();});
+  m.addEventListener('click',e=>e.stopPropagation());
+  const two=n=>String(n).padStart(2,'0');
+  // 開始／終了の実時刻。終了が開始より前なら翌日（0時またぎ）として扱う
+  const spanTs=()=>{
+    const b=parseDS(mi.day);
+    const s=new Date(b.getFullYear(),b.getMonth(),b.getDate(),mi.sH,mi.sM,0).getTime();
+    let e=new Date(b.getFullYear(),b.getMonth(),b.getDate(),mi.eH,mi.eM,0).getTime();
+    if(e<=s) e+=86400000;
+    return {s,e};
+  };
+  const def=lifeModeDef(mi.key)||{icon:"🕒",label:mi.key,color:"#64748b"};
+
+  m.appendChild(div({style:{fontSize:"15px",fontWeight:700,color:"#e2e8f0",marginBottom:"2px"}},"🕒 モードの時間を挿入"));
+  m.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"12px",lineHeight:1.5}},
+    "記録し忘れた時間を後から埋めたり、長いモードの途中に差し込めます。重なっていたモードはこの時間ぶん短くなります。"));
+
+  // 日付
+  m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"4px"}},"📅 日付"));
+  { const inp=document.createElement('input'); inp.type='date'; inp.value=mi.day; inp.max=todayStr();
+    inp.style.cssText="width:100%;padding:9px 11px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:14px;font-family:inherit;box-sizing:border-box;margin-bottom:12px;color-scheme:dark";
+    inp.addEventListener('change',e=>{ if(e.target.value){ state.modeIns.day=e.target.value; render(); } });
+    m.appendChild(inp); }
+
+  // 開始・終了
+  const timeField=(label,getH,getM,set)=>{
+    const w=div({style:{flex:1}});
+    w.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"4px"}},label));
+    const inp=document.createElement('input'); inp.type='time'; inp.value=`${two(getH())}:${two(getM())}`;
+    inp.style.cssText="width:100%;padding:9px 6px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:15px;font-family:inherit;box-sizing:border-box;color-scheme:dark";
+    inp.addEventListener('change',e=>{ const p=(e.target.value||"").split(':'); const h=Number(p[0]),mm=Number(p[1]);
+      if(!isNaN(h)&&!isNaN(mm)){ set(h,mm); render(); } });
+    w.appendChild(inp); return w;
+  };
+  m.appendChild(div({style:{display:"flex",gap:"8px",marginBottom:"10px"}},[
+    timeField("開始",()=>mi.sH,()=>mi.sM,(h,mm)=>{state.modeIns.sH=h;state.modeIns.sM=mm;}),
+    timeField("終了",()=>mi.eH,()=>mi.eM,(h,mm)=>{state.modeIns.eH=h;state.modeIns.eM=mm;})
+  ]));
+
+  // モードを選ぶ
+  m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"5px"}},"どのモードだった？"));
+  { const g=div({style:{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"5px",marginBottom:"12px"}});
+    getLifeModes().forEach(md=>{ const on=mi.key===md.key;
+      const b=btn({style:{padding:"7px 2px",borderRadius:"9px",cursor:"pointer",fontFamily:"inherit",lineHeight:1.25,
+        border:`1px solid ${on?md.color:"#334155"}`,background:on?md.color+"22":"transparent",color:on?md.color:"#94a3b8",
+        fontSize:"9px",fontWeight:600}},[
+        div({style:{fontSize:"16px"}},md.icon),
+        div({style:{marginTop:"1px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},md.label)
+      ]);
+      b.addEventListener('click',(()=>{const k=md.key;return()=>{state.modeIns.key=k;render();};})());
+      g.appendChild(b); });
+    m.appendChild(g); }
+
+  // どうなるかの下見（置き換わる相手を出す）
+  { const {s,e}=spanTs();
+    const now=Date.now();
+    const box=div({style:{padding:"8px 10px",background:"#0f172a",borderRadius:"8px",marginBottom:"14px"}});
+    const tl=ts=>{ const d=new Date(ts); return `${two(d.getHours())}:${two(d.getMinutes())}`; };
+    const over=e>now;
+    box.appendChild(div({style:{fontSize:"12px",fontWeight:700,color:def.color,marginBottom:"4px"}},
+      `${def.icon} ${def.label}　${tl(s)} 〜 ${over?"いま":tl(e)}　${fmtDur(Math.max(0,Math.min(e,now)-s))}`));
+    const hit=getModeLog().filter(x=>{ const xs=x.start, xe=(x.end==null?now:x.end); return xe>s && xs<Math.min(e,now); });
+    if(!hit.length) box.appendChild(div({style:{fontSize:"10px",color:"#64748b"}},"この時間の記録はありません（空きを埋めます）"));
+    else{
+      box.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"3px"}},"この時間に入っていたモード（短くなります）"));
+      const seen=[];
+      hit.forEach(x=>{ const d2=lifeModeDef(x.key); const lb=d2?`${d2.icon} ${d2.label}`:x.key; if(seen.indexOf(lb)<0)seen.push(lb); });
+      box.appendChild(div({style:{fontSize:"11px",color:"#cbd5e1"}},seen.join("・")));
+    }
+    if(s>=now) box.appendChild(div({style:{fontSize:"10px",color:"#f97316",marginTop:"4px"}},"※ これから先の時間には入れられません"));
+    m.appendChild(box); }
+
+  m.appendChild(div({style:{display:"flex",gap:"8px"}},[
+    btn({className:"btn-ghost",style:{flex:1},onClick:()=>{state.modal=null;render();}},"キャンセル"),
+    btn({style:{flex:2,padding:"10px",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:600,cursor:"pointer"},
+      onClick:()=>{
+        const {s,e}=spanTs();
+        const r=insertModeSession(state.modeIns.key,s,e);
+        if(!r.ok){ showToast(r.msg); return; }
+        state.modal=null; showToast(`🕒 ${def.label}の時間を挿入しました`); render();
+      }},"挿入する")
+  ]));
+  bg.appendChild(m); return bg;
+}
 function openModeTimeEdit(sess){
   const i=getModeLog().indexOf(sess);
   if(i<0){ showToast("この記録は編集できません"); return; }
@@ -14659,6 +14819,17 @@ function renderModeTimeModal(){
   { const len=(running?Date.now():state.modeEditEnd)-state.modeEditStart;
     m.appendChild(div({style:{fontSize:"12px",color:def.color,fontWeight:700,textAlign:"center",padding:"8px",background:"#0f172a",borderRadius:"8px",marginBottom:"14px"}},
       `${tv(state.modeEditStart)} 〜 ${running?"いま":tv(state.modeEditEnd)}　${fmtDur(Math.max(0,len))}`)); }
+
+  // この時間の中に別のモードを差し込む（前後がこのモードのまま残る）
+  { const ib=btn({style:{width:"100%",padding:"9px",marginBottom:"12px",borderRadius:"8px",cursor:"pointer",fontSize:"12px",fontWeight:600,
+      border:"1px solid #334155",background:"transparent",color:"#94a3b8",fontFamily:"inherit"}},"＋ この時間の中に別のモードを挿入");
+    ib.addEventListener('click',()=>{
+      const s0=sess.start, e0=(running?Date.now():sess.end);
+      // 既定は真ん中あたりの30分
+      const mid=s0+Math.max(0,Math.floor((e0-s0)/2)-15*60000);
+      openModeInsert({start:mid,end:Math.min(e0,mid+30*60000)});
+    });
+    m.appendChild(ib); }
 
   m.appendChild(div({style:{display:"flex",gap:"8px"}},[
     btn({className:"btn-ghost",style:{flex:1},onClick:close},"キャンセル"),
