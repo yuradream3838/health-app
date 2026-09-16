@@ -222,7 +222,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.53"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.54"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -2409,12 +2409,17 @@ function insertModeSession(key,startTs,endTs){
   const toNow=(e>=now-1000) && !out.some(x=>x.start>=e-1000);
   const ins={key,start:s}; if(!toNow) ins.end=e;
   out.push(ins);
-  out.sort((a,b)=>a.start-b.start);
-  // 短すぎる切れ端は捨て、隣が同じモードになったらつなげる（無駄な切り替えを残さない）
-  const merged=[];
-  out.forEach(x=>{
-    const len=((x.end==null?now:x.end)-x.start);
-    if(len<1000 && x.end!=null) return;
+  const merged=mergeAdjacentModes(out);
+  state.modeLog=merged;
+  _modeEditLabel=`${(lifeModeDef(key)||{}).label||key} を挿入`;
+  saveModeLog();
+  return {ok:true,count:merged.length};
+}
+// 隣が同じモードになったらつなげ、1秒未満の切れ端は捨てる（無駄な切り替えを残さない）
+function mergeAdjacentModes(list){
+  const now=Date.now(), merged=[];
+  [...list].sort((a,b)=>a.start-b.start).forEach(x=>{
+    if(x.end!=null && (x.end-x.start)<1000) return;
     const last=merged[merged.length-1];
     if(last && last.key===x.key && last.end!=null && Math.abs(last.end-x.start)<1000
        && (last.tag||null)===(x.tag||null)){
@@ -2423,10 +2428,42 @@ function insertModeSession(key,startTs,endTs){
     }
     merged.push(x);
   });
-  state.modeLog=merged;
-  _modeEditLabel=`${(lifeModeDef(key)||{}).label||key} を挿入`;
+  return merged;
+}
+// 🗑 モードの記録を1つ消す（押し間違いの「0分」など）。
+//  鎖を壊さないよう、その時間は**前のモードに含める**（前が無ければ次のモードの始まりを早める）。
+//  消したのが進行中なら、前のモードが進行中に戻る。
+function deleteModeSession(sess){
+  const log=getModeLog(), i=log.indexOf(sess);
+  if(i<0) return {ok:false,msg:"この記録は見つかりません"};
+  if(log.length<=1) return {ok:false,msg:"最後の1件は消せません"};
+  const prev=log[i-1], next=log[i+1], running=(sess.end==null);
+  if(prev){ if(running) delete prev.end; else prev.end=sess.end; }
+  else if(next){ next.start=sess.start; }
+  const rest=log.filter((_,j)=>j!==i);
+  state.modeLog=mergeAdjacentModes(rest);
+  _modeEditLabel=`${(lifeModeDef(sess.key)||{}).label||sess.key} を削除`;
   saveModeLog();
-  return {ok:true,count:merged.length};
+  return {ok:true};
+}
+// 1分未満で終わっている記録（一覧で「0分」に見えるもの）をまとめて消す
+function zeroModeSessions(){ return getModeLog().filter(s=>s.end!=null && (s.end-s.start)<MODE_MIN_MS); }
+function cleanupZeroModes(){
+  const keep=[]; let removed=0, pend=null;
+  getModeLog().forEach(x=>{
+    let s=x;
+    if(pend!=null){ s={...s,start:pend}; pend=null; }   // 先頭が0分だった → 始まりを引き継ぐ
+    if(!(s.end!=null && (s.end-s.start)<MODE_MIN_MS)){ keep.push(s); return; }
+    removed++;
+    const prev=keep[keep.length-1];
+    if(prev && prev.end!=null) prev.end=s.end;          // 前のモードに含める
+    else pend=s.start;                                   // 前が無ければ次に引き継ぐ
+  });
+  if(!removed || !keep.length) return 0;
+  state.modeLog=mergeAdjacentModes(keep);
+  _modeEditLabel=`0分の記録を${removed}件削除`;
+  saveModeLog();
+  return removed;
 }
 // 入力された時刻(h:m)を、動かせる範囲に収まる日付へ自動で合わせる。
 // 0時をまたぐモード（睡眠など）でも「前日にする」のような操作が要らない。
@@ -12386,7 +12423,19 @@ function renderModeStatCard(){
     const ib=btn({style:{flexShrink:0,fontSize:"10px",padding:"4px 9px",borderRadius:"7px",border:"1px solid #334155",background:"transparent",color:"#94a3b8",cursor:"pointer",fontFamily:"inherit"}},"＋ 時間を挿入");
     ib.addEventListener('click',()=>openModeInsert({}));
     row.appendChild(ib);
-    card.appendChild(row); }
+    card.appendChild(row);
+    // 押し間違いで1分未満になった記録（一覧で「0分」に見えるもの）をまとめて片付ける
+    const zn=zeroModeSessions().length;
+    if(zn){
+      const zb=btn({style:{width:"100%",padding:"7px",marginBottom:"8px",borderRadius:"8px",cursor:"pointer",fontSize:"11px",fontWeight:600,
+        border:"1px solid #7f1d1d",background:"transparent",color:"#f87171",fontFamily:"inherit"}},`🗑 0分の記録を${zn}件まとめて削除`);
+      zb.addEventListener('click',()=>{
+        if(!confirm(`1分未満の記録 ${zn}件を削除します。\n時間は前のモードに含まれます。`)) return;
+        const n=cleanupZeroModes();
+        showToast(n?`🗑 0分の記録を${n}件削除しました`:"削除できる記録がありませんでした"); render();
+      });
+      card.appendChild(zb);
+    } }
   // 一覧
   // 直前の同じ長さの期間との比較（1日なら前日比）
   const prevTot=modeTotalsForRange(per.prevList);
@@ -14819,6 +14868,20 @@ function renderModeTimeModal(){
   { const len=(running?Date.now():state.modeEditEnd)-state.modeEditStart;
     m.appendChild(div({style:{fontSize:"12px",color:def.color,fontWeight:700,textAlign:"center",padding:"8px",background:"#0f172a",borderRadius:"8px",marginBottom:"14px"}},
       `${tv(state.modeEditStart)} 〜 ${running?"いま":tv(state.modeEditEnd)}　${fmtDur(Math.max(0,len))}`)); }
+
+  // 🗑 この記録を消す（押し間違いの0分など）。時間は隣のモードが引き取る
+  { const prevDef=bS&&bS.prev?lifeModeDef(bS.prev.key):null;
+    const nextDef=(!(bS&&bS.prev)&&bS&&bS.next)?lifeModeDef(bS.next.key):null;
+    const into=prevDef?`${prevDef.icon} ${prevDef.label}`:(nextDef?`${nextDef.icon} ${nextDef.label}`:null);
+    const db=btn({style:{width:"100%",padding:"9px",marginBottom:"8px",borderRadius:"8px",cursor:"pointer",fontSize:"12px",fontWeight:700,
+      border:"1px solid #7f1d1d",background:"transparent",color:"#f87171",fontFamily:"inherit"}},
+      into?`🗑 この記録を削除（時間は ${into} に含める）`:"🗑 この記録を削除");
+    db.addEventListener('click',()=>{
+      const r=deleteModeSession(sess);
+      if(!r.ok){ showToast(r.msg); return; }
+      state.modal=null; showToast(`🗑 ${def.label}の記録を削除しました`); render();
+    });
+    m.appendChild(db); }
 
   // この時間の中に別のモードを差し込む（前後がこのモードのまま残る）
   { const ib=btn({style:{width:"100%",padding:"9px",marginBottom:"12px",borderRadius:"8px",cursor:"pointer",fontSize:"12px",fontWeight:600,
