@@ -222,7 +222,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.54"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.55"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -2307,8 +2307,36 @@ function recordSleepAwakening(careSess,nextKey){
 // モード別の「1日の目標時間（分）」。0/未設定なら目標なし
 function getModeGoals(){ if(!state.modeGoals||typeof state.modeGoals!=='object')state.modeGoals={}; return state.modeGoals; }
 function saveModeGoals(){ try{localStorage.setItem(STORAGE_KEY+'_modegoals',JSON.stringify(getModeGoals()));}catch(_){} }
-function modeGoalMin(key){ const v=getModeGoals()[key]; return (v>0)?v:0; }
-function setModeGoalMin(key,min){ const g=getModeGoals(); if(min>0)g[key]=min; else delete g[key]; saveModeGoals(); }
+// モードの1日の目標時間（分）。「これ以上」と「これ以下」の両方を持てる。
+//   古い形（数値ひとつ＝これ以上）もそのまま読めるようにしておく。
+function modeGoalOf(key){
+  const v=getModeGoals()[key];
+  if(v==null) return {min:0,max:0};
+  if(typeof v==='number') return {min:v>0?v:0,max:0};
+  return {min:(v.min>0?v.min:0), max:(v.max>0?v.max:0)};
+}
+function modeGoalMin(key){ return modeGoalOf(key).min; }
+function modeGoalMax(key){ return modeGoalOf(key).max; }
+function hasModeGoal(key){ const g=modeGoalOf(key); return g.min>0||g.max>0; }
+function setModeGoal(key,min,max){
+  const g=getModeGoals(), lo=Math.max(0,min|0), hi=Math.max(0,max|0);
+  if(lo>0||hi>0) g[key]={...(lo>0?{min:lo}:{}),...(hi>0?{max:hi}:{})};
+  else delete g[key];
+  saveModeGoals();
+}
+function setModeGoalMin(key,min){ setModeGoal(key,min,modeGoalMax(key)); }
+// 目標に対していまどうか。以上／以下のどちらを外しているかまで返す
+function modeGoalStatus(perDayMs,goal){
+  const lo=(goal.min||0)*60000, hi=(goal.max||0)*60000;
+  if(lo>0 && perDayMs<lo) return {ok:false,text:`あと ${fmtDur(lo-perDayMs)}`,color:"#f97316"};
+  if(hi>0 && perDayMs>hi) return {ok:false,text:`${fmtDur(perDayMs-hi)} 超過`,color:"#f87171"};
+  return {ok:true,text:"✓ 達成",color:"#4ade80"};
+}
+function modeGoalLabel(goal){
+  const lo=(goal.min||0)*60000, hi=(goal.max||0)*60000;
+  const a=lo>0?`${fmtDur(lo)}以上`:"", b=hi>0?`${fmtDur(hi)}以下`:"";
+  return a&&b?`${a} / ${b}`:(a||b);
+}
 // 既定モードにできるのは「いつもの生活」側のモードだけ（ケアは除く）
 function nonCareModes(){ return getLifeModes().filter(m=>!m.care); }
 function getDefaultMode(){ const dm=state.defaultMode||'life'; const d=lifeModeDef(dm); return (d&&!d.care)?dm:(nonCareModes()[0]||{key:'life'}).key; }
@@ -2894,20 +2922,32 @@ function renderModeEditor(inSettings){
       m.care?div({style:{fontSize:'10px',color:'#64748b',border:'1px solid #334155',borderRadius:'6px',padding:'1px 6px'}},'🩹 ケア'):null
     ]));
     // 1日の目標時間（時間・分）。ケアモードは「長くいたい時間」ではないので目標を出さない
-    if(!m.care){ const g=modeGoalMin(m.key);
-      const row=div({style:{display:'flex',alignItems:'center',gap:'6px',marginBottom:'8px'}});
-      row.appendChild(span({style:{fontSize:'11px',color:'#94a3b8',flexShrink:0}},'1日の目標'));
-      const mk=(val,max,ph,onCh)=>{ const i=document.createElement('input'); i.type='number'; i.min='0'; i.max=String(max); i.placeholder=ph; i.value=val?String(val):'';
-        i.style.cssText='width:56px;padding:6px 8px;background:#0f172a;border:1px solid #334155;border-radius:7px;color:#e2e8f0;font-size:13px;font-family:inherit;text-align:center';
-        i.addEventListener('change',onCh); return i; };
-      const hI=mk(Math.floor(g/60),23,'0',null), mI=mk(g%60,59,'0',null);
-      const apply=()=>{ const H=Math.max(0,Math.min(23,parseInt(hI.value)||0)), M=Math.max(0,Math.min(59,parseInt(mI.value)||0)); setModeGoalMin(m.key,H*60+M); render(); };
-      hI.addEventListener('change',apply); mI.addEventListener('change',apply);
-      row.appendChild(hI); row.appendChild(span({style:{fontSize:'11px',color:'#94a3b8'}},'時間'));
-      row.appendChild(mI); row.appendChild(span({style:{fontSize:'11px',color:'#94a3b8'}},'分'));
-      if(g>0){ const cl=btn({style:{marginLeft:'auto',padding:'5px 9px',borderRadius:'7px',border:'1px solid #334155',background:'transparent',color:'#64748b',fontSize:'11px',cursor:'pointer',fontFamily:'inherit'}},'クリア');
-        cl.addEventListener('click',(()=>{const k=m.key;return()=>{ setModeGoalMin(k,0); render(); };})()); row.appendChild(cl); }
-      card.appendChild(row);
+    // 1日の目標時間（これ以上／これ以下の両方を設定できる）。
+    // ケアモードは「長くいたい時間」ではないので目標を出さない
+    if(!m.care){ const g=modeGoalOf(m.key);
+      card.appendChild(div({style:{fontSize:'11px',color:'#94a3b8',marginBottom:'5px'}},'1日の目標時間（どちらか片方だけでも可）'));
+      const mk=val=>{ const i=document.createElement('input'); i.type='number'; i.min='0'; i.placeholder='0'; i.value=val?String(val):'';
+        i.style.cssText='width:52px;padding:6px 6px;background:#0f172a;border:1px solid #334155;border-radius:7px;color:#e2e8f0;font-size:13px;font-family:inherit;text-align:center';
+        return i; };
+      const hMin=mk(Math.floor(g.min/60)), mMin=mk(g.min%60), hMax=mk(Math.floor(g.max/60)), mMax=mk(g.max%60);
+      const apply=()=>{ const v=(h,mm)=>Math.max(0,Math.min(23,parseInt(h.value)||0))*60+Math.max(0,Math.min(59,parseInt(mm.value)||0));
+        setModeGoal(m.key, v(hMin,mMin), v(hMax,mMax)); render(); };
+      const line=(mark,markColor,hI,mI)=>{
+        [hI,mI].forEach(i=>i.addEventListener('change',apply));
+        return div({style:{display:'flex',alignItems:'center',gap:'5px',marginBottom:'5px'}},[
+          span({style:{fontSize:'11px',color:markColor,fontWeight:700,width:'62px',flexShrink:0}},mark),
+          hI, span({style:{fontSize:'11px',color:'#94a3b8'}},'時間'),
+          mI, span({style:{fontSize:'11px',color:'#94a3b8'}},'分')
+        ]);
+      };
+      card.appendChild(line('⬆ これ以上','#4ade80',hMin,mMin));
+      card.appendChild(line('⬇ これ以下','#f87171',hMax,mMax));
+      { const note=div({style:{display:'flex',alignItems:'center',gap:'8px',marginBottom:'8px'}});
+        note.appendChild(div({style:{flex:1,minWidth:0,fontSize:'9px',color:'#475569',lineHeight:1.4}},
+          (g.min>0&&g.max>0&&g.min>g.max)?'⚠ 「以上」が「以下」を超えています':'例）トレーニングは30分以上、仕事は8時間以下'));
+        if(g.min>0||g.max>0){ const cl=btn({style:{flexShrink:0,padding:'5px 9px',borderRadius:'7px',border:'1px solid #334155',background:'transparent',color:'#64748b',fontSize:'11px',cursor:'pointer',fontFamily:'inherit'}},'クリア');
+          cl.addEventListener('click',(()=>{const k=m.key;return()=>{ setModeGoal(k,0,0); render(); };})()); note.appendChild(cl); }
+        card.appendChild(note); }
     }
     card.appendChild(colorPickerRow(m.color,(()=>{const i=idx;return c=>{ getLifeModes()[i].color=c; saveLifeModes(); render(); };})()));
     box.appendChild(card);
@@ -12456,17 +12496,25 @@ function renderModeStatCard(){
     card.appendChild(row);
     // タップで「何時から何時まで」を展開（この期間のセッション一覧）
     if(openK) card.appendChild(modeSessionListBox(list,k,ms,def,isDay));
-    // 目標時間の達成ゲージ（1日あたりで比較）
-    const goal=modeGoalMin(k);
-    if(goal>0){
-      const perDay=ms/days, goalMs=goal*60000, pct=Math.min(200,Math.round(perDay/goalMs*100));
+    // 目標時間の達成ゲージ（1日あたりで比較）。「これ以上／これ以下」の目盛りを帯の上に置く
+    const goal=modeGoalOf(k);
+    if(goal.min>0||goal.max>0){
+      const perDay=ms/days, lo=goal.min*60000, hi=goal.max*60000;
+      const st=modeGoalStatus(perDay,goal);
       const g=div({style:{margin:"0 0 6px 27px"}});
-      g.appendChild(div({style:{display:"flex",justifyContent:"space-between",fontSize:"9px",color:"#64748b",marginBottom:"2px"}},[
-        span({},`目標 ${fmtDur(goalMs)}/日${days>1?`・1日平均 ${fmtDur(perDay)}`:""}`),
-        span({style:{color:pct>=100?"#4ade80":"#94a3b8",fontWeight:700}},`${pct}%`)
+      g.appendChild(div({style:{display:"flex",justifyContent:"space-between",gap:"6px",fontSize:"9px",color:"#64748b",marginBottom:"2px"}},[
+        span({style:{minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},
+          `目標 ${modeGoalLabel(goal)}/日${days>1?`・1日平均 ${fmtDur(perDay)}`:""}`),
+        span({style:{color:st.color,fontWeight:700,flexShrink:0}},st.text)
       ]));
-      const track=div({style:{height:"5px",borderRadius:"3px",background:"#0f172a",overflow:"hidden"}});
-      track.appendChild(div({style:{height:"100%",width:`${Math.min(100,pct)}%`,background:pct>=100?"#22c55e":(def?def.color:"#38bdf8"),borderRadius:"3px"}}));
+      // 目盛りの上限：実績・以上・以下のいちばん大きいものに少し余白を足す
+      const scale=Math.max(perDay,lo,hi,60000)*1.08;
+      const track=div({style:{position:"relative",height:"5px",borderRadius:"3px",background:"#0f172a",overflow:"hidden"}});
+      track.appendChild(div({style:{height:"100%",width:`${Math.min(100,perDay/scale*100).toFixed(2)}%`,
+        background:st.ok?"#22c55e":(def?def.color:"#38bdf8"),borderRadius:"3px"}}));
+      const tick=(v,col)=>{ if(!(v>0)) return;
+        track.appendChild(div({style:{position:"absolute",top:0,bottom:0,left:`${Math.min(100,v/scale*100).toFixed(2)}%`,width:"2px",background:col}})); };
+      tick(lo,"#4ade80"); tick(hi,"#f87171");
       g.appendChild(track);
       card.appendChild(g);
     }
@@ -12488,11 +12536,12 @@ function renderModeStatCard(){
   });
   // 目標はあるがこの期間まったく記録が無いモードも、未達として出す
   getLifeModes().forEach(m=>{
+    // 「これ以上」の目標があるモードだけ未達として出す（「以下」だけなら0分は達成なので出さない）
     const goal=modeGoalMin(m.key); if(!goal||tot[m.key]>0) return;
     const g=div({style:{display:"flex",alignItems:"center",gap:"9px",padding:"5px 0",borderBottom:"1px solid #1e293b",opacity:0.65}});
     g.appendChild(div({style:{width:"18px",fontSize:"17px",textAlign:"center",flexShrink:0}},m.icon));
     g.appendChild(div({style:{flex:1,minWidth:0,fontSize:"13px",color:"#94a3b8"}},m.label));
-    g.appendChild(div({style:{fontSize:"11px",color:"#f97316",flexShrink:0}},`目標 ${fmtDur(goal*60000)}/日・記録なし`));
+    g.appendChild(div({style:{fontSize:"11px",color:"#f97316",flexShrink:0}},`目標 ${fmtDur(goal*60000)}以上/日・記録なし`));
     card.appendChild(g);
   });
   if(days>1) card.appendChild(div({style:{fontSize:"10px",color:"#475569",marginTop:"9px",textAlign:"center"}},`この期間 ${days}日分・記録のある時間の合計 ${fmtDur(grand)}（1日あたり平均 ${fmtDur(grand/days)}）`));
@@ -13635,9 +13684,10 @@ function buildModeContext(days){
   const grand=entries.reduce((a,[,ms])=>a+ms,0);
   const hh=ms=>(ms/3600000).toFixed(1);
   const sum=entries.map(([k,ms])=>{
-    const def=lifeModeDef(k); const goal=modeGoalMin(k);
+    const def=lifeModeDef(k); const goal=modeGoalOf(k);
     const perDay=ms/days;
-    const g=goal>0?`（目標${(goal/60).toFixed(1)}h/日・達成${Math.round(perDay/(goal*60000)*100)}%）`:'';
+    const gl=[]; if(goal.min>0)gl.push(`${(goal.min/60).toFixed(1)}h以上`); if(goal.max>0)gl.push(`${(goal.max/60).toFixed(1)}h以下`);
+    const g=gl.length?`（目標${gl.join('・')}/日・${modeGoalStatus(perDay,goal).ok?'達成':'未達'}）`:'';
     return `${def?def.label:k}: 合計${hh(ms)}h 1日平均${hh(perDay)}h 構成比${Math.round(ms/grand*100)}%${g}`;
   }).join('\n');
   // 日別（いつ何をしていたか。時刻付きで並べる）
