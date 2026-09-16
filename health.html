@@ -222,7 +222,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.55"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.56"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -1765,6 +1765,16 @@ function bedStreak(){ if(!getSleepGoal())return 0; const tol=sleepTol(); let n=0
 // 今夜の就寝までの分（負=超過）。今日のシフトの目標で
 function bedCountdownMin(now){ const t=bedTargetNightMin(sleepNightDay()); if(t==null)return null; const d=now?new Date(now):new Date(); const nowN=toNightMin(d.getHours()*60+d.getMinutes()); return t-nowN; }
 function windDownAt(){ return getDaily(sleepNightDay()).windDownAt||null; }
+// 🛏 寝支度を始めた印。睡眠前モードに入るとき（入口カードからでも、モードの切り替えからでも）
+//   その時刻を記録する。すでに記録があれば上書きしない（開き直しで時刻がずれないように）。
+//   新しく記録したときだけ true を返す。
+function startWindDown(){
+  if(windDownAt()) return false;
+  const n=new Date();
+  state.windEditH=n.getHours(); state.windEditM=n.getMinutes();
+  setDaily(sleepNightDay(),{windDownAt:n.toISOString(),smReturned:false});
+  return true;
+}
 function goToSleepSettings(){ exitWidget&&exitWidget(); state.tab="設定"; state.sgDraft=null; openSetting('sleep',true); render(); setTimeout(()=>{ try{ const el=document.getElementById('sleep-settings'); if(el)el.scrollIntoView({block:"start",behavior:"smooth"}); }catch(_){} },80); }
 // 就寝リズムの設定カード（設定画面に配置）。目標の入力フォーム
 function sleepRhythmSettingsCard(){
@@ -1918,11 +1928,11 @@ function sleepRhythmCard(full){
       row.appendChild(ed);row.appendChild(clr); c.appendChild(row);
       // 睡眠前モードを再度開く
       const openB=btn({style:{width:"100%",padding:"10px",marginBottom:"9px",borderRadius:"8px",border:"none",color:"#fff",fontSize:"13px",fontWeight:800,cursor:"pointer",background:"linear-gradient(135deg,#4338ca,#7c3aed)"}},"🌙 睡眠前モードを開く");
-      openB.addEventListener('click',()=>{ state.sleepMode=true; render(); });
+      openB.addEventListener('click',()=>{ startWindDown(); state.sleepMode=true; render(); });
       c.appendChild(openB);
     } else {
       const near=cd!=null && cd<=45 && cd>-60; const b=btn({style:{width:"100%",padding:"11px",marginBottom:"9px",borderRadius:"8px",border:"none",color:"#fff",fontSize:"13px",fontWeight:800,cursor:"pointer",background:near?"linear-gradient(135deg,#f59e0b,#a855f7)":"#4338ca"}},"🛏 寝支度を始める");
-      b.addEventListener('click',()=>{ const n=new Date(); state.windEditH=n.getHours(); state.windEditM=n.getMinutes(); setDaily(sleepNightDay(),{windDownAt:new Date().toISOString(),smReturned:false}); state.sleepMode=true; showToast("🌙 睡眠前モード開始","#a5b4fc"); render(); }); c.appendChild(b);
+      b.addEventListener('click',()=>{ startWindDown(); state.sleepMode=true; showToast("🌙 睡眠前モード開始","#a5b4fc"); render(); }); c.appendChild(b);
     }
   }
   // ⑤ ストリーク ＋ ④ドリフト（サマリー）
@@ -2063,7 +2073,7 @@ function sleepModeEntryCard(){
     : `就寝目標を ${-cd}分 過ぎています`;
   c.appendChild(div({style:{fontSize:"11px",color:cd!=null&&cd<0?"#fbbf24":"#94a3b8",marginBottom:"9px"}},sub));
   const b=btn({style:{width:"100%",padding:"12px",borderRadius:"10px",border:"none",color:"#fff",fontSize:"14px",fontWeight:800,cursor:"pointer",background:"linear-gradient(135deg,#6d5ae0,#a855f7)"}},"🌙 睡眠前モードを開く");
-  b.addEventListener('click',()=>{ state.sleepMode=true; render(); });
+  b.addEventListener('click',()=>{ if(startWindDown())showToast("🌙 睡眠前モード開始","#a5b4fc"); state.sleepMode=true; render(); });
   c.appendChild(b);
   return c;
 }
@@ -2599,7 +2609,8 @@ function openLifeMode(key,opts){
   else { state.peekMode=null; state.peekArm=false; switchLifeMode(key); }
   state.modeSwitcher=false; state.lifeScreen=null;
   const def=lifeModeDef(key);
-  if(def&&def.screen==='sleep'){ state.sleepMode=true; render(); }
+  // 睡眠前モードに入る＝寝支度を始めること。切り替えから入っても時刻を記録する
+  if(def&&def.screen==='sleep'){ if(!peek && startWindDown()) showToast("🛏 寝支度を始めました","#a5b4fc"); state.sleepMode=true; render(); }
   else if(def&&def.screen&&def.screen.indexOf('self:')===0){ enterSelfMode(def.screen.slice(5), resuming); } // enterSelfMode 内で render()
   else { state.lifeScreen=key; render(); }
 }
