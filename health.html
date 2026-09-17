@@ -222,7 +222,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.61"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.62"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -346,7 +346,7 @@ function restoreSave(id){
 const DAILY_SAVE_LABELS=[["drinks","🍺 飲酒"],["cravings","🍺 飲酒欲求"],["ejaculations","💧 射精"],["foods","🍽 食事"],
   ["water","💧 水分"],["bedTime","😴 睡眠"],["wakeTime","😴 起床"],["naps","💤 昼寝"],["awakenings","😴 中途覚醒"],
   ["actuals","📌 実績"],["actualNotes","📌 実績のメモ"],["planDone","✓ 予定の完了"],["meds","💊 服薬"],["routineOverrides","🔁 まとめの実績"],
-  ["windDownAt","🛏 寝支度"],["bodyComps","🏋️ 体組成"],["score","📔 生活記録"]];
+  ["windDownAt","🛏 寝支度"],["bodyComps","🏋️ 体組成"],["sleepQuality","🛌 眠りの質"],["sleepNote","🛌 眠りのメモ"],["score","📔 生活記録"]];
 function dailySaveLabel(upd){
   const ks=Object.keys(upd||{});
   for(const [k,l] of DAILY_SAVE_LABELS){ if(ks.indexOf(k)>=0) return l; }
@@ -4314,6 +4314,23 @@ function buildSleepSections(vd){
         div({style:{fontSize:"10px",color:"#475569"}},"起床＝今朝の目覚め／就寝＝今夜寝る時刻。「今」で現在時刻を記録。予定「実際」列に反映されます")
       ]);
     })(),
+    // 🛌 眠りの質（主観）＋ひとことメモ。起床と同じく「その朝までの夜」の評価
+    (()=>{
+      const q=sleepQualOf(vd), qd=sleepQualDef(q);
+      const sec=div({style:{marginBottom:"12px"}});
+      sec.appendChild(div({style:{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:"6px"}},[
+        span({style:{fontSize:"12px",color:"#94a3b8"}},"🛌 眠りの質（前夜）"),
+        span({style:{fontSize:"12px",fontWeight:700,color:sleepQualColor(q)}},qd?`${qd.icon} ${qd.label}`:"—")
+      ]));
+      sec.appendChild(sleepQualPicker(vd,false));
+      const ta=document.createElement('input'); ta.type='text'; ta.value=sleepNoteOf(vd);
+      ta.placeholder="ひとことメモ（夢・寝つき・暑さなど）";
+      ta.style.cssText="width:100%;box-sizing:border-box;margin-top:7px;padding:8px 10px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit";
+      ta.addEventListener('change',(()=>{const k=vd;return e=>{ setSleepNote(k,e.target.value); render(); };})());
+      sec.appendChild(ta);
+      sec.appendChild(div({style:{fontSize:"10px",color:"#475569",marginTop:"4px"}},"今朝までの眠りの実感。睡眠ログと総合分析（体調・飲酒との関係）に使われます"));
+      return sec;
+    })(),
     // 🌙 就寝リズム（就寝ドリフト対策）
     (vd===todayStr()?div({style:{marginBottom:"12px"}},[sleepRhythmCard(true)]):null),
     // 中途覚醒
@@ -4425,8 +4442,9 @@ function sleepLogNight(ds){
   const net=getNightSleepHours(nd);                  // 中途覚醒を引いた実睡眠(h)
   const awakeMins=awakes.reduce((a,x)=>a+(x.mins||0),0);
   const napMins=naps.reduce((a,x)=>a+(x.mins||0),0);
-  return {ds,nd,bed,wake,bedAbs,wakeAbs,windAbs,tgt,dev,net,awakes,awakeMins,naps,napMins,
-    has:(bed!=null||wake!=null)};
+  const qual=sleepQualOf(nd), note=sleepNoteOf(nd);   // 眠りの質は「目が覚めた朝」に記録される
+  return {ds,nd,bed,wake,bedAbs,wakeAbs,windAbs,tgt,dev,net,awakes,awakeMins,naps,napMins,qual,note,
+    has:(bed!=null||wake!=null||qual!=null||!!note)};
 }
 // 直近n夜（今夜から過去へ）。今夜はまだ就寝前のことがあるので、記録があるときだけ含める
 function sleepLogNights(n){
@@ -4436,15 +4454,17 @@ function sleepLogNights(n){
 }
 // 平均などのまとめ（記録のある夜だけで計算）
 function sleepLogSummary(nights){
-  const bedM=[], wakeM=[], nets=[]; let inTol=0, tolN=0;
+  const bedM=[], wakeM=[], nets=[], quals=[]; let inTol=0, tolN=0;
   const tol=sleepTol();
   nights.forEach(g=>{
     if(g.bed!=null){ bedM.push(bedFloatToNightMin(g.bed)); if(g.tgt!=null){ tolN++; if(Math.abs(bedFloatToNightMin(g.bed)-g.tgt)<=tol)inTol++; } }
     if(g.wake!=null) wakeM.push(Math.round(g.wake*60));
     if(g.net!=null) nets.push(g.net);
+    if(g.qual!=null) quals.push(g.qual);
   });
   const avg=a=>a.length?a.reduce((x,y)=>x+y,0)/a.length:null;
-  return {n:nights.length, bedAvg:avg(bedM), wakeAvg:avg(wakeM), netAvg:avg(nets), inTol, tolN, netN:nets.length};
+  return {n:nights.length, bedAvg:avg(bedM), wakeAvg:avg(wakeM), netAvg:avg(nets), qualAvg:avg(quals),
+    inTol, tolN, netN:nets.length, qualN:quals.length};
 }
 // 1夜ぶんの帯（18:00〜翌12:00）。就寝→起床を塗り、中途覚醒は抜き、寝支度と就寝目標の印を出す
 function sleepLogBand(g){
@@ -4496,6 +4516,7 @@ function renderSleepLogCard(){
     g3.appendChild(cell(sm.bedAvg!=null?fmtHM(sm.bedAvg):"—","平均 就寝","#a5b4fc"));
     g3.appendChild(cell(sm.wakeAvg!=null?fmtHM(sm.wakeAvg):"—","平均 起床","#fbbf24"));
     g3.appendChild(cell(sm.netAvg!=null?`${(Math.round(sm.netAvg*10)/10)}h`:"—","平均 実睡眠",sm.netAvg==null?"#64748b":sm.netAvg>=7?"#22c55e":sm.netAvg<=5?"#ef4444":"#eab308"));
+    g3.appendChild(cell(sm.qualAvg!=null?`${Math.round(sm.qualAvg*10)/10}`:"—",`平均 質${sm.qualN?`(${sm.qualN})`:""}`,sleepQualColor(sm.qualAvg==null?null:Math.round(sm.qualAvg))));
     if(sm.tolN) g3.appendChild(cell(`${sm.inTol}/${sm.tolN}`,`目標±${tol}分`,sm.inTol===sm.tolN?"#22c55e":"#94a3b8"));
     card.appendChild(g3); }
   if(!nights.length){ card.appendChild(div({style:{fontSize:"11px",color:"#475569",textAlign:"center",padding:"10px 0"}},"まだ睡眠の記録がありません。")); return card; }
@@ -4519,11 +4540,18 @@ function renderSleepLogCard(){
     if(g.napMins) bits.push(`💤 昼寝 ${fmtMinLabel(g.napMins)}`);
     row.appendChild(div({style:{display:"flex",flexWrap:"wrap",gap:"8px",paddingLeft:"64px",fontSize:"10px",
       color:(g.dev!=null&&Math.abs(g.dev)>tol)?"#fbbf24":"#64748b"}},bits.map(t=>span({},t))));
+    // 🛌 眠りの質：ここから直接つけられる（つけ忘れた夜をあとから埋められるように）
+    { const qr=div({style:{display:"flex",alignItems:"center",gap:"7px",paddingLeft:"64px",marginTop:"4px"}});
+      qr.appendChild(div({style:{width:"100px",flexShrink:0}},[sleepQualPicker(g.nd,true)]));
+      const qd=sleepQualDef(g.qual);
+      qr.appendChild(div({style:{flex:1,minWidth:0,fontSize:"10px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",
+        color:g.note?"#94a3b8":sleepQualColor(g.qual)}}, g.note?`📝 ${g.note}`:(qd?qd.label:"眠りの質は未記録")));
+      row.appendChild(qr); }
     row.addEventListener('click',(()=>{const k=g.ds;return()=>{ state.viewDate=k; state.tab="日記"; state.diarySubTab="睡眠"; state.widget=false; render(); };})());
     card.appendChild(row);
   });
   card.appendChild(div({style:{fontSize:"9px",color:"#475569",marginTop:"8px",lineHeight:1.5}},
-    "🛏 寝支度｜🌙 就寝（かっこ内は就寝目標とのズレ）｜🌅 起床｜😪 中途覚醒（実睡眠から差し引き）｜💤 その日の昼寝。帯の点線は就寝目標、薄い帯は片方だけの記録からの推定。"));
+    "🛏 寝支度｜🌙 就寝（かっこ内は就寝目標とのズレ）｜🌅 起床｜😪 中途覚醒（実睡眠から差し引き）｜💤 その日の昼寝。帯の点線は就寝目標、薄い帯は片方だけの記録からの推定。顔は眠りの質（その場でつけ直せます）。"));
   return card;
 }
 function renderSleepPanel(vd,ds,isToday){
@@ -6126,6 +6154,33 @@ function mdLabel(ds){ if(!ds)return ""; const p=(""+ds).split('-'); return p.len
 function hhmm(h,m){ return `${String(h).padStart(2,'0')}:${String(m||0).padStart(2,'0')}`; } // "HH:MM"
 // その夜の中途覚醒の合計（分）。覚醒はその朝(ds)の記録に付く
 function getNightAwakeMins(ds){ return (getDaily(ds).awakenings||[]).reduce((a,x)=>a+(x.mins||0),0); }
+// ── 🛌 眠りの質（主観・1〜5）とひとことメモ ───────────────────────
+// 中途覚醒や起床時刻と同じく「目が覚めた朝」の日付に記録する（＝その朝までの夜の評価）。
+// 体動センサーのような推定ではなく本人の実感。総合分析では他の記録と同じ材料として扱う。
+const SLEEP_QUALS=[{v:1,icon:"😵",label:"最悪"},{v:2,icon:"😪",label:"よくない"},{v:3,icon:"😐",label:"ふつう"},{v:4,icon:"🙂",label:"よい"},{v:5,icon:"😊",label:"ぐっすり"}];
+function sleepQualOf(ds){ const v=getDaily(ds).sleepQuality; return (v>=1&&v<=5)?v:null; }
+function sleepQualDef(v){ return SLEEP_QUALS.find(x=>x.v===v)||null; }
+function sleepQualColor(v){ return v==null?"#475569":(v>=4?"#4ade80":(v<=2?"#f87171":"#eab308")); }
+// 同じ評価をもう一度押したら取り消し（押し間違いをその場で消せるように）
+function setSleepQual(ds,v){ setDaily(ds,{sleepQuality:(sleepQualOf(ds)===v?null:v)}); }
+function sleepNoteOf(ds){ return getDaily(ds).sleepNote||""; }
+function setSleepNote(ds,t){ setDaily(ds,{sleepNote:(t||"").trim()||null}); }
+// 評価を選ぶボタンの並び（睡眠タブでも睡眠ログでも同じものを使う）。sm=小さい版
+function sleepQualPicker(ds,sm,after){
+  const cur=sleepQualOf(ds);
+  const row=div({style:{display:"flex",gap:sm?"3px":"5px"}});
+  SLEEP_QUALS.forEach(q=>{
+    const on=cur===q.v, col=sleepQualColor(q.v);
+    const b=btn({style:{flex:1,padding:sm?"3px 0":"7px 2px",borderRadius:sm?"6px":"9px",cursor:"pointer",fontFamily:"inherit",lineHeight:1.15,
+      border:`1px solid ${on?col:"#334155"}`,background:on?col+"22":"transparent"}},[
+      div({style:{fontSize:sm?"13px":"17px",filter:on?"none":"grayscale(0.7)",opacity:on?1:0.75}},q.icon),
+      sm?null:div({style:{fontSize:"9px",marginTop:"1px",color:on?col:"#64748b"}},q.label)
+    ]);
+    b.addEventListener('click',(()=>{const k=ds,vv=q.v;return e=>{ e.stopPropagation(); setSleepQual(k,vv); if(after)after(); render(); };})());
+    row.appendChild(b);
+  });
+  return row;
+}
 // その日の朝に起きた睡眠(＝前日の就寝→当日の起床)の時間数（中途覚醒を差し引いた実睡眠）。未記録は null
 function getNightSleepHours(ds){
   const bed=getDaily(addDays(ds,-1)).bedTime, wake=getDaily(ds).wakeTime;
@@ -7981,7 +8036,7 @@ const FEATURE_INDEX=[
   ]},
   {group:"📔 日記",items:[
     {label:"生活記録",desc:"体調・飲水・食事などの記録",go:()=>{state.tab="日記";state.diarySubTab="生活記録";}},
-    {label:"睡眠",desc:"就寝リズム・睡眠ログ・中途覚醒・昼寝",go:()=>{state.tab="日記";state.diarySubTab="睡眠";}},
+    {label:"睡眠",desc:"就寝リズム・睡眠ログ・眠りの質・中途覚醒・昼寝",go:()=>{state.tab="日記";state.diarySubTab="睡眠";}},
     {label:"トレーニング",desc:"体組成(写真取込)・ワークアウト・有酸素",go:()=>{state.tab="日記";state.diarySubTab="トレーニング";}},
     {label:"体調記録",desc:"症状・服薬などの記録",go:()=>{state.tab="日記";state.diarySubTab="体調記録";}},
     {label:"アルコール",desc:"飲酒記録・減酒サポート・飲まない夜の習慣",go:()=>{state.tab="日記";state.diarySubTab="アルコール";}},
@@ -9820,7 +9875,7 @@ async function runAICoach(kind){
     const doneN=getTodoItems().filter(it=>!(todo[it.id]||{}).excluded && isTodoDone(today,it)).length;
     const dueC=dueCustomTodos(today).filter(ct=>!(todo[ct.uid]||{}).checked&&!(todo[ct.uid]||{}).excluded).map(ct=>ct.label);
     const streak=currentOverallStreak().streak;
-    const ctx=`日付:${today}（${shift}）連続達成:${streak}日 今日の体調:${avg}/10 前夜の睡眠:${sleep}\n未完了ルーティン:${remain.join('、')||'なし'}（完了${doneN}件）\n未実施の定期ルーティン:${dueC.join('、')||'なし'}\n\n【目標ツリー（階層・期間・進捗・連結習慣）】\n${buildGoalCoachContext()}`;
+    const ctx=`日付:${today}（${shift}）連続達成:${streak}日 今日の体調:${avg}/10 前夜の睡眠:${sleep}${(()=>{const q=sleepQualDef(sleepQualOf(today));return q?`（眠りの質 ${q.label}/5点中${q.v}）`:"";})()}\n未完了ルーティン:${remain.join('、')||'なし'}（完了${doneN}件）\n未実施の定期ルーティン:${dueC.join('、')||'なし'}\n\n【目標ツリー（階層・期間・進捗・連結習慣）】\n${buildGoalCoachContext()}`;
     let sys, prompt;
     if(kind==="goal"){
       sys="あなたはユーザー専属の目標達成コーチです。ユーザーの目標ツリー・進捗・連結習慣・体調を踏まえ、精神論ではなく『目標を前に進める具体的な次の行動』を示します。今日〜今週に実行できる1〜2手を、実行意図（いつ・どこで・何をするか）の形で具体的に提案してください。目標が曖昧または大きすぎる場合は、達成につながる小さな下位目標や、毎日の習慣（ルーティン）への落とし込みを提案します。目標が未登録なら、記録内容から始めやすい目標を1つ提案します。日本語で4〜6文、JSONやMarkdownの装飾は使わないでください。";
@@ -9883,6 +9938,7 @@ function soberMorningCard(){
   const bits=[];
   if(streak>0) bits.push(`🚱 連続休肝 ${streak}日`);
   if(sleep!=null) bits.push(`😴 睡眠 ${Math.round(sleep*10)/10}h`);
+  { const q=sleepQualDef(sleepQualOf(today)); if(q) bits.push(`🛌 眠り ${q.icon}${q.label}`); }
   if(score!=null) bits.push(`💗 体調 ${score.toFixed(1)}`);
   c.appendChild(div({style:{fontSize:"12px",color:"#cbd5e1",lineHeight:1.7}},bits.length?bits.join("　"):"今朝のあなたのコンディションです"));
   c.appendChild(div({style:{fontSize:"11px",color:"#94a3b8",marginTop:"6px",lineHeight:1.6}},"飲まなかった分、体も財布も軽い。この調子でいきましょう。"));
@@ -10053,14 +10109,16 @@ function ifThenPlanCard(){
 function alcoholImpactStats(){
   const avgScore=ds=>{ const ls=state.logs.filter(l=>l.dateStr===ds&&l.score!=null).map(l=>l.score); return ls.length?ls.reduce((a,b)=>a+b,0)/ls.length:null; };
   const dates=[...new Set((state.dailies||[]).map(d=>d.dateStr).filter(Boolean))];
-  const dNext=[],sNext=[],dSleep=[],sSleep=[];
+  const dNext=[],sNext=[],dSleep=[],sSleep=[],dQual=[],sQual=[];
   dates.forEach(ds=>{ const nd=addDays(ds,1); const drank=dayHasAlcohol(ds);
     const ns=avgScore(nd); if(ns!=null)(drank?dNext:sNext).push(ns);
     const nsl=getNightSleepHours(nd); if(nsl!=null)(drank?dSleep:sSleep).push(nsl);
+    const q=sleepQualOf(nd); if(q!=null)(drank?dQual:sQual).push(q);
   });
   const mean=a=>a.length?a.reduce((x,y)=>x+y,0)/a.length:null;
   return { drinkNextScore:mean(dNext), soberNextScore:mean(sNext), drinkN:dNext.length, soberN:sNext.length,
-           drinkNextSleep:mean(dSleep), soberNextSleep:mean(sSleep), drinkSleepN:dSleep.length, soberSleepN:sSleep.length };
+           drinkNextSleep:mean(dSleep), soberNextSleep:mean(sSleep), drinkSleepN:dSleep.length, soberSleepN:sSleep.length,
+           drinkNextQual:mean(dQual), soberNextQual:mean(sQual), drinkQualN:dQual.length, soberQualN:sQual.length };
 }
 // 直近days日の「アルコール由来カロリー」（純アルコール7.1kcal/g）
 function alcoholKcalRange(vd, days){ let kcal=0; for(let i=0;i<days;i++){ const ds=addDays(vd,-i); (getDaily(ds).drinks||[]).forEach(dr=>{ const dt=resolveDT(dr); kcal+=pureAlcohol(dr.ml, dr.pct!=null?dr.pct:dt.pct)*7.1; }); } return Math.round(kcal); }
@@ -11017,7 +11075,7 @@ function buildScheduleContext(vd){
   scoredAll.forEach(l=>{const h=l.hour; if(h>=5&&h<11)tod.m.push(l.score);else if(h>=11&&h<17)tod.a.push(l.score);else if(h>=17&&h<22)tod.e.push(l.score);else tod.n.push(l.score);});
   const av=a=>{const v=avgOf(a);return v!=null?v.toFixed(1):"—";};
   const todStr=`朝(5-11時)${av(tod.m)} / 昼(11-17時)${av(tod.a)} / 夕(17-22時)${av(tod.e)} / 夜(22-5時)${av(tod.n)}`;
-  const conditionCtx=`今日の体調: ${todayAvg!=null?todayAvg.toFixed(1)+"/10":"未記録"} / 直近7日平均: ${recentAvg!=null?recentAvg.toFixed(1)+"/10":"—"} / 前夜の睡眠: ${sleepH!=null?sleepH+"h":"—"} / 最近の症状: ${recentSymptoms.join("・")||"なし"} / 時間帯別の平均体調(10点満点): ${todStr}`;
+  const conditionCtx=`今日の体調: ${todayAvg!=null?todayAvg.toFixed(1)+"/10":"未記録"} / 直近7日平均: ${recentAvg!=null?recentAvg.toFixed(1)+"/10":"—"} / 前夜の睡眠: ${sleepH!=null?sleepH+"h":"—"}${(()=>{const q=sleepQualDef(sleepQualOf(vd));return q?`（眠りの質 ${q.v}/5 ${q.label}）`:"";})()} / 最近の症状: ${recentSymptoms.join("・")||"なし"} / 時間帯別の平均体調(10点満点): ${todStr}`;
   const now=new Date();
   const timeCtx=(vd===todayStr())?`現在時刻は${now.getHours()}:${String(now.getMinutes()).padStart(2,'0')}です。今の時刻以降のスケジュールだけ提案してください。`:"1日全体のスケジュールを提案してください。";
   return `日付: ${vd}\n勤務: ${shift}\n${timeCtx}\n\n【体調】\n${conditionCtx}\n\n【既存の予定】\n${existing}\n\n【やることリスト(未完了・優先度付き)】\n${todoTasks}\n\n【ルーティン（各グループはまとめて1件の予定として配置。titleはグループ名のまま）】\n${routineDesc}\n\n【その他の毎日の項目（個別に配置してよい）】\n${soloItems}`;
@@ -12016,7 +12074,10 @@ function renderAlcohol(vd,isToday){
       c.appendChild(div({style:{fontSize:"11px",color:"#475569",marginBottom:"10px"}},"体調スコアの記録が増えると、飲んだ翌日と休肝日翌日の比較が出ます。"));
     }
     if(st.drinkNextSleep!=null && st.soberNextSleep!=null){
-      c.appendChild(div({style:{fontSize:"11px",color:"#94a3b8",marginBottom:"10px"}},`😴 翌日の睡眠：飲んだ翌日 ${st.drinkNextSleep.toFixed(1)}h ／ 休肝日翌日 ${st.soberNextSleep.toFixed(1)}h`));
+      c.appendChild(div({style:{fontSize:"11px",color:"#94a3b8",marginBottom:st.drinkNextQual!=null&&st.soberNextQual!=null?"4px":"10px"}},`😴 翌日の睡眠：飲んだ翌日 ${st.drinkNextSleep.toFixed(1)}h ／ 休肝日翌日 ${st.soberNextSleep.toFixed(1)}h`));
+    }
+    if(st.drinkNextQual!=null && st.soberNextQual!=null){
+      c.appendChild(div({style:{fontSize:"11px",color:"#94a3b8",marginBottom:"10px"}},`🛌 翌朝の眠りの質：飲んだ翌朝 ${st.drinkNextQual.toFixed(1)} ／ 休肝日翌朝 ${st.soberNextQual.toFixed(1)}（5点満点）`));
     }
     const k7=alcoholKcalRange(vd,7), k30=alcoholKcalRange(vd,30);
     c.appendChild(div({style:{display:"flex",gap:"8px"}},[
@@ -13000,6 +13061,7 @@ const MODE_METRICS=[
   {k:"score", label:"体調",       unit:"",  dec:1, norm:10, min:0.5, hiGood:true},
   {k:"mental",label:"心の調子",   unit:"",  dec:1, norm:10, min:0.5, hiGood:true},
   {k:"sleep", label:"睡眠",       unit:"h", dec:1, norm:8,  min:0.4, hiGood:true},
+  {k:"sleepQ",label:"眠りの質",   unit:"",  dec:1, norm:5,  min:0.3, hiGood:true},
   {k:"alc",   label:"純アルコール",unit:"g", dec:0, norm:20, min:3,   hiGood:false}
 ];
 function modeDayMetrics(ds){
@@ -13009,6 +13071,7 @@ function modeDayMetrics(ds){
     score: sc.length? sc.reduce((a,b)=>a+b.score,0)/sc.length : null,
     mental: mn.length? mn.reduce((a,b)=>a+b.mental,0)/mn.length : null,
     sleep: getNightSleepHours(addDays(ds,1)),   // その日の夜の睡眠
+    sleepQ: sleepQualOf(addDays(ds,1)),        // その夜の眠りの質（翌朝に記録される）
     alc: pureAlcoholG(ds)
   };
 }
