@@ -222,7 +222,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.60"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.61"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -856,6 +856,7 @@ const state = {
   actEditUid:null, actTitle:"", actNote:"", actSH:9, actSM:0, actEH:10, actEM:0, actStartNextDay:false, actEndNextDay:false, actColor:"#f472b6", actUnplanned:true, actDate:null,
   actMemoKey:null, actMemoLabel:"", actMemoVd:null, actMemoText:"", // 実績（睡眠・飲酒等）へのメモ
   analysisSubTab:"日次・週次", diarySubTab:"生活記録", taskSubTab:"ルーティン",
+  sleepLogDays:7, // 🛏 睡眠ログで見る夜数（7/14/30）
   storageAlert:false, storageExportYear:null,
   weather:[], weatherCity:null, weatherLoading:false, weatherError:null,
   editHour:null, editDate:null, editScore:null, editMental:null, editSymptoms:[], editNote:"", editCraving:null,
@@ -4402,11 +4403,135 @@ function buildSleepSections(vd){
     })(),
   ];
 }
+// ── 🛏 睡眠ログ（夜ごとの一覧）────────────────────────────────
+// 1夜 = 「就寝する日 ds」の夜。就寝は ds の bedTime、起床は翌日の wakeTime、
+// 中途覚醒は「目が覚めた朝」＝翌日に記録される（予定タブの睡眠実績と同じ数え方）。
+// 帯の物差しは ds の 18:00 〜 翌 12:00（18時間）。
+const SLEEPLOG_FROM=18*60, SLEEPLOG_TO=36*60;
+function sleepLogNight(ds){
+  const nd=addDays(ds,1);
+  const dayB=getDaily(ds), dayW=getDaily(nd);
+  const bed=dayB.bedTime, wake=dayW.wakeTime;
+  const wind=dayB.windDownAt||null;
+  const awakes=[...(dayW.awakenings||[])].sort((a,b)=>(toNightMin(a.hour*60+(a.min||0)))-(toNightMin(b.hour*60+(b.min||0))));
+  const naps=dayW.naps||[];
+  // ds 0:00 を起点にした分（就寝が正午前なら翌日の就寝）
+  const bedAbs = bed!=null ? ((bed<12?1440:0)+Math.round(bed*60)) : null;
+  const wakeAbs= wake!=null ? (1440+Math.round(wake*60)) : null;
+  const windAbs= wind ? (()=>{ const d=new Date(wind); const p=parseDS(ds); return Math.round((d-p)/60000); })() : null;
+  const tgt=bedTargetNightMin(ds);                   // 夜基準分（24:00=1440）
+  const bedNight=bed!=null?bedFloatToNightMin(bed):null;
+  const dev=(tgt!=null&&bedNight!=null)?(bedNight-tgt):null;
+  const net=getNightSleepHours(nd);                  // 中途覚醒を引いた実睡眠(h)
+  const awakeMins=awakes.reduce((a,x)=>a+(x.mins||0),0);
+  const napMins=naps.reduce((a,x)=>a+(x.mins||0),0);
+  return {ds,nd,bed,wake,bedAbs,wakeAbs,windAbs,tgt,dev,net,awakes,awakeMins,naps,napMins,
+    has:(bed!=null||wake!=null)};
+}
+// 直近n夜（今夜から過去へ）。今夜はまだ就寝前のことがあるので、記録があるときだけ含める
+function sleepLogNights(n){
+  const out=[]; const today=todayStr();
+  for(let i=0;i<n;i++){ const ds=addDays(today,-i); const g=sleepLogNight(ds); if(i===0&&!g.has)continue; out.push(g); }
+  return out;
+}
+// 平均などのまとめ（記録のある夜だけで計算）
+function sleepLogSummary(nights){
+  const bedM=[], wakeM=[], nets=[]; let inTol=0, tolN=0;
+  const tol=sleepTol();
+  nights.forEach(g=>{
+    if(g.bed!=null){ bedM.push(bedFloatToNightMin(g.bed)); if(g.tgt!=null){ tolN++; if(Math.abs(bedFloatToNightMin(g.bed)-g.tgt)<=tol)inTol++; } }
+    if(g.wake!=null) wakeM.push(Math.round(g.wake*60));
+    if(g.net!=null) nets.push(g.net);
+  });
+  const avg=a=>a.length?a.reduce((x,y)=>x+y,0)/a.length:null;
+  return {n:nights.length, bedAvg:avg(bedM), wakeAvg:avg(wakeM), netAvg:avg(nets), inTol, tolN, netN:nets.length};
+}
+// 1夜ぶんの帯（18:00〜翌12:00）。就寝→起床を塗り、中途覚醒は抜き、寝支度と就寝目標の印を出す
+function sleepLogBand(g){
+  const W=SLEEPLOG_TO-SLEEPLOG_FROM;
+  const pc=m=>`${Math.max(0,Math.min(100,((m-SLEEPLOG_FROM)/W)*100))}%`;
+  const band=div({style:{position:"relative",height:"20px",borderRadius:"5px",background:"#0b1220",border:"1px solid #1e293b",overflow:"hidden"}});
+  // 0時の目盛り
+  band.appendChild(div({style:{position:"absolute",left:pc(1440),top:"0",bottom:"0",width:"1px",background:"#1e3a5f"}}));
+  if(g.bedAbs!=null||g.wakeAbs!=null){
+    const s=g.bedAbs!=null?g.bedAbs:(g.wakeAbs-480), e=g.wakeAbs!=null?g.wakeAbs:(g.bedAbs+480);
+    const est=(g.bedAbs==null||g.wakeAbs==null);   // 片方だけの記録は推定表示
+    // 中途覚醒で塗りを分割
+    let segs=[[s,e]];
+    g.awakes.forEach(aw=>{ const a0=(aw.hour<12?1440:0)+aw.hour*60+(aw.min||0), a1=a0+(aw.mins||0);
+      segs=segs.reduce((acc,[s0,s1])=>{ if(a1<=s0||a0>=s1){acc.push([s0,s1]);} else { if(a0>s0)acc.push([s0,a0]); if(a1<s1)acc.push([a1,s1]); } return acc; },[]); });
+    const col=getSleepColor();
+    segs.forEach(([s0,s1])=>{ if(s1<=s0)return;
+      band.appendChild(div({style:{position:"absolute",left:pc(s0),width:`${Math.max(0,((Math.min(s1,SLEEPLOG_TO)-Math.max(s0,SLEEPLOG_FROM))/W)*100)}%`,top:"3px",bottom:"3px",
+        background:est?col+"44":col+"cc",border:est?`1px dashed ${col}`:"none",borderRadius:"3px"}})); });
+  }
+  // 🛏 寝支度の印
+  if(g.windAbs!=null) band.appendChild(div({style:{position:"absolute",left:pc(g.windAbs),top:"1px",bottom:"1px",width:"2px",background:"#a78bfa"}}));
+  // 🎯 就寝目標の印（点線）
+  if(g.tgt!=null) band.appendChild(div({style:{position:"absolute",left:pc(g.tgt),top:"0",bottom:"0",width:"0",borderLeft:"1px dashed #fbbf24"}}));
+  return band;
+}
+function renderSleepLogCard(){
+  const per=state.sleepLogDays||7;
+  const nights=sleepLogNights(per), sm=sleepLogSummary(nights), tol=sleepTol();
+  const card=div({className:"card"});
+  card.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0",marginBottom:"4px"}},"🛏 睡眠ログ"));
+  card.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"9px",lineHeight:1.5}},
+    "夜ごとの寝支度・就寝・起床・中途覚醒を一覧にしたものです。帯は18時〜翌12時。タップでその夜の記録へ移動します。"));
+  // 期間の切り替え
+  { const row=div({style:{display:"flex",gap:"5px",marginBottom:"10px"}});
+    [[7,"7夜"],[14,"14夜"],[30,"30夜"]].forEach(([n,lbl])=>{
+      const on=per===n;
+      const b=btn({style:{flex:1,padding:"6px",borderRadius:"8px",cursor:"pointer",fontSize:"11px",fontWeight:600,fontFamily:"inherit",
+        border:`1px solid ${on?"#6366f1":"#334155"}`,background:on?"#6366f122":"transparent",color:on?"#a5b4fc":"#64748b"}},lbl);
+      b.addEventListener('click',(()=>{const nn=n;return()=>{ state.sleepLogDays=nn; render(); };})());
+      row.appendChild(b);
+    });
+    card.appendChild(row); }
+  // まとめ
+  { const cell=(v,l,col)=>div({style:{flex:1,padding:"7px 3px",borderRadius:"8px",background:"#0f172a",textAlign:"center"}},[
+      div({style:{fontSize:"14px",fontWeight:800,color:col,lineHeight:1.15}},v),
+      div({style:{fontSize:"9px",color:"#64748b",marginTop:"2px"}},l)]);
+    const g3=div({style:{display:"flex",gap:"5px",marginBottom:"10px"}});
+    g3.appendChild(cell(sm.bedAvg!=null?fmtHM(sm.bedAvg):"—","平均 就寝","#a5b4fc"));
+    g3.appendChild(cell(sm.wakeAvg!=null?fmtHM(sm.wakeAvg):"—","平均 起床","#fbbf24"));
+    g3.appendChild(cell(sm.netAvg!=null?`${(Math.round(sm.netAvg*10)/10)}h`:"—","平均 実睡眠",sm.netAvg==null?"#64748b":sm.netAvg>=7?"#22c55e":sm.netAvg<=5?"#ef4444":"#eab308"));
+    if(sm.tolN) g3.appendChild(cell(`${sm.inTol}/${sm.tolN}`,`目標±${tol}分`,sm.inTol===sm.tolN?"#22c55e":"#94a3b8"));
+    card.appendChild(g3); }
+  if(!nights.length){ card.appendChild(div({style:{fontSize:"11px",color:"#475569",textAlign:"center",padding:"10px 0"}},"まだ睡眠の記録がありません。")); return card; }
+  // 夜ごとの行
+  nights.forEach(g=>{
+    const row=div({style:{padding:"7px 0",borderBottom:"1px solid #1e293b",cursor:"pointer"}});
+    row.dataset.sleepnight=g.ds;
+    const top=div({style:{display:"flex",alignItems:"center",gap:"8px",marginBottom:"4px"}});
+    const dd=parseDS(g.ds), wd=["日","月","火","水","木","金","土"][dd.getDay()];
+    top.appendChild(div({style:{width:"56px",flexShrink:0,fontSize:"11px",color:wd==="日"?"#f87171":wd==="土"?"#60a5fa":"#94a3b8"}},`${dd.getMonth()+1}/${dd.getDate()}(${wd})`));
+    top.appendChild(div({style:{flex:1,minWidth:0}},[sleepLogBand(g)]));
+    top.appendChild(div({style:{width:"44px",flexShrink:0,textAlign:"right",fontSize:"12px",fontWeight:700,
+      color:g.net==null?"#475569":g.net>=7?"#4ade80":g.net<=5?"#f87171":"#eab308"}}, g.net!=null?`${Math.round(g.net*10)/10}h`:"—"));
+    row.appendChild(top);
+    // 細字の内訳
+    const bits=[];
+    if(g.windAbs!=null) bits.push(`🛏 ${fmtHM(g.windAbs)}`);
+    bits.push(g.bed!=null?`🌙 ${fmtHM(Math.round(g.bed*60))}${g.dev!=null?`（${g.dev>0?"+":""}${g.dev}分）`:""}`:"🌙 —");
+    bits.push(g.wake!=null?`🌅 ${fmtHM(Math.round(g.wake*60))}`:"🌅 —");
+    if(g.awakes.length) bits.push(`😪 覚醒${g.awakes.length}回 ${fmtMinLabel(g.awakeMins)}`);
+    if(g.napMins) bits.push(`💤 昼寝 ${fmtMinLabel(g.napMins)}`);
+    row.appendChild(div({style:{display:"flex",flexWrap:"wrap",gap:"8px",paddingLeft:"64px",fontSize:"10px",
+      color:(g.dev!=null&&Math.abs(g.dev)>tol)?"#fbbf24":"#64748b"}},bits.map(t=>span({},t))));
+    row.addEventListener('click',(()=>{const k=g.ds;return()=>{ state.viewDate=k; state.tab="日記"; state.diarySubTab="睡眠"; state.widget=false; render(); };})());
+    card.appendChild(row);
+  });
+  card.appendChild(div({style:{fontSize:"9px",color:"#475569",marginTop:"8px",lineHeight:1.5}},
+    "🛏 寝支度｜🌙 就寝（かっこ内は就寝目標とのズレ）｜🌅 起床｜😪 中途覚醒（実睡眠から差し引き）｜💤 その日の昼寝。帯の点線は就寝目標、薄い帯は片方だけの記録からの推定。"));
+  return card;
+}
 function renderSleepPanel(vd,ds,isToday){
   const wrap=div({style:{maxWidth:"600px",margin:"0 auto",padding:"10px 16px 60px"}});
   if(!isToday){ const isFuture=vd>ds; wrap.appendChild(div({style:{background:"#1e3a5f22",border:"1px solid #1e3a5f",borderRadius:"10px",padding:"8px 12px",marginBottom:"8px",fontSize:"12px",color:"#64748b"}},isFuture?"📅 未来の日付を表示中 — 事前に記録できます":"📅 過去の記録を表示中 — 編集可能です")); }
   const card=div({className:"card"},[ div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0",marginBottom:"12px"}},"😴 睡眠"), ...buildSleepSections(vd) ]);
   wrap.appendChild(card);
+  wrap.appendChild(renderSleepLogCard());
   { const cc=div({className:"card"});
     cc.appendChild(div({style:{fontSize:"12px",color:"#94a3b8",marginBottom:"7px"}},"🎨 睡眠の実績色（予定タブのタイムライン）"));
     cc.appendChild(colorPickerRow(getSleepColor(),c=>{ setSleepColor(c); render(); }));
@@ -7856,7 +7981,7 @@ const FEATURE_INDEX=[
   ]},
   {group:"📔 日記",items:[
     {label:"生活記録",desc:"体調・飲水・食事などの記録",go:()=>{state.tab="日記";state.diarySubTab="生活記録";}},
-    {label:"睡眠",desc:"就寝リズム・中途覚醒・昼寝",go:()=>{state.tab="日記";state.diarySubTab="睡眠";}},
+    {label:"睡眠",desc:"就寝リズム・睡眠ログ・中途覚醒・昼寝",go:()=>{state.tab="日記";state.diarySubTab="睡眠";}},
     {label:"トレーニング",desc:"体組成(写真取込)・ワークアウト・有酸素",go:()=>{state.tab="日記";state.diarySubTab="トレーニング";}},
     {label:"体調記録",desc:"症状・服薬などの記録",go:()=>{state.tab="日記";state.diarySubTab="体調記録";}},
     {label:"アルコール",desc:"飲酒記録・減酒サポート・飲まない夜の習慣",go:()=>{state.tab="日記";state.diarySubTab="アルコール";}},
