@@ -224,7 +224,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.67"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.68"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -4960,6 +4960,64 @@ function goalEvents(goalId){
   out.sort((a,b)=>String(a.ds).localeCompare(String(b.ds)));
   return out;
 }
+// ── 🎯目標の期間 ↔ その目標から作った予定の日付 を連動させる ─────────
+// 日次目標は「その日」、週間〜年間は「その期間」に予定があるのが自然なので、
+// どちらかを動かしたらもう片方も同じ日数だけずらす。行き来で呼び合わないよう同期中は入口で止める。
+let _goalDateSyncing=false;
+function daysBetweenDS(a,b){ return Math.round((parseDS(b)-parseDS(a))/86400000); }
+// 予定1件を delta 日ずらす（単発はscheduleの中で移動、繰り返しは開始日をずらす）
+function shiftGoalEvent(g,delta){
+  if(!delta) return false;
+  const e=g.ev;
+  if(g.repeat){
+    e.startDate=addDays(e.startDate||g.ds,delta);
+    if(e.endDate) e.endDate=addDays(e.endDate,delta);
+    saveRepeatEvents(); return true;
+  }
+  const from=g.ds, to=addDays(from,delta);
+  state.schedule[from]=(state.schedule[from]||[]).filter(x=>x.uid!==e.uid);
+  if(e.endDate) e.endDate=addDays(e.endDate,delta);
+  if(!state.schedule[to]) state.schedule[to]=[];
+  state.schedule[to].push(e);
+  moveConnectPlanRef(e.uid,from,to);   // 🫂つながる予定の参照も一緒に動かす
+  saveSchedule(); return true;
+}
+// ① 予定の日付が変わった → その予定を作った目標の期間も合わせる
+//    日次＝その日に、週間〜年間＝その日を含む期間に。変えたときは新しい期間のラベルを返す
+function syncGoalFromEvent(goalId,newDs){
+  if(_goalDateSyncing||!goalId||!newDs) return null;
+  const f=gtFind(goalId); if(!f) return null;
+  const n=f.node; if(!n.periodType) return null;
+  const nk=getGoalKey(n.periodType,newDs);
+  if(!nk||nk===n.periodKey) return null;
+  _goalDateSyncing=true;
+  try{
+    const old=goalPeriodRange(n.periodType,n.periodKey);
+    // 複数日の一日目標は長さを保ったままずらす
+    if(n.periodType==="daily" && n.dailyEnd && old&&old.start){
+      const len=daysBetweenDS(old.start,n.dailyEnd);
+      n.dailyEnd = len>0 ? addDays(newDs,len) : null;
+    }
+    n.periodKey=nk; saveGoalTree();
+  } finally { _goalDateSyncing=false; }
+  return pkShort(nk)||nk;
+}
+// ② 目標の期間が変わった → その目標から作った予定も同じ日数だけずらす。動かした件数を返す
+function syncEventsFromGoal(goalId,oldType,oldKey){
+  if(_goalDateSyncing||!goalId) return 0;
+  const f=gtFind(goalId); if(!f) return 0;
+  const n=f.node;
+  const o=goalPeriodRange(oldType,oldKey), w=goalPeriodRange(n.periodType,n.periodKey);
+  if(!o||!w) return 0;
+  const delta=daysBetweenDS(o.start,w.start);
+  if(!delta) return 0;
+  const evs=goalEvents(goalId); if(!evs.length) return 0;
+  _goalDateSyncing=true;
+  let moved=0;
+  try{ evs.forEach(g=>{ if(shiftGoalEvent(g,delta)) moved++; }); }
+  finally{ _goalDateSyncing=false; }
+  return moved;
+}
 // 予定1件の時間ラベル（終日／繰り返しも扱う）
 function goalEventTimeLabel(g){
   const e=g.ev;
@@ -5477,7 +5535,13 @@ function renderGoalTreeModal(){
         // 下位目標を作るときに選んだ「上位目標の達成判定」を親に保存する
         if(m0.parentId!=null && m0.parentRule){ gtUpdate(m0.parentId, m0.parentRule==="all"?{doneRule:null}:{doneRule:{mode:"manual"}}); }
       } else {
+        // 期間を変えたら、この目標から作った予定も同じ日数だけずらす（連動）
+        const _pf=gtFind(m0.id), _oldT=_pf&&_pf.node.periodType, _oldK=_pf&&_pf.node.periodKey;
         gtUpdate(m0.id,{text, periodType:pt, periodKey:pk, note, linkedRoutines:linked, dailyEnd:dailyEnd||null});
+        if(pt && _oldT===pt && _oldK && _oldK!==pk){
+          const moved=syncEventsFromGoal(m0.id,_oldT,_oldK);
+          if(moved) showToast(`📅 予定も${moved>1?`${moved}件`:""}動かしました`,"#38bdf8");
+        }
       }
       state.goalTreeModal=null; render();
     }},"保存"));
@@ -9941,7 +10005,11 @@ function renderAddEventModal(vd){
         }
         // 日付を動かしたら、🫂つながる予定の参照（日付＋uid）も一緒に動かす
         if(keepUid!=null){ const from=state.editEventDate||vd; if(from!==targetDate) moveConnectPlanRef(keepUid,from,targetDate); }
+        // 🎯目標から作った予定なら、目標の期間もその日に合わせる（日次＝その日／週間〜年間＝その日を含む期間）
+        let _goalMoved=null;
+        if(state.newEvGoalId && isNone && !isRepEdit) _goalMoved=syncGoalFromEvent(state.newEvGoalId,targetDate);
         saveSchedule();saveRepeatEvents();
+        if(_goalMoved) showToast(`🎯 目標の期間も ${_goalMoved} に合わせました`,"#a5b4fc");
         if(!isRepEdit && targetDate!==vd){ state.viewDate=targetDate; state.scheduleSubTab="日"; }
         state.modal=null;render();
       }},"保存")
