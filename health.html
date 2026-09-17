@@ -28,8 +28,10 @@ textarea{font-family:inherit}
 .hour-row.now{background:var(--border);border-color:var(--mode);box-shadow:0 0 0 2px var(--mode-soft)}
 .modal-bg{position:fixed;inset:0;background:#000000cc;display:flex;align-items:flex-end;z-index:200}
 .modal{width:100%;max-width:600px;margin:0 auto;background:var(--surface);border-radius:16px 16px 0 0;padding:18px 16px 36px;max-height:80vh;overflow-y:auto}
-.modal-center{position:fixed;inset:0;background:#000000cc;display:flex;align-items:center;justify-content:center;z-index:400}
-.modal-box{width:90%;max-width:360px;background:var(--surface);border-radius:16px;padding:22px 20px}
+/* 中央モーダル：中身が画面より高くなってもスクロールできるようにする（はみ出して触れない部分を作らない）。
+   個別に maxHeight/overflowY を指定しているモーダルは、そのインライン指定が優先される。 */
+.modal-center{position:fixed;inset:0;background:#000000cc;display:flex;align-items:center;justify-content:center;z-index:400;overflow-y:auto;padding:14px 0;box-sizing:border-box;-webkit-overflow-scrolling:touch}
+.modal-box{width:90%;max-width:360px;background:var(--surface);border-radius:16px;padding:22px 20px;margin:auto;max-height:calc(100vh - 28px);max-height:calc(100dvh - 28px);overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
 .sel{flex:1;padding:6px 4px;background:var(--surface-2);border:1px solid var(--border);border-radius:7px;color:var(--text-1);font-size:13px}
 .btn-primary{padding:10px;border-radius:8px;border:none;font-size:13px;font-weight:600;cursor:pointer;background:var(--mode);color:#fff}
 .btn-ghost{padding:10px;background:transparent;border:1px solid var(--dim);border-radius:8px;color:var(--text-3);cursor:pointer;font-size:13px}
@@ -222,7 +224,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.64"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.65"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
