@@ -222,7 +222,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.57"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.58"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -1775,6 +1775,20 @@ function startWindDown(){
   setDaily(sleepNightDay(),{windDownAt:n.toISOString(),smReturned:false});
   return true;
 }
+// 🛏 寝支度の開始時刻を書き換える（就寝リズムのカードからでも、睡眠前モードの画面からでも同じ保存）。
+//   0〜11時の指定は「その夜の翌日」＝日付をまたいだ深夜として扱う。
+function saveWindDownTime(H,M){
+  const nd=sleepNightDay(), p=nd.split('-');
+  const dt=new Date(+p[0],+p[1]-1,+p[2],H,M,0,0);
+  if(H<12) dt.setDate(dt.getDate()+1);
+  setDaily(nd,{windDownAt:dt.toISOString()});
+  return dt;
+}
+// 🛏 寝支度の時刻を編集するUIを開く（いまの記録値を初期値にする）
+function openWindEdit(){
+  const w=windDownAt(), d=w?new Date(w):new Date();
+  state.windEditH=d.getHours(); state.windEditM=d.getMinutes(); state.windEditOpen=true;
+}
 function goToSleepSettings(){ exitWidget&&exitWidget(); state.tab="設定"; state.sgDraft=null; openSetting('sleep',true); render(); setTimeout(()=>{ try{ const el=document.getElementById('sleep-settings'); if(el)el.scrollIntoView({block:"start",behavior:"smooth"}); }catch(_){} },80); }
 // 就寝リズムの設定カード（設定画面に配置）。目標の入力フォーム
 function sleepRhythmSettingsCard(){
@@ -1905,7 +1919,7 @@ function sleepRhythmCard(full){
       box.appendChild(ti);
       const row=div({style:{display:"flex",gap:"6px"}});
       const ok=btn({style:{flex:2,padding:"9px",background:"#4338ca",border:"none",borderRadius:"8px",color:"#fff",fontSize:"12px",fontWeight:700,cursor:"pointer"}},"✅ 保存");
-      ok.addEventListener('click',()=>{ const nd=sleepNightDay(); const p=nd.split('-'); const dt=new Date(+p[0],+p[1]-1,+p[2],state.windEditH,state.windEditM,0,0); if(state.windEditH<12)dt.setDate(dt.getDate()+1); setDaily(nd,{windDownAt:dt.toISOString()}); state.windEditOpen=false; showToast("🛏 寝支度の時刻を保存","#a5b4fc"); render(); });
+      ok.addEventListener('click',()=>{ saveWindDownTime(state.windEditH,state.windEditM); state.windEditOpen=false; showToast("🛏 寝支度の時刻を保存","#a5b4fc"); render(); });
       const cancel=btn({style:{flex:1,padding:"9px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#64748b",fontSize:"12px",cursor:"pointer"}},"取消");
       cancel.addEventListener('click',()=>{ state.windEditOpen=false; render(); });
       row.appendChild(ok);row.appendChild(cancel); box.appendChild(row);
@@ -1922,17 +1936,18 @@ function sleepRhythmCard(full){
         wsub?div({style:{fontSize:"10px",color:wdiff>0?"#fbbf24":"#64748b",marginTop:"1px"}},wsub):null
       ]));
       const ed=btn({style:{padding:"5px 9px",background:"transparent",border:"1px solid #334155",borderRadius:"7px",color:"#94a3b8",fontSize:"11px",cursor:"pointer",flexShrink:0}},"✏️ 時刻");
-      ed.addEventListener('click',()=>{ state.windEditH=wd.getHours(); state.windEditM=wd.getMinutes(); state.windEditOpen=true; render(); });
+      ed.addEventListener('click',()=>{ openWindEdit(); render(); });
       const clr=btn({style:{padding:"5px 9px",background:"transparent",border:"1px solid #7f1d1d",borderRadius:"7px",color:"#f87171",fontSize:"11px",cursor:"pointer",flexShrink:0}},"取消");
       clr.addEventListener('click',()=>{ setDaily(sleepNightDay(),{windDownAt:null}); render(); });
       row.appendChild(ed);row.appendChild(clr); c.appendChild(row);
       // 睡眠前モードを再度開く
       const openB=btn({style:{width:"100%",padding:"10px",marginBottom:"9px",borderRadius:"8px",border:"none",color:"#fff",fontSize:"13px",fontWeight:800,cursor:"pointer",background:"linear-gradient(135deg,#4338ca,#7c3aed)"}},"🌙 睡眠前モードを開く");
-      openB.addEventListener('click',()=>{ startWindDown(); state.sleepMode=true; render(); });
+      // 画面を開くだけでなく生活モードも「🌙 睡眠前」に切り替える（アプリに戻ったとき前のモードに戻らないように）
+      openB.addEventListener('click',()=>{ openLifeMode('sleepprep'); });
       c.appendChild(openB);
     } else {
       const near=cd!=null && cd<=45 && cd>-60; const b=btn({style:{width:"100%",padding:"11px",marginBottom:"9px",borderRadius:"8px",border:"none",color:"#fff",fontSize:"13px",fontWeight:800,cursor:"pointer",background:near?"linear-gradient(135deg,#f59e0b,#a855f7)":"#4338ca"}},"🛏 寝支度を始める");
-      b.addEventListener('click',()=>{ startWindDown(); state.sleepMode=true; showToast("🌙 睡眠前モード開始","#a5b4fc"); render(); }); c.appendChild(b);
+      b.addEventListener('click',()=>{ openLifeMode('sleepprep'); }); c.appendChild(b);
     }
   }
   // ⑤ ストリーク ＋ ④ドリフト（サマリー）
@@ -2062,7 +2077,7 @@ function sleepModeTick(){
   if(!el || !state.sleepMode){ if(window._sleepTick){clearInterval(window._sleepTick);window._sleepTick=null;} return; }
   const n=new Date(); el.textContent=`${String(n.getHours()).padStart(2,'0')}:${String(n.getMinutes()).padStart(2,'0')}`;
 }
-function exitSleepMode(){ state.sleepMode=false; if(window._sleepTick){clearInterval(window._sleepTick);window._sleepTick=null;} try{ if(windDownAt())setDaily(sleepNightDay(),{smReturned:true}); }catch(_){} } // アプリに戻ったら入口は一番下へ
+function exitSleepMode(){ state.sleepMode=false; state.windEditOpen=false; if(window._sleepTick){clearInterval(window._sleepTick);window._sleepTick=null;} try{ if(windDownAt())setDaily(sleepNightDay(),{smReturned:true}); }catch(_){} } // アプリに戻ったら入口は一番下へ
 // 睡眠前モードの入口カード（寝支度中〜就寝記録まで表示）
 function sleepModeEntryCard(){
   const c=div({className:"card",style:{padding:"12px 14px",marginBottom:"10px",border:"1px solid #7c3aed55",background:"linear-gradient(135deg,#4338ca1f,#7c3aed1f)"}});
@@ -2073,7 +2088,7 @@ function sleepModeEntryCard(){
     : `就寝目標を ${-cd}分 過ぎています`;
   c.appendChild(div({style:{fontSize:"11px",color:cd!=null&&cd<0?"#fbbf24":"#94a3b8",marginBottom:"9px"}},sub));
   const b=btn({style:{width:"100%",padding:"12px",borderRadius:"10px",border:"none",color:"#fff",fontSize:"14px",fontWeight:800,cursor:"pointer",background:"linear-gradient(135deg,#6d5ae0,#a855f7)"}},"🌙 睡眠前モードを開く");
-  b.addEventListener('click',()=>{ if(startWindDown())showToast("🌙 睡眠前モード開始","#a5b4fc"); state.sleepMode=true; render(); });
+  b.addEventListener('click',()=>{ openLifeMode('sleepprep'); });
   c.appendChild(b);
   return c;
 }
@@ -2119,7 +2134,34 @@ function renderSleepMode(){
       ]));
     }
   }
-  if(w){ const wd=new Date(w); inner.appendChild(div({style:{textAlign:"center",fontSize:"11px",color:"#8f83ab",marginTop:"-8px",marginBottom:"16px"}},`🛏 寝支度スタート ${hhmm(wd.getHours(),wd.getMinutes())}`)); }
+  // 🛏 寝支度スタート（この画面からも時刻を直せる。押し忘れ・押し間違いをここで直せるように）
+  if(w){ const wd=new Date(w);
+    if(state.windEditOpen && !peek){
+      const box=div({style:{marginTop:"-8px",marginBottom:"16px",padding:"10px 12px",borderRadius:"12px",background:"#ffffff0d",border:"1px solid #ffffff22"}});
+      box.appendChild(div({style:{fontSize:"11px",color:"#b6a3d9",fontWeight:600,marginBottom:"6px"}},"🛏 寝支度を始めた時刻"));
+      const ti=document.createElement('input'); ti.type='time'; ti.id='sleepmode-wind-input';
+      ti.value=`${String(state.windEditH).padStart(2,'0')}:${String(state.windEditM).padStart(2,'0')}`;
+      ti.style.cssText="width:100%;box-sizing:border-box;padding:9px;margin-bottom:8px;background:#00000040;border:1px solid #ffffff33;border-radius:9px;color:#f4e9d6;font-size:16px;color-scheme:dark;font-family:inherit";
+      ti.addEventListener('change',e=>{const q=(e.target.value||'').split(':');const H=Number(q[0]),M=Number(q[1]);if(!isNaN(H)&&!isNaN(M)){state.windEditH=H;state.windEditM=M;}});
+      box.appendChild(ti);
+      const row=div({style:{display:"flex",gap:"6px"}});
+      const ok=btn({style:{flex:2,padding:"9px",background:"linear-gradient(135deg,#4338ca,#7c3aed)",border:"none",borderRadius:"9px",color:"#fff",fontSize:"12px",fontWeight:700,cursor:"pointer",fontFamily:"inherit"}},"✅ 保存");
+      ok.addEventListener('click',()=>{ saveWindDownTime(state.windEditH,state.windEditM); state.windEditOpen=false; showToast("🛏 寝支度の時刻を保存","#a5b4fc"); render(); });
+      const cancel=btn({style:{flex:1,padding:"9px",background:"transparent",border:"1px solid #ffffff22",borderRadius:"9px",color:"#9c8fb8",fontSize:"12px",cursor:"pointer",fontFamily:"inherit"}},"取消");
+      cancel.addEventListener('click',()=>{ state.windEditOpen=false; render(); });
+      row.appendChild(ok); row.appendChild(cancel); box.appendChild(row);
+      inner.appendChild(box);
+    } else {
+      const wrapW=div({style:{display:"flex",justifyContent:"center",alignItems:"center",gap:"8px",marginTop:"-8px",marginBottom:"16px"}});
+      wrapW.appendChild(div({style:{fontSize:"11px",color:"#8f83ab"}},`🛏 寝支度スタート ${hhmm(wd.getHours(),wd.getMinutes())}`));
+      if(!peek){
+        const ed=btn({style:{padding:"3px 9px",borderRadius:"7px",border:"1px solid #ffffff22",background:"transparent",color:"#b6a3d9",fontSize:"10px",cursor:"pointer",fontFamily:"inherit"}},"✏️ 時刻");
+        ed.addEventListener('click',()=>{ openWindEdit(); render(); });
+        wrapW.appendChild(ed);
+      }
+      inner.appendChild(wrapW);
+    }
+  }
 
   // いまの体調（どのモード画面でも同じ内容・同じ保存先）
   appendModeCondition(inner,"#c4b5fd");
