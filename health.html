@@ -224,7 +224,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.68"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.69"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -6960,10 +6960,12 @@ function effectivePattern(p, ds){
   else if(best.sH!=null){ np.byShift=false; np.startH=best.sH; np.startM=best.sM||0; np.endH=best.eH; np.endM=best.eM||0; np.nextDay=!!best.nextDay; np.weekdayTimes=undefined; }
   return np;
 }
-function patternTimesFor(p,ds){
+// ignoreHidden=true なら「この日は非表示」を無視して本来の時間を返す（非表示のものが
+// どの日に掛かっていたかを調べるために使う）
+function patternTimesFor(p,ds,ignoreHidden){
   if(!p||p.enabled===false)return null;
   const ov=(getDaily(ds).patternOv||{})[p.uid];
-  if(ov&&ov.hidden)return null;
+  if(ov&&ov.hidden&&!ignoreHidden)return null;
   if(ov&&ov.startH!=null) return {sH:ov.startH,sM:ov.startM||0,eH:ov.endH,eM:ov.endM||0,nextDay:!!ov.nextDay};
   p=effectivePattern(p,ds); // 「この日以降で時間を変更」を反映（その日だけ変更 patternOv の次に優先）
   const dow=parseDS(ds).getDay();
@@ -6987,6 +6989,16 @@ function patternTimesFor(p,ds){
     return {sH:st.startH,sM:st.startM||0,eH:st.endH,eM:st.endM||0,nextDay:!!st.nextDay};
   }
   return {sH:p.startH,sM:p.startM||0,eH:p.endH,eM:p.endM||0,nextDay:!!p.nextDay};
+}
+// 所有日Dのパターン予定が、表示している日vdの時間帯に掛かるか（非表示にしていても時間の上で掛かるか）。
+// 予定の描画とまったく同じ計算をして、0時をまたぐぶんだけを「前日分」として扱えるようにする。
+function patternCoversDay(p,D,vd){
+  const t=patternTimesFor(p,D,true); if(!t) return false;
+  const off=Math.round((parseDS(D)-parseDS(vd))/86400000);
+  const base=off+(t.nextDay?1:0);
+  let s=base*1440+t.sH*60+(t.sM||0), e=base*1440+t.eH*60+(t.eM||0);
+  if(e<=s)e+=1440;
+  return Math.min(1440,e)>Math.max(0,s);
 }
 
 // パターン予定ブロックのタップ → 編集モーダル
@@ -9137,7 +9149,9 @@ function renderDaySchedule(vd,ds,isToday){
     for(let off=-2; off<=0; off++){
       const D=addDays(vd,off);
       const pov=getDaily(D).patternOv||{};
-      (state.planPatterns||[]).forEach(p=>{ if(pov[p.uid]&&pov[p.uid].hidden){ hiddenItems.push({label:(p.title||"予定")+(off!==0?"（前日分）":""), restore:()=>{ const d=getDaily(D); const ov={...(d.patternOv||{})}; delete ov[p.uid]; setDaily(D,{patternOv:ov});
+      // 前日以前のぶんは、0時をまたいでこの日に掛かるものだけ出す（掛からないものは
+      // この日の画面には元々出ないので、戻すボタンだけ残っても邪魔になる）
+      (state.planPatterns||[]).forEach(p=>{ if(pov[p.uid]&&pov[p.uid].hidden && (off===0||patternCoversDay(p,D,vd))){ hiddenItems.push({label:(p.title||"予定")+(off!==0?"（前日分）":""), restore:()=>{ const d=getDaily(D); const ov={...(d.patternOv||{})}; delete ov[p.uid]; setDaily(D,{patternOv:ov});
       syncPatternHideToRoutines(p,D,false);   // 連動ルーティンの除外も解除する
       showToast("予定を戻しました"); render(); }}); } });
     }
