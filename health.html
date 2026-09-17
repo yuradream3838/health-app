@@ -224,7 +224,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.66"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.67"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -9891,6 +9891,7 @@ function renderAddEventModal(vd){
           pushUndo("予定を削除しました");
           const owner=state.editEventDate||vd;
           state.schedule[owner]=(state.schedule[owner]||[]).filter(e=>e.uid!==state.editEventUid);
+          dropConnectPlanRef(state.editEventUid,owner);   // 🫂つながる予定の参照も片付ける
           saveSchedule();
         }
         state.modal=null;render();
@@ -9911,7 +9912,11 @@ function renderAddEventModal(vd){
         const mdEnd=(!isRepEdit && isNone && state.newEvEndDate && state.newEvEndDate>targetDate)?state.newEvEndDate:null;
         const evData={title:state.newEvTitle.trim(),startH:state.newEvH,startM:state.newEvM,endH:state.newEvEndH,endM:state.newEvEndM,endNextDay:!!state.newEvEndNextDay,color:state.newEvColor,allDay:mdEnd?true:!!state.newEvAllDay,refOnly:!!state.newEvRefOnly,...(mdEnd?{endDate:mdEnd}:{}),...(evPlace?{place:evPlace}:{}),...(evNote?{note:evNote}:{}),...(ft?{fromTask:ft}:{}),...(evPre>0?{preDays:evPre}:{}),...(state.newEvGoalId?{goalId:state.newEvGoalId}:{})};
         const newWds=isW(state.newEvRepeat)?((state.newEvWeekdays&&state.newEvWeekdays.length)?[...state.newEvWeekdays].sort((a,b)=>a-b):[parseDS(targetDate).getDay()]):null;
-        const addSingle=()=>{ if(!state.schedule[targetDate])state.schedule[targetDate]=[]; state.schedule[targetDate].push({uid:Date.now(),...evData}); };
+        // 単発の予定を編集したときは**同じuidのまま**保存する。uidが変わると、この予定を指している
+        // 他の記録（🫂つながる予定・実績のメモ・「やった」印など）との結びつきが切れてしまうため。
+        // 繰り返しから単発を切り出すとき（isRepEdit）は別の予定になるので新しいuidにする。
+        const keepUid=(!isRepEdit && isEdit && state.editEventUid!=null)?state.editEventUid:null;
+        const addSingle=()=>{ if(!state.schedule[targetDate])state.schedule[targetDate]=[]; state.schedule[targetDate].push({uid:(keepUid!=null?keepUid:Date.now()),...evData}); };
         const mkRepeat=(startDate)=>{ const rep={uid:Date.now()+Math.floor(Math.random()*1000),...evData,repeatType:state.newEvRepeat,startDate}; if(newWds)rep.weekdays=newWds; return rep; };
 
         if(isRepEdit){
@@ -9934,6 +9939,8 @@ function renderAddEventModal(vd){
           if(isNone) addSingle();
           else { if(!state.repeatEvents)state.repeatEvents=[]; state.repeatEvents.push(mkRepeat(targetDate)); }
         }
+        // 日付を動かしたら、🫂つながる予定の参照（日付＋uid）も一緒に動かす
+        if(keepUid!=null){ const from=state.editEventDate||vd; if(from!==targetDate) moveConnectPlanRef(keepUid,from,targetDate); }
         saveSchedule();saveRepeatEvents();
         if(!isRepEdit && targetDate!==vd){ state.viewDate=targetDate; state.scheduleSubTab="日"; }
         state.modal=null;render();
@@ -10443,6 +10450,25 @@ function upcomingEvents(days){
     });
   }
   return out;
+}
+// 予定を別の日へ動かしたとき、その予定を指している🫂つながる予定の参照も同じ日へ動かす
+// （予定側は編集してもuidを変えないので、日付だけ追いかければ結びつきは切れない）
+function moveConnectPlanRef(uid,fromDs,toDs){
+  try{
+    const g=getConnectGoal(); let changed=false;
+    (g.plans||[]).forEach(p=>{ if(p&&p.uid!=null&&String(p.uid)===String(uid)&&p.ds===fromDs){ p.ds=toDs; changed=true; } });
+    if(changed) saveConnectGoal();
+    return changed;
+  }catch(_){ return false; }
+}
+// 予定を消したとき、その予定を指している🫂つながる予定の参照も片付ける
+function dropConnectPlanRef(uid,ds){
+  try{
+    const g=getConnectGoal(); const before=(g.plans||[]).length;
+    g.plans=(g.plans||[]).filter(p=>!(p&&p.uid!=null&&String(p.uid)===String(uid)&&(ds==null||p.ds===ds)));
+    if(g.plans.length!==before){ saveConnectGoal(); return true; }
+    return false;
+  }catch(_){ return false; }
 }
 // 保存済みつながり予定の参照 {ds,uid} から実際の予定を解決（削除済みならnull）。旧形式(text)はそのまま
 function resolveConnectPlan(p){ if(!p||p.uid==null) return null; const ev=getEventsForDate(p.ds).find(e=>String(e.uid)===String(p.uid)); return ev||null; }
