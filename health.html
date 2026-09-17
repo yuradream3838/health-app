@@ -222,7 +222,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.63"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.64"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -1783,9 +1783,11 @@ function saveWindDownTime(H,M){
   const nd=sleepNightDay(), p=nd.split('-');
   const dt=new Date(+p[0],+p[1]-1,+p[2],H,M,0,0);
   if(H<12) dt.setDate(dt.getDate()+1);
+  // 🌙睡眠前モードの開始も同じ時刻にする。前後のモードとぶつかって動かせないときは、
+  // 2つの時刻がズレるくらいなら**どちらも変えない**（合っていることを優先する）。
+  const sy=syncModeFromWindDown(nd,dt.getTime());
+  if(sy.msg){ showToast(`🛏 ${sy.msg}。先に睡眠前モードの時間を直してください`,"#f59e0b"); return null; }
   setDaily(nd,{windDownAt:dt.toISOString()});
-  const sy=syncModeFromWindDown(nd,dt.getTime());   // 🌙睡眠前モードの開始も合わせる
-  if(sy.msg) showToast(`🛏 時刻は保存しましたが、モードの開始は動かせません（${sy.msg}）`,"#f59e0b");
   return dt;
 }
 // 🛏 寝支度の時刻を編集するUIを開く（いまの記録値を初期値にする）
@@ -1923,7 +1925,7 @@ function sleepRhythmCard(full){
       box.appendChild(ti);
       const row=div({style:{display:"flex",gap:"6px"}});
       const ok=btn({style:{flex:2,padding:"9px",background:"#4338ca",border:"none",borderRadius:"8px",color:"#fff",fontSize:"12px",fontWeight:700,cursor:"pointer"}},"✅ 保存");
-      ok.addEventListener('click',()=>{ saveWindDownTime(state.windEditH,state.windEditM); state.windEditOpen=false; showToast("🛏 寝支度の時刻を保存","#a5b4fc"); render(); });
+      ok.addEventListener('click',()=>{ if(!saveWindDownTime(state.windEditH,state.windEditM)){ render(); return; } state.windEditOpen=false; showToast("🛏 寝支度の時刻を保存","#a5b4fc"); render(); });
       const cancel=btn({style:{flex:1,padding:"9px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#64748b",fontSize:"12px",cursor:"pointer"}},"取消");
       cancel.addEventListener('click',()=>{ state.windEditOpen=false; render(); });
       row.appendChild(ok);row.appendChild(cancel); box.appendChild(row);
@@ -2150,7 +2152,7 @@ function renderSleepMode(){
       box.appendChild(ti);
       const row=div({style:{display:"flex",gap:"6px"}});
       const ok=btn({style:{flex:2,padding:"9px",background:"linear-gradient(135deg,#4338ca,#7c3aed)",border:"none",borderRadius:"9px",color:"#fff",fontSize:"12px",fontWeight:700,cursor:"pointer",fontFamily:"inherit"}},"✅ 保存");
-      ok.addEventListener('click',()=>{ saveWindDownTime(state.windEditH,state.windEditM); state.windEditOpen=false; showToast("🛏 寝支度の時刻を保存","#a5b4fc"); render(); });
+      ok.addEventListener('click',()=>{ if(!saveWindDownTime(state.windEditH,state.windEditM)){ render(); return; } state.windEditOpen=false; showToast("🛏 寝支度の時刻を保存","#a5b4fc"); render(); });
       const cancel=btn({style:{flex:1,padding:"9px",background:"transparent",border:"1px solid #ffffff22",borderRadius:"9px",color:"#9c8fb8",fontSize:"12px",cursor:"pointer",fontFamily:"inherit"}},"取消");
       cancel.addEventListener('click',()=>{ state.windEditOpen=false; render(); });
       row.appendChild(ok); row.appendChild(cancel); box.appendChild(row);
