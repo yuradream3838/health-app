@@ -222,7 +222,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.58"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.59"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -919,7 +919,7 @@ function loadStorage(){
     const goals=localStorage.getItem(STORAGE_KEY+"_goals");
     if(goals){state.goals=JSON.parse(goals);}
     const gtree=localStorage.getItem(STORAGE_KEY+"_goaltree");
-    if(gtree){const a=JSON.parse(gtree); if(Array.isArray(a))state.goalTree=a;}
+    if(gtree){const a=JSON.parse(gtree); if(Array.isArray(a)){state.goalTree=a; try{ if(migrateGoalRules(state.goalTree))saveGoalTree(); }catch(_){}}}
     const ev=localStorage.getItem(STORAGE_KEY+"_events");
     if(ev){state.events=JSON.parse(ev);}
     const tl=localStorage.getItem(STORAGE_KEY+"_tasklist");
@@ -4610,21 +4610,23 @@ function goalScheduleBtn(n, vd){
   return b;
 }
 // ── 🎯 目標の達成判定（アプリ内でここ1本に統一する）───────────────
-// 下位目標を持つ目標は「達成ルール」で決まる。子を持たない目標は自分のチェックだけ。
-//   all   : 子が全部そろったら達成（既定。日次の最後を終えたら週次も達成になる）
-//   count : 子のうち◯個そろったら達成（「今週3回」など。1日落としても週次は生きている）
-//   manual: 子と関係なく自分で判定（成果物型。「企画書を仕上げる」など）
+// 下位目標を持つ目標は「達成ルール」で決まる。ルールは2つだけ。
+//   all   : 下位目標が全部そろったら達成（既定。日次の最後を終えたら週次も達成になる）
+//   manual: 下位目標と関係なく自分で判定（成果物型。「企画書を仕上げる」など）
+// 子を持たない目標は自分のチェックだけ（＝manual扱い）。
+// 判定は**下位目標を作るとき**に選ぶ（目標は上から下へ作るので、下位目標ができた時点で
+// 「この上位目標は下位目標の達成で完成するか」が決まる）。あとから編集画面でも変えられる。
 // 自動で達成になるのは**下→上だけ**。上を手で達成にしても下は未チェックのまま
 // （やっていない日を「やった」ことにしないため）。
 function goalRule(n){
   const hasKids=!!(n&&n.children&&n.children.length);
   if(!hasKids) return {mode:"manual",need:0};
   const r=n.doneRule;
-  if(r&&r.mode==="manual") return {mode:"manual",need:0};
-  if(r&&r.mode==="count"&&r.need>0) return {mode:"count",need:r.need};
+  // 旧「子のうち◯個」は廃止。勝手に未達成へ落とさないよう「自分で判定」として扱う
+  if(r&&(r.mode==="manual"||r.mode==="count")) return {mode:"manual",need:0};
   return {mode:"all",need:0};
 }
-const GOAL_RULE_LABELS={all:"子が全部",count:"子のうち◯個",manual:"自分で判定"};
+const GOAL_RULE_LABELS={all:"下位が全部",manual:"自分で判定"};
 function goalAchieved(n, vd){
   if(!n) return false;
   if(isRangeDaily(n)) return dailyGoalDone(n, vd||todayStr());
@@ -4633,21 +4635,54 @@ function goalAchieved(n, vd){
   if(rule.mode==="manual") return false;
   const kids=n.children||[];
   const done=kids.filter(c=>goalAchieved(c,vd)).length;
-  return rule.mode==="count" ? done>=rule.need : (kids.length>0 && done===kids.length);
+  return kids.length>0 && done===kids.length;
 }
-// 進捗ゲージ（直下の子で数える。分母は達成ルールに合わせる）。子が無ければ null
+// 進捗ゲージ（直下の子で数える）。子が無ければ null
 function goalGauge(n, vd){
   const kids=(n&&n.children)||[];
   if(!kids.length) return null;
   const rule=goalRule(n);
   const done=kids.filter(c=>goalAchieved(c,vd)).length;
-  const total=rule.mode==="count"?rule.need:kids.length;
-  return {done,total,mode:rule.mode,need:rule.need,
+  const total=kids.length;
+  return {done,total,mode:rule.mode,need:0,
     pct: total?Math.round(Math.min(done,total)/total*100):0,
-    label: rule.mode==="count"?`${done}/${total}回`:`${done}/${total}`};
+    label: `${done}/${total}`};
+}
+// 旧「子のうち◯個」ルールの後始末。その時点で条件を満たしていたものは達成済みとして残し、
+// ルール自体は「自分で判定」に寄せる（勝手に未達成へ戻さない）。
+function migrateGoalRules(list){
+  let changed=false;
+  (function walk(ls){ (ls||[]).forEach(n=>{
+    const r=n.doneRule;
+    if(r&&r.mode==="count"){
+      const kids=n.children||[];
+      const done=kids.filter(c=>goalAchieved(c)).length;
+      if(r.need>0 && done>=r.need && !n.done){ n.done=true; if(!n.doneAt)n.doneAt=new Date().toISOString(); }
+      n.doneRule={mode:"manual"}; changed=true;
+    }
+    if(n.children&&n.children.length) walk(n.children);
+  }); })(list);
+  return changed;
 }
 // ゲージで表す目標か（子があり、かつ自分で判定するのでないもの）＝週次などの積み上げ型
 function goalIsRollup(n){ const g=goalRule(n); return !!(n&&n.children&&n.children.length) && g.mode!=="manual"; }
+// 達成ルールの選択UI（下位目標を作るときと、目標の編集画面の両方で同じものを使う）
+function goalRuleChooser(mode, onPick){
+  const wrap=div({});
+  const row=div({style:{display:"flex",gap:"6px",marginBottom:"5px"}});
+  [["all","✅ 下位が全部そろえば達成"],["manual","✋ 自分で判定"]].forEach(([k,lbl])=>{
+    const on=mode===k;
+    const b=btn({style:{flex:1,padding:"8px 4px",borderRadius:"8px",cursor:"pointer",fontSize:"11px",fontWeight:600,fontFamily:"inherit",lineHeight:1.3,
+      border:`1px solid ${on?"#6366f1":"#334155"}`,background:on?"#6366f122":"transparent",color:on?"#a5b4fc":"#94a3b8"}},lbl);
+    b.addEventListener('click',(()=>{const kk=k;return()=>onPick(kk);})());
+    row.appendChild(b);
+  });
+  wrap.appendChild(row);
+  wrap.appendChild(div({style:{fontSize:"9px",color:"#475569",marginBottom:"12px",lineHeight:1.5}},
+    mode==="manual"?"下位目標が全部そろっても自動では達成にしません（成果物型の目標向け）"
+    :"最後の下位目標を達成すると、この目標も自動で達成になります"));
+  return wrap;
+}
 // periodKey → 日付範囲 {start,end}
 function goalPeriodRange(periodType, periodKey){
   if(!periodType||!periodKey) return null;
@@ -4856,6 +4891,17 @@ function renderGoalTreeModal(){
   ta.value=m0.text||"";ta.placeholder="目標を入力...";
   ta.addEventListener('input',e=>{state.goalTreeModal.text=e.target.value;});
   m.appendChild(ta);
+  // 🎯 上位目標の達成判定（下位目標を作るときに決める）。
+  //   目標は上から下へ作るので、下位目標ができた時点で「この上位目標は下位目標の達成で完成するか」を選ぶ。
+  if(m0.mode==="add" && m0.parentId!=null){
+    const pf=gtFind(m0.parentId), pnode=pf&&pf.node;
+    if(pnode){
+      const already=(pnode.children||[]).length;             // すでに下位目標があるなら現在のルールが初期値
+      if(m0.parentRule===undefined) m0.parentRule = already ? goalRule(pnode).mode : "all";
+      m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"5px"}},`🎯 「${pnode.text||"上位目標"}」の達成判定`));
+      m.appendChild(goalRuleChooser(m0.parentRule, k=>{ state.goalTreeModal.parentRule=k; render(); }));
+    }
+  }
   // 期間連動：どの期間タイプ＋どの特定期（Q1/Q2…、○月など）に紐付けるか
   if(m0.periodType===undefined && m0.mode==="edit"){ const f=gtFind(m0.id); m0.periodType=(f&&f.node.periodType)||null; if(f&&f.node.periodKey)m0.periodKey=f.node.periodKey; if(f&&f.node.dailyEnd)m0.dailyEnd=f.node.dailyEnd; }
   let parentKey=null;
@@ -4985,29 +5031,7 @@ function renderGoalTreeModal(){
     if(nodeR && nodeR.children && nodeR.children.length){
       const cur=goalRule(nodeR), kidN=nodeR.children.length;
       m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"5px",marginTop:"4px"}},`🎯 達成ルール（下位目標 ${kidN}件）`));
-      const rrow=div({style:{display:"flex",gap:"5px",marginBottom:"5px"}});
-      [["all","子が全部"],["count","子のうち◯個"],["manual","自分で判定"]].forEach(([k,lbl])=>{
-        const on=cur.mode===k;
-        const b=btn({style:{flex:1,padding:"7px 3px",borderRadius:"8px",cursor:"pointer",fontSize:"11px",fontWeight:600,fontFamily:"inherit",
-          border:`1px solid ${on?"#6366f1":"#334155"}`,background:on?"#6366f122":"transparent",color:on?"#a5b4fc":"#94a3b8"}},lbl);
-        b.addEventListener('click',(()=>{const kk=k,id=m0.id,nn=Math.max(1,Math.min(kidN,cur.need||Math.ceil(kidN/2)));return()=>{
-          gtUpdate(id, kk==="all"?{doneRule:null}:{doneRule:{mode:kk,...(kk==="count"?{need:nn}:{})}}); render(); };})());
-        rrow.appendChild(b);
-      });
-      m.appendChild(rrow);
-      if(cur.mode==="count"){
-        const crow=div({style:{display:"flex",alignItems:"center",gap:"6px",marginBottom:"5px"}});
-        crow.appendChild(span({style:{fontSize:"11px",color:"#94a3b8"}},"何個そろえば達成？"));
-        const ni=document.createElement('input'); ni.type='number'; ni.min='1'; ni.value=String(cur.need);
-        ni.style.cssText='width:64px;padding:6px 8px;background:#0f172a;border:1px solid #334155;border-radius:7px;color:#e2e8f0;font-size:13px;font-family:inherit;text-align:center';
-        ni.addEventListener('change',(()=>{const id=m0.id;return e=>{ const v=Math.max(1,parseInt(e.target.value)||1); gtUpdate(id,{doneRule:{mode:"count",need:v}}); render(); };})());
-        crow.appendChild(ni); crow.appendChild(span({style:{fontSize:"11px",color:"#94a3b8"}},`個 / 下位 ${kidN}件`));
-        m.appendChild(crow);
-      }
-      m.appendChild(div({style:{fontSize:"9px",color:"#475569",marginBottom:"12px",lineHeight:1.5}},
-        cur.mode==="manual"?"下位が全部そろっても自動では達成にしません（成果物型の目標向け）"
-        :cur.mode==="count"?"「週に◯回」向け。1つ落としてもまだ達成できます"
-        :"最後の下位目標を達成すると、この目標も達成になります"));
+      m.appendChild(goalRuleChooser(cur.mode, k=>{ gtUpdate(m0.id, k==="all"?{doneRule:null}:{doneRule:{mode:"manual"}}); render(); }));
     }
   }
   if(m0.mode==="edit"){
@@ -5040,6 +5064,8 @@ function renderGoalTreeModal(){
         gtAddChild(m0.parentId==null?null:m0.parentId, text);
         const list=m0.parentId==null?state.goalTree:(gtFind(m0.parentId)?.node.children||[]); const created=list[list.length-1];
         if(created){ if(pt){created.periodType=pt;created.periodKey=pk;} if(dailyEnd)created.dailyEnd=dailyEnd; if(note)created.note=note; if(linked.length)created.linkedRoutines=linked; saveGoalTree(); }
+        // 下位目標を作るときに選んだ「上位目標の達成判定」を親に保存する
+        if(m0.parentId!=null && m0.parentRule){ gtUpdate(m0.parentId, m0.parentRule==="all"?{doneRule:null}:{doneRule:{mode:"manual"}}); }
       } else {
         gtUpdate(m0.id,{text, periodType:pt, periodKey:pk, note, linkedRoutines:linked, dailyEnd:dailyEnd||null});
       }
@@ -5134,7 +5160,7 @@ function renderGoals(vd, ds){
       gg?div({style:{display:"flex",alignItems:"center",gap:"6px",marginTop:"3px"}},[
         div({style:{flex:1,maxWidth:"110px",height:"5px",background:"#0a1120",borderRadius:"3px",overflow:"hidden"}},
           [div({style:{height:"100%",width:`${gg.pct}%`,background:gg.pct>=100?"#22c55e":"#6366f1",borderRadius:"3px"}})]),
-        span({style:{fontSize:"9px",color:"#64748b",flexShrink:0}},`下位 ${gg.label}${gg.mode==="count"?"（◯個で達成）":gg.mode==="manual"?"（自分で判定）":""}`)
+        span({style:{fontSize:"9px",color:"#64748b",flexShrink:0}},`下位 ${gg.label}${gg.mode==="manual"?"（自分で判定）":""}`)
       ]):null
     ]);
     tx.addEventListener('click',()=>{state.goalView="tree";state.goalTreeModal={mode:"edit",id:n.id,text:n.text||""};render();});
@@ -5228,7 +5254,7 @@ function renderGoalPeriodModal(){
       gg?div({style:{display:"flex",alignItems:"center",gap:"6px",marginTop:"3px"}},[
         div({style:{flex:1,maxWidth:"110px",height:"5px",background:"#0a1120",borderRadius:"3px",overflow:"hidden"}},
           [div({style:{height:"100%",width:`${gg.pct}%`,background:gg.pct>=100?"#22c55e":"#6366f1",borderRadius:"3px"}})]),
-        span({style:{fontSize:"9px",color:"#64748b",flexShrink:0}},`下位 ${gg.label}${gg.mode==="count"?"（◯個で達成）":gg.mode==="manual"?"（自分で判定）":""}`)
+        span({style:{fontSize:"9px",color:"#64748b",flexShrink:0}},`下位 ${gg.label}${gg.mode==="manual"?"（自分で判定）":""}`)
       ]):null
     ]);
     tx.addEventListener('click',(()=>{const id=n.id,t=n.text||"";return()=>{state.goalTreeModal={mode:"edit",id,text:t};render();};})());
@@ -14116,7 +14142,7 @@ function importData(e){
       if(p.shiftPattern&&Array.isArray(p.shiftPattern.grid)){state.shiftPattern={...defaultShiftPattern(),...p.shiftPattern};saveShiftPattern();}
       if(Array.isArray(p.planPatterns)){state.planPatterns=p.planPatterns;savePlanPatterns();}
       if(Array.isArray(p.customTodos)){state.customTodos=p.customTodos;saveCustomTodos();}
-      if(Array.isArray(p.goalTree)){state.goalTree=p.goalTree;saveGoalTree();}
+      if(Array.isArray(p.goalTree)){state.goalTree=p.goalTree;try{migrateGoalRules(state.goalTree);}catch(_){}saveGoalTree();}
       if(Array.isArray(p.rewards)){state.rewards=p.rewards;saveRewards();}
       if(Array.isArray(p.investActions)){state.investActions=p.investActions;saveInvestActions();}
       if(Array.isArray(p.ifThenPlans)){state.ifThenPlans=p.ifThenPlans;saveIfThenPlans();}
@@ -14182,7 +14208,7 @@ function viewBackupFile(e){
       if(p.shiftPattern&&Array.isArray(p.shiftPattern.grid))state.shiftPattern={...defaultShiftPattern(),...p.shiftPattern};
       if(Array.isArray(p.planPatterns))state.planPatterns=p.planPatterns;
       if(Array.isArray(p.customTodos))state.customTodos=p.customTodos;
-      state.goalTree=Array.isArray(p.goalTree)?p.goalTree:[];
+      state.goalTree=Array.isArray(p.goalTree)?p.goalTree:[]; try{migrateGoalRules(state.goalTree);}catch(_){}
       if(Array.isArray(p.rewards))state.rewards=p.rewards;
       if(Array.isArray(p.investActions))state.investActions=p.investActions;
       if(Array.isArray(p.ifThenPlans))state.ifThenPlans=p.ifThenPlans;
