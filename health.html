@@ -222,7 +222,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.59"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.60"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -269,7 +269,7 @@ const SAVE_TARGETS=[
   ["saveChangePlan","changePlan","📋 変化の計画"],
   ["saveWidgetSections","widgetSections","🧩 ウィジェットの表示"],
   ["saveWidgetOrder","widgetSecOrder","🧩 ウィジェットの並び"],
-  ["saveNudgeCfg",["nudgesOff","notifyOn","moodCheckH","moodCheckM","dayCutoffH"],"🔔 切り替え提案の設定"],
+  ["saveNudgeCfg",["nudgesOff","notifyOn","moodCheckH","moodCheckM","dayCutoffH","nudgeRules","notifyQuiet","notifyRepeat"],"🔔 通知の設定"],
   ["saveBacProfile",["bacWeight","bacSex"],"🍺 BACプロファイル"],
   ["saveAlcLimit",["alcLimitDay","alcLimitWeek"],"🍺 アルコール上限"],
 ];
@@ -891,6 +891,7 @@ const state = {
   modeSwitcher:false, modeEditMode:false, lifeScreen:null, lifeBreathing:false, defaultMode:'life', // ライフモードの切替画面・編集・各モード画面・既定モード
   autoModeOn:true, autoLastKey:undefined, // ライフモードの自動切替（勤務シフト起点）
   nudges:null, nudgesOff:false, notifyOn:false, wakeGoal:null, moodCheckH:18, moodCheckM:0, // セルフスイッチ・ナッジ
+  nudgeRules:null, notifyQuiet:null, notifyRepeat:30, // 🔔 通知：項目別のON/OFFと時間・静かな時間帯・再通知間隔
   dayCutoffH:12, // 就寝未記録時のフォールバック切替時刻（既定12:00＝正午）
   nextDrink:null, nextDrinkEdit:false, // 次に飲みに行く予定（計画飲酒）
   investHistExpanded:false, // 未来投資履歴の全件展開
@@ -1002,7 +1003,7 @@ function loadStorage(){
     const wgl=localStorage.getItem(STORAGE_KEY+"_wakegoal");
     if(wgl){try{const o=JSON.parse(wgl); if(o&&typeof o==="object")state.wakeGoal=o;}catch{}}
     const ncf=localStorage.getItem(STORAGE_KEY+"_nudgecfg");
-    if(ncf){try{const o=JSON.parse(ncf); if(o&&typeof o==="object"){ state.nudgesOff=!!o.off; state.notifyOn=!!o.notify; if(o.moodH!=null)state.moodCheckH=o.moodH; if(o.moodM!=null)state.moodCheckM=o.moodM; if(o.fallbackH!=null)state.dayCutoffH=o.fallbackH; }}catch{}}
+    if(ncf){try{ applyNudgeCfg(JSON.parse(ncf)); }catch{}}
     const ndg=localStorage.getItem(STORAGE_KEY+"_nudges");
     if(ndg){try{const o=JSON.parse(ndg); if(o&&typeof o==="object"&&o.ds)state.nudges=o;}catch{}}
     const word=localStorage.getItem(STORAGE_KEY+"_widgetorder");
@@ -2693,7 +2694,64 @@ function getWakeGoal(){ if(!state.wakeGoal||typeof state.wakeGoal!=='object')sta
 function saveWakeGoal(){ try{localStorage.setItem(STORAGE_KEY+'_wakegoal',JSON.stringify(getWakeGoal()));}catch(_){} }
 function wakeGoalMinsFor(ds){ const k=getPlanShiftKey(ds); const g=getWakeGoal()[k]; return g&&g.h!=null?g.h*60+(g.m||0):null; }
 function moodCheckMin(){ return (state.moodCheckH!=null?state.moodCheckH:18)*60+(state.moodCheckM||0); }
-function saveNudgeCfg(){ try{localStorage.setItem(STORAGE_KEY+'_nudgecfg',JSON.stringify({off:!!state.nudgesOff,notify:!!state.notifyOn,moodH:(state.moodCheckH!=null?state.moodCheckH:18),moodM:state.moodCheckM||0,fallbackH:dayCutoffH()}));}catch(_){} }
+// ── 🔔 通知（切り替え提案）の項目と設定 ──────────────────────────
+// 項目ごとに ON/OFF と「いつ出すか」を設定できる。設定はすべて設定画面の「🔔 通知」にまとめる。
+// num: その項目の時間設定（分）。key=保存キー / def=既定 / min,max=範囲 / unit=入力の単位
+const NUDGE_DEFS=[
+  {id:'wake', icon:'☀️', label:'起きる時間です', pri:2,
+   desc:'目標起床時刻を過ぎても起床が未記録のとき（目標時刻はシフト別に下で設定）'},
+  {id:'sleep', icon:'🌙', label:'そろそろ寝る準備', pri:3,
+   desc:'就寝目標の手前から。就寝を記録するまで出します',
+   num:{key:'lead', def:null, min:10, max:300, unit:'min', label:'就寝目標の何分前から', nullLabel:'就寝リズムの設定に合わせる'}},
+  {id:'meal', icon:'🍚', label:'食事の時間', pri:5,
+   desc:'予定に入れた食事の時刻を過ぎても記録がないとき',
+   num:{key:'win', def:120, min:15, max:360, unit:'min', label:'予定時刻から何分以内まで出す'}},
+  {id:'drink', icon:'🍶', label:'飲みすぎ注意', pri:1,
+   desc:'飲みモードが続いているとき',
+   num:{key:'min', def:90, min:15, max:480, unit:'min', label:'飲みモードが何分続いたら'}},
+  {id:'stall', icon:'🔀', label:'モードの停滞', pri:6,
+   desc:'趣味・休息のモードが長く続いているとき',
+   num:{key:'min', def:180, min:30, max:720, unit:'min', label:'同じモードが何分続いたら'}},
+  {id:'mood', icon:'🫧', label:'今日の気分は？', pri:4,
+   desc:'この時刻以降に1日1回。落ち込み・たかぶりのケアへの入口になります',
+   time:{label:'出す時刻'}},
+];
+function nudgeDef(id){ return NUDGE_DEFS.find(d=>d.id===id)||null; }
+// 分 → 「90分」「3時間」「1時間30分」
+function fmtMinLabel(min){ const m=Math.max(0,Math.round(min||0)); if(m<60)return `${m}分`; const h=Math.floor(m/60),r=m%60; return r?`${h}時間${r}分`:`${h}時間`; }
+function getNudgeRules(){
+  if(!state.nudgeRules||typeof state.nudgeRules!=='object') state.nudgeRules={};
+  NUDGE_DEFS.forEach(d=>{ const r=state.nudgeRules[d.id]; if(!r||typeof r!=='object') state.nudgeRules[d.id]={on:true}; else if(r.on===undefined) r.on=true; });
+  return state.nudgeRules;
+}
+function nudgeOn(id){ return !state.nudgesOff && getNudgeRules()[id].on!==false; }
+// その項目の時間設定（分）。未設定なら既定値
+function nudgeNum(id){
+  const d=nudgeDef(id); if(!d||!d.num) return null;
+  const v=getNudgeRules()[id][d.num.key];
+  return (v==null||isNaN(v)) ? d.num.def : v;
+}
+function setNudgeNum(id,v){
+  const d=nudgeDef(id); if(!d||!d.num) return;
+  const r=getNudgeRules()[id];
+  if(v==null) r[d.num.key]=null;
+  else r[d.num.key]=Math.max(d.num.min,Math.min(d.num.max,Math.round(v)));
+  saveNudgeCfg();
+}
+function setNudgeOn(id,on){ getNudgeRules()[id].on=!!on; saveNudgeCfg(); }
+// 就寝の提案を出し始める「目標の何分前から」。未設定なら就寝リズムのカウントダウンに合わせる
+function sleepNudgeLead(){ const v=nudgeNum('sleep'); return (v==null)?cdLeadMin():v; }
+// 端末通知を鳴らさない時間帯（バナーは出る）。from==to なら無効
+function quietHours(){ const q=state.notifyQuiet; return (q&&q.from!=null&&q.to!=null&&q.from!==q.to)?q:null; }
+function inQuietHours(now){
+  const q=quietHours(); if(!q) return false;
+  const d=new Date(now||Date.now()), m=d.getHours()*60+d.getMinutes();
+  return (q.from<q.to) ? (m>=q.from&&m<q.to) : (m>=q.from||m<q.to);   // 日をまたぐ指定に対応
+}
+function notifyRepeatMin(){ return state.notifyRepeat>0?state.notifyRepeat:30; }
+function nudgeCfgPayload(){ return {off:!!state.nudgesOff,notify:!!state.notifyOn,moodH:(state.moodCheckH!=null?state.moodCheckH:18),moodM:state.moodCheckM||0,fallbackH:dayCutoffH(),rules:getNudgeRules(),quiet:state.notifyQuiet||null,repeat:notifyRepeatMin()}; }
+function applyNudgeCfg(o){ if(!o||typeof o!=='object')return; state.nudgesOff=!!o.off; state.notifyOn=!!o.notify; if(o.moodH!=null)state.moodCheckH=o.moodH; if(o.moodM!=null)state.moodCheckM=o.moodM; if(o.fallbackH!=null)state.dayCutoffH=o.fallbackH; if(o.rules&&typeof o.rules==='object')state.nudgeRules=o.rules; state.notifyQuiet=(o.quiet&&typeof o.quiet==='object')?o.quiet:null; if(o.repeat>0)state.notifyRepeat=o.repeat; getNudgeRules(); }
+function saveNudgeCfg(){ try{localStorage.setItem(STORAGE_KEY+'_nudgecfg',JSON.stringify(nudgeCfgPayload()));}catch(_){} }
 // 端末通知（ローカル通知）。サーバなしのためアプリ起動中/バックグラウンド中のみベストエフォート
 function canNotify(){ try{ return !!state.notifyOn && typeof Notification!=='undefined' && Notification.permission==='granted'; }catch(_){ return false; } }
 function requestNotify(){
@@ -2707,14 +2765,16 @@ function fireNudgeNotification(n){
     else { new Notification(title,opts); }
   }catch(_){}
 }
-// 定期実行：バックグラウンド中に有効なナッジがあれば端末通知（30分に1回まで／気分チェックは除外）
+// 定期実行：バックグラウンド中に有効なナッジがあれば端末通知（同じ項目は設定の間隔に1回まで／気分チェックは除外）
+// 「通知を出さない時間帯」の間は鳴らさない（アプリ内のバナーは今までどおり出る）
 function nudgeNotifyTick(now){
   if(!canNotify()) return;
   try{ if(typeof document!=='undefined' && !document.hidden) return; }catch(_){}
   now=now||Date.now();
+  if(inQuietHours(now)) return;
   const n=evalNudges(now); if(!n || n.mood) return;
   const r=nudgeR(n.id);
-  if(now-(r.notifiedAt||0) < 30*60000) return;
+  if(now-(r.notifiedAt||0) < notifyRepeatMin()*60000) return;
   r.notifiedAt=now; saveNudges();
   fireNudgeNotification(n);
 }
@@ -2745,7 +2805,7 @@ function scheduledMealsForDay(vd){
 }
 // 予定時刻を過ぎて未記録の食事があれば返す（予定時刻〜+2時間の間だけ提案）
 function currentMealDue(vd,nowMin){
-  const WINDOW=120;
+  const WINDOW=nudgeNum('meal')||120;
   const due=scheduledMealsForDay(vd).filter(m=> nowMin>=m.startMin && nowMin<=m.startMin+WINDOW && !mealRoutineDone(vd,m.key));
   due.sort((a,b)=>a.startMin-b.startMin);
   return due[0]||null;
@@ -2756,20 +2816,20 @@ function evalNudges(now){
   if(state.sleepMode||state.selfMode||state.modeSwitcher||state.lifeScreen) return null; // 全画面表示中は出さない
   now=now||Date.now(); const nd=new Date(now); const nowMin=nd.getHours()*60+nd.getMinutes();
   const vd=todayStr(); const curMode=currentLifeModeKey(); const cands=[];
-  // R3 飲み過ぎ（飲みモード開始から90分経過）
-  if(nudgeActive('drink',now) && curMode==='drink'){ const ses=currentModeSession(); const el=ses?(now-ses.start):0; if(el>=90*60000){ const g=Math.round(pureAlcoholG(vd)), lim=alcLimitDay(), over=g>=lim; cands.push({pri:1,id:'drink',icon:'🍶',title:over?`今日 ${g}g（上限${lim}g）`:'飲みモードが90分',sub:'そろそろ切り上げませんか？',act:()=>{ state.modeSwitcher=true; }}); } }
+  // R3 飲み過ぎ（飲みモードが設定の分数だけ続いた）
+  if(nudgeOn('drink') && nudgeActive('drink',now) && curMode==='drink'){ const lim0=nudgeNum('drink'); const ses=currentModeSession(); const el=ses?(now-ses.start):0; if(el>=lim0*60000){ const g=Math.round(pureAlcoholG(vd)), lim=alcLimitDay(), over=g>=lim; cands.push({pri:1,id:'drink',icon:'🍶',title:over?`今日 ${g}g（上限${lim}g）`:`飲みモードが${fmtMinLabel(lim0)}`,sub:'そろそろ切り上げませんか？',act:()=>{ state.modeSwitcher=true; }}); } }
   // R2 寝坊（目標起床時刻・シフト別）
-  if(nudgeActive('wake',now) && curMode!=='sleep' && curMode!=='sleepprep'){ const wg=wakeGoalMinsFor(vd); if(wg!=null && nowMin>=wg && nowMin<=wg+120 && getDaily(vd).wakeTime==null){ cands.push({pri:2,id:'wake',icon:'☀️',title:'起きる時間です',sub:'朝モードで一日を始めましょう',act:()=>openLifeMode('morning')}); } }
-  // R1 夜更かし（就寝リズムのリード時間と同じ）
-  if(nudgeActive('sleep',now) && curMode!=='sleep' && curMode!=='sleepprep'){ const cd=bedCountdownMin(now); if(cd!=null && cd<=cdLeadMin() && cd>-120 && getDaily(sleepNightDay()).bedTime==null){ cands.push({pri:3,id:'sleep',icon:'🌙',title:cd>0?'そろそろ寝る準備':'まだ起きています',sub:'睡眠前モードに切り替える？',act:()=>openLifeMode('sleepprep')}); } }
+  if(nudgeOn('wake') && nudgeActive('wake',now) && curMode!=='sleep' && curMode!=='sleepprep'){ const wg=wakeGoalMinsFor(vd); if(wg!=null && nowMin>=wg && nowMin<=wg+120 && getDaily(vd).wakeTime==null){ cands.push({pri:2,id:'wake',icon:'☀️',title:'起きる時間です',sub:'朝モードで一日を始めましょう',act:()=>openLifeMode('morning')}); } }
+  // R1 夜更かし（就寝目標の何分前から出すかは設定。未設定なら就寝リズムのリード時間）
+  if(nudgeOn('sleep') && nudgeActive('sleep',now) && curMode!=='sleep' && curMode!=='sleepprep'){ const cd=bedCountdownMin(now); if(cd!=null && cd<=sleepNudgeLead() && cd>-120 && getDaily(sleepNightDay()).bedTime==null){ cands.push({pri:3,id:'sleep',icon:'🌙',title:cd>0?'そろそろ寝る準備':'まだ起きています',sub:'睡眠前モードに切り替える？',act:()=>openLifeMode('sleepprep')}); } }
   // R4 夕方の気分チェック（バナー内で気分入力）
-  if(nudgeActive('mood',now) && !nudgeR('mood').answered && nowMin>=moodCheckMin()
+  if(nudgeOn('mood') && nudgeActive('mood',now) && !nudgeR('mood').answered && nowMin>=moodCheckMin()
      && !selfCondRecorded(selfCondDay(),selfCondHour())){ // 同じ時間に体調の記録があれば出さない
     cands.push({pri:4,id:'mood',icon:'🫧',title:'今日の気分は？',sub:'体調記録と同じ内容で登録できます',mood:true}); }
   // R5 食事
-  if(nudgeActive('meal',now) && curMode!=='meal'){ const meal=currentMealDue(vd,nowMin); if(meal){ cands.push({pri:5,id:'meal',icon:'🍚',title:`${meal.label}の時間`,sub:'食事モードで記録しませんか？',act:()=>openLifeMode('meal')}); } }
+  if(nudgeOn('meal') && nudgeActive('meal',now) && curMode!=='meal'){ const meal=currentMealDue(vd,nowMin); if(meal){ cands.push({pri:5,id:'meal',icon:'🍚',title:`${meal.label}の時間`,sub:'食事モードで記録しませんか？',act:()=>openLifeMode('meal')}); } }
   // R6 停滞
-  if(nudgeActive('stall',now) && (curMode==='hobby'||curMode==='rest')){ const s=currentModeSession(); if(s && now-s.start>=3*3600000){ const def=lifeModeDef(curMode); cands.push({pri:6,id:'stall',icon:'🔀',title:`${def?def.label:''}モードが3時間`,sub:'切り替えますか？',act:()=>{ state.modeSwitcher=true; }}); } }
+  if(nudgeOn('stall') && nudgeActive('stall',now) && (curMode==='hobby'||curMode==='rest')){ const lim2=nudgeNum('stall'); const s=currentModeSession(); if(s && now-s.start>=lim2*60000){ const def=lifeModeDef(curMode); cands.push({pri:6,id:'stall',icon:'🔀',title:`${def?def.label:''}モードが${fmtMinLabel(lim2)}`,sub:'切り替えますか？',act:()=>{ state.modeSwitcher=true; }}); } }
   cands.sort((a,b)=>a.pri-b.pri);
   return cands[0]||null;
 }
@@ -2784,9 +2844,12 @@ function afterMoodRecorded(b){
 function nudgeBanner(){
   const n=evalNudges(Date.now()); if(!n) return null;
   const c=div({className:'card',style:{padding:'11px 13px',marginBottom:'10px',border:'1px solid #38bdf855',background:'#0ea5e912'}});
+  const cfgB=btn({style:{flexShrink:0,padding:'4px 8px',borderRadius:'7px',border:'1px solid #334155',background:'transparent',color:'#64748b',fontSize:'10px',cursor:'pointer',fontFamily:'inherit'}},'⚙️ 通知');
+  cfgB.addEventListener('click',()=>goToNotifySettings());
   c.appendChild(div({style:{display:'flex',alignItems:'center',gap:'10px'}},[
     div({style:{fontSize:'22px'}},n.icon),
-    div({style:{flex:1,minWidth:0}},[div({style:{fontSize:'13px',fontWeight:700,color:'#e2e8f0'}},n.title),div({style:{fontSize:'11px',color:'#94a3b8'}},n.sub)])
+    div({style:{flex:1,minWidth:0}},[div({style:{fontSize:'13px',fontWeight:700,color:'#e2e8f0'}},n.title),div({style:{fontSize:'11px',color:'#94a3b8'}},n.sub)]),
+    cfgB
   ]));
   if(n.mood){
     // モード画面とまったく同じ体調入力カード（体調スコア/メンタル/飲酒欲求/症状/メモ＋記録ボタン）
@@ -3009,34 +3072,89 @@ function renderModeEditor(inSettings){
     done.addEventListener('click',()=>{ saveLifeModes(); state.modeEditMode=false; render(); }); box.appendChild(done); }
   return box;
 }
+// 🔔 通知の設定（設定画面の「🔔 通知」にすべてまとめる）。
+//   ①全体のON/OFF ②端末通知 ③通知を出さない時間帯・再通知の間隔 ④項目ごとのON/OFFと時刻・分
+function notifyNumField(val, ph, onSet){
+  const i=document.createElement('input'); i.type='number'; i.inputMode='numeric';
+  i.value=(val==null?'':String(val)); i.placeholder=ph||'';
+  i.style.cssText='width:72px;flex-shrink:0;padding:7px 8px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:14px;font-family:inherit;text-align:center;box-sizing:border-box';
+  i.addEventListener('change',e=>{ const v=e.target.value; onSet(v===''?null:Number(v)); });
+  return i;
+}
+// 1項目ぶんのカード（ON/OFF＋その項目の時間設定）
+function nudgeRuleCard(d){
+  const on=getNudgeRules()[d.id].on!==false, all=!state.nudgesOff;
+  const card=div({style:{border:`1px solid ${on&&all?'#38bdf855':'#1e293b'}`,background:on&&all?'#0ea5e90d':'transparent',borderRadius:'11px',padding:'10px 12px',marginBottom:'8px',opacity:all?1:0.5}});
+  const head=div({style:{display:'flex',alignItems:'center',gap:'9px'}});
+  head.appendChild(div({style:{fontSize:'19px',flexShrink:0}},d.icon));
+  head.appendChild(div({style:{flex:1,minWidth:0}},[
+    div({style:{fontSize:'13px',fontWeight:700,color:on?'#e2e8f0':'#64748b'}},d.label),
+    div({style:{fontSize:'10px',color:'#64748b',lineHeight:1.5,marginTop:'1px'}},d.desc)
+  ]));
+  const tg=btn({style:{flexShrink:0,padding:'6px 12px',borderRadius:'8px',cursor:'pointer',fontSize:'11px',fontWeight:700,fontFamily:'inherit',
+    border:`1px solid ${on?'#38bdf8':'#334155'}`,background:on?'#38bdf822':'transparent',color:on?'#7dd3fc':'#64748b'}},on?'ON':'OFF');
+  tg.addEventListener('click',(()=>{const id=d.id,v=!on;return()=>{ setNudgeOn(id,v); render(); };})());
+  head.appendChild(tg);
+  card.appendChild(head);
+  if(!on) return card;
+  // 🫧 気分チェック＝時刻
+  if(d.time){
+    const row=div({style:{display:'flex',alignItems:'center',gap:'9px',marginTop:'9px'}});
+    row.appendChild(div({style:{width:'96px',flexShrink:0,fontSize:'11px',color:'#94a3b8'}},d.time.label));
+    row.appendChild(clockField(state.moodCheckH!=null?state.moodCheckH:18,state.moodCheckM||0,(H,M)=>{ state.moodCheckH=H; state.moodCheckM=M; saveNudgeCfg(); render(); }));
+    card.appendChild(row);
+  }
+  // 分で指定する項目
+  if(d.num){
+    const cur=getNudgeRules()[d.id][d.num.key];
+    const row=div({style:{display:'flex',alignItems:'center',gap:'8px',marginTop:'9px',flexWrap:'wrap'}});
+    row.appendChild(div({style:{flex:1,minWidth:'120px',fontSize:'11px',color:'#94a3b8'}},d.num.label));
+    row.appendChild(notifyNumField(cur==null?(d.num.def==null?null:d.num.def):cur, d.num.def==null?'既定':String(d.num.def), (()=>{const id=d.id;return v=>{ setNudgeNum(id,v); render(); };})()));
+    row.appendChild(div({style:{fontSize:'11px',color:'#64748b',flexShrink:0}},'分'));
+    card.appendChild(row);
+    const eff=nudgeNum(d.id);
+    card.appendChild(div({style:{fontSize:'9px',color:'#475569',marginTop:'4px'}},
+      (cur==null&&d.num.nullLabel)?`いまは「${d.num.nullLabel}」＝${fmtMinLabel(sleepNudgeLead())}前から`
+      :`いまの設定：${fmtMinLabel(eff)}（${d.num.min}〜${d.num.max}分）`));
+    if(d.num.nullLabel && cur!=null){
+      const cl=btn({style:{marginTop:'5px',padding:'4px 9px',borderRadius:'7px',border:'1px solid #334155',background:'transparent',color:'#64748b',fontSize:'10px',cursor:'pointer',fontFamily:'inherit'}},`↩ ${d.num.nullLabel}に戻す`);
+      cl.addEventListener('click',(()=>{const id=d.id;return()=>{ setNudgeNum(id,null); render(); };})());
+      card.appendChild(cl);
+    }
+  }
+  // ☀️ 起床＝シフト別の目標起床時刻
+  if(d.id==='wake'){
+    const wg=getWakeGoal();
+    card.appendChild(div({style:{fontSize:'11px',color:'#94a3b8',marginTop:'9px',marginBottom:'5px'}},'🌅 目標起床時刻（シフト別）'));
+    [['s1','1直'],['s2','2直'],['off','休み1'],['off2','休み2']].forEach(([k,label])=>{
+      const row=div({style:{display:'flex',alignItems:'center',gap:'10px',marginBottom:'6px'}});
+      row.appendChild(div({style:{width:'52px',flexShrink:0,fontSize:'12px',color:'#cbd5e1'}},label));
+      row.appendChild(clockField(wg[k].h,wg[k].m,(()=>{const kk=k;return(H,M)=>{ getWakeGoal()[kk]={h:H,m:M}; saveWakeGoal(); };})()));
+      card.appendChild(row);
+    });
+  }
+  return card;
+}
+function renderNotifyPanel(){
+  const card=div({className:'card'});
+  card.appendChild(div({style:{fontSize:'14px',fontWeight:700,color:'#e2e8f0',marginBottom:'4px'}},'🔔 通知'));
+  card.appendChild(div({style:{fontSize:'11px',color:'#64748b',marginBottom:'10px',lineHeight:1.6}},
+    '「そろそろ寝る準備」などの切り替え提案を、項目ごとにON/OFF・出す時刻や分で調整できます。提案はアプリ内のバナーで出て、端末通知を有効にすると通知でも届きます。'));
+  card.appendChild(renderNudgeConfig(true));
+  return card;
+}
 function renderNudgeConfig(inSettings){
   const box=div({});
-  box.appendChild(div({style:{fontSize:'13px',fontWeight:700,color:'#e2e8f0',marginBottom:'4px'}},'🌅 目標起床時刻（シフト別）'));
-  box.appendChild(div({style:{fontSize:'11px',color:'#64748b',marginBottom:'9px',lineHeight:1.6}},'この時刻を過ぎて起床未記録なら「起きる時間です」と提案します。'));
-  const wg=getWakeGoal();
-  [['s1','1直'],['s2','2直'],['off','休み1'],['off2','休み2']].forEach(([k,label])=>{
-    const row=div({style:{display:'flex',alignItems:'center',gap:'10px',marginBottom:'8px'}});
-    row.appendChild(div({style:{width:'60px',fontSize:'13px',color:'#cbd5e1'}},label));
-    row.appendChild(clockField(wg[k].h,wg[k].m,(()=>{const kk=k;return(H,M)=>{ getWakeGoal()[kk]={h:H,m:M}; saveWakeGoal(); };})()));
-    box.appendChild(row);
-  });
-  box.appendChild(div({style:{fontSize:'13px',fontWeight:700,color:'#e2e8f0',margin:'14px 0 4px'}},'🫧 気分チェックの時刻'));
-  box.appendChild(div({style:{fontSize:'11px',color:'#64748b',marginBottom:'9px',lineHeight:1.6}},'この時刻以降に1日1回「今日の気分は？」を表示（落ち込み/たかぶりの入口）。'));
-  const mrow=div({style:{display:'flex',alignItems:'center',gap:'10px',marginBottom:'8px'}});
-  mrow.appendChild(div({style:{width:'60px',fontSize:'13px',color:'#cbd5e1'}},'時刻'));
-  mrow.appendChild(clockField(state.moodCheckH!=null?state.moodCheckH:18,state.moodCheckM||0,(H,M)=>{ state.moodCheckH=H; state.moodCheckM=M; saveNudgeCfg(); }));
-  box.appendChild(mrow);
-  box.appendChild(div({style:{fontSize:'13px',fontWeight:700,color:'#e2e8f0',margin:'14px 0 4px'}},'🌃 基準日の切り替え'));
-  box.appendChild(div({style:{fontSize:'11px',color:'#64748b',marginBottom:'9px',lineHeight:1.6}},'就寝（睡眠前モードの「就寝した」等）を記録するまでは前日扱いのまま。深夜に飲酒・記録しても基準日が変わらず、その夜の分としてまとまります。下は「就寝を記録し忘れた場合」の切り替え時刻（フォールバック・既定12:00）。'));
-  const crow=div({style:{display:'flex',alignItems:'center',gap:'10px',marginBottom:'8px'}});
-  crow.appendChild(div({style:{width:'110px',fontSize:'12px',color:'#cbd5e1'}},'フォールバック時刻'));
-  crow.appendChild(clockField(dayCutoffH(),0,(H)=>{ state.dayCutoffH=H; saveNudgeCfg(); }));
-  box.appendChild(crow);
-  // 端末通知
-  box.appendChild(div({style:{fontSize:'13px',fontWeight:700,color:'#e2e8f0',margin:'14px 0 4px'}},'📱 端末通知'));
+  // ① 全体のON/OFF
+  const nOn=!state.nudgesOff;
+  const nt=btn({style:{width:'100%',padding:'11px',borderRadius:'10px',border:`1px solid ${nOn?'#38bdf8':'#334155'}`,background:nOn?'#38bdf818':'transparent',color:nOn?'#7dd3fc':'#94a3b8',fontSize:'12px',fontWeight:700,cursor:'pointer',fontFamily:'inherit',marginBottom:'12px'}},`🔔 切り替え提案（ナッジ）：${nOn?'ON':'OFF'}`);
+  nt.addEventListener('click',()=>{ state.nudgesOff=nOn; saveNudgeCfg(); render(); });
+  box.appendChild(nt);
+  // ② 端末通知
+  box.appendChild(div({style:{fontSize:'13px',fontWeight:700,color:'#e2e8f0',margin:'2px 0 4px'}},'📱 端末通知'));
   const permGranted=(typeof Notification!=='undefined' && Notification.permission==='granted');
   const active=permGranted && state.notifyOn;
-  box.appendChild(div({style:{fontSize:'11px',color:'#64748b',marginBottom:'9px',lineHeight:1.6}},'切り替え提案を端末通知でも受け取れます。※アプリを開いている間・バックグラウンド中のみのベストエフォート（完全に閉じると鳴りません）。確実な起床にはOS標準アラームの併用を。'));
+  box.appendChild(div({style:{fontSize:'11px',color:'#64748b',marginBottom:'9px',lineHeight:1.6}},'※アプリを開いている間・バックグラウンド中のみのベストエフォート（完全に閉じると鳴りません）。確実な起床にはOS標準アラームの併用を。'));
   if(active){
     box.appendChild(div({style:{fontSize:'12px',color:'#4ade80',marginBottom:'8px'}},'✓ 端末通知：有効'));
     const off=btn({style:{width:'100%',padding:'10px',borderRadius:'10px',border:'1px solid #334155',background:'transparent',color:'#94a3b8',fontSize:'12px',cursor:'pointer',fontFamily:'inherit'}},'端末通知をオフにする');
@@ -3049,6 +3167,32 @@ function renderNudgeConfig(inSettings){
     on.addEventListener('click',()=>requestNotify());
     box.appendChild(on);
   }
+  // ③ 通知を出さない時間帯・再通知の間隔（端末通知だけに効く）
+  if(active){
+    const q=quietHours();
+    box.appendChild(div({style:{fontSize:'12px',fontWeight:700,color:'#cbd5e1',margin:'14px 0 4px'}},'🌙 通知を出さない時間帯'));
+    box.appendChild(div({style:{fontSize:'10px',color:'#64748b',marginBottom:'7px',lineHeight:1.5}},'この時間帯は端末通知を鳴らしません（アプリ内のバナーは今までどおり出ます）。日をまたぐ指定もできます。'));
+    const qrow=div({style:{display:'flex',alignItems:'center',gap:'7px',marginBottom:'6px'}});
+    const setQ=(from,to)=>{ state.notifyQuiet=(from==null||to==null)?null:{from,to}; saveNudgeCfg(); render(); };
+    qrow.appendChild(clockField(Math.floor((q?q.from:23*60)/60),(q?q.from:23*60)%60,(H,M)=>setQ(H*60+M, q?q.to:7*60)));
+    qrow.appendChild(div({style:{fontSize:'12px',color:'#64748b',flexShrink:0}},'〜'));
+    qrow.appendChild(clockField(Math.floor((q?q.to:7*60)/60),(q?q.to:7*60)%60,(H,M)=>setQ(q?q.from:23*60, H*60+M)));
+    box.appendChild(qrow);
+    const qt=btn({style:{padding:'5px 10px',borderRadius:'7px',cursor:'pointer',fontSize:'10px',fontFamily:'inherit',marginBottom:'6px',
+      border:`1px solid ${q?'#38bdf8':'#334155'}`,background:q?'#38bdf818':'transparent',color:q?'#7dd3fc':'#64748b'}},q?`✓ 有効（${fmtHM(q.from)}〜${fmtHM(q.to)}は鳴らさない）`:'この時間帯を使う');
+    qt.addEventListener('click',()=>{ if(q)setQ(null,null); else setQ(23*60,7*60); });
+    box.appendChild(qt);
+    const rrow=div({style:{display:'flex',alignItems:'center',gap:'8px',margin:'8px 0 2px'}});
+    rrow.appendChild(div({style:{flex:1,minWidth:0,fontSize:'11px',color:'#94a3b8'}},'同じ項目を鳴らし直す間隔'));
+    rrow.appendChild(notifyNumField(notifyRepeatMin(),'30',v=>{ state.notifyRepeat=(v==null)?30:Math.max(5,Math.min(360,Math.round(v))); saveNudgeCfg(); render(); }));
+    rrow.appendChild(div({style:{fontSize:'11px',color:'#64748b',flexShrink:0}},'分'));
+    box.appendChild(rrow);
+  }
+  // ④ 項目ごとの設定
+  box.appendChild(div({style:{fontSize:'13px',fontWeight:700,color:'#e2e8f0',margin:'16px 0 4px'}},'📋 通知する項目と時間'));
+  box.appendChild(div({style:{fontSize:'11px',color:'#64748b',marginBottom:'9px',lineHeight:1.6}},
+    state.nudgesOff?'⚠ いま「切り替え提案」が OFF なので、項目をONにしても出ません。':'出したい項目だけONにして、出すタイミングをそれぞれ決められます。'));
+  NUDGE_DEFS.forEach(d=>box.appendChild(nudgeRuleCard(d)));
   if(!inSettings){ const done=btn({style:{width:'100%',marginTop:'14px',padding:'11px',borderRadius:'10px',border:'none',background:'#334155',color:'#e2e8f0',fontSize:'13px',fontWeight:700,cursor:'pointer',fontFamily:'inherit'}},'完了');
     done.addEventListener('click',()=>{ saveWakeGoal(); saveNudgeCfg(); state.nudgeCfgOpen=false; render(); }); box.appendChild(done); }
   return box;
@@ -7736,6 +7880,7 @@ const FEATURE_INDEX=[
     {label:"AI分析",desc:"AI総合分析とAIへの質問",go:()=>{state.tab="分析";state.analysisSubTab="AI分析";}},
   ]},
   {group:"⚙ 設定",items:[
+    {label:"通知",desc:"切り替え提案の項目別ON/OFF・時刻・端末通知",go:()=>{ goToNotifySettings(); }},
     {label:"シフト・パターン予定",desc:"勤務シフトと定型スケジュール",go:()=>{state.tab="設定";}},
     {label:"就寝リズム",desc:"目標就寝時刻・寝支度・カウントダウン",go:()=>{state.tab="設定";}},
     {label:"文字サイズ／データ管理",desc:"表示倍率・バックアップ出力/読込",go:()=>{state.tab="設定";}},
@@ -7772,24 +7917,30 @@ function renderFeatureIndexPanel(){
 function renderModeSettingsPanel(){
   const card=div({className:"card"});
   card.appendChild(div({style:{fontSize:"14px",fontWeight:700,color:"#e2e8f0",marginBottom:"4px"}},"🕒 セルフモード・切り替えの設定"));
-  card.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"12px",lineHeight:1.6}},"モードの色・既定モード・自動切替・切り替え提案（ナッジ）・端末通知・目標起床時刻など。"));
+  card.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"12px",lineHeight:1.6}},"モードの色・既定モード・自動切替・基準日の切り替えなど。通知（切り替え提案）は「🔔 通知」にまとめました。"));
   // 自動切替トグル
   const autoOn=state.autoModeOn!==false;
   const at=btn({style:{width:"100%",padding:"11px",borderRadius:"10px",border:`1px solid ${autoOn?"#22c55e":"#334155"}`,background:autoOn?"#22c55e18":"transparent",color:autoOn?"#4ade80":"#94a3b8",fontSize:"12px",fontWeight:600,cursor:"pointer",fontFamily:"inherit",marginBottom:"8px"}},`⚙️ 自動切替：${autoOn?"ON":"OFF"}（勤務シフトで仕事へ／帰宅ルーティン後に休息へ）`);
   at.addEventListener('click',()=>{ state.autoModeOn=!autoOn; saveAutoState(); render(); });
   card.appendChild(at);
-  // ナッジトグル
-  const nOn=!state.nudgesOff;
-  const nt=btn({style:{width:"100%",padding:"11px",borderRadius:"10px",border:`1px solid ${nOn?"#38bdf8":"#334155"}`,background:nOn?"#38bdf818":"transparent",color:nOn?"#7dd3fc":"#94a3b8",fontSize:"12px",fontWeight:600,cursor:"pointer",fontFamily:"inherit",marginBottom:"12px"}},`🔔 切り替え提案（ナッジ）：${nOn?"ON":"OFF"}`);
-  nt.addEventListener('click',()=>{ state.nudgesOff=!nOn; saveNudgeCfg(); render(); });
-  card.appendChild(nt);
+  // 通知の設定は「🔔 通知」へ
+  const gn=btn({style:{width:"100%",padding:"11px",borderRadius:"10px",border:"1px solid #38bdf855",background:"#38bdf80d",color:"#7dd3fc",fontSize:"12px",fontWeight:600,cursor:"pointer",fontFamily:"inherit",marginBottom:"12px"}},`🔔 通知の設定（項目・時刻）→ 開く`);
+  gn.addEventListener('click',()=>goToNotifySettings());
+  card.appendChild(gn);
   // 既定モード＋色の変更
   card.appendChild(renderModeEditor(true));
   card.appendChild(div({style:{height:"1px",background:"#1e3a5f",margin:"6px 0 14px"}}));
-  // 目標起床時刻・気分チェック・端末通知・基準日
-  card.appendChild(renderNudgeConfig(true));
+  // 🌃 基準日の切り替え（通知ではなく日付の扱いの設定なのでここに置く）
+  card.appendChild(div({style:{fontSize:'13px',fontWeight:700,color:'#e2e8f0',margin:'2px 0 4px'}},'🌃 基準日の切り替え'));
+  card.appendChild(div({style:{fontSize:'11px',color:'#64748b',marginBottom:'9px',lineHeight:1.6}},'就寝（睡眠前モードの「就寝した」等）を記録するまでは前日扱いのまま。深夜に飲酒・記録しても基準日が変わらず、その夜の分としてまとまります。下は「就寝を記録し忘れた場合」の切り替え時刻（フォールバック・既定12:00）。'));
+  { const crow=div({style:{display:'flex',alignItems:'center',gap:'10px',marginBottom:'4px'}});
+    crow.appendChild(div({style:{width:'110px',flexShrink:0,fontSize:'12px',color:'#cbd5e1'}},'フォールバック時刻'));
+    crow.appendChild(clockField(dayCutoffH(),0,(H)=>{ state.dayCutoffH=H; saveNudgeCfg(); }));
+    card.appendChild(crow); }
   return card;
 }
+// 設定画面の「🔔 通知」を開く
+function goToNotifySettings(){ if(typeof exitWidget==='function')exitWidget(); state.modeSwitcher=false; state.nudgeCfgOpen=false; state.tab="設定"; openSetting('notify',true); render(); setTimeout(()=>{ try{ const el=document.getElementById('notify-settings'); if(el)el.scrollIntoView({block:"start",behavior:"smooth"}); }catch(_){} },80); }
 // ── 設定画面：各項目をたためるようにする ──
 // 各パネルは「1つ目の子＝見出し」「2つ目以降＝中身」という同じ形なので、
 // 見出しをタップで開閉できるようにし、閉じているときは中身を外す。開閉状態は保存する。
@@ -7854,7 +8005,7 @@ function renderSettingsHub(){
   // モード設定から飛んできたときはその項目を開いておく
   if(state.settingsModeCfg){ openSetting('mode',true); state.settingsModeCfg=false; }
   // すべて開く／閉じる
-  { const keys=['hist','mode','display','colors','shift','pattern','sleep','routine','data'];
+  { const keys=['hist','mode','notify','display','colors','shift','pattern','sleep','routine','data'];
     const anyOpen=keys.some(isSettingOpen);
     const bar=div({style:{display:"flex",justifyContent:"flex-end",marginBottom:"8px"}});
     const b=btn({style:{padding:"5px 11px",borderRadius:"8px",border:"1px solid #334155",background:"transparent",color:"#94a3b8",fontSize:"11px",cursor:"pointer",fontFamily:"inherit"}},anyOpen?"⊖ すべて閉じる":"⊕ すべて開く");
@@ -7863,6 +8014,7 @@ function renderSettingsHub(){
   wrap.appendChild(renderFeatureIndexPanel());
   wrap.appendChild(collapsibleSetting('hist',renderSaveHistoryPanel()));
   wrap.appendChild(collapsibleSetting('mode',renderModeSettingsPanel()));
+  { const nc=renderNotifyPanel(); nc.id='notify-settings'; wrap.appendChild(collapsibleSetting('notify',nc)); }
   wrap.appendChild(collapsibleSetting('display',renderDisplayPanel()));
   wrap.appendChild(collapsibleSetting('colors',renderColorLegendPanel()));
   wrap.appendChild(collapsibleSetting('shift',renderShiftPanel()));
@@ -14077,6 +14229,7 @@ function exportData(){
     modeLog:state.modeLog,
     modeTags:state.modeTags,
     wakeGoal:state.wakeGoal,
+    notifyCfg:nudgeCfgPayload(),
     decisBalance:state.decisBalance,
     miValues:state.miValues,
     changePlan:state.changePlan,
@@ -14163,6 +14316,7 @@ function importData(e){
       if(Array.isArray(p.modeLog)){state.modeLog=p.modeLog;saveModeLog();}
       if(p.modeTags&&typeof p.modeTags==="object"){state.modeTags=p.modeTags;saveModeTags();}
       if(p.wakeGoal&&typeof p.wakeGoal==="object"){state.wakeGoal=p.wakeGoal;saveWakeGoal();}
+      if(p.notifyCfg&&typeof p.notifyCfg==="object"){applyNudgeCfg(p.notifyCfg);saveNudgeCfg();}
       if(p.decisBalance&&typeof p.decisBalance==="object"){state.decisBalance=p.decisBalance;saveDecisBalance();}
       if(p.miValues&&typeof p.miValues==="object"){state.miValues=p.miValues;saveMIValues();}
       if(p.changePlan&&typeof p.changePlan==="object"){state.changePlan=p.changePlan;saveChangePlan();}
