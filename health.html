@@ -224,7 +224,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.65"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.66"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -844,7 +844,7 @@ const state = {
   shiftPattern:defaultShiftPattern(), swapMode:false, swapFirst:null,
   planPatterns:defaultPlanPatterns(), customTodos:[], customTodoModal:null,
   scheduleSubTab:"日", editEventUid:null, editEventIsRepeat:false, editScope:"all", patternEdit:null,
-  newEvH:9, newEvM:0, newEvEndH:10, newEvEndM:0, newEvEndNextDay:false, newEvTitle:"", newEvRepeat:"none", newEvColor:"#38bdf8", newEvWeekdays:[], newEvFromTask:null, newEvAllDay:false, newEvRefOnly:false, newEvEndDate:null, editEventDate:null,
+  newEvH:9, newEvM:0, newEvEndH:10, newEvEndM:0, newEvEndNextDay:false, newEvTitle:"", newEvRepeat:"none", newEvColor:"#38bdf8", newEvWeekdays:[], newEvFromTask:null, newEvGoalId:null, newEvAllDay:false, newEvRefOnly:false, newEvEndDate:null, editEventDate:null,
   aiScheduleLoading:false, aiScheduleProposal:null,
   aiAnalysisResult:null, aiAnalysisLoading:false, aiAnalysisError:null, aiAnalysisRemaining:null,
   events:{}, taskList:[], wishList:[], shopList:[],
@@ -4947,6 +4947,30 @@ function openGoalAsEvent(node, targetDate){
   state.newEvRepeat="none"; state.newEvColor=EV_DEFAULT;
   state.newEvWeekdays=[parseDS(target).getDay()];
   state.newEvFromTask=null; state.newEvAllDay=false; state.newEvRefOnly=false; state.newEvPlace=""; state.newEvNote=""; state.newEvPreDays=0;
+  state.newEvGoalId=(node&&node.id)||null;   // この予定がどの目標から来たかを覚える
+  render();
+}
+// 🎯 その目標から作った予定（単発＋繰り返し）。予定側の goalId で結びつく
+function goalEvents(goalId){
+  const out=[];
+  if(!goalId) return out;
+  const sch=state.schedule||{};
+  Object.keys(sch).forEach(ds=>{ (sch[ds]||[]).forEach(e=>{ if(e.goalId===goalId) out.push({ds,ev:e,repeat:false}); }); });
+  (state.repeatEvents||[]).forEach(e=>{ if(e.goalId===goalId) out.push({ds:e.startDate||todayStr(),ev:e,repeat:true}); });
+  out.sort((a,b)=>String(a.ds).localeCompare(String(b.ds)));
+  return out;
+}
+// 予定1件の時間ラベル（終日／繰り返しも扱う）
+function goalEventTimeLabel(g){
+  const e=g.ev;
+  if(g.repeat) return `🔁 ${repeatLabel(e.repeatType,g.ds)||"繰り返し"}${e.allDay?"・終日":`・${fmtHM(e.startH*60+(e.startM||0))}〜`}`;
+  if(e.allDay) return e.endDate?`終日 ${mdLabel(g.ds)}〜${mdLabel(e.endDate)}`:"終日";
+  return `${fmtHM(e.startH*60+(e.startM||0))}〜${fmtHM(e.endH*60+(e.endM||0))}`;
+}
+// その予定を予定タブで開く（日ビュー・その日付へ）
+function goToGoalEvent(g){
+  state.goalTreeModal=null; state.goalPeriodModal=null; state.widget=false;
+  state.tab="予定"; state.scheduleSubTab="日"; state.viewDate=g.ds;
   render();
 }
 function dailyRangeLabel(n){ const s=dailyGoalStart(n); if(!s||!isRangeDaily(n))return ""; return `📅 ${mdLabel(s)}〜${mdLabel(n.dailyEnd)}`; }
@@ -4961,9 +4985,19 @@ function goalScheduleTargetDate(n, vd){
   return today;                        // 期間内 → 今日
 }
 // 目標を「予定に追加」するボタン（日次・期間問わず）
+// 📅 予定に追加。すでにこの目標から予定を作ってあれば、ボタンではなく**その予定の日付**を出す（タップでその日へ）
 function goalScheduleBtn(n, vd){
+  const evs=goalEvents(n&&n.id);
+  if(evs.length){
+    const g=evs[0];
+    const lbl=btn({style:{flexShrink:0,fontSize:"10px",padding:"3px 8px",borderRadius:"6px",cursor:"pointer",fontWeight:600,
+      border:"1px solid #0ea5e955",background:"transparent",color:"#7dd3fc",fontFamily:"inherit"}},
+      `📅 ${g.repeat?"繰り返し":mdLabel(g.ds)}${evs.length>1?` +${evs.length-1}`:""}`);
+    lbl.addEventListener('click',(()=>{const gg=g;return e=>{ e.stopPropagation(); goToGoalEvent(gg); };})());
+    return lbl;
+  }
   const b=btn({style:{flexShrink:0,fontSize:"12px",padding:"3px 9px",borderRadius:"6px",cursor:"pointer",fontWeight:600,border:"1px solid #0ea5e9",background:"#0ea5e918",color:"#38bdf8"}},"📅");
-  b.addEventListener('click',(()=>{const node=n;return()=>{ openGoalAsEvent(node, goalScheduleTargetDate(node, vd)); };})());
+  b.addEventListener('click',(()=>{const node=n;return e=>{ e.stopPropagation(); openGoalAsEvent(node, goalScheduleTargetDate(node, vd)); };})());
   return b;
 }
 // ── 🎯 目標の達成判定（アプリ内でここ1本に統一する）───────────────
@@ -5391,14 +5425,33 @@ function renderGoalTreeModal(){
       m.appendChild(goalRuleChooser(cur.mode, k=>{ gtUpdate(m0.id, k==="all"?{doneRule:null}:{doneRule:{mode:"manual"}}); render(); }));
     }
   }
+  // 📅 予定：まだ作っていなければ「予定に追加」、作ってあれば**その予定を表示**する（ボタンは出さない）
   if(m0.mode==="edit"){
-    m.appendChild(btn({style:{width:"100%",padding:"10px",marginBottom:"10px",background:"#0ea5e918",border:"1px solid #0ea5e955",borderRadius:"8px",color:"#38bdf8",fontSize:"13px",fontWeight:600,cursor:"pointer"},
-      onClick:()=>{
-        const f=gtFind(m0.id); const node=(f&&f.node)||{text:state.goalTreeModal.text};
-        let target=state.viewDate||todayStr();
-        if(node&&node.periodType==="daily"){ const ds=dailyGoalStart(node); if(ds)target=ds; } // 一日目標はその日へ
-        openGoalAsEvent(node, target);
-      }},"📅 この目標を予定に追加"));
+    const evs=goalEvents(m0.id);
+    if(evs.length){
+      m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"5px"}},`📅 予定に入れています（${evs.length}件）`));
+      evs.forEach(g=>{
+        const row=div({style:{display:"flex",alignItems:"center",gap:"8px",padding:"8px 10px",marginBottom:"6px",borderRadius:"9px",
+          border:"1px solid #0ea5e955",background:"#0ea5e90d",cursor:"pointer"}});
+        row.appendChild(div({style:{width:"10px",flexShrink:0,alignSelf:"stretch",borderRadius:"3px",background:g.ev.color||EV_DEFAULT}}));
+        row.appendChild(div({style:{flex:1,minWidth:0}},[
+          div({style:{fontSize:"12px",color:"#e2e8f0",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},g.ev.title||"(無題)"),
+          div({style:{fontSize:"10px",color:"#7dd3fc",marginTop:"1px"}},`${mdLabel(g.ds)}　${goalEventTimeLabel(g)}`)
+        ]));
+        row.appendChild(span({style:{flexShrink:0,fontSize:"13px",color:"#38bdf8"}},"→"));
+        row.addEventListener('click',(()=>{const gg=g;return()=>goToGoalEvent(gg);})());
+        m.appendChild(row);
+      });
+      m.appendChild(div({style:{fontSize:"9px",color:"#475569",marginBottom:"10px",lineHeight:1.5}},"タップするとその日の予定を開きます。予定を消すと、ここはまた「予定に追加」に戻ります。"));
+    } else {
+      m.appendChild(btn({style:{width:"100%",padding:"10px",marginBottom:"10px",background:"#0ea5e918",border:"1px solid #0ea5e955",borderRadius:"8px",color:"#38bdf8",fontSize:"13px",fontWeight:600,cursor:"pointer"},
+        onClick:()=>{
+          const f=gtFind(m0.id); const node=(f&&f.node)||{text:state.goalTreeModal.text};
+          let target=state.viewDate||todayStr();
+          if(node&&node.periodType==="daily"){ const ds=dailyGoalStart(node); if(ds)target=ds; } // 一日目標はその日へ
+          openGoalAsEvent(node, target);
+        }},"📅 この目標を予定に追加"));
+    }
   }
   const btns=[];
   if(m0.mode==="edit"){
@@ -6607,7 +6660,7 @@ function openAddEvent(vd, startH, startM){
   state.newEvEndH=(sh+1)%24;state.newEvEndM=sm;state.newEvEndNextDay=(sh+1)>=24;
   state.newEvRepeat="none";state.newEvColor=EV_DEFAULT;
   state.newEvWeekdays=[parseDS(vd).getDay()];
-  state.newEvFromTask=null;state.newEvAllDay=false;state.newEvRefOnly=false;state.newEvPlace="";state.newEvNote="";state.newEvPreDays=0;
+  state.newEvFromTask=null;state.newEvGoalId=null;state.newEvAllDay=false;state.newEvRefOnly=false;state.newEvPlace="";state.newEvNote="";state.newEvPreDays=0;
   render();
 }
 // ルーティン実績ブロックの「その日だけ」表示名・メモを編集
@@ -8322,7 +8375,7 @@ function collectSearchItems(){
           state.modal="addEvent";state.editEventUid=e.uid;state.editEventIsRepeat=false;state.editEventDate=dsk;state.eventEditMode=false;
           state.newEvTitle=e.title;state.newEvH=e.startH;state.newEvM=e.startM;state.newEvEndH=e.endH;state.newEvEndM=e.endM;
           state.newEvRepeat="none";state.newEvColor=e.color||EV_DEFAULT;state.newEvWeekdays=[parseDS(dsk).getDay()];state.newEvDate=dsk;state.newEvEndDate=e.endDate||null;
-          state.newEvFromTask=e.fromTask||null;state.newEvAllDay=!!e.allDay;state.newEvRefOnly=!!e.refOnly;state.newEvPlace=e.place||"";state.newEvNote=e.note||"";state.newEvPreDays=e.preDays||0;state.editScope="this";render(); }});
+          state.newEvFromTask=e.fromTask||null;state.newEvGoalId=e.goalId||null;state.newEvAllDay=!!e.allDay;state.newEvRefOnly=!!e.refOnly;state.newEvPlace=e.place||"";state.newEvNote=e.note||"";state.newEvPreDays=e.preDays||0;state.editScope="this";render(); }});
     });
   });
   // 2. 予定（繰り返し）
@@ -8336,7 +8389,7 @@ function collectSearchItems(){
         state.newEvTitle=e.title;state.newEvH=e.startH;state.newEvM=e.startM;state.newEvEndH=e.endH;state.newEvEndM=e.endM;
         state.newEvRepeat=e.repeatType||"weekly";state.newEvColor=e.color||EV_DEFAULT;
         state.newEvWeekdays=(e.weekdays&&e.weekdays.length)?[...e.weekdays]:[parseDS(e.startDate||todayStr()).getDay()];state.newEvDate=todayStr();state.newEvEndDate=null;
-        state.newEvFromTask=e.fromTask||null;state.newEvAllDay=!!e.allDay;state.newEvRefOnly=!!e.refOnly;state.newEvPlace=e.place||"";state.newEvNote=e.note||"";state.newEvPreDays=e.preDays||0;state.editScope="this";render(); }});
+        state.newEvFromTask=e.fromTask||null;state.newEvGoalId=e.goalId||null;state.newEvAllDay=!!e.allDay;state.newEvRefOnly=!!e.refOnly;state.newEvPlace=e.place||"";state.newEvNote=e.note||"";state.newEvPreDays=e.preDays||0;state.editScope="this";render(); }});
   });
   // 3. 定期ルーティン
   (state.customTodos||[]).forEach(ct=>{
@@ -8713,7 +8766,7 @@ function renderDaySchedule(vd,ds,isToday){
           state.newEvRepeat=e2.isRepeat?e2.repeatType:"none";state.newEvColor=e2.color||EV_DEFAULT;
           state.newEvWeekdays=(e2.weekdays&&e2.weekdays.length)?[...e2.weekdays]:[parseDS(e2.startDate||vd).getDay()];
           state.newEvDate=owner;state.newEvEndDate=e2.endDate||e2._mdEnd||null;
-          state.newEvFromTask=e2.fromTask||null;state.newEvAllDay=true;state.newEvRefOnly=!!e2.refOnly;state.newEvPlace=e2.place||"";state.newEvNote=e2.note||"";state.newEvPreDays=e2.preDays||0;state.editScope="this";render();
+          state.newEvFromTask=e2.fromTask||null;state.newEvGoalId=e2.goalId||null;state.newEvAllDay=true;state.newEvRefOnly=!!e2.refOnly;state.newEvPlace=e2.place||"";state.newEvNote=e2.note||"";state.newEvPreDays=e2.preDays||0;state.editScope="this";render();
         };})());
         ad.appendChild(chip);
       });
@@ -8950,6 +9003,7 @@ function renderDaySchedule(vd,ds,isToday){
     state.newEvColor=ev.color||EV_DEFAULT;
     state.newEvWeekdays=(ev.weekdays&&ev.weekdays.length)?[...ev.weekdays]:[parseDS(ev.startDate||vd).getDay()];
     state.newEvFromTask=ev.fromTask||null;
+    state.newEvGoalId=ev.goalId||null;
     state.newEvAllDay=!!ev.allDay;state.newEvRefOnly=!!ev.refOnly;
     state.newEvPlace=ev.place||"";state.newEvNote=ev.note||"";state.newEvPreDays=ev.preDays||0;
     state.editScope="this";
@@ -9364,7 +9418,7 @@ function renderTaskMatrix(){
       state.newEvEndH=Math.min(23,now.getHours()+1);state.newEvEndM=0;
       state.newEvRepeat="none";state.newEvColor=EV_DEFAULT;
       state.newEvWeekdays=[parseDS(target).getDay()];
-      state.newEvFromTask=it.uid;
+      state.newEvFromTask=it.uid; state.newEvGoalId=null;
       state.newEvPlace="";state.newEvNote=(it.note||"");
       state.scheduleSubTab="日";
       render();
@@ -9855,7 +9909,7 @@ function renderAddEventModal(vd){
         const isNone=state.newEvRepeat==="none";
         // 複数日予定（開始日<終了日・単発のみ）は終日扱いで endDate を保存
         const mdEnd=(!isRepEdit && isNone && state.newEvEndDate && state.newEvEndDate>targetDate)?state.newEvEndDate:null;
-        const evData={title:state.newEvTitle.trim(),startH:state.newEvH,startM:state.newEvM,endH:state.newEvEndH,endM:state.newEvEndM,endNextDay:!!state.newEvEndNextDay,color:state.newEvColor,allDay:mdEnd?true:!!state.newEvAllDay,refOnly:!!state.newEvRefOnly,...(mdEnd?{endDate:mdEnd}:{}),...(evPlace?{place:evPlace}:{}),...(evNote?{note:evNote}:{}),...(ft?{fromTask:ft}:{}),...(evPre>0?{preDays:evPre}:{})};
+        const evData={title:state.newEvTitle.trim(),startH:state.newEvH,startM:state.newEvM,endH:state.newEvEndH,endM:state.newEvEndM,endNextDay:!!state.newEvEndNextDay,color:state.newEvColor,allDay:mdEnd?true:!!state.newEvAllDay,refOnly:!!state.newEvRefOnly,...(mdEnd?{endDate:mdEnd}:{}),...(evPlace?{place:evPlace}:{}),...(evNote?{note:evNote}:{}),...(ft?{fromTask:ft}:{}),...(evPre>0?{preDays:evPre}:{}),...(state.newEvGoalId?{goalId:state.newEvGoalId}:{})};
         const newWds=isW(state.newEvRepeat)?((state.newEvWeekdays&&state.newEvWeekdays.length)?[...state.newEvWeekdays].sort((a,b)=>a-b):[parseDS(targetDate).getDay()]):null;
         const addSingle=()=>{ if(!state.schedule[targetDate])state.schedule[targetDate]=[]; state.schedule[targetDate].push({uid:Date.now(),...evData}); };
         const mkRepeat=(startDate)=>{ const rep={uid:Date.now()+Math.floor(Math.random()*1000),...evData,repeatType:state.newEvRepeat,startDate}; if(newWds)rep.weekdays=newWds; return rep; };
@@ -12800,7 +12854,7 @@ function renderAchievement(vd){
           state.newEvEndH=Math.min(23,now.getHours()+1); state.newEvEndM=0; state.newEvEndNextDay=false;
           state.newEvRepeat="none"; state.newEvColor=EV_DEFAULT;
           state.newEvWeekdays=[parseDS(target).getDay()];
-          state.newEvFromTask=null; state.newEvAllDay=false; state.newEvRefOnly=false; state.newEvPlace=""; state.newEvNote=""; state.newEvPreDays=0;
+          state.newEvFromTask=null; state.newEvGoalId=null; state.newEvAllDay=false; state.newEvRefOnly=false; state.newEvPlace=""; state.newEvNote=""; state.newEvPreDays=0;
           render();
         };})());
         row.appendChild(planB);
