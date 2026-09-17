@@ -222,7 +222,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.62"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.63"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -346,7 +346,7 @@ function restoreSave(id){
 const DAILY_SAVE_LABELS=[["drinks","🍺 飲酒"],["cravings","🍺 飲酒欲求"],["ejaculations","💧 射精"],["foods","🍽 食事"],
   ["water","💧 水分"],["bedTime","😴 睡眠"],["wakeTime","😴 起床"],["naps","💤 昼寝"],["awakenings","😴 中途覚醒"],
   ["actuals","📌 実績"],["actualNotes","📌 実績のメモ"],["planDone","✓ 予定の完了"],["meds","💊 服薬"],["routineOverrides","🔁 まとめの実績"],
-  ["windDownAt","🛏 寝支度"],["bodyComps","🏋️ 体組成"],["sleepQuality","🛌 眠りの質"],["sleepNote","🛌 眠りのメモ"],["score","📔 生活記録"]];
+  ["windDownAt","🛏 寝支度"],["bodyComps","🏋️ 体組成"],["sleepQuality","🛌 眠りの質"],["sleepNote","🛌 眠りのメモ"],["dream","💭 夢"],["score","📔 生活記録"]];
 function dailySaveLabel(upd){
   const ks=Object.keys(upd||{});
   for(const [k,l] of DAILY_SAVE_LABELS){ if(ks.indexOf(k)>=0) return l; }
@@ -1784,6 +1784,8 @@ function saveWindDownTime(H,M){
   const dt=new Date(+p[0],+p[1]-1,+p[2],H,M,0,0);
   if(H<12) dt.setDate(dt.getDate()+1);
   setDaily(nd,{windDownAt:dt.toISOString()});
+  const sy=syncModeFromWindDown(nd,dt.getTime());   // 🌙睡眠前モードの開始も合わせる
+  if(sy.msg) showToast(`🛏 時刻は保存しましたが、モードの開始は動かせません（${sy.msg}）`,"#f59e0b");
   return dt;
 }
 // 🛏 寝支度の時刻を編集するUIを開く（いまの記録値を初期値にする）
@@ -2456,9 +2458,43 @@ function setModeSessionTime(sess,which,ts){
   const b=modeSessionBounds(sess,which);
   if(!b) return {ok:false,msg:which==='end'?"進行中のモードは終了時刻を変えられません":"この記録は編集できません"};
   if(!(ts>=b.lo&&ts<=b.hi)) return {ok:false,msg:"前後のモードと重なるので、その時刻にはできません"};
-  if(which==='start'){ if(b.other) b.other.end=ts; sess.start=ts; }
+  if(which==='start'){ if(b.other) b.other.end=ts; sess.start=ts; syncWindDownFromMode(sess); }
   else { if(b.other) b.other.start=ts; sess.end=ts; }
   return {ok:true};
+}
+// ── 🛏 寝支度スタート ↔ 🌙睡眠前モードの開始 を同じ時刻に保つ ──────────
+// 「睡眠前モードに入ること＝寝支度を始めること」なので、片方を直したらもう片方も動かす。
+// 行き来で無限に呼び合わないよう、同期中は入口で止める。
+let _windSyncing=false;
+// その時刻が「どの夜のもの」か。正午より前は前日の夜（深夜＝その夜の続き）
+function nightDayOfTs(ts){ const d=new Date(ts); const cal=fmtDS(d); return d.getHours()<12?addDays(cal,-1):cal; }
+// その夜の睡眠前モードのセッション（いちばん新しいもの）
+function sleepprepSessionForNight(nd){
+  const log=getModeLog();
+  for(let i=log.length-1;i>=0;i--){ const s=log[i]; if(s.key==='sleepprep' && nightDayOfTs(s.start)===nd) return s; }
+  return null;
+}
+// モードの開始を直した → 寝支度スタートも同じ時刻にする
+function syncWindDownFromMode(sess){
+  if(_windSyncing || !sess || sess.key!=='sleepprep') return false;
+  _windSyncing=true;
+  try{ setDaily(nightDayOfTs(sess.start),{windDownAt:new Date(sess.start).toISOString()}); }
+  catch(_){ return false; }
+  finally{ _windSyncing=false; }
+  return true;
+}
+// 寝支度スタートを直した → その夜の睡眠前モードの開始も同じ時刻にする。
+// 前後のモードとぶつかって動かせなかったときは、その理由を返す（記録自体は残す）
+function syncModeFromWindDown(nd,ts){
+  if(_windSyncing) return {moved:false};
+  const sess=sleepprepSessionForNight(nd);
+  if(!sess) return {moved:false};
+  if(Math.abs(sess.start-ts)<1000) return {moved:false};
+  _windSyncing=true;
+  let r;
+  try{ r=setModeSessionTime(sess,'start',ts); if(r.ok) saveModeLog(); }
+  finally{ _windSyncing=false; }
+  return r&&r.ok ? {moved:true} : {moved:false, msg:(r&&r.msg)||null};
 }
 // 🕒 モードの挿入：指定した時間帯を、そのモードで塗り替える。
 //   ・空白（アプリを使っていなかった時間）を埋める
@@ -2495,6 +2531,8 @@ function insertModeSession(key,startTs,endTs){
   state.modeLog=merged;
   _modeEditLabel=`${(lifeModeDef(key)||{}).label||key} を挿入`;
   saveModeLog();
+  // 睡眠前モードを入れた＝その夜の寝支度を始めた時刻でもある
+  if(key==='sleepprep') syncWindDownFromMode(merged.find(x=>x.key==='sleepprep'&&Math.abs(x.start-s)<1000)||null);
   return {ok:true,count:merged.length};
 }
 // 隣が同じモードになったらつなげ、1秒未満の切れ端は捨てる（無駄な切り替えを残さない）
@@ -3410,6 +3448,20 @@ function renderLifeScreen(){
   } else if(c==='sleep'){
     inner.appendChild(div({style:{textAlign:'center',fontSize:'13px',color:'#cbd5e1',lineHeight:1.7,marginBottom:'14px'}},'おやすみなさい。'));
     addAssigned();
+    // 🛌 眠りの質と💭夢：目が覚めたその場で残せるように（保存先は睡眠タブと同じ＝この朝の日付）
+    if(!peek){
+      const q=sleepQualOf(vd), qd=sleepQualDef(q);
+      const box=div({style:{background:'#ffffff0d',border:'1px solid #ffffff14',borderRadius:'12px',padding:'11px 13px',marginBottom:'10px'}});
+      box.appendChild(div({style:{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:'7px'}},[
+        span({style:{fontSize:'12px',color:'#cbd5e1',fontWeight:700}},'🛌 眠りの質'),
+        span({style:{fontSize:'12px',fontWeight:700,color:sleepQualColor(q)}},qd?`${qd.icon} ${qd.label}`:'未記録')
+      ]));
+      box.appendChild(sleepQualPicker(vd,false));
+      box.appendChild(div({style:{fontSize:'11px',color:'#94a3b8',margin:'9px 0 5px'}},'💭 夢'));
+      box.appendChild(dreamField(vd,{field:'#00000038',fieldBorder:'#ffffff22',text:'#e2e8f0'}));
+      box.appendChild(div({style:{fontSize:'9px',color:'#64748b',marginTop:'5px',lineHeight:1.5}},'目が覚めたときの実感。日記→睡眠と同じ記録なので、あとから直せます'));
+      inner.appendChild(box);
+    }
     // 起床＝睡眠モードを終えて☀️朝モードへ（朝の画面を開く）。プレビューでも存在だけは見せる
     { const _b=lifeActionBtn(`🌅 起床した（睡眠を終了 → ${nextModeLabel(key)}モードへ）`,def.color,()=>{
         const n=new Date(); setDaily(vd,{wakeTime:n.getHours()+n.getMinutes()/60});
@@ -4328,7 +4380,9 @@ function buildSleepSections(vd){
       ta.style.cssText="width:100%;box-sizing:border-box;margin-top:7px;padding:8px 10px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit";
       ta.addEventListener('change',(()=>{const k=vd;return e=>{ setSleepNote(k,e.target.value); render(); };})());
       sec.appendChild(ta);
-      sec.appendChild(div({style:{fontSize:"10px",color:"#475569",marginTop:"4px"}},"今朝までの眠りの実感。睡眠ログと総合分析（体調・飲酒との関係）に使われます"));
+      sec.appendChild(div({style:{fontSize:"11px",color:"#94a3b8",margin:"9px 0 5px"}},"💭 夢"));
+      sec.appendChild(dreamField(vd));
+      sec.appendChild(div({style:{fontSize:"10px",color:"#475569",marginTop:"4px"}},"今朝までの眠りの実感。睡眠ログと総合分析（体調・飲酒との関係）に使われます。睡眠モードの画面からも記録できます"));
       return sec;
     })(),
     // 🌙 就寝リズム（就寝ドリフト対策）
@@ -4442,9 +4496,9 @@ function sleepLogNight(ds){
   const net=getNightSleepHours(nd);                  // 中途覚醒を引いた実睡眠(h)
   const awakeMins=awakes.reduce((a,x)=>a+(x.mins||0),0);
   const napMins=naps.reduce((a,x)=>a+(x.mins||0),0);
-  const qual=sleepQualOf(nd), note=sleepNoteOf(nd);   // 眠りの質は「目が覚めた朝」に記録される
-  return {ds,nd,bed,wake,bedAbs,wakeAbs,windAbs,tgt,dev,net,awakes,awakeMins,naps,napMins,qual,note,
-    has:(bed!=null||wake!=null||qual!=null||!!note)};
+  const qual=sleepQualOf(nd), note=sleepNoteOf(nd), dream=dreamOf(nd);  // 質・メモ・夢は「目が覚めた朝」に記録される
+  return {ds,nd,bed,wake,bedAbs,wakeAbs,windAbs,tgt,dev,net,awakes,awakeMins,naps,napMins,qual,note,dream,
+    has:(bed!=null||wake!=null||qual!=null||!!note||!!dream)};
 }
 // 直近n夜（今夜から過去へ）。今夜はまだ就寝前のことがあるので、記録があるときだけ含める
 function sleepLogNights(n){
@@ -4544,14 +4598,16 @@ function renderSleepLogCard(){
     { const qr=div({style:{display:"flex",alignItems:"center",gap:"7px",paddingLeft:"64px",marginTop:"4px"}});
       qr.appendChild(div({style:{width:"100px",flexShrink:0}},[sleepQualPicker(g.nd,true)]));
       const qd=sleepQualDef(g.qual);
+      const side=g.note?`📝 ${g.note}`:(g.dream?`💭 ${g.dream}`:(qd?qd.label:"眠りの質は未記録"));
       qr.appendChild(div({style:{flex:1,minWidth:0,fontSize:"10px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",
-        color:g.note?"#94a3b8":sleepQualColor(g.qual)}}, g.note?`📝 ${g.note}`:(qd?qd.label:"眠りの質は未記録")));
+        color:(g.note||g.dream)?"#94a3b8":sleepQualColor(g.qual)}}, side));
+      if(g.note&&g.dream) qr.appendChild(div({style:{flexShrink:0,fontSize:"10px",color:"#a5b4fc"}},"💭"));
       row.appendChild(qr); }
     row.addEventListener('click',(()=>{const k=g.ds;return()=>{ state.viewDate=k; state.tab="日記"; state.diarySubTab="睡眠"; state.widget=false; render(); };})());
     card.appendChild(row);
   });
   card.appendChild(div({style:{fontSize:"9px",color:"#475569",marginTop:"8px",lineHeight:1.5}},
-    "🛏 寝支度｜🌙 就寝（かっこ内は就寝目標とのズレ）｜🌅 起床｜😪 中途覚醒（実睡眠から差し引き）｜💤 その日の昼寝。帯の点線は就寝目標、薄い帯は片方だけの記録からの推定。顔は眠りの質（その場でつけ直せます）。"));
+    "🛏 寝支度｜🌙 就寝（かっこ内は就寝目標とのズレ）｜🌅 起床｜😪 中途覚醒（実睡眠から差し引き）｜💤 その日の昼寝。帯の点線は就寝目標、薄い帯は片方だけの記録からの推定。顔は眠りの質（その場でつけ直せます）｜📝 メモ／💭 夢。"));
   return card;
 }
 function renderSleepPanel(vd,ds,isToday){
@@ -6165,6 +6221,18 @@ function sleepQualColor(v){ return v==null?"#475569":(v>=4?"#4ade80":(v<=2?"#f87
 function setSleepQual(ds,v){ setDaily(ds,{sleepQuality:(sleepQualOf(ds)===v?null:v)}); }
 function sleepNoteOf(ds){ return getDaily(ds).sleepNote||""; }
 function setSleepNote(ds,t){ setDaily(ds,{sleepNote:(t||"").trim()||null}); }
+// 💭 夢。起きた直後ほど覚えているので、睡眠モードの画面からも書けるようにする（保存先は質と同じ朝の日付）
+function dreamOf(ds){ return getDaily(ds).dream||""; }
+function setDream(ds,t){ setDaily(ds,{dream:(t||"").trim()||null}); }
+// 夢の入力欄（睡眠モードの画面と睡眠タブで同じものを使う）
+function dreamField(ds,pal){
+  const P=pal||{field:"#0f172a",fieldBorder:"#334155",text:"#e2e8f0"};
+  const ta=document.createElement('textarea');
+  ta.value=dreamOf(ds); ta.placeholder="見た夢（覚えているうちに）";
+  ta.style.cssText=`width:100%;box-sizing:border-box;height:62px;padding:8px 10px;background:${P.field};border:1px solid ${P.fieldBorder};border-radius:9px;color:${P.text};font-size:13px;font-family:inherit;resize:vertical;line-height:1.5`;
+  ta.addEventListener('change',(()=>{const k=ds;return e=>{ setDream(k,e.target.value); render(); };})());
+  return ta;
+}
 // 評価を選ぶボタンの並び（睡眠タブでも睡眠ログでも同じものを使う）。sm=小さい版
 function sleepQualPicker(ds,sm,after){
   const cur=sleepQualOf(ds);
