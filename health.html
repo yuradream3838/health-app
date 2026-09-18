@@ -224,7 +224,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.69"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.70"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -3584,6 +3584,12 @@ function exitSelfMode(recordIt){
   }
   state.selfMode=null; if(window._selfTick){clearInterval(window._selfTick);window._selfTick=null;}
 }
+// 参照のためにケアの画面を離れるだけ。モードは終わらせない（記録もしない）ので、
+// ヘッダーの現在モードバーからいつでも戻ってこられる。
+function leaveSelfScreen(){
+  state.selfMode=null; state.selfBreathing=false;
+  if(window._selfTick){clearInterval(window._selfTick);window._selfTick=null;}
+}
 function selfModeTick(){ if(!state.selfMode){ if(window._selfTick){clearInterval(window._selfTick);window._selfTick=null;} return; }
   const el=document.getElementById('selfmode-elapsed'); if(el)el.textContent=fmtSecMS(Math.round((Date.now()-selfModeStartAt())/1000));
   const de=document.getElementById('selfmode-delay'); if(de){ const left=Math.round(((state.selfDelayUntil||0)-Date.now())/1000); de.textContent=left>0?fmtSecMS(left):"OK ✓"; }
@@ -3880,7 +3886,10 @@ function renderSelfMode(){
     // 衝動チェック（24時間ルール・自分で編集可）
     inner.appendChild(div({style:{fontSize:"10px",color:"#a89e8c",margin:"2px 2px 4px"}},"⏳ 24時間ルール — その前に自問"));
     inner.appendChild(selfChecklistCard("hype",M.accent));
-    inner.appendChild(selfActionBtn("🔀 if-thenプランを見る",M.accent,()=>{ exitSelfMode(true); state.tab="達成"; state.achieveSubTab="if-then"; state.widget=false; render(); }));
+    // if-thenプランは「見に行くだけ」なので、モードは終わらせない（戻ってきて続けられる）
+    inner.appendChild(selfActionBtn("🔀 if-thenプランを見る",M.accent,()=>{
+      leaveSelfScreen(); state.tab="達成"; state.achieveSubTab="if-then"; state.widget=false;
+      showToast(`${M.title}は続いています。上のモードバーから戻れます`,M.accent); render(); }));
     { const _e=bigExitBtn("✅ 記録して終了",M.accent); inner.appendChild(peek?peekDisabled(_e):_e); }
   }
   else if(key==="urge"){
