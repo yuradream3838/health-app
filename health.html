@@ -224,7 +224,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.72"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.73"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -12327,7 +12327,7 @@ function renderAlcohol(vd,isToday){
           const head=btn({style:{width:"100%",display:"flex",alignItems:"center",gap:"8px",padding:"6px 9px",borderRadius:"7px",
             border:"1px solid #f59e0b33",background:"#f59e0b0d",cursor:"pointer",fontFamily:"inherit",textAlign:"left"}},[
             div({style:{flex:1,minWidth:0,fontSize:"11px",color:"#fbbf24",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},
-              `📝 ${(t.name||"").trim()||"お酒の記録"}${t.stars?`　${starsLabel(t.stars)}`:""}${t.near?`　🫧${NEAR_LABELS[t.near]}`:""}`),
+              `📝 ${(t.name||"").trim()||"お酒の記録"}${t.stars?`　${starsLabel(t.stars)}`:""}${t.near?`　🫧${nearLabel(t.near)}`:""}`),
             span({style:{flexShrink:0,fontSize:"11px",color:"#64748b"}},opened?"▲":"▼")
           ]);
           head.addEventListener('click',(()=>{const uid=d.uid;return()=>{ if(!state.drinkNoteShow)state.drinkNoteShow={}; state.drinkNoteShow[uid]=!state.drinkNoteShow[uid]; render(); };})());
@@ -12339,12 +12339,14 @@ function renderAlcohol(vd,isToday){
                 span({style:{width:"48px",flexShrink:0,fontSize:"10px",color:"#64748b"}},f.label),
                 span({style:{flex:1,minWidth:0,fontSize:"12px",color:"#cbd5e1",whiteSpace:"pre-wrap",wordBreak:"break-word",lineHeight:1.5}},v)
               ])); });
-            if(t.near) box.appendChild(div({style:{display:"flex",gap:"8px",marginBottom:"4px"}},[
+            if(t.near) box.appendChild(div({style:{display:"flex",gap:"8px",alignItems:"center",marginBottom:"4px"}},[
               span({style:{width:"48px",flexShrink:0,fontSize:"10px",color:"#64748b"}},"近さ"),
-              span({style:{flex:1,fontSize:"12px",color:"#7dd3fc"}},`🫧 ${starsLabel(t.near)} ${NEAR_LABELS[t.near]}`)]));
-            if(t.stars) box.appendChild(div({style:{display:"flex",gap:"8px"}},[
+              starPicker(t.near,"#38bdf8",null),
+              span({style:{fontSize:"11px",color:"#7dd3fc"}},`${t.near%1?t.near.toFixed(1):t.near}／5・${nearLabel(t.near)}`)]));
+            if(t.stars) box.appendChild(div({style:{display:"flex",gap:"8px",alignItems:"center"}},[
               span({style:{width:"48px",flexShrink:0,fontSize:"10px",color:"#64748b"}},"総評"),
-              span({style:{flex:1,fontSize:"13px",color:"#fbbf24",fontWeight:700}},`${starsLabel(t.stars)} ${t.stars}/5`)]));
+              starPicker(t.stars,"#fbbf24",null),
+              span({style:{fontSize:"11px",color:"#fbbf24",fontWeight:700}},`${t.stars%1?t.stars.toFixed(1):t.stars}／5`)]));
             wrapN.appendChild(box);
           }
           return wrapN; })(),
@@ -12495,25 +12497,39 @@ const TASTE_FIELDS=[
 const NEAR_LABELS=['','全然違う','少し似ている','まあまあ','近い','そっくり'];
 function tastingOf(d){ const t=d&&d.tasting; return (t&&typeof t==='object')?t:{}; }
 function hasTasting(t){ if(!t)return false; return TASTE_FIELDS.some(f=>(t[f.k]||'').trim()) || t.stars>0 || t.near>0; }
+// 星の値は0.5刻み（0.5〜5.0の10段階）。範囲外・半端な数はここでそろえる
+function roundHalf(n){ return Math.max(0.5,Math.min(5,Math.round((Number(n)||0)*2)/2)); }
 // 保存する形に整える（全部空なら null＝持たせない）。
 // 「お酒との近さ」はノンアル（度数0%）のときだけの項目なので、度数が入っていれば落とす。
 function cleanTasting(t,pct){
   if(!t) return null;
   const o={};
   TASTE_FIELDS.forEach(f=>{ const v=(t[f.k]||'').trim(); if(v)o[f.k]=v; });
-  if(t.stars>0) o.stars=Math.max(1,Math.min(5,Math.round(t.stars)));
-  if(t.near>0 && !(pct>0)) o.near=Math.max(1,Math.min(5,Math.round(t.near)));
+  if(t.stars>0) o.stars=roundHalf(t.stars);
+  if(t.near>0 && !(pct>0)) o.near=roundHalf(t.near);
   return Object.keys(o).length?o:null;
 }
-function starsLabel(n){ const v=Math.max(0,Math.min(5,Math.round(n||0))); return '★'.repeat(v)+'☆'.repeat(5-v); }
-// ★5つの選択（同じ星をもう一度押すと消す）
+// 文字で書くときは「★4.5」。0.5刻みなので星の数だけでは半分を表せないため数で添える
+function starsLabel(n){ const v=Math.max(0,Math.min(5,Math.round((Number(n)||0)*2)/2)); return `★${v%1?v.toFixed(1):v}`; }
+function nearLabel(n){ const i=Math.max(1,Math.min(5,Math.round(Number(n)||0))); return NEAR_LABELS[i]; }
+// ★の選択（0.5刻み＝10段階）。星の左半分で「◯.5」、右半分で「◯.0」。
+// 同じ値をもう一度押すと消す。onPick を渡さなければ表示だけ（読むだけの場所で使う）
 function starPicker(value,color,onPick){
+  const v=Number(value)||0;
   const row=div({style:{display:'flex',gap:'2px',alignItems:'center'}});
   for(let i=1;i<=5;i++){
-    const on=(value||0)>=i;
-    const b=btn({style:{background:'transparent',border:'none',cursor:'pointer',fontSize:'22px',lineHeight:1,padding:'0 1px',color:on?color:'#334155',fontFamily:'inherit'}},on?'★':'☆');
-    b.addEventListener('click',(()=>{const v=i;return()=>onPick((value===v)?0:v);})());
-    row.appendChild(b);
+    const fill=Math.max(0,Math.min(1,v-(i-1)));      // 0=空 / 0.5=半分 / 1=満
+    const cell=div({style:{position:'relative',width:'24px',height:'24px',flexShrink:0}});
+    cell.appendChild(div({style:{position:'absolute',inset:'0',fontSize:'21px',lineHeight:'24px',textAlign:'center',color:'#334155',pointerEvents:'none'}},'★'));
+    if(fill>0) cell.appendChild(div({style:{position:'absolute',left:'0',top:'0',bottom:'0',width:(fill>=1?'100%':'50%'),overflow:'hidden',pointerEvents:'none'}},
+      [div({style:{width:'24px',fontSize:'21px',lineHeight:'24px',textAlign:'center',color}},'★')]));
+    if(onPick){
+      const zone=(left,val)=>{ const b=btn({style:{position:'absolute',top:'0',bottom:'0',left:left,width:'50%',background:'transparent',border:'none',padding:'0',cursor:'pointer'}},'');
+        b.addEventListener('click',(()=>{const vv=val;return()=>onPick((v===vv)?0:vv);})()); return b; };
+      cell.appendChild(zone('0',i-0.5));
+      cell.appendChild(zone('50%',i));
+    }
+    row.appendChild(cell);
   }
   return row;
 }
@@ -12629,14 +12645,14 @@ function renderAddDrinkModal(vd){
         nearRow.appendChild(div({style:{fontSize:"11px",color:"#7dd3fc",marginBottom:"4px"}},"🫧 お酒との近さ（ノンアル用）"));
         const r=div({style:{display:"flex",alignItems:"center",gap:"9px"}});
         r.appendChild(starPicker(t.near||0,"#38bdf8",v=>{ set('near',v); render(); }));
-        r.appendChild(span({style:{fontSize:"11px",color:"#7dd3fc"}},t.near?NEAR_LABELS[t.near]:"未記録"));
+        r.appendChild(span({style:{fontSize:"11px",color:"#7dd3fc"}},t.near?`${t.near%1?t.near.toFixed(1):t.near}／5・${nearLabel(t.near)}`:"未記録"));
         nearRow.appendChild(r);
         box.appendChild(nearRow); }
       // ⭐ 総評
       { const sr=div({style:{display:"flex",alignItems:"center",gap:"9px",marginTop:"2px"}});
         sr.appendChild(span({style:{fontSize:"11px",color:"#94a3b8",width:"48px",flexShrink:0}},"総評"));
         sr.appendChild(starPicker(t.stars||0,"#fbbf24",v=>{ set('stars',v); render(); }));
-        sr.appendChild(span({style:{fontSize:"11px",color:"#fbbf24"}},t.stars?`${t.stars}/5`:"未記録"));
+        sr.appendChild(span({style:{fontSize:"11px",color:"#fbbf24"}},t.stars?`${t.stars%1?t.stars.toFixed(1):t.stars}／5`:"未記録"));
         box.appendChild(sr); }
       m.appendChild(box);
     }
