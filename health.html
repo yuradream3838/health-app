@@ -224,7 +224,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.70"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.71"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -883,6 +883,7 @@ const state = {
   connectNote:"", connectEdit:null, ceLabel:null, ceNote:null, // つながり記録の内容入力・編集
   connectTagEdit:false, newConnectTag:"", // つながりタグの種類編集
   widgetSections:null, widgetEditMode:false, widgetSecOrder:null, // ヴィジェット表示項目・順序のカスタマイズ
+  todoSecOpen:null, newTodo:null, // ✅ TODO：やること／やりたいことの開閉と入力欄
   shopAddCat:"food", shopAddText:"", editingShopUid:null, shopEditText:"", shopEditCat:"food", // 買物リストのタグ・編集
   sleepGoal:null, sleepGoalEdit:false, sgDraft:null, // 就寝リズム（就寝ドリフト対策）
   bodyComps:null, bcForm:null, bcPhotoLoading:false, bcPhotoError:null, bcTrendMetric:"weight", bcHistExpanded:false, // トレーニング：体組成記録
@@ -4294,13 +4295,14 @@ function renderWidgetView(vd,ds){
 
   // ── TODO（未完了のみ）──
   if(wSecOn('todo')){
-    const open=(state.tasks&&state.tasks.todo||[]).filter(t=>!t.done);
+    // ウィジェットは「やること」だけ（やりたいことは急がないので日々の画面には出さない）
+    const open=(state.tasks&&state.tasks.todo||[]).filter(t=>!t.done&&todoKindOf(t)==='do');
     if(open.length){
       const prio=t=>(t.imp&&t.urg)?0:t.urg?1:t.imp?2:3;
       const dueVal=t=>t.due?parseDS(t.due).getTime():Infinity;
       open.sort((a,b)=>prio(a)-prio(b)||dueVal(a)-dueVal(b));
       const c=div({className:"card",style:{padding:"12px 14px",marginBottom:"10px"}});
-      c.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#38bdf8",marginBottom:"6px"}},`✅ TODO ${open.length}件`));
+      c.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#38bdf8",marginBottom:"6px"}},`✅ やること ${open.length}件`));
       open.slice(0,12).forEach(t=>{
         const sub=t.due?(()=>{const days=Math.round((parseDS(t.due)-parseDS(todayStr()))/86400000);return days<0?`期日超過${-days}日`:days===0?"今日が期日":`あと${days}日`;})():null;
         c.appendChild(checkRow(false,t.text,sub,()=>{ state.tasks.todo=state.tasks.todo.map(x=>x.uid===t.uid?{...x,done:true}:x); saveTasks(); showToast(`✅ ${t.text}`); render(); }));
@@ -8255,7 +8257,7 @@ const FEATURE_INDEX=[
     {label:"ルーティン",desc:"毎日の固定項目(設定で編集可)",go:()=>{state.tab="タスク";state.taskSubTab="ルーティン";}},
     {label:"定期ルーティン",desc:"曜日/間隔で繰り返す予定(タイマー対応)",go:()=>{state.tab="タスク";state.taskSubTab="定期ルーティン";}},
     {label:"目標",desc:"目標ツリー(年間〜日次)",go:()=>{state.tab="タスク";state.taskSubTab="目標";}},
-    {label:"TODO",desc:"重要度/緊急度マトリクス",go:()=>{state.tab="タスク";state.taskSubTab="TODO";}},
+    {label:"TODO",desc:"やること／やりたいこと（重要度・緊急度で優先順位）",go:()=>{state.tab="タスク";state.taskSubTab="TODO";}},
     {label:"買物リスト",desc:"買うものメモ",go:()=>{state.tab="タスク";state.taskSubTab="買物";}},
   ]},
   {group:"🏆 達成",items:[
@@ -9366,45 +9368,110 @@ function renderMonthCalendar(vd,ds){
 }
 
 // ── やることリスト（重要度×緊急度マトリクス） ──
+// ── ✅ TODO：「やること」と「やりたいこと」を分けて持つ ──────────────
+// 同じ入れ物（state.tasks.todo）に kind を付けて分けるだけなので、期日・予定・メモなど
+// 中の機能はどちらでも同じように使える。kind が無い既存のものは「やること」扱い。
+const TODO_KINDS=[
+  {k:'do',   label:'✅ やること',      color:'#38bdf8', desc:'やらないといけないこと。重要・緊急で優先順位付け／期日・「予定に追加」で作業をスケジュール化', ph:'やることを追加...'},
+  {k:'want', label:'✨ やりたいこと',  color:'#a78bfa', desc:'いつかやりたいこと。急がないけれど忘れたくないものを置いておく', ph:'やりたいことを追加...'},
+];
+function todoKindOf(t){ return (t&&t.kind==='want')?'want':'do'; }
+function todoKindDef(k){ return TODO_KINDS.find(x=>x.k===k)||TODO_KINDS[0]; }
+function todoListOf(kind){ return (state.tasks.todo||[]).filter(t=>todoKindOf(t)===kind); }
+// 開閉状態（両方ともたためる。閉じても件数は見える）
+function getTodoSecOpen(){
+  if(!state.todoSecOpen||typeof state.todoSecOpen!=='object'){
+    state.todoSecOpen={do:true,want:true};
+    try{ const v=localStorage.getItem(STORAGE_KEY+'_todosec'); if(v){ const o=JSON.parse(v); if(o&&typeof o==='object')state.todoSecOpen={do:o.do!==false,want:o.want!==false}; } }catch(_){}
+  }
+  return state.todoSecOpen;
+}
+function saveTodoSecOpen(){ try{ localStorage.setItem(STORAGE_KEY+'_todosec',JSON.stringify(getTodoSecOpen())); }catch(_){} }
+function toggleTodoSec(kind){ const o=getTodoSecOpen(); o[kind]=!o[kind]; saveTodoSecOpen(); }
+// 追加欄の入力は「やること」「やりたいこと」で別々に持つ
+function todoDraft(kind){
+  if(!state.newTodo||typeof state.newTodo!=='object')state.newTodo={};
+  if(!state.newTodo[kind])state.newTodo[kind]={text:"",imp:false,urg:false};
+  return state.newTodo[kind];
+}
 function renderTaskMatrix(){
   const wrap=div({});
-  const list=state.tasks.todo||[];
+  // 実績などから飛んできて強調するTODOがあるときは、そちら側を開いておく（たたんだままだと見えない）
+  if(state.highlightTodo!=null){ const t=(state.tasks.todo||[]).find(x=>x.uid===state.highlightTodo); if(t){ getTodoSecOpen()[todoKindOf(t)]=true; saveTodoSecOpen(); } }
+  TODO_KINDS.forEach(d=>wrap.appendChild(todoSectionCard(d.k)));
+  return wrap;
+}
+function todoSectionCard(kind){
+  const def=todoKindDef(kind);
+  const list=todoListOf(kind);
+  const openN=list.filter(t=>!t.done).length;
+  const open=getTodoSecOpen()[kind]!==false;
   const card=div({className:"card"});
-  card.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0",marginBottom:"2px"}},"✅ TODO"));
-  card.appendChild(div({style:{fontSize:"10px",color:"#475569",marginBottom:"10px"}},"重要・緊急で優先順位付け／期日設定・「予定に追加」で作業をスケジュール化"));
+  // 見出し（タップで開閉。閉じていても件数は見える）
+  const head=btn({style:{width:"100%",display:"flex",alignItems:"center",gap:"8px",background:"transparent",border:"none",cursor:"pointer",padding:0,fontFamily:"inherit",textAlign:"left"}},[
+    div({style:{flex:1,minWidth:0}},[
+      div({style:{fontSize:"13px",fontWeight:700,color:def.color}},`${def.label}　${openN}件${list.length>openN?`（完了${list.length-openN}）`:""}`),
+      open?div({style:{fontSize:"10px",color:"#475569",marginTop:"2px",lineHeight:1.5}},def.desc):null
+    ]),
+    span({style:{flexShrink:0,fontSize:"13px",color:"#64748b"}},open?"▲":"▼")
+  ]);
+  head.addEventListener('click',(()=>{const k=kind;return()=>{ toggleTodoSec(k); render(); };})());
+  card.appendChild(head);
+  if(!open) return card;
+  card.appendChild(div({style:{height:"8px"}}));
 
+  // 追加欄
+  const dr=todoDraft(kind);
   const inputRow=div({style:{display:"flex",gap:"6px",marginBottom:"8px"}});
   const inp=document.createElement('input');
-  inp.type='text';inp.placeholder="やることを追加...";inp.value=state.newTodoText||"";
+  inp.type='text';inp.placeholder=def.ph;inp.value=dr.text||"";
   inp.style.cssText="flex:1;padding:8px 12px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit";
-  inp.addEventListener('input',e=>{state.newTodoText=e.target.value;});
+  inp.addEventListener('input',e=>{todoDraft(kind).text=e.target.value;});
   const addFn=()=>{
-    const v=(state.newTodoText||"").trim();if(!v)return;
-    state.tasks.todo=[...(state.tasks.todo||[]),{uid:Date.now(),text:v,done:false,imp:!!state.newTodoImp,urg:!!state.newTodoUrg}];
-    state.newTodoText="";state.newTodoImp=false;state.newTodoUrg=false;
+    const d=todoDraft(kind); const v=(d.text||"").trim(); if(!v)return;
+    state.tasks.todo=[...(state.tasks.todo||[]),{uid:Date.now(),text:v,done:false,imp:!!d.imp,urg:!!d.urg,kind}];
+    d.text="";d.imp=false;d.urg=false;
     saveTasks();render();
   };
   inp.addEventListener('keydown',e=>{if(e.key==="Enter")addFn();});
-  const addBtn=btn({style:{padding:"8px 16px",background:"#0ea5e918",border:"1px solid #0ea5e9",borderRadius:"8px",color:"#38bdf8",fontSize:"13px",fontWeight:600,cursor:"pointer"}},"＋");
+  const addBtn=btn({style:{padding:"8px 16px",background:def.color+"18",border:`1px solid ${def.color}`,borderRadius:"8px",color:def.color,fontSize:"13px",fontWeight:600,cursor:"pointer"}},"＋");
   addBtn.addEventListener('click',addFn);
   inputRow.appendChild(inp);inputRow.appendChild(addBtn);
   card.appendChild(inputRow);
   // 作成時に重要・緊急フラグを指定
   const flagRow=div({style:{display:"flex",gap:"6px",marginBottom:"10px"}});
-  const mkFlag=(on,label,col,key)=>{const b=btn({style:{fontSize:"11px",padding:"5px 12px",borderRadius:"20px",cursor:"pointer",fontWeight:600,border:`1px solid ${on?col:"#334155"}`,background:on?col+"22":"transparent",color:on?col:"#64748b"}},label);b.addEventListener('click',()=>{state[key]=!state[key];render();});return b;};
-  flagRow.appendChild(mkFlag(!!state.newTodoImp,"⭐ 重要","#f97316","newTodoImp"));
-  flagRow.appendChild(mkFlag(!!state.newTodoUrg,"⚡ 緊急","#eab308","newTodoUrg"));
+  const mkFlag=(on,label,col,fk)=>{const b=btn({style:{fontSize:"11px",padding:"5px 12px",borderRadius:"20px",cursor:"pointer",fontWeight:600,border:`1px solid ${on?col:"#334155"}`,background:on?col+"22":"transparent",color:on?col:"#64748b"}},label);b.addEventListener('click',()=>{const d=todoDraft(kind);d[fk]=!d[fk];render();});return b;};
+  flagRow.appendChild(mkFlag(!!dr.imp,"⭐ 重要","#f97316","imp"));
+  flagRow.appendChild(mkFlag(!!dr.urg,"⚡ 緊急","#eab308","urg"));
   card.appendChild(flagRow);
 
   // 優先度ソート：重×急 → 重 → 急 → なし → 完了、同順位は期日の早い順
   const prio=t=>t.done?4:(t.imp&&t.urg)?0:t.urg?1:t.imp?2:3;
-  const prioColor=t=>(t.imp&&t.urg)?"#ef4444":t.imp?"#f97316":t.urg?"#eab308":"#334155";
-  const prioLabel=t=>(t.imp&&t.urg)?"最優先":t.imp?"重要":t.urg?"緊急":"";
   const dueVal=t=>t.due?parseDS(t.due).getTime():Infinity;
   const sorted=[...list].sort((a,b)=>prio(a)-prio(b)||dueVal(a)-dueVal(b));
+  if(sorted.length===0){
+    card.appendChild(div({style:{textAlign:"center",fontSize:"11px",color:"#475569",padding:"12px 0"}},"まだありません"));
+  }
+  sorted.forEach(item=>card.appendChild(todoItemBox(item)));
+
+  if(list.some(x=>x.done)){
+    const clearBtn=btn({style:{width:"100%",marginTop:"6px",padding:"6px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#475569",fontSize:"11px",cursor:"pointer"}},"完了済みをまとめて削除");
+    clearBtn.addEventListener('click',(()=>{const k=kind;return()=>{
+      pushUndo("完了済みTODOを削除しました");
+      state.tasks.todo=state.tasks.todo.filter(x=>!(x.done&&todoKindOf(x)===k));
+      saveTasks();render();
+    };})());
+    card.appendChild(clearBtn);
+  }
+  return card;
+}
+// TODO 1件ぶんの箱（やること・やりたいこと どちらも同じ中身）
+function todoItemBox(item){
+  const prioColor=t=>(t.imp&&t.urg)?"#ef4444":t.imp?"#f97316":t.urg?"#eab308":"#334155";
+  const prioLabel=t=>(t.imp&&t.urg)?"最優先":t.imp?"重要":t.urg?"緊急":"";
   const updateTask=(uid,upd)=>{state.tasks.todo=state.tasks.todo.map(x=>x.uid===uid?{...x,...upd}:x);saveTasks();render();};
-  const dueBadge=item=>{
-    const dd=parseDS(item.due), td=parseDS(todayStr());
+  const dueBadge=it=>{
+    const dd=parseDS(it.due), td=parseDS(todayStr());
     const days=Math.round((dd-td)/86400000);
     let color,label;
     if(days<0){color="#ef4444";label=`期日超過${-days}日`;}
@@ -9416,131 +9483,122 @@ function renderTaskMatrix(){
   // タスクから追加された予定（単発は日時、繰り返しは次回日時＋🔁）を集める
   const md=mdLabel, hm=hhmm; // 時刻は他画面と揃えて時も0埋め
   const nextRepeatDate=rep=>{let ds=todayStr();for(let i=0;i<400;i++){if(repeatMatches(rep,ds))return ds;ds=addDays(ds,1);}return rep.startDate;};
-  const scheduledBadges=item=>{
+  const scheduledBadges=it=>{
     const out=[];
-    Object.keys(state.schedule||{}).forEach(ds=>{(state.schedule[ds]||[]).forEach(e=>{if(e.fromTask===item.uid)out.push({k:ds+String(e.startH).padStart(2,'0')+String(e.startM).padStart(2,'0'),text:`📅 ${md(ds)} ${hm(e.startH,e.startM)}`,repeat:false});});});
-    (state.repeatEvents||[]).filter(e=>e.fromTask===item.uid).forEach(rep=>{
+    Object.keys(state.schedule||{}).forEach(ds=>{(state.schedule[ds]||[]).forEach(e=>{if(e.fromTask===it.uid)out.push({k:ds+String(e.startH).padStart(2,'0')+String(e.startM).padStart(2,'0'),text:`📅 ${md(ds)} ${hm(e.startH,e.startM)}`,repeat:false});});});
+    (state.repeatEvents||[]).filter(e=>e.fromTask===it.uid).forEach(rep=>{
       const nd=nextRepeatDate(rep);
       out.push({k:'z'+nd,text:`🔁 繰り返し 次:${md(nd)} ${hm(rep.startH,rep.startM)}`,repeat:true});
     });
     out.sort((a,b)=>a.k<b.k?-1:a.k>b.k?1:0);
     return out;
   };
-
-  if(sorted.length===0){
-    card.appendChild(div({style:{textAlign:"center",fontSize:"11px",color:"#475569",padding:"12px 0"}},"まだありません"));
+  const pc=prioColor(item);
+  const isHi=state.highlightTodo===item.uid; // TODO由来の予定を実績化して移動してきたとき強調
+  const box=div({style:{padding:"8px 10px",background:isHi?"#38bdf81f":"#0f172a",borderRadius:"8px",marginBottom:"4px",borderLeft:`3px solid ${item.done?"#334155":pc}`,opacity:item.done?"0.5":"1",...(isHi?{outline:"2px solid #38bdf8",outlineOffset:"1px"}:{})}});
+  box.dataset.todouid=item.uid;
+  if(isHi) setTimeout(()=>{try{box.scrollIntoView({block:"center",behavior:"smooth"});}catch(_){}},60);
+  // 1行目：チェック＋テキスト＋削除
+  const row1=div({style:{display:"flex",alignItems:"center",gap:"8px"}});
+  const cb=btn({style:{width:"22px",height:"22px",borderRadius:"6px",flexShrink:0,
+    border:`2px solid ${item.done?"#22c55e":"#334155"}`,background:item.done?"#22c55e":"transparent",
+    cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"12px"}},item.done?"✓":"");
+  cb.addEventListener('click',(()=>{const uid=item.uid,d=item.done;return()=>updateTask(uid,{done:!d});})());
+  row1.appendChild(cb);
+  const label=div({style:{flex:1,minWidth:0}});
+  if(state.editingTaskUid===item.uid){
+    const ei=document.createElement('input');
+    ei.type='text'; ei.value=item.text;
+    ei.style.cssText="width:100%;padding:5px 8px;background:#1e293b;border:1px solid #38bdf8;border-radius:6px;color:#e2e8f0;font-size:13px;font-family:inherit;box-sizing:border-box";
+    const commit=()=>{const v=ei.value.trim(); state.editingTaskUid=null; if(v&&v!==item.text)updateTask(item.uid,{text:v}); else render();};
+    ei.addEventListener('keydown',e=>{if(e.key==="Enter"){e.preventDefault();ei.blur();}});
+    ei.addEventListener('blur',commit);
+    label.appendChild(ei);
+    setTimeout(()=>{try{ei.focus();ei.select();}catch(_){}} ,0);
+  } else {
+    const tx=div({style:{fontSize:"13px",color:item.done?"#64748b":"#e2e8f0",textDecoration:item.done?"line-through":"none",cursor:"text",wordBreak:"break-word"}},item.text);
+    tx.addEventListener('click',(()=>{const uid=item.uid;return()=>{state.editingTaskUid=uid;render();};})());
+    label.appendChild(tx);
   }
-  sorted.forEach(item=>{
-    const pc=prioColor(item);
-    const isHi=state.highlightTodo===item.uid; // TODO由来の予定を実績化して移動してきたとき強調
-    const box=div({style:{padding:"8px 10px",background:isHi?"#38bdf81f":"#0f172a",borderRadius:"8px",marginBottom:"4px",borderLeft:`3px solid ${item.done?"#334155":pc}`,opacity:item.done?"0.5":"1",...(isHi?{outline:"2px solid #38bdf8",outlineOffset:"1px"}:{})}});
-    if(isHi) setTimeout(()=>{try{box.scrollIntoView({block:"center",behavior:"smooth"});}catch(_){}},60);
-    // 1行目：チェック＋テキスト＋削除
-    const row1=div({style:{display:"flex",alignItems:"center",gap:"8px"}});
-    const cb=btn({style:{width:"22px",height:"22px",borderRadius:"6px",flexShrink:0,
-      border:`2px solid ${item.done?"#22c55e":"#334155"}`,background:item.done?"#22c55e":"transparent",
-      cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"12px"}},item.done?"✓":"");
-    cb.addEventListener('click',(()=>{const uid=item.uid;return()=>updateTask(uid,{done:!item.done});})());
-    row1.appendChild(cb);
-    const label=div({style:{flex:1,minWidth:0}});
-    if(state.editingTaskUid===item.uid){
-      const ei=document.createElement('input');
-      ei.type='text'; ei.value=item.text;
-      ei.style.cssText="width:100%;padding:5px 8px;background:#1e293b;border:1px solid #38bdf8;border-radius:6px;color:#e2e8f0;font-size:13px;font-family:inherit;box-sizing:border-box";
-      const commit=()=>{const v=ei.value.trim(); state.editingTaskUid=null; if(v&&v!==item.text)updateTask(item.uid,{text:v}); else render();};
-      ei.addEventListener('keydown',e=>{if(e.key==="Enter"){e.preventDefault();ei.blur();}});
-      ei.addEventListener('blur',commit);
-      label.appendChild(ei);
-      setTimeout(()=>{try{ei.focus();ei.select();}catch(_){}} ,0);
-    } else {
-      const tx=div({style:{fontSize:"13px",color:item.done?"#64748b":"#e2e8f0",textDecoration:item.done?"line-through":"none",cursor:"text",wordBreak:"break-word"}},item.text);
-      tx.addEventListener('click',(()=>{const uid=item.uid;return()=>{state.editingTaskUid=uid;render();};})());
-      label.appendChild(tx);
+  if(prioLabel(item)&&!item.done)label.appendChild(div({style:{fontSize:"9px",color:pc,fontWeight:700}},prioLabel(item)));
+  if(item.due&&!item.done)label.appendChild(dueBadge(item));
+  // 予定バッジ：最新3件のみ表示し、残りは畳む（TODOごとに展開状態を保持）
+  { const sb=scheduledBadges(item); // 日付昇順
+    const exp=!!(state.todoSchedExpanded&&state.todoSchedExpanded[item.uid]);
+    const shown=(sb.length<=3||exp)?sb:sb.slice(-3); // 最新3件＝末尾3件
+    shown.forEach(b=>label.appendChild(div({style:{fontSize:"9px",color:b.repeat?"#a78bfa":"#38bdf8",fontWeight:600,marginTop:"2px"}},b.text)));
+    if(sb.length>3){
+      const hiddenN=sb.length-3;
+      const tg=btn({style:{fontSize:"9px",padding:"2px 8px",marginTop:"3px",borderRadius:"6px",border:"1px solid #334155",background:"transparent",color:"#64748b",cursor:"pointer",fontFamily:"inherit"}},exp?"🔼 予定を畳む":`🔽 他${hiddenN}件の予定を表示`);
+      tg.addEventListener('click',(()=>{const uid=item.uid;return()=>{ if(!state.todoSchedExpanded)state.todoSchedExpanded={}; state.todoSchedExpanded[uid]=!state.todoSchedExpanded[uid]; render(); };})());
+      label.appendChild(tg);
     }
-    if(prioLabel(item)&&!item.done)label.appendChild(div({style:{fontSize:"9px",color:pc,fontWeight:700}},prioLabel(item)));
-    if(item.due&&!item.done)label.appendChild(dueBadge(item));
-    // 予定バッジ：最新3件のみ表示し、残りは畳む（TODOごとに展開状態を保持）
-    { const sb=scheduledBadges(item); // 日付昇順
-      const exp=!!(state.todoSchedExpanded&&state.todoSchedExpanded[item.uid]);
-      const shown=(sb.length<=3||exp)?sb:sb.slice(-3); // 最新3件＝末尾3件
-      shown.forEach(b=>label.appendChild(div({style:{fontSize:"9px",color:b.repeat?"#a78bfa":"#38bdf8",fontWeight:600,marginTop:"2px"}},b.text)));
-      if(sb.length>3){
-        const hiddenN=sb.length-3;
-        const tg=btn({style:{fontSize:"9px",padding:"2px 8px",marginTop:"3px",borderRadius:"6px",border:"1px solid #334155",background:"transparent",color:"#64748b",cursor:"pointer",fontFamily:"inherit"}},exp?"🔼 予定を畳む":`🔽 他${hiddenN}件の予定を表示`);
-        tg.addEventListener('click',(()=>{const uid=item.uid;return()=>{ if(!state.todoSchedExpanded)state.todoSchedExpanded={}; state.todoSchedExpanded[uid]=!state.todoSchedExpanded[uid]; render(); };})());
-        label.appendChild(tg);
-      }
-    }
-    row1.appendChild(label);
-    const del=btn({style:{background:"transparent",border:"none",color:"#334155",cursor:"pointer",fontSize:"15px",padding:"0 2px",flexShrink:0}},"×");
-    del.addEventListener('click',(()=>{const uid=item.uid;return()=>{pushUndo("TODOを削除しました");state.tasks.todo=state.tasks.todo.filter(x=>x.uid!==uid);saveTasks();render();};})());
-    row1.appendChild(del);
-    box.appendChild(row1);
-    // 2行目：重要・緊急・期日・予定に追加
-    const row2=div({style:{display:"flex",alignItems:"center",gap:"6px",marginTop:"8px",flexWrap:"wrap"}});
-    const impB=btn({style:{fontSize:"10px",padding:"3px 8px",borderRadius:"6px",cursor:"pointer",whiteSpace:"nowrap",
-      border:`1px solid ${item.imp?"#f97316":"#334155"}`,background:item.imp?"#f9731622":"transparent",color:item.imp?"#f97316":"#475569"}},"重要");
-    impB.addEventListener('click',(()=>{const uid=item.uid;return()=>updateTask(uid,{imp:!item.imp});})());
-    row2.appendChild(impB);
-    const urgB=btn({style:{fontSize:"10px",padding:"3px 8px",borderRadius:"6px",cursor:"pointer",whiteSpace:"nowrap",
-      border:`1px solid ${item.urg?"#eab308":"#334155"}`,background:item.urg?"#eab30822":"transparent",color:item.urg?"#eab308":"#475569"}},"緊急");
-    urgB.addEventListener('click',(()=>{const uid=item.uid;return()=>updateTask(uid,{urg:!item.urg});})());
-    row2.appendChild(urgB);
-    // 期日
-    const dueInp=document.createElement('input');dueInp.type='date';dueInp.value=item.due||"";
-    dueInp.style.cssText="padding:3px 6px;background:#1e293b;border:1px solid #334155;border-radius:6px;color:#e2e8f0;font-size:11px;font-family:inherit;color-scheme:dark";
-    dueInp.addEventListener('change',(()=>{const uid=item.uid;return e=>updateTask(uid,{due:e.target.value||null});})());
-    row2.appendChild(div({style:{display:"flex",alignItems:"center",gap:"3px"}},[span({style:{fontSize:"10px",color:"#64748b"}},"期日"),dueInp]));
-    // 予定に追加（作業予定をスケジュールへ）
-    const planB=btn({style:{fontSize:"10px",padding:"3px 8px",borderRadius:"6px",cursor:"pointer",whiteSpace:"nowrap",marginLeft:"auto",
-      border:"1px solid #0ea5e9",background:"#0ea5e918",color:"#38bdf8",fontWeight:600}},"📅 予定に追加");
-    planB.addEventListener('click',(()=>{const it=item;return()=>{
-      const now=new Date();
-      const target=it.due||state.viewDate;
-      state.viewDate=target;
-      state.modal="addEvent";state.editEventUid=null;state.editEventIsRepeat=false;state.editEventDate=target;
-      state.newEvDate=target;state.newEvEndDate=null;
-      state.newEvTitle=it.text;
-      state.newEvH=now.getHours();state.newEvM=0;
-      state.newEvEndH=Math.min(23,now.getHours()+1);state.newEvEndM=0;
-      state.newEvRepeat="none";state.newEvColor=EV_DEFAULT;
-      state.newEvWeekdays=[parseDS(target).getDay()];
-      state.newEvFromTask=it.uid; state.newEvGoalId=null;
-      state.newEvPlace="";state.newEvNote=(it.note||"");
-      state.scheduleSubTab="日";
-      render();
-    };})());
-    row2.appendChild(planB);
-    box.appendChild(row2);
-    // メモ（開閉トグル。メモがあれば常時表示）
-    const hasNote=!!(item.note&&item.note.trim());
-    const memoOpen=!!(state.taskMemoOpen&&state.taskMemoOpen[item.uid]);
-    const memoB=btn({style:{fontSize:"10px",padding:"3px 8px",borderRadius:"6px",cursor:"pointer",whiteSpace:"nowrap",marginTop:"6px",
-      border:`1px solid ${hasNote?"#a78bfa":"#334155"}`,background:hasNote?"#a78bfa18":"transparent",color:hasNote?"#a78bfa":"#475569"}},hasNote?"📝 メモを編集":(memoOpen?"📝 メモを閉じる":"📝 メモを追加"));
-    memoB.addEventListener('click',(()=>{const uid=item.uid;return()=>{ if(!state.taskMemoOpen)state.taskMemoOpen={}; state.taskMemoOpen[uid]=!state.taskMemoOpen[uid]; render(); };})());
-    box.appendChild(memoB);
-    if(hasNote||memoOpen){
-      const ta=document.createElement('textarea');
-      ta.value=item.note||""; ta.placeholder="メモ...";
-      ta.style.cssText="width:100%;margin-top:6px;min-height:44px;background:#1e293b;border:1px solid #334155;border-radius:6px;color:#cbd5e1;font-size:12px;padding:7px;resize:vertical;box-sizing:border-box;font-family:inherit;line-height:1.5";
-      ta.addEventListener('change',(()=>{const uid=item.uid;return e=>updateTask(uid,{note:e.target.value});})());
-      ta.addEventListener('blur',(()=>{const uid=item.uid;return e=>updateTask(uid,{note:e.target.value});})());
-      box.appendChild(ta);
-    }
-    card.appendChild(box);
-  });
-
-  if(list.some(x=>x.done)){
-    const clearBtn=btn({style:{width:"100%",marginTop:"6px",padding:"6px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#475569",fontSize:"11px",cursor:"pointer"}},"完了済みをまとめて削除");
-    clearBtn.addEventListener('click',()=>{
-      pushUndo("完了済みTODOを削除しました");
-      state.tasks.todo=state.tasks.todo.filter(x=>!x.done);
-      saveTasks();render();
-    });
-    card.appendChild(clearBtn);
   }
-  wrap.appendChild(card);
-  return wrap;
+  row1.appendChild(label);
+  const del=btn({style:{background:"transparent",border:"none",color:"#334155",cursor:"pointer",fontSize:"15px",padding:"0 2px",flexShrink:0}},"×");
+  del.addEventListener('click',(()=>{const uid=item.uid;return()=>{pushUndo("TODOを削除しました");state.tasks.todo=state.tasks.todo.filter(x=>x.uid!==uid);saveTasks();render();};})());
+  row1.appendChild(del);
+  box.appendChild(row1);
+  // 2行目：重要・緊急・期日・予定に追加
+  const row2=div({style:{display:"flex",alignItems:"center",gap:"6px",marginTop:"8px",flexWrap:"wrap"}});
+  const impB=btn({style:{fontSize:"10px",padding:"3px 8px",borderRadius:"6px",cursor:"pointer",whiteSpace:"nowrap",
+    border:`1px solid ${item.imp?"#f97316":"#334155"}`,background:item.imp?"#f9731622":"transparent",color:item.imp?"#f97316":"#475569"}},"重要");
+  impB.addEventListener('click',(()=>{const uid=item.uid,v=item.imp;return()=>updateTask(uid,{imp:!v});})());
+  row2.appendChild(impB);
+  const urgB=btn({style:{fontSize:"10px",padding:"3px 8px",borderRadius:"6px",cursor:"pointer",whiteSpace:"nowrap",
+    border:`1px solid ${item.urg?"#eab308":"#334155"}`,background:item.urg?"#eab30822":"transparent",color:item.urg?"#eab308":"#475569"}},"緊急");
+  urgB.addEventListener('click',(()=>{const uid=item.uid,v=item.urg;return()=>updateTask(uid,{urg:!v});})());
+  row2.appendChild(urgB);
+  // 期日
+  const dueInp=document.createElement('input');dueInp.type='date';dueInp.value=item.due||"";
+  dueInp.style.cssText="padding:3px 6px;background:#1e293b;border:1px solid #334155;border-radius:6px;color:#e2e8f0;font-size:11px;font-family:inherit;color-scheme:dark";
+  dueInp.addEventListener('change',(()=>{const uid=item.uid;return e=>updateTask(uid,{due:e.target.value||null});})());
+  row2.appendChild(div({style:{display:"flex",alignItems:"center",gap:"3px"}},[span({style:{fontSize:"10px",color:"#64748b"}},"期日"),dueInp]));
+  // 予定に追加（作業予定をスケジュールへ）
+  const planB=btn({style:{fontSize:"10px",padding:"3px 8px",borderRadius:"6px",cursor:"pointer",whiteSpace:"nowrap",marginLeft:"auto",
+    border:"1px solid #0ea5e9",background:"#0ea5e918",color:"#38bdf8",fontWeight:600}},"📅 予定に追加");
+  planB.addEventListener('click',(()=>{const it=item;return()=>{
+    const now=new Date();
+    const target=it.due||state.viewDate;
+    state.viewDate=target;
+    state.modal="addEvent";state.editEventUid=null;state.editEventIsRepeat=false;state.editEventDate=target;
+    state.newEvDate=target;state.newEvEndDate=null;
+    state.newEvTitle=it.text;
+    state.newEvH=now.getHours();state.newEvM=0;
+    state.newEvEndH=Math.min(23,now.getHours()+1);state.newEvEndM=0;
+    state.newEvRepeat="none";state.newEvColor=EV_DEFAULT;
+    state.newEvWeekdays=[parseDS(target).getDay()];
+    state.newEvFromTask=it.uid; state.newEvGoalId=null;
+    state.newEvPlace="";state.newEvNote=(it.note||"");
+    state.scheduleSubTab="日";
+    render();
+  };})());
+  row2.appendChild(planB);
+  box.appendChild(row2);
+  // メモ（開閉トグル。メモがあれば常時表示）＋ もう片方へ移す
+  const hasNote=!!(item.note&&item.note.trim());
+  const memoOpen=!!(state.taskMemoOpen&&state.taskMemoOpen[item.uid]);
+  const row3=div({style:{display:"flex",alignItems:"center",gap:"6px",marginTop:"6px",flexWrap:"wrap"}});
+  const memoB=btn({style:{fontSize:"10px",padding:"3px 8px",borderRadius:"6px",cursor:"pointer",whiteSpace:"nowrap",
+    border:`1px solid ${hasNote?"#a78bfa":"#334155"}`,background:hasNote?"#a78bfa18":"transparent",color:hasNote?"#a78bfa":"#475569"}},hasNote?"📝 メモを編集":(memoOpen?"📝 メモを閉じる":"📝 メモを追加"));
+  memoB.addEventListener('click',(()=>{const uid=item.uid;return()=>{ if(!state.taskMemoOpen)state.taskMemoOpen={}; state.taskMemoOpen[uid]=!state.taskMemoOpen[uid]; render(); };})());
+  row3.appendChild(memoB);
+  // 入れる場所を間違えても、ここで移せる
+  { const cur=todoKindOf(item), other=todoKindDef(cur==='do'?'want':'do');
+    const mv=btn({style:{fontSize:"10px",padding:"3px 8px",borderRadius:"6px",cursor:"pointer",whiteSpace:"nowrap",marginLeft:"auto",
+      border:`1px solid ${other.color}55`,background:"transparent",color:other.color,fontFamily:"inherit"}},`→ ${other.label.replace(/^\S+\s*/,'')}へ`);
+    mv.addEventListener('click',(()=>{const uid=item.uid,nk=(cur==='do'?'want':'do'),lbl=other.label;return()=>{ updateTask(uid,{kind:nk}); showToast(`${lbl}に移しました`); };})());
+    row3.appendChild(mv); }
+  box.appendChild(row3);
+  if(hasNote||memoOpen){
+    const ta=document.createElement('textarea');
+    ta.value=item.note||""; ta.placeholder="メモ...";
+    ta.style.cssText="width:100%;margin-top:6px;min-height:44px;background:#1e293b;border:1px solid #334155;border-radius:6px;color:#cbd5e1;font-size:12px;padding:7px;resize:vertical;box-sizing:border-box;font-family:inherit;line-height:1.5";
+    ta.addEventListener('change',(()=>{const uid=item.uid;return e=>updateTask(uid,{note:e.target.value});})());
+    ta.addEventListener('blur',(()=>{const uid=item.uid;return e=>updateTask(uid,{note:e.target.value});})());
+    box.appendChild(ta);
+  }
+  return box;
 }
 
 // ── 買物リスト（食品／消耗品／欲しい物 でタグ分け・内容編集可）──
