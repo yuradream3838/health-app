@@ -224,7 +224,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.71"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.72"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -884,6 +884,7 @@ const state = {
   connectTagEdit:false, newConnectTag:"", // つながりタグの種類編集
   widgetSections:null, widgetEditMode:false, widgetSecOrder:null, // ヴィジェット表示項目・順序のカスタマイズ
   todoSecOpen:null, newTodo:null, // ✅ TODO：やること／やりたいことの開閉と入力欄
+  drinkNoteOpen:undefined, drinkNoteShow:null, // 🍶 お酒の記録（入力欄の開閉・一覧での展開）
   shopAddCat:"food", shopAddText:"", editingShopUid:null, shopEditText:"", shopEditCat:"food", // 買物リストのタグ・編集
   sleepGoal:null, sleepGoalEdit:false, sgDraft:null, // 就寝リズム（就寝ドリフト対策）
   bodyComps:null, bcForm:null, bcPhotoLoading:false, bcPhotoError:null, bcTrendMetric:"weight", bcHistExpanded:false, // トレーニング：体組成記録
@@ -3825,7 +3826,7 @@ function renderSelfMode(){
     const recWrap=div({style:{background:"#ffffff0d",border:"1px solid #ffffff14",borderRadius:"11px",padding:"9px 10px",marginBottom:"10px"}});
     recWrap.appendChild(div({style:{fontSize:"11px",color:"#a89e8c",marginBottom:"6px"}},"🍺 飲んだものを記録"));
     const addBtn=btn({style:{width:"100%",padding:"11px",borderRadius:"10px",border:`1px solid ${M.accent}66`,background:M.accent+"1a",color:"#f0e9dd",fontSize:"14px",fontWeight:700,cursor:"pointer",fontFamily:"inherit"}},"＋ 飲み物を追加（種類・量・度数・時刻）");
-    addBtn.addEventListener('click',()=>{ const now=new Date(); state.modal="addDrink"; state.newDrink={typeId:"beer",ml:350,hour:now.getHours(),min:now.getMinutes(),pct:5,startNextDay:(todayStr()!==activeDay())}; render(); });
+    addBtn.addEventListener('click',()=>{ const now=new Date(); state.modal="addDrink"; state.newDrink={typeId:"beer",ml:350,hour:now.getHours(),min:now.getMinutes(),pct:5,startNextDay:(todayStr()!==activeDay()),tasting:{}}; state.drinkNoteOpen=undefined; render(); });
     recWrap.appendChild(addBtn);
     // 記録済みの一覧（種類・度数・時刻）＋各行の削除
     const drinkList=(getDaily(vd).drinks||[]).map(dr=>({...dr,drinkType:resolveDT(dr)}));
@@ -4068,7 +4069,7 @@ function renderWidgetView(vd,ds){
     const grid=div({style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"8px"}});
     const qbtn=(label,border,bg,color,onClick)=>{const b=btn({style:{padding:"11px",borderRadius:"8px",cursor:"pointer",fontSize:"13px",fontWeight:600,border:`1px solid ${border}`,background:bg,color}},label);b.addEventListener('click',onClick);return b;};
     grid.appendChild(qbtn(`💗 体調（今）${nowScore!=null?`：${nowScore}`:""}`,"#f43f5e","#f43f5e18","#fb7185",()=>{ openScoreModal(vd,curH); }));
-    grid.appendChild(qbtn(`🍺 アルコール${drN?`（${drN}）`:""}`,"#f59e0b","#f59e0b18","#fbbf24",()=>{ const now=new Date(); state.modal="addDrink"; state.newDrink={typeId:"beer",ml:350,hour:now.getHours(),min:now.getMinutes(),pct:5,startNextDay:false}; render(); }));
+    grid.appendChild(qbtn(`🍺 アルコール${drN?`（${drN}）`:""}`,"#f59e0b","#f59e0b18","#fbbf24",()=>{ const now=new Date(); state.modal="addDrink"; state.newDrink={typeId:"beer",ml:350,hour:now.getHours(),min:now.getMinutes(),pct:5,startNextDay:false,tasting:{}}; state.drinkNoteOpen=undefined; render(); }));
     grid.appendChild(qbtn(`🍽️ 食べたもの${foodN?`（${foodN}）`:""}`,"#0ea5e9","#0ea5e918","#38bdf8",()=>{ state.modal="food"; state.foodSelected=[...(d.foods||[])]; state.foodOpenCat=null; render(); }));
     grid.appendChild(qbtn(`💧 射精${ejN?`（${ejN}）`:""}`,"#6366f1","#6366f118","#a5b4fc",()=>openEjacModal(null)));
     c.appendChild(grid);
@@ -12292,7 +12293,7 @@ function renderAlcohol(vd,isToday){
         totalG>0?div({style:{fontSize:"11px",marginTop:"2px",color:totalG>20?"#f97316":"#64748b"}},`純アルコール計: ${totalG.toFixed(1)}g（適量目安 20g）`):null
       ]),
       btn({style:{padding:"6px 12px",background:"#0ea5e918",border:"1px solid #0ea5e9",borderRadius:"8px",color:"#38bdf8",fontSize:"12px",cursor:"pointer",fontWeight:600},
-        onClick:()=>{const now=new Date();state.modal="addDrink";state.newDrink={typeId:"beer",ml:350,hour:now.getHours(),min:now.getMinutes(),pct:5,startNextDay:false};render();}},"+ 追加")
+        onClick:()=>{const now=new Date();state.modal="addDrink";state.newDrink={typeId:"beer",ml:350,hour:now.getHours(),min:now.getMinutes(),pct:5,startNextDay:false,tasting:{}};state.drinkNoteOpen=undefined;render();}},"+ 追加")
     ])
   ]);
   if(drinks.length===0){
@@ -12313,12 +12314,40 @@ function renderAlcohol(vd,isToday){
       const item=div({style:{background:"#0f172a",borderRadius:"10px",overflow:"hidden",marginBottom:"8px"}},[
         div({style:{display:"flex",alignItems:"center",gap:"10px",padding:"8px 10px"}},[
           span({style:{fontSize:"22px"}},d.drinkType.emoji),
-          div({style:{flex:1,cursor:"pointer"},onClick:(()=>{const dr=d;return()=>{ state.modal="addDrink"; state.newDrink={typeId:dr.id||dr.drinkType.id,ml:dr.ml,hour:dr.hour,min:dr.min||0,pct:dr.drinkType.pct,startNextDay:!!dr.startNextDay,editUid:dr.uid}; render(); };})()},[
+          div({style:{flex:1,cursor:"pointer"},onClick:(()=>{const dr=d;return()=>{ state.modal="addDrink"; state.newDrink={typeId:dr.id||dr.drinkType.id,ml:dr.ml,hour:dr.hour,min:dr.min||0,pct:dr.drinkType.pct,startNextDay:!!dr.startNextDay,editUid:dr.uid,tasting:{...tastingOf(dr)}}; state.drinkNoteOpen=undefined; render(); };})()},[
             div({style:{fontSize:"13px",fontWeight:600,color:"#e2e8f0"}},`${d.drinkType.label} ${d.ml}ml`),
             div({style:{fontSize:"10px",color:"#64748b"}},[txt(`🕐 ${sL}`),hasEnd?span({style:{color:"#a78bfa"}},` → 🍵 ${eL}`):null,txt(` ${g.toFixed(1)}g ・ タップで編集`)])
           ]),
           btn({style:{background:"transparent",border:"none",color:"#475569",cursor:"pointer",fontSize:"18px",padding:"0 4px"},onClick:(()=>{const uid=d.uid;return()=>{removeDrink(vd,uid);};})()} ,"×")
         ]),
+        // 📝 お酒の記録（あるときだけ。タップで詳細を開く）
+        (()=>{ const t=tastingOf(d); if(!hasTasting(t)) return null;
+          const opened=!!(state.drinkNoteShow&&state.drinkNoteShow[d.uid]);
+          const wrapN=div({style:{padding:"0 10px 8px"}});
+          const head=btn({style:{width:"100%",display:"flex",alignItems:"center",gap:"8px",padding:"6px 9px",borderRadius:"7px",
+            border:"1px solid #f59e0b33",background:"#f59e0b0d",cursor:"pointer",fontFamily:"inherit",textAlign:"left"}},[
+            div({style:{flex:1,minWidth:0,fontSize:"11px",color:"#fbbf24",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},
+              `📝 ${(t.name||"").trim()||"お酒の記録"}${t.stars?`　${starsLabel(t.stars)}`:""}${t.near?`　🫧${NEAR_LABELS[t.near]}`:""}`),
+            span({style:{flexShrink:0,fontSize:"11px",color:"#64748b"}},opened?"▲":"▼")
+          ]);
+          head.addEventListener('click',(()=>{const uid=d.uid;return()=>{ if(!state.drinkNoteShow)state.drinkNoteShow={}; state.drinkNoteShow[uid]=!state.drinkNoteShow[uid]; render(); };})());
+          wrapN.appendChild(head);
+          if(opened){
+            const box=div({style:{marginTop:"6px",padding:"8px 10px",borderRadius:"7px",background:"#0b1220",border:"1px solid #1e293b"}});
+            TASTE_FIELDS.forEach(f=>{ const v=(t[f.k]||"").trim(); if(!v)return;
+              box.appendChild(div({style:{display:"flex",gap:"8px",marginBottom:"4px"}},[
+                span({style:{width:"48px",flexShrink:0,fontSize:"10px",color:"#64748b"}},f.label),
+                span({style:{flex:1,minWidth:0,fontSize:"12px",color:"#cbd5e1",whiteSpace:"pre-wrap",wordBreak:"break-word",lineHeight:1.5}},v)
+              ])); });
+            if(t.near) box.appendChild(div({style:{display:"flex",gap:"8px",marginBottom:"4px"}},[
+              span({style:{width:"48px",flexShrink:0,fontSize:"10px",color:"#64748b"}},"近さ"),
+              span({style:{flex:1,fontSize:"12px",color:"#7dd3fc"}},`🫧 ${starsLabel(t.near)} ${NEAR_LABELS[t.near]}`)]));
+            if(t.stars) box.appendChild(div({style:{display:"flex",gap:"8px"}},[
+              span({style:{width:"48px",flexShrink:0,fontSize:"10px",color:"#64748b"}},"総評"),
+              span({style:{flex:1,fontSize:"13px",color:"#fbbf24",fontWeight:700}},`${starsLabel(t.stars)} ${t.stars}/5`)]));
+            wrapN.appendChild(box);
+          }
+          return wrapN; })(),
         // 💧 この飲酒と一緒に飲んだ水（1杯=0.2L・飲水量に反映）
         div({style:{padding:"0 10px 8px"}},[
           div({style:{display:"flex",alignItems:"center",gap:"8px",padding:"5px 8px",marginBottom:"6px",background:"#0ea5e90d",borderRadius:"7px",border:"1px solid #0ea5e933"}},[
@@ -12451,6 +12480,43 @@ function recordEnd(vd,uid){const n=new Date();const d=getDaily(vd);setDaily(vd,{
 function clearEnd(vd,uid){const d=getDaily(vd);setDaily(vd,{drinks:(d.drinks||[]).map(x=>{if(x.uid!==uid)return x;const c={...x};delete c.endHour;delete c.endMin;return c;})});render();}
 
 // ── 追加・編集モーダル ────────────────────────────
+// ── 🍶 お酒の記録（テイスティングノート）──────────────────────────
+// 飲んだ一杯そのものの記録。飲酒量の管理とは別に「何を飲んだか・どうだったか」を残す。
+// ノンアル（度数0%）のときだけ「お酒との近さ」も付けられる。
+const TASTE_FIELDS=[
+  {k:'name',  label:'名前',   ph:'銘柄・商品名',       line:true},
+  {k:'maker', label:'生産者', ph:'醸造所・蔵元・メーカー', line:true},
+  {k:'area',  label:'生産地', ph:'国・地域',           line:true},
+  {k:'look',  label:'外観',   ph:'色・泡・粘性など'},
+  {k:'aroma', label:'香り',   ph:'立ち香・含み香'},
+  {k:'taste', label:'味わい', ph:'甘み・酸味・苦味・ボディ'},
+  {k:'finish',label:'余韻',   ph:'長さ・残る風味'},
+];
+const NEAR_LABELS=['','全然違う','少し似ている','まあまあ','近い','そっくり'];
+function tastingOf(d){ const t=d&&d.tasting; return (t&&typeof t==='object')?t:{}; }
+function hasTasting(t){ if(!t)return false; return TASTE_FIELDS.some(f=>(t[f.k]||'').trim()) || t.stars>0 || t.near>0; }
+// 保存する形に整える（全部空なら null＝持たせない）。
+// 「お酒との近さ」はノンアル（度数0%）のときだけの項目なので、度数が入っていれば落とす。
+function cleanTasting(t,pct){
+  if(!t) return null;
+  const o={};
+  TASTE_FIELDS.forEach(f=>{ const v=(t[f.k]||'').trim(); if(v)o[f.k]=v; });
+  if(t.stars>0) o.stars=Math.max(1,Math.min(5,Math.round(t.stars)));
+  if(t.near>0 && !(pct>0)) o.near=Math.max(1,Math.min(5,Math.round(t.near)));
+  return Object.keys(o).length?o:null;
+}
+function starsLabel(n){ const v=Math.max(0,Math.min(5,Math.round(n||0))); return '★'.repeat(v)+'☆'.repeat(5-v); }
+// ★5つの選択（同じ星をもう一度押すと消す）
+function starPicker(value,color,onPick){
+  const row=div({style:{display:'flex',gap:'2px',alignItems:'center'}});
+  for(let i=1;i<=5;i++){
+    const on=(value||0)>=i;
+    const b=btn({style:{background:'transparent',border:'none',cursor:'pointer',fontSize:'22px',lineHeight:1,padding:'0 1px',color:on?color:'#334155',fontFamily:'inherit'}},on?'★':'☆');
+    b.addEventListener('click',(()=>{const v=i;return()=>onPick((value===v)?0:v);})());
+    row.appendChild(b);
+  }
+  return row;
+}
 function renderAddDrinkModal(vd){
   const nd=state.newDrink;
   const selType=DRINK_TYPES.find(t=>t.id===nd.typeId)||DRINK_TYPES[0];
@@ -12496,6 +12562,9 @@ function renderAddDrinkModal(vd){
     // 純アルコール表示をリアルタイム更新
     const alcEl=document.getElementById('modal-alc-display');
     if(alcEl) alcEl.textContent=`${pureAlcohol(state.newDrink.ml,newPct).toFixed(1)}g`;
+    // 「お酒との近さ」はノンアル（0%）のときだけ。入力中に描き直さず表示だけ切り替える
+    const nearEl=document.getElementById('drink-near-row');
+    if(nearEl) nearEl.style.display=(newPct>0?"none":"block");
   });
   pctWrap.appendChild(pctInput);
   pctWrap.appendChild(span({style:{fontSize:"12px",color:"#64748b"}},"% （種類を変えると自動更新）"));
@@ -12526,6 +12595,52 @@ function renderAddDrinkModal(vd){
     toggle.addEventListener('click',()=>{state.newDrink={...state.newDrink,startNextDay:!on};render();});
     m.appendChild(toggle);
   })();
+  // ── 📝 お酒の記録（任意・たためる）──
+  { const t=(nd.tasting&&typeof nd.tasting==='object')?nd.tasting:{};
+    if(!nd.tasting) state.newDrink.tasting=t;
+    const open=state.drinkNoteOpen===undefined?hasTasting(t):!!state.drinkNoteOpen;
+    const head=btn({style:{width:"100%",display:"flex",alignItems:"center",gap:"8px",padding:"9px 11px",marginBottom:open?"10px":"20px",
+      borderRadius:"9px",border:`1px solid ${hasTasting(t)?"#f59e0b66":"#334155"}`,background:hasTasting(t)?"#f59e0b0d":"transparent",cursor:"pointer",fontFamily:"inherit"}},[
+      div({style:{flex:1,minWidth:0,textAlign:"left"}},[
+        div({style:{fontSize:"12px",fontWeight:700,color:hasTasting(t)?"#fbbf24":"#94a3b8"}},"📝 お酒の記録（任意）"),
+        div({style:{fontSize:"10px",color:"#64748b",marginTop:"1px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},
+          hasTasting(t)?`${(t.name||"").trim()||"名前なし"}${t.stars?`　${starsLabel(t.stars)}`:""}`:"名前・生産者・生産地・外観・香り・味わい・余韻・総評")
+      ]),
+      span({style:{flexShrink:0,fontSize:"13px",color:"#64748b"}},open?"▲":"▼")
+    ]);
+    head.addEventListener('click',()=>{ state.drinkNoteOpen=!open; render(); });
+    m.appendChild(head);
+    if(open){
+      const box=div({style:{padding:"10px 11px",marginBottom:"20px",borderRadius:"9px",background:"#0b1220",border:"1px solid #1e293b"}});
+      const set=(k,v)=>{ const cur=(state.newDrink.tasting&&typeof state.newDrink.tasting==='object')?state.newDrink.tasting:{}; state.newDrink.tasting={...cur,[k]:v}; };
+      TASTE_FIELDS.forEach(f=>{
+        box.appendChild(div({style:{fontSize:"11px",color:"#94a3b8",marginBottom:"4px"}},f.label));
+        let el;
+        if(f.line){ el=document.createElement('input'); el.type='text';
+          el.style.cssText="width:100%;box-sizing:border-box;padding:7px 10px;margin-bottom:9px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit"; }
+        else { el=document.createElement('textarea'); el.rows=2;
+          el.style.cssText="width:100%;box-sizing:border-box;padding:7px 10px;margin-bottom:9px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit;resize:vertical;line-height:1.5"; }
+        el.placeholder=f.ph; el.value=t[f.k]||"";
+        el.addEventListener('input',(()=>{const k=f.k;return e=>set(k,e.target.value);})());   // 再描画しない（入力中にフォーカスを失わないため）
+        box.appendChild(el);
+      });
+      // 🫧 お酒との近さ（アルコール0%のときだけ）
+      { const nearRow=div({id:"drink-near-row",style:{display:(curPct>0?"none":"block"),marginBottom:"9px",padding:"8px 10px",borderRadius:"8px",background:"#0ea5e90d",border:"1px solid #0ea5e933"}});
+        nearRow.appendChild(div({style:{fontSize:"11px",color:"#7dd3fc",marginBottom:"4px"}},"🫧 お酒との近さ（ノンアル用）"));
+        const r=div({style:{display:"flex",alignItems:"center",gap:"9px"}});
+        r.appendChild(starPicker(t.near||0,"#38bdf8",v=>{ set('near',v); render(); }));
+        r.appendChild(span({style:{fontSize:"11px",color:"#7dd3fc"}},t.near?NEAR_LABELS[t.near]:"未記録"));
+        nearRow.appendChild(r);
+        box.appendChild(nearRow); }
+      // ⭐ 総評
+      { const sr=div({style:{display:"flex",alignItems:"center",gap:"9px",marginTop:"2px"}});
+        sr.appendChild(span({style:{fontSize:"11px",color:"#94a3b8",width:"48px",flexShrink:0}},"総評"));
+        sr.appendChild(starPicker(t.stars||0,"#fbbf24",v=>{ set('stars',v); render(); }));
+        sr.appendChild(span({style:{fontSize:"11px",color:"#fbbf24"}},t.stars?`${t.stars}/5`:"未記録"));
+        box.appendChild(sr); }
+      m.appendChild(box);
+    }
+  }
   m.appendChild(div({style:{display:"flex",gap:"8px"}},[
     btn({className:"btn-ghost",style:{flex:1},onClick:()=>{state.modal=null;render();}},"キャンセル"),
     btn({style:{flex:2,padding:"10px",background:"linear-gradient(135deg,#f97316,#ef4444)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:600,cursor:"pointer"},onClick:()=>{
@@ -12537,10 +12652,15 @@ function renderAddDrinkModal(vd){
       const d=getDaily(vd);
       if(state.newDrink.editUid){
         // 既存の1杯を編集（飲み終わり時刻などは維持）
-        setDaily(vd,{drinks:(d.drinks||[]).map(x=>x.uid===state.newDrink.editUid?{...x,id:state.newDrink.typeId,drinkType:dt,ml:state.newDrink.ml,hour:state.newDrink.hour,min:state.newDrink.min,startNextDay:!!state.newDrink.startNextDay}:x)});
+        const tn=cleanTasting(state.newDrink.tasting,finalPct);
+        setDaily(vd,{drinks:(d.drinks||[]).map(x=>{ if(x.uid!==state.newDrink.editUid) return x;
+          const nx={...x,id:state.newDrink.typeId,drinkType:dt,ml:state.newDrink.ml,hour:state.newDrink.hour,min:state.newDrink.min,startNextDay:!!state.newDrink.startNextDay};
+          if(tn) nx.tasting=tn; else delete nx.tasting;
+          return nx; })});
       } else {
         const drink={uid:Date.now(),id:state.newDrink.typeId,drinkType:dt,ml:state.newDrink.ml,hour:state.newDrink.hour,min:state.newDrink.min};
         if(state.newDrink.startNextDay) drink.startNextDay=true;
+        { const tn=cleanTasting(state.newDrink.tasting,finalPct); if(tn) drink.tasting=tn; }
         setDaily(vd,{drinks:[...(d.drinks||[]),drink]});
         // 超過アラート
         const dg=Math.round(pureAlcoholG(vd)), dl2=alcLimitDay();
