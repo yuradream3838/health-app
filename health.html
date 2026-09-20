@@ -224,7 +224,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.77"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.78"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -4119,7 +4119,7 @@ function renderWidgetView(vd,ds){
     c.appendChild(openInv);
     secNodes.invest=c;
   }
-  if(wSecOn('nextdrink')) secNodes.nextdrink=nextDrinkCard(); // 🍺 次に飲みに行く予定（踏みとどまるの下）
+  if(wSecOn('nextdrink')) secNodes.nextdrink=nextDrinkCard({widget:true}); // 🍺 次に飲みに行く予定（踏みとどまるの下）
   if(vd===todayStr() && wSecOn('nightritual')) secNodes.nightritual=nightRitualCard(vd,false); // 🌙 飲まない夜のルーティン
 
   // ── 🫂 つながり習慣（今日・今週の進捗） ──
@@ -10513,17 +10513,11 @@ function syncNextDrinkFromEvent(ndId,newDs){
   try{ state.nextDrink={...p,date:newDs}; saveNextDrinkPlan(); }finally{ _ndDateSyncing=false; }
   return mdLabel(newDs);
 }
-// ② 飲み予定の日付を変えた → そこから作った予定も同じ日数だけずらす。動かした件数を返す
-function syncEventsFromNextDrink(oldDate,newDate){
-  if(_ndDateSyncing||!oldDate||!newDate) return 0;
-  const delta=daysBetweenDS(oldDate,newDate); if(!delta) return 0;
-  const evs=nextDrinkEvents(); if(!evs.length) return 0;
-  _ndDateSyncing=true;
-  let moved=0;
-  try{ evs.forEach(g=>{ if(shiftLinkedEvent(g,delta)) moved++; }); }finally{ _ndDateSyncing=false; }
-  return moved;
-}
-function nextDrinkCard(){
+// ※ 飲み予定の日付を変えたときは、予定を動かさない。飲みに行く機会そのものが別なので、
+//    前の日に作った予定は記録として残し、新しい日にはまた「📅 予定に追加」を出す（上の保存処理）。
+// opts.widget … ウィジェット用。日付と残り日数だけを出し、予定の追加・表示は出さない
+function nextDrinkCard(opts){
+  const wOnly=!!(opts&&opts.widget);
   const p=getNextDrinkPlan();
   const today=todayStr();
   const isFuture=p && p.date>=today;
@@ -10546,7 +10540,7 @@ function nextDrinkCard(){
       ]));
       if(p.note)c.appendChild(div({style:{fontSize:"12px",color:"#e2e8f0",marginTop:"4px",lineHeight:1.5}},p.note));
       // 📅 予定に追加。すでにこの飲み予定から作ってあれば、ボタンではなく**その予定**を出す（タップでその日へ）
-      { const evs=nextDrinkEvents();
+      if(!wOnly){ const evs=nextDrinkEvents();
         if(evs.length){
           evs.forEach(g=>{
             const row=btn({style:{width:"100%",marginTop:"7px",padding:"8px 10px",borderRadius:"8px",cursor:"pointer",fontFamily:"inherit",textAlign:"left",
@@ -10558,7 +10552,7 @@ function nextDrinkCard(){
             row.addEventListener('click',(()=>{const gg=g;return()=>goToNextDrinkEvent(gg);})());
             c.appendChild(row);
           });
-          c.appendChild(div({style:{fontSize:"9px",color:"#475569",marginTop:"5px",lineHeight:1.5}},"タップするとその日の予定を開きます。予定を消すと、ここはまた「予定に追加」に戻ります。日付はどちらを変えても合わせます。"));
+          c.appendChild(div({style:{fontSize:"9px",color:"#475569",marginTop:"5px",lineHeight:1.5}},"タップするとその日の予定を開きます。予定を消すと、ここはまた「予定に追加」に戻ります。この予定を別の日に動かすと、上の日付も合わせます。飲み予定の日を変えたときは、前の予定はそのまま残ります。"));
         } else {
           const b=btn({style:{width:"100%",marginTop:"8px",padding:"9px",borderRadius:"8px",cursor:"pointer",fontFamily:"inherit",fontSize:"12px",fontWeight:600,
             border:"1px solid #0ea5e9",background:"#0ea5e918",color:"#38bdf8"}},"📅 予定に追加");
@@ -10590,11 +10584,14 @@ function nextDrinkCard(){
   const save=btn({style:{flex:2,padding:"10px",borderRadius:"8px",border:"none",background:"linear-gradient(135deg,#f59e0b,#f97316)",color:"#fff",fontSize:"13px",fontWeight:700,cursor:"pointer"}},"✅ 予定を決める");
   save.addEventListener('click',()=>{ const dt=state.ndDraftDate; if(!dt){showToast("日付を選んでください");return;}
     const old=p&&p.date;
-    state.nextDrink={...(p||{}),date:dt,note:(state.ndDraftNote||"").trim()}; saveNextDrinkPlan();
-    // 日付を変えたら、この飲み予定から作った予定も同じ日数だけずらす
-    const moved=old?syncEventsFromNextDrink(old,dt):0;
+    const newDay=!!(old&&old!==dt);
+    const hadEv=newDay&&nextDrinkEvents().length>0;
+    // 日を変えたら**次の機会**として立て直す。前の日に作った予定は動かさず、そのまま残す
+    // （結びつきだけ切るので、新しい日でまた「📅 予定に追加」ができる）
+    const base={...(p||{})}; if(newDay) delete base.id;
+    state.nextDrink={...base,date:dt,note:(state.ndDraftNote||"").trim()}; saveNextDrinkPlan();
     state.nextDrinkEdit=false;
-    showToast(moved?`🍺 予定も ${mdLabel(dt)} に動かしました`:`🍺 次の飲み予定：${mdLabel(dt)}`,"#f59e0b"); render(); });
+    showToast(hadEv?`🍺 次の飲み予定：${mdLabel(dt)}（前の予定はそのまま残ります）`:`🍺 次の飲み予定：${mdLabel(dt)}`,"#f59e0b"); render(); });
   row.appendChild(save);
   c.appendChild(row);
   if(p){ const clr=btn({style:{width:"100%",marginTop:"8px",padding:"9px",background:"transparent",border:"1px solid #7f1d1d",borderRadius:"8px",color:"#f87171",fontSize:"12px",cursor:"pointer"}},"🗑 予定を削除");
