@@ -224,7 +224,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.74"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.75"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -859,6 +859,8 @@ const state = {
   actMemoKey:null, actMemoLabel:"", actMemoVd:null, actMemoText:"", // 実績（睡眠・飲酒等）へのメモ
   analysisSubTab:"日次・週次", diarySubTab:"生活記録", taskSubTab:"ルーティン",
   sleepLogDays:7, // 🛏 睡眠ログで見る夜数（7/14/30）
+  sleepHistDays:30, sleepHistMetric:"net", sleepHistMore:false,  // 分析→睡眠履歴
+  trainHistDays:30, trainHistMetric:"vol", trainHistEx:null, trainHistMore:false, // 分析→トレーニング履歴
   storageAlert:false, storageExportYear:null,
   weather:[], weatherCity:null, weatherLoading:false, weatherError:null,
   editHour:null, editDate:null, editScore:null, editMental:null, editSymptoms:[], editNote:"", editCraving:null,
@@ -4562,13 +4564,53 @@ function sleepLogBand(g){
   if(g.tgt!=null) band.appendChild(div({style:{position:"absolute",left:pc(g.tgt),top:"0",bottom:"0",width:"0",borderLeft:"1px dashed #fbbf24"}}));
   return band;
 }
+// 一晩ぶんの記録の大半（起床・眠りの質・夢・中途覚醒）は「目が覚めた朝 nd」に付いている。
+// 行をタップしたときの行き先もその朝に合わせる。まだ朝が来ていない夜（今夜）は就寝日のまま。
+function sleepNightJumpDS(g){ const t=todayStr(); return (g.nd>t)?g.ds:g.nd; }
+// 夜ごとの1行（睡眠ログと分析の睡眠履歴で共通）
+function sleepNightRow(g,tol){
+  const row=div({style:{padding:"7px 0",borderBottom:"1px solid #1e293b",cursor:"pointer"}});
+  row.dataset.sleepnight=g.ds;
+  const jd=sleepNightJumpDS(g);
+  const top=div({style:{display:"flex",alignItems:"center",gap:"8px",marginBottom:"4px"}});
+  const dd=parseDS(g.ds), wd=["日","月","火","水","木","金","土"][dd.getDay()];
+  const nn=parseDS(g.nd);
+  top.appendChild(div({style:{width:"56px",flexShrink:0}},[
+    div({style:{fontSize:"11px",color:wd==="日"?"#f87171":wd==="土"?"#60a5fa":"#94a3b8"}},`${dd.getMonth()+1}/${dd.getDate()}(${wd})`),
+    jd===g.nd?div({style:{fontSize:"9px",color:"#475569",marginTop:"1px"}},`→${nn.getMonth()+1}/${nn.getDate()}の朝`):null,
+  ]));
+  top.appendChild(div({style:{flex:1,minWidth:0}},[sleepLogBand(g)]));
+  top.appendChild(div({style:{width:"44px",flexShrink:0,textAlign:"right",fontSize:"12px",fontWeight:700,
+    color:g.net==null?"#475569":g.net>=7?"#4ade80":g.net<=5?"#f87171":"#eab308"}}, g.net!=null?`${Math.round(g.net*10)/10}h`:"—"));
+  row.appendChild(top);
+  // 細字の内訳
+  const bits=[];
+  if(g.windAbs!=null) bits.push(`🛏 ${fmtHM(g.windAbs)}`);
+  bits.push(g.bed!=null?`🌙 ${fmtHM(Math.round(g.bed*60))}${g.dev!=null?`（${g.dev>0?"+":""}${g.dev}分）`:""}`:"🌙 —");
+  bits.push(g.wake!=null?`🌅 ${fmtHM(Math.round(g.wake*60))}`:"🌅 —");
+  if(g.awakes.length) bits.push(`😪 覚醒${g.awakes.length}回 ${fmtMinLabel(g.awakeMins)}`);
+  if(g.napMins) bits.push(`💤 昼寝 ${fmtMinLabel(g.napMins)}`);
+  row.appendChild(div({style:{display:"flex",flexWrap:"wrap",gap:"8px",paddingLeft:"64px",fontSize:"10px",
+    color:(g.dev!=null&&Math.abs(g.dev)>tol)?"#fbbf24":"#64748b"}},bits.map(t=>span({},t))));
+  // 🛌 眠りの質：ここから直接つけられる（つけ忘れた夜をあとから埋められるように）
+  { const qr=div({style:{display:"flex",alignItems:"center",gap:"7px",paddingLeft:"64px",marginTop:"4px"}});
+    qr.appendChild(div({style:{width:"100px",flexShrink:0}},[sleepQualPicker(g.nd,true)]));
+    const qd=sleepQualDef(g.qual);
+    const side=g.note?`📝 ${g.note}`:(g.dream?`💭 ${g.dream}`:(qd?qd.label:"眠りの質は未記録"));
+    qr.appendChild(div({style:{flex:1,minWidth:0,fontSize:"10px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",
+      color:(g.note||g.dream)?"#94a3b8":sleepQualColor(g.qual)}}, side));
+    if(g.note&&g.dream) qr.appendChild(div({style:{flexShrink:0,fontSize:"10px",color:"#a5b4fc"}},"💭"));
+    row.appendChild(qr); }
+  row.addEventListener('click',(()=>{const k=jd;return()=>{ state.viewDate=k; state.tab="日記"; state.diarySubTab="睡眠"; state.widget=false; render(); };})());
+  return row;
+}
 function renderSleepLogCard(){
   const per=state.sleepLogDays||7;
   const nights=sleepLogNights(per), sm=sleepLogSummary(nights), tol=sleepTol();
   const card=div({className:"card"});
   card.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0",marginBottom:"4px"}},"🛏 睡眠ログ"));
   card.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"9px",lineHeight:1.5}},
-    "夜ごとの寝支度・就寝・起床・中途覚醒を一覧にしたものです。帯は18時〜翌12時。タップでその夜の記録へ移動します。"));
+    "夜ごとの寝支度・就寝・起床・中途覚醒を一覧にしたものです。帯は18時〜翌12時。タップで「起床した朝」の記録へ移動します。"));
   // 期間の切り替え
   { const row=div({style:{display:"flex",gap:"5px",marginBottom:"10px"}});
     [[7,"7夜"],[14,"14夜"],[30,"30夜"]].forEach(([n,lbl])=>{
@@ -4592,40 +4634,13 @@ function renderSleepLogCard(){
     card.appendChild(g3); }
   if(!nights.length){ card.appendChild(div({style:{fontSize:"11px",color:"#475569",textAlign:"center",padding:"10px 0"}},"まだ睡眠の記録がありません。")); return card; }
   // 夜ごとの行
-  nights.forEach(g=>{
-    const row=div({style:{padding:"7px 0",borderBottom:"1px solid #1e293b",cursor:"pointer"}});
-    row.dataset.sleepnight=g.ds;
-    const top=div({style:{display:"flex",alignItems:"center",gap:"8px",marginBottom:"4px"}});
-    const dd=parseDS(g.ds), wd=["日","月","火","水","木","金","土"][dd.getDay()];
-    top.appendChild(div({style:{width:"56px",flexShrink:0,fontSize:"11px",color:wd==="日"?"#f87171":wd==="土"?"#60a5fa":"#94a3b8"}},`${dd.getMonth()+1}/${dd.getDate()}(${wd})`));
-    top.appendChild(div({style:{flex:1,minWidth:0}},[sleepLogBand(g)]));
-    top.appendChild(div({style:{width:"44px",flexShrink:0,textAlign:"right",fontSize:"12px",fontWeight:700,
-      color:g.net==null?"#475569":g.net>=7?"#4ade80":g.net<=5?"#f87171":"#eab308"}}, g.net!=null?`${Math.round(g.net*10)/10}h`:"—"));
-    row.appendChild(top);
-    // 細字の内訳
-    const bits=[];
-    if(g.windAbs!=null) bits.push(`🛏 ${fmtHM(g.windAbs)}`);
-    bits.push(g.bed!=null?`🌙 ${fmtHM(Math.round(g.bed*60))}${g.dev!=null?`（${g.dev>0?"+":""}${g.dev}分）`:""}`:"🌙 —");
-    bits.push(g.wake!=null?`🌅 ${fmtHM(Math.round(g.wake*60))}`:"🌅 —");
-    if(g.awakes.length) bits.push(`😪 覚醒${g.awakes.length}回 ${fmtMinLabel(g.awakeMins)}`);
-    if(g.napMins) bits.push(`💤 昼寝 ${fmtMinLabel(g.napMins)}`);
-    row.appendChild(div({style:{display:"flex",flexWrap:"wrap",gap:"8px",paddingLeft:"64px",fontSize:"10px",
-      color:(g.dev!=null&&Math.abs(g.dev)>tol)?"#fbbf24":"#64748b"}},bits.map(t=>span({},t))));
-    // 🛌 眠りの質：ここから直接つけられる（つけ忘れた夜をあとから埋められるように）
-    { const qr=div({style:{display:"flex",alignItems:"center",gap:"7px",paddingLeft:"64px",marginTop:"4px"}});
-      qr.appendChild(div({style:{width:"100px",flexShrink:0}},[sleepQualPicker(g.nd,true)]));
-      const qd=sleepQualDef(g.qual);
-      const side=g.note?`📝 ${g.note}`:(g.dream?`💭 ${g.dream}`:(qd?qd.label:"眠りの質は未記録"));
-      qr.appendChild(div({style:{flex:1,minWidth:0,fontSize:"10px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",
-        color:(g.note||g.dream)?"#94a3b8":sleepQualColor(g.qual)}}, side));
-      if(g.note&&g.dream) qr.appendChild(div({style:{flexShrink:0,fontSize:"10px",color:"#a5b4fc"}},"💭"));
-      row.appendChild(qr); }
-    row.addEventListener('click',(()=>{const k=g.ds;return()=>{ state.viewDate=k; state.tab="日記"; state.diarySubTab="睡眠"; state.widget=false; render(); };})());
-    card.appendChild(row);
-  });
-  card.appendChild(div({style:{fontSize:"9px",color:"#475569",marginTop:"8px",lineHeight:1.5}},
-    "🛏 寝支度｜🌙 就寝（かっこ内は就寝目標とのズレ）｜🌅 起床｜😪 中途覚醒（実睡眠から差し引き）｜💤 その日の昼寝。帯の点線は就寝目標、薄い帯は片方だけの記録からの推定。顔は眠りの質（その場でつけ直せます）｜📝 メモ／💭 夢。"));
+  nights.forEach(g=>{ card.appendChild(sleepNightRow(g,tol)); });
+  card.appendChild(sleepLogLegend());
   return card;
+}
+function sleepLogLegend(){
+  return div({style:{fontSize:"9px",color:"#475569",marginTop:"8px",lineHeight:1.5}},
+    "🛏 寝支度｜🌙 就寝（かっこ内は就寝目標とのズレ）｜🌅 起床｜😪 中途覚醒（実睡眠から差し引き）｜💤 その日の昼寝。帯の点線は就寝目標、薄い帯は片方だけの記録からの推定。顔は眠りの質（その場でつけ直せます）｜📝 メモ／💭 夢。起床・眠りの質・夢は「目が覚めた朝」に記録されるので、タップすると「→」の日付（その朝）の記録が開きます。");
 }
 function renderSleepPanel(vd,ds,isToday){
   const wrap=div({style:{maxWidth:"600px",margin:"0 auto",padding:"10px 16px 60px"}});
@@ -7559,6 +7574,52 @@ function stopCardio(vd,uid){ setCardio(vd, cardioOn(vd).map(w=>{ if(w.uid!==uid|
 function cardioTickFn(){ const el=document.getElementById('cardio-elapsed'); if(!el){ if(window._cardioTick){clearInterval(window._cardioTick);window._cardioTick=null;} return; } const w=cardioRunning(state.viewDate); if(!w){ if(window._cardioTick){clearInterval(window._cardioTick);window._cardioTick=null;} return; } const live=cardioLive(w); el.textContent=fmtSecMS(live.seconds); const de=document.getElementById('cardio-dist'); if(de)de.textContent=live.distance.toFixed(2)+" km"; }
 function lastCardio(name,vd){ const n=(name||"").trim().toLowerCase(); const all=allCardio().filter(w=>(w.name||"").trim().toLowerCase()===n); const notToday=all.filter(w=>w.date!==vd); return (notToday[0]||all[0])||null; }
 function bestCardioDist(name){ const n=(name||"").trim().toLowerCase(); const all=allCardio().filter(w=>(w.name||"").trim().toLowerCase()===n&&w.distance!=null); if(!all.length)return null; return all.reduce((m,w)=>w.distance>m.distance?w:m,all[0]); }
+// ── 🏋️ トレーニング履歴（分析タブ）──────────────────────────
+// 1日ぶんのトレーニングを1つにまとめる。ボリューム＝重量×回数×セットの合計
+function trainDay(ds){
+  const sess=trainingSessions(ds).filter(s=>s.startTime);
+  const mins=Math.round(trainingMinutes(ds));
+  const wos=workoutsOn(ds);
+  const ca=cardioOn(ds).filter(w=>!w.running);
+  const vol=wos.reduce((a,w)=>a+((w.weight||0)*(w.reps||0)*(w.sets||1)),0);
+  const sets=wos.reduce((a,w)=>a+(w.sets||1),0);
+  const km=ca.reduce((a,w)=>a+(w.distance||0),0);
+  const caMin=ca.reduce((a,w)=>a+(w.minutes!=null?w.minutes:(w.seconds!=null?w.seconds/60:0)),0);
+  return {ds,sess,mins,wos,ca,vol,sets,km,caMin,has:(sess.length>0||wos.length>0||ca.length>0)};
+}
+// 直近n日のうち、記録のある日だけ（新しい順）
+function trainDays(n){ const out=[],t=todayStr(); for(let i=0;i<n;i++){ const d=trainDay(addDays(t,-i)); if(d.has)out.push(d); } return out; }
+function trainHistSummary(days){
+  return {gym:days.length,
+    mins:days.reduce((a,d)=>a+d.mins,0), vol:days.reduce((a,d)=>a+d.vol,0),
+    sets:days.reduce((a,d)=>a+d.sets,0), km:days.reduce((a,d)=>a+d.km,0),
+    caMin:days.reduce((a,d)=>a+d.caMin,0)};
+}
+// 期間内の種目別まとめ（回数の多い順）。items は新しい順
+function workoutsByName(days){
+  const m=new Map();
+  days.forEach(d=>d.wos.forEach(w=>{
+    const n=(w.name||"").trim()||"(無題)";
+    if(!m.has(n))m.set(n,{name:n,n:0,sets:0,vol:0,best:null,items:[]});
+    const e=m.get(n);
+    e.n++; e.sets+=(w.sets||1); e.vol+=(w.weight||0)*(w.reps||0)*(w.sets||1);
+    if(w.weight!=null&&(e.best==null||w.weight>e.best.weight))e.best={...w,date:d.ds};
+    e.items.push({...w,date:d.ds});
+  }));
+  const arr=[...m.values()];
+  arr.forEach(e=>{ e.items.sort((a,b)=>{ const ta=a.date+(a.t||""),tb=b.date+(b.t||""); return ta<tb?1:ta>tb?-1:0; }); e.last=e.items[0]||null; });
+  return arr.sort((a,b)=>b.n-a.n||(a.name<b.name?-1:a.name>b.name?1:0));
+}
+// 1回ぶんの表示（40kg × 10回 × 3セット）
+function woLabel(w){ return `${w.weight!=null?`${w.weight}kg`:"—"}${w.reps!=null?` × ${w.reps}回`:""}${w.sets?` × ${w.sets}セット`:""}`; }
+// 有酸素1本ぶんの表示
+function caLabel(w){
+  const mins=w.minutes!=null?w.minutes:(w.seconds!=null?w.seconds/60:null);
+  const segs=w.segments||[]; let sp="";
+  if(segs.length){ const s=segs.map(x=>x.speed).filter(x=>x!=null); if(s.length)sp=(Math.min(...s)===Math.max(...s))?`${s[0]}km/h`:`${Math.min(...s)}〜${Math.max(...s)}km/h`; }
+  else if(w.speed!=null) sp=`${w.speed}km/h`;
+  return [sp, mins!=null?`${Math.round(mins)}分`:"", w.distance!=null?`${w.distance}km`:""].filter(Boolean).join(" ・ ");
+}
 function renderTrainingPanel(vd,ds,isToday){
   const wrap=div({style:{maxWidth:"600px",margin:"0 auto",padding:"10px 16px 60px"}});
   if(!isToday){ const isFuture=vd>ds; wrap.appendChild(div({style:{background:"#1e3a5f22",border:"1px solid #1e3a5f",borderRadius:"10px",padding:"8px 12px",marginBottom:"8px",fontSize:"12px",color:"#64748b"}},isFuture?"📅 未来の日付を表示中":"📅 過去の記録を表示中 — 編集可能です")); }
@@ -8271,6 +8332,8 @@ const FEATURE_INDEX=[
   ]},
   {group:"📊 分析",items:[
     {label:"日次・週次／総合分析",desc:"モード時間・週の推移・相関の振り返り",go:()=>{state.tab="分析";state.analysisSubTab="日次・週次";}},
+    {label:"睡眠の履歴",desc:"過去の夜をさかのぼる・就寝/起床/実睡眠/眠りの質の推移",go:()=>{state.tab="分析";state.analysisSubTab="睡眠";}},
+    {label:"トレーニングの履歴",desc:"過去のトレーニング・種目べつの記録・自己ベスト",go:()=>{state.tab="分析";state.analysisSubTab="トレーニング";}},
     {label:"AI分析",desc:"AI総合分析とAIへの質問",go:()=>{state.tab="分析";state.analysisSubTab="AI分析";}},
   ]},
   {group:"⚙ 設定",items:[
@@ -12816,7 +12879,7 @@ function renderEditEndModal(vd){
 }
 
 // ── ログタブ ──────────────────────────────────────
-// ── 分析ハブ（サブタブ：日次・週次／総合分析／AIに質問） ──
+// ── 分析ハブ（サブタブ：日次・週次／睡眠／トレーニング／総合分析／AI分析） ──
 // その日のルーティン達成状況（除外を除いた実達成率）
 function dayRoutineStats(ds){
   const todo=state.todos[ds]||{};
@@ -13375,8 +13438,225 @@ function renderAchievement(vd){
   return wrap;
 }
 
+// ═══════════════════════════════════════════════════
+// 📈 履歴（分析タブ）：睡眠とトレーニングを過去にさかのぼって見る
+// ═══════════════════════════════════════════════════
+// 小さな棒グラフ。arr=[{ds,v,t}] を古い順に。zero:true で0起点、false なら最小値の少し下を底にする
+function miniBars(arr,color,opts){
+  const o=opts||{}; const wrap=div({});
+  if(!arr.length){ wrap.appendChild(div({style:{fontSize:"11px",color:"#475569",textAlign:"center",padding:"14px 0"}},o.empty||"この期間に記録がありません。")); return wrap; }
+  const vals=arr.map(x=>x.v), mx=Math.max(...vals), mn=Math.min(...vals);
+  const base=o.zero?0:(mn-((mx-mn)||1)*0.2);
+  const rng=(mx-base)||1;
+  const H=o.height||58, showT=arr.length<=14;
+  const row=div({style:{display:"flex",alignItems:"flex-end",gap:"2px",height:(H+(showT?12:0))+"px"}});
+  arr.forEach(x=>{
+    const h=Math.max(3,Math.round(((x.v-base)/rng)*(H-8))+8);
+    const col=typeof color==="function"?color(x):color;
+    const cell=div({style:{flex:1,minWidth:0,display:"flex",flexDirection:"column",justifyContent:"flex-end",alignItems:"center",gap:"2px"}});
+    if(showT)cell.appendChild(div({style:{fontSize:"8px",color:"#64748b",whiteSpace:"nowrap"}},x.t));
+    const bar=div({style:{width:"76%",height:h+"px",background:col,borderRadius:"3px"}});
+    bar.title=`${mdLabel(x.ds)} ${x.t}`;
+    cell.appendChild(bar); row.appendChild(cell);
+  });
+  wrap.appendChild(row);
+  wrap.appendChild(div({style:{display:"flex",justifyContent:"space-between",fontSize:"8px",color:"#475569",marginTop:"3px"}},
+    [span({},mdLabel(arr[0].ds)),span({},`${mdLabel(arr[arr.length-1].ds)}（${arr.length}件）`)]));
+  return wrap;
+}
+// 期間の切り替え（7日/30日…）
+function histPeriodRow(defs,cur,onPick){
+  const row=div({style:{display:"flex",gap:"5px",marginBottom:"10px"}});
+  defs.forEach(([n,lbl])=>{
+    const on=cur===n;
+    const b=btn({style:{flex:1,padding:"6px",borderRadius:"8px",cursor:"pointer",fontSize:"11px",fontWeight:600,fontFamily:"inherit",
+      border:`1px solid ${on?"#6366f1":"#334155"}`,background:on?"#6366f122":"transparent",color:on?"#a5b4fc":"#64748b"}},lbl);
+    b.addEventListener('click',(()=>{const nn=n;return()=>{ onPick(nn); render(); };})());
+    row.appendChild(b);
+  });
+  return row;
+}
+// まとめの数字を横並びに。cells=[[値,ラベル,色],…]
+function histStatCells(cells){
+  const row=div({style:{display:"flex",gap:"5px",marginBottom:"10px"}});
+  cells.forEach(([v,l,col])=>row.appendChild(div({style:{flex:1,padding:"7px 3px",borderRadius:"8px",background:"#0f172a",textAlign:"center"}},[
+    div({style:{fontSize:"14px",fontWeight:800,color:col||"#e2e8f0",lineHeight:1.15}},v),
+    div({style:{fontSize:"9px",color:"#64748b",marginTop:"2px"}},l)])));
+  return row;
+}
+// 指標の切り替えチップ
+function histChips(defs,cur,onPick){
+  const row=div({style:{display:"flex",flexWrap:"wrap",gap:"5px",marginBottom:"8px"}});
+  defs.forEach(([k,l])=>{
+    const on=cur===k;
+    const b=btn({style:{padding:"5px 10px",borderRadius:"14px",cursor:"pointer",fontSize:"11px",fontWeight:on?700:400,fontFamily:"inherit",
+      border:`1px solid ${on?"#38bdf8":"#334155"}`,background:on?"#0ea5e922":"transparent",color:on?"#38bdf8":"#94a3b8"}},l);
+    b.addEventListener('click',(()=>{const kk=k;return()=>{ onPick(kk); render(); };})());
+    row.appendChild(b);
+  });
+  return row;
+}
+// ── 🛏 睡眠履歴 ──
+const SLEEP_HIST_METRICS=[["net","🛌 実睡眠"],["qual","😊 眠りの質"],["bed","🌙 就寝時刻"],["wake","🌅 起床時刻"]];
+function sleepHistBars(nights,metric){
+  const asc=[...nights].reverse();   // 古い順
+  if(metric==="qual") return miniBars(asc.filter(g=>g.qual!=null).map(g=>({ds:g.ds,v:g.qual,t:String(g.qual)})),x=>sleepQualColor(x.v),{zero:true,empty:"眠りの質の記録がまだありません。"});
+  if(metric==="bed")  return miniBars(asc.filter(g=>g.bed!=null).map(g=>{const m=bedFloatToNightMin(g.bed);return{ds:g.ds,v:m,t:fmtHM(m)};}),"#a5b4fc",{empty:"就寝時刻の記録がまだありません。"});
+  if(metric==="wake") return miniBars(asc.filter(g=>g.wake!=null).map(g=>{const m=Math.round(g.wake*60);return{ds:g.ds,v:m,t:fmtHM(m)};}),"#fbbf24",{empty:"起床時刻の記録がまだありません。"});
+  return miniBars(asc.filter(g=>g.net!=null).map(g=>({ds:g.ds,v:g.net,t:String(Math.round(g.net*10)/10)})),
+    x=>x.v>=7?"#22c55e":x.v<=5?"#ef4444":"#eab308",{zero:true,empty:"実睡眠時間の記録がまだありません。"});
+}
+function renderSleepHistory(){
+  const wrap=div({style:{maxWidth:"600px",margin:"0 auto",padding:"12px 16px 60px"}});
+  const per=state.sleepHistDays||30;
+  // 履歴では記録のある夜だけを並べる（1年ぶんでも見渡せるように）
+  const nights=sleepLogNights(per).filter(g=>g.has), sm=sleepLogSummary(nights), tol=sleepTol();
+  const metric=state.sleepHistMetric||"net";
+  // ① まとめ＋推移
+  { const c=div({className:"card",style:{marginBottom:"10px"}});
+    c.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0",marginBottom:"4px"}},"🛏 睡眠の履歴"));
+    c.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"9px",lineHeight:1.5}},
+      "過去の夜をさかのぼって見られます。平均は記録のある夜だけで計算しています。"));
+    c.appendChild(histPeriodRow([[7,"7夜"],[14,"14夜"],[30,"30夜"],[90,"90夜"],[365,"1年"]],per,n=>{state.sleepHistDays=n;state.sleepHistMore=false;}));
+    c.appendChild(histStatCells([
+      [sm.bedAvg!=null?fmtHM(sm.bedAvg):"—","平均 就寝","#a5b4fc"],
+      [sm.wakeAvg!=null?fmtHM(sm.wakeAvg):"—","平均 起床","#fbbf24"],
+      [sm.netAvg!=null?`${Math.round(sm.netAvg*10)/10}h`:"—","平均 実睡眠",sm.netAvg==null?"#64748b":sm.netAvg>=7?"#22c55e":sm.netAvg<=5?"#ef4444":"#eab308"],
+      [sm.qualAvg!=null?String(Math.round(sm.qualAvg*10)/10):"—",`平均 質${sm.qualN?`(${sm.qualN})`:""}`,sleepQualColor(sm.qualAvg==null?null:Math.round(sm.qualAvg))],
+      [`${nights.length}`,"記録した夜","#94a3b8"],
+    ]));
+    if(sm.tolN) c.appendChild(div({style:{fontSize:"10px",color:sm.inTol===sm.tolN?"#4ade80":"#94a3b8",marginBottom:"9px"}},
+      `🎯 就寝目標の±${tol}分に収まった夜：${sm.inTol}/${sm.tolN}`));
+    c.appendChild(histChips(SLEEP_HIST_METRICS,metric,k=>{state.sleepHistMetric=k;}));
+    c.appendChild(sleepHistBars(nights,metric));
+    wrap.appendChild(c); }
+  // ② 夜ごとの一覧（睡眠ログと同じ行）
+  { const c=div({className:"card"});
+    c.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0",marginBottom:"8px"}},`🌙 夜ごとの記録　${nights.length}夜`));
+    if(!nights.length){ c.appendChild(div({style:{fontSize:"11px",color:"#475569",textAlign:"center",padding:"14px 0"}},"まだ睡眠の記録がありません。")); }
+    else {
+      const CAP=30, more=!!state.sleepHistMore;
+      (more?nights:nights.slice(0,CAP)).forEach(g=>c.appendChild(sleepNightRow(g,tol)));
+      if(nights.length>CAP){
+        const b=btn({style:{width:"100%",marginTop:"8px",padding:"8px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#64748b",cursor:"pointer",fontSize:"11px",fontFamily:"inherit"}},
+          more?"🔼 閉じる":`🔽 のこり${nights.length-CAP}夜を表示`);
+        b.addEventListener('click',()=>{ state.sleepHistMore=!state.sleepHistMore; render(); });
+        c.appendChild(b);
+      }
+      c.appendChild(sleepLogLegend());
+    }
+    wrap.appendChild(c); }
+  return wrap;
+}
+// ── 🏋️ トレーニング履歴 ──
+const TRAIN_HIST_METRICS=[["vol","🏋️ ボリューム"],["mins","⏱ 時間"],["sets","🔁 セット"],["km","🏃 有酸素km"]];
+function trainHistBars(days,metric){
+  const asc=[...days].reverse();
+  if(metric==="mins") return miniBars(asc.filter(d=>d.mins>0).map(d=>({ds:d.ds,v:d.mins,t:`${d.mins}`})),"#22c55e",{zero:true,empty:"計測した時間の記録がまだありません。"});
+  if(metric==="sets") return miniBars(asc.filter(d=>d.sets>0).map(d=>({ds:d.ds,v:d.sets,t:`${d.sets}`})),"#f59e0b",{zero:true,empty:"セットの記録がまだありません。"});
+  if(metric==="km")   return miniBars(asc.filter(d=>d.km>0).map(d=>({ds:d.ds,v:d.km,t:`${Math.round(d.km*10)/10}`})),"#0ea5e9",{zero:true,empty:"有酸素の記録がまだありません。"});
+  return miniBars(asc.filter(d=>d.vol>0).map(d=>({ds:d.ds,v:d.vol,t:`${Math.round(d.vol)}`})),"#f43f5e",{zero:true,empty:"重量・回数の記録がまだありません（種目を記録すると出ます）。"});
+}
+function goToTrainingDay(ds){ state.viewDate=ds; state.tab="日記"; state.diarySubTab="トレーニング"; state.widget=false; render(); }
+function renderTrainHistory(){
+  const wrap=div({style:{maxWidth:"600px",margin:"0 auto",padding:"12px 16px 60px"}});
+  const per=state.trainHistDays||30;
+  const days=trainDays(per), sm=trainHistSummary(days);
+  const metric=state.trainHistMetric||"vol";
+  // ① まとめ＋推移
+  { const c=div({className:"card",style:{marginBottom:"10px"}});
+    c.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0",marginBottom:"4px"}},"🏋️ トレーニングの履歴"));
+    c.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"9px",lineHeight:1.5}},
+      "過去のトレーニングをさかのぼって見られます。ボリューム＝重量×回数×セットの合計です。"));
+    c.appendChild(histPeriodRow([[7,"7日"],[30,"30日"],[90,"90日"],[365,"1年"]],per,n=>{state.trainHistDays=n;state.trainHistMore=false;state.trainHistEx=null;}));
+    c.appendChild(histStatCells([
+      [`${sm.gym}`,"行った日","#22c55e"],
+      [sm.mins?(sm.mins>=60?`${Math.floor(sm.mins/60)}h${sm.mins%60?`${sm.mins%60}m`:""}`:`${sm.mins}分`):"—","計測した時間","#4ade80"],
+      [sm.vol?`${Math.round(sm.vol).toLocaleString()}`:"—","総ボリューム","#f43f5e"],
+      [sm.sets?`${sm.sets}`:"—","総セット","#fbbf24"],
+      [sm.km?`${Math.round(sm.km*10)/10}`:"—","有酸素km","#38bdf8"],
+    ]));
+    c.appendChild(histChips(TRAIN_HIST_METRICS,metric,k=>{state.trainHistMetric=k;}));
+    c.appendChild(trainHistBars(days,metric));
+    wrap.appendChild(c); }
+  // ② 種目べつ
+  { const c=div({className:"card",style:{marginBottom:"10px"}});
+    const list=workoutsByName(days);
+    c.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#f59e0b",marginBottom:"4px"}},`🏋️ 種目べつ　${list.length}種目`));
+    c.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"8px",lineHeight:1.5}},"タップするとその種目の記録が全部出ます。⭐ はこの期間の自己ベスト。"));
+    if(!list.length){ c.appendChild(div({style:{fontSize:"11px",color:"#475569",textAlign:"center",padding:"12px 0"}},"この期間に種目の記録がありません。")); }
+    list.forEach(e=>{
+      const open=state.trainHistEx===e.name;
+      const box=div({style:{borderBottom:"1px solid #1e293b",padding:"7px 0"}});
+      box.dataset.trainex=e.name;
+      const head=btn({style:{width:"100%",display:"flex",alignItems:"center",gap:"8px",background:"transparent",border:"none",padding:"0",cursor:"pointer",fontFamily:"inherit",textAlign:"left"}},[
+        div({style:{flex:1,minWidth:0}},[
+          div({style:{fontSize:"13px",color:"#e2e8f0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},`${open?"▲":"▼"} ${e.name}`),
+          div({style:{fontSize:"10px",color:"#94a3b8",marginTop:"1px"}},
+            `${e.n}回・${e.sets}セット${e.best?`・⭐ ${e.best.weight}kg`:""}${e.last?`・前回 ${woLabel(e.last)}（${mdLabel(e.last.date)}）`:""}`),
+        ]),
+      ]);
+      head.addEventListener('click',(()=>{const nm=e.name;return()=>{ state.trainHistEx=(state.trainHistEx===nm?null:nm); render(); };})());
+      box.appendChild(head);
+      if(open){
+        // 重量の推移（記録のあるものだけ・古い順）
+        const bars=[...e.items].filter(w=>w.weight!=null).reverse().map(w=>({ds:w.date,v:w.weight,t:`${w.weight}`}));
+        if(bars.length>=2) box.appendChild(div({style:{marginTop:"8px"}},[miniBars(bars,"#f59e0b",{height:44})]));
+        e.items.forEach(w=>{
+          const isBest=!!(e.best&&e.best.uid===w.uid);
+          const r=div({style:{display:"flex",gap:"8px",alignItems:"center",padding:"5px 0",cursor:"pointer"}});
+          r.dataset.trainwo=`${w.date}:${w.uid}`;
+          r.appendChild(span({style:{fontSize:"11px",color:"#64748b",width:"52px",flexShrink:0}},mdLabel(w.date)));
+          r.appendChild(div({style:{flex:1,minWidth:0,fontSize:"12px",color:isBest?"#fbbf24":"#cbd5e1"}},`${isBest?"⭐ ":""}${woLabel(w)}`));
+          r.appendChild(span({style:{fontSize:"10px",color:"#475569",flexShrink:0}},"📅"));
+          r.addEventListener('click',(()=>{const k=w.date;return()=>goToTrainingDay(k);})());
+          box.appendChild(r);
+        });
+      }
+      c.appendChild(box);
+    });
+    wrap.appendChild(c); }
+  // ③ 日ごとの記録
+  { const c=div({className:"card"});
+    c.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#22c55e",marginBottom:"8px"}},`📅 日ごとの記録　${days.length}日`));
+    if(!days.length){ c.appendChild(div({style:{fontSize:"11px",color:"#475569",textAlign:"center",padding:"14px 0"}},"この期間にトレーニングの記録がありません。")); }
+    else {
+      const CAP=20, more=!!state.trainHistMore;
+      (more?days:days.slice(0,CAP)).forEach(d=>{
+        const row=div({style:{padding:"7px 0",borderBottom:"1px solid #1e293b",cursor:"pointer"}});
+        row.dataset.trainday=d.ds;
+        const dd=parseDS(d.ds), wd=["日","月","火","水","木","金","土"][dd.getDay()];
+        const top=div({style:{display:"flex",alignItems:"center",gap:"8px"}});
+        top.appendChild(div({style:{width:"62px",flexShrink:0,fontSize:"11px",color:wd==="日"?"#f87171":wd==="土"?"#60a5fa":"#94a3b8"}},`${dd.getMonth()+1}/${dd.getDate()}(${wd})`));
+        const bits=[];
+        if(d.mins) bits.push(`⏱ ${fmtMinLabel(d.mins)}`);
+        if(d.wos.length) bits.push(`🏋️ ${d.wos.length}種目・${d.sets}セット`);
+        if(d.vol) bits.push(`${Math.round(d.vol).toLocaleString()}kg`);
+        if(d.ca.length) bits.push(`🏃 ${Math.round(d.caMin)}分${d.km?`・${Math.round(d.km*10)/10}km`:""}`);
+        top.appendChild(div({style:{flex:1,minWidth:0,display:"flex",flexWrap:"wrap",gap:"7px",fontSize:"11px",color:"#cbd5e1"}},bits.map(t=>span({},t))));
+        top.appendChild(span({style:{fontSize:"10px",color:"#475569",flexShrink:0}},"📅"));
+        row.appendChild(top);
+        // 種目・有酸素の中身
+        const det=[...d.wos.map(w=>`${w.name||"(無題)"} ${woLabel(w)}`),...d.ca.map(w=>`🏃 ${w.name||"有酸素"} ${caLabel(w)}`),
+          ...d.sess.filter(s=>s.note).map(s=>`📝 ${s.note}`)];
+        if(det.length) row.appendChild(div({style:{paddingLeft:"70px",marginTop:"3px",fontSize:"10px",color:"#64748b",lineHeight:1.6}},
+          det.slice(0,6).map(t=>div({},t)).concat(det.length>6?[div({style:{color:"#475569"}},`ほか${det.length-6}件`)]:[])));
+        row.addEventListener('click',(()=>{const k=d.ds;return()=>goToTrainingDay(k);})());
+        c.appendChild(row);
+      });
+      if(days.length>CAP){
+        const b=btn({style:{width:"100%",marginTop:"8px",padding:"8px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#64748b",cursor:"pointer",fontSize:"11px",fontFamily:"inherit"}},
+          more?"🔼 閉じる":`🔽 のこり${days.length-CAP}日を表示`);
+        b.addEventListener('click',()=>{ state.trainHistMore=!state.trainHistMore; render(); });
+        c.appendChild(b);
+      }
+      c.appendChild(div({style:{fontSize:"9px",color:"#475569",marginTop:"8px",lineHeight:1.5}},"行をタップするとその日の日記（トレーニング）が開きます。"));
+    }
+    wrap.appendChild(c); }
+  return wrap;
+}
 function renderAnalysisHub(vd, ds, curH, isToday){
-  const SUB_TABS=["日次・週次","総合分析","AI分析"];
+  const SUB_TABS=["日次・週次","睡眠","トレーニング","総合分析","AI分析"];
   if(state.analysisSubTab==="日次ログ"||state.analysisSubTab==="週次分析") state.analysisSubTab="日次・週次"; // 旧値の移行
   if(state.analysisSubTab==="AIに質問") state.analysisSubTab="AI分析";                                     // 旧値の移行
   const wrap=div({style:{maxWidth:"600px",margin:"0 auto"}});
@@ -13385,7 +13665,7 @@ function renderAnalysisHub(vd, ds, curH, isToday){
   const subBar=div({style:{display:"flex",borderBottom:"1px solid var(--border)",background:"var(--surface)",position:"sticky",top:"var(--hdr-h, 150px)",zIndex:50}});
   SUB_TABS.forEach(t=>{
     const b=btn({style:{
-      flex:1,padding:"10px 4px",border:"none",cursor:"pointer",fontSize:"12px",fontWeight:600,
+      flex:1,padding:"10px 2px",border:"none",cursor:"pointer",fontSize:"11px",fontWeight:600,whiteSpace:"nowrap",
       background:"transparent",
       color:state.analysisSubTab===t?"var(--mode)":"var(--text-4)",
       borderBottom:`2px solid ${state.analysisSubTab===t?"var(--mode)":"transparent"}`
@@ -13398,6 +13678,8 @@ function renderAnalysisHub(vd, ds, curH, isToday){
   const inner=div({style:{padding:"0"}});
   if(!SUB_TABS.includes(state.analysisSubTab))state.analysisSubTab="日次・週次";
   if(state.analysisSubTab==="日次・週次") inner.appendChild(renderLog());
+  if(state.analysisSubTab==="睡眠")       inner.appendChild(renderSleepHistory());
+  if(state.analysisSubTab==="トレーニング") inner.appendChild(renderTrainHistory());
   if(state.analysisSubTab==="総合分析")  inner.appendChild(renderAnalysis());
   if(state.analysisSubTab==="AI分析")    inner.appendChild(renderAIHub());
   wrap.appendChild(inner);
