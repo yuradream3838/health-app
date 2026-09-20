@@ -224,7 +224,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.79"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.80"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -4120,7 +4120,7 @@ function renderWidgetView(vd,ds){
     c.appendChild(openInv);
     secNodes.invest=c;
   }
-  if(wSecOn('nextdrink')) secNodes.nextdrink=nextDrinkCard({widget:true}); // 🍺 次に飲みに行く予定（踏みとどまるの下）
+  if(wSecOn('nextdrink')) secNodes.nextdrink=nextDrinkCard(); // 🍺 次に飲みに行く予定（踏みとどまるの下）
   if(vd===todayStr() && wSecOn('nightritual')) secNodes.nightritual=nightRitualCard(vd,false); // 🌙 飲まない夜のルーティン
 
   // ── 🫂 つながり習慣（今日・今週の進捗） ──
@@ -10569,9 +10569,8 @@ function syncNextDrinkFromEvent(ndId,newDs){
 }
 // ※ 飲み予定の日付を変えたときは、予定を動かさない。飲みに行く機会そのものが別なので、
 //    前の日に作った予定は記録として残し、新しい日にはまた「📅 予定に追加」を出す（上の保存処理）。
-// opts.widget … ウィジェット用。日付と残り日数だけを出し、予定の追加・表示は出さない
-function nextDrinkCard(opts){
-  const wOnly=!!(opts&&opts.widget);
+// ウィジェットでもアルコールタブでも同じものを出す（作った予定もそのまま見える）
+function nextDrinkCard(){
   const p=getNextDrinkPlan();
   const today=todayStr();
   const isFuture=p && p.date>=today;
@@ -10594,9 +10593,8 @@ function nextDrinkCard(opts){
       ]));
       if(p.note)c.appendChild(div({style:{fontSize:"12px",color:"#e2e8f0",marginTop:"4px",lineHeight:1.5}},p.note));
       // 📅 予定に追加。すでにこの飲み予定から作ってあれば、ボタンではなく**その予定**を出す（タップでその日へ）
-      // ウィジェットでは「作る」だけできて、作った予定の行は出さない（ホームは日付と残り日数だけに保つ）
       { const evs=nextDrinkEvents();
-        if(evs.length){ if(!wOnly){
+        if(evs.length){
           evs.forEach(g=>{
             const row=btn({style:{width:"100%",marginTop:"7px",padding:"8px 10px",borderRadius:"8px",cursor:"pointer",fontFamily:"inherit",textAlign:"left",
               border:"1px solid #0ea5e955",background:"#0ea5e90d",display:"flex",alignItems:"center",gap:"8px"}},[
@@ -10611,8 +10609,8 @@ function nextDrinkCard(opts){
             row.appendChild(un);
             c.appendChild(row);
           });
-          c.appendChild(div({style:{fontSize:"9px",color:"#475569",marginTop:"5px",lineHeight:1.5}},"タップするとその日の予定を開きます。「解除」で予定は残したまま結びつきだけ外せます。この予定を別の日に動かすと、上の日付も合わせます。飲み予定の日を変えたときは、前の予定はそのまま残ります。"));
-        } } else {
+          c.appendChild(div({style:{fontSize:"9px",color:"#475569",marginTop:"5px",lineHeight:1.5}},"タップでその日の予定へ。「解除」は予定を残したまま結びつきだけ外します。この予定を別の日に動かすと上の日付も合わせます。"));
+        } else {
           const row=div({style:{display:"flex",gap:"6px",marginTop:"8px"}});
           const b=btn({style:{flex:1,padding:"9px",borderRadius:"8px",cursor:"pointer",fontFamily:"inherit",fontSize:"12px",fontWeight:600,
             border:"1px solid #0ea5e9",background:"#0ea5e918",color:"#38bdf8"}},"📅 予定に追加");
