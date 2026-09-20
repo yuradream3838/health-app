@@ -224,7 +224,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.75"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.76"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -858,7 +858,6 @@ const state = {
   actEditUid:null, actTitle:"", actNote:"", actSH:9, actSM:0, actEH:10, actEM:0, actStartNextDay:false, actEndNextDay:false, actColor:"#f472b6", actUnplanned:true, actDate:null,
   actMemoKey:null, actMemoLabel:"", actMemoVd:null, actMemoText:"", // 実績（睡眠・飲酒等）へのメモ
   analysisSubTab:"日次・週次", diarySubTab:"生活記録", taskSubTab:"ルーティン",
-  sleepLogDays:7, // 🛏 睡眠ログで見る夜数（7/14/30）
   sleepHistDays:30, sleepHistMetric:"net", sleepHistMore:false,  // 分析→睡眠履歴
   trainHistDays:30, trainHistMetric:"vol", trainHistEx:null, trainHistMore:false, // 分析→トレーニング履歴
   storageAlert:false, storageExportYear:null,
@@ -4401,7 +4400,7 @@ function buildSleepSections(vd){
       sec.appendChild(ta);
       sec.appendChild(div({style:{fontSize:"11px",color:"#94a3b8",margin:"9px 0 5px"}},"💭 夢"));
       sec.appendChild(dreamField(vd));
-      sec.appendChild(div({style:{fontSize:"10px",color:"#475569",marginTop:"4px"}},"今朝までの眠りの実感。睡眠ログと総合分析（体調・飲酒との関係）に使われます。睡眠モードの画面からも記録できます"));
+      sec.appendChild(div({style:{fontSize:"10px",color:"#475569",marginTop:"4px"}},"今朝までの眠りの実感。睡眠の履歴と総合分析（体調・飲酒との関係）に使われます。睡眠モードの画面からも記録できます"));
       return sec;
     })(),
     // 🌙 就寝リズム（就寝ドリフト対策）
@@ -4493,7 +4492,7 @@ function buildSleepSections(vd){
     })(),
   ];
 }
-// ── 🛏 睡眠ログ（夜ごとの一覧）────────────────────────────────
+// ── 🛏 夜ごとの睡眠（分析→睡眠の履歴で使う）────────────────────
 // 1夜 = 「就寝する日 ds」の夜。就寝は ds の bedTime、起床は翌日の wakeTime、
 // 中途覚醒は「目が覚めた朝」＝翌日に記録される（予定タブの睡眠実績と同じ数え方）。
 // 帯の物差しは ds の 18:00 〜 翌 12:00（18時間）。
@@ -4567,7 +4566,7 @@ function sleepLogBand(g){
 // 一晩ぶんの記録の大半（起床・眠りの質・夢・中途覚醒）は「目が覚めた朝 nd」に付いている。
 // 行をタップしたときの行き先もその朝に合わせる。まだ朝が来ていない夜（今夜）は就寝日のまま。
 function sleepNightJumpDS(g){ const t=todayStr(); return (g.nd>t)?g.ds:g.nd; }
-// 夜ごとの1行（睡眠ログと分析の睡眠履歴で共通）
+// 夜ごとの1行（分析→睡眠の履歴）
 function sleepNightRow(g,tol){
   const row=div({style:{padding:"7px 0",borderBottom:"1px solid #1e293b",cursor:"pointer"}});
   row.dataset.sleepnight=g.ds;
@@ -4604,50 +4603,20 @@ function sleepNightRow(g,tol){
   row.addEventListener('click',(()=>{const k=jd;return()=>{ state.viewDate=k; state.tab="日記"; state.diarySubTab="睡眠"; state.widget=false; render(); };})());
   return row;
 }
-function renderSleepLogCard(){
-  const per=state.sleepLogDays||7;
-  const nights=sleepLogNights(per), sm=sleepLogSummary(nights), tol=sleepTol();
-  const card=div({className:"card"});
-  card.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0",marginBottom:"4px"}},"🛏 睡眠ログ"));
-  card.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"9px",lineHeight:1.5}},
-    "夜ごとの寝支度・就寝・起床・中途覚醒を一覧にしたものです。帯は18時〜翌12時。タップで「起床した朝」の記録へ移動します。"));
-  // 期間の切り替え
-  { const row=div({style:{display:"flex",gap:"5px",marginBottom:"10px"}});
-    [[7,"7夜"],[14,"14夜"],[30,"30夜"]].forEach(([n,lbl])=>{
-      const on=per===n;
-      const b=btn({style:{flex:1,padding:"6px",borderRadius:"8px",cursor:"pointer",fontSize:"11px",fontWeight:600,fontFamily:"inherit",
-        border:`1px solid ${on?"#6366f1":"#334155"}`,background:on?"#6366f122":"transparent",color:on?"#a5b4fc":"#64748b"}},lbl);
-      b.addEventListener('click',(()=>{const nn=n;return()=>{ state.sleepLogDays=nn; render(); };})());
-      row.appendChild(b);
-    });
-    card.appendChild(row); }
-  // まとめ
-  { const cell=(v,l,col)=>div({style:{flex:1,padding:"7px 3px",borderRadius:"8px",background:"#0f172a",textAlign:"center"}},[
-      div({style:{fontSize:"14px",fontWeight:800,color:col,lineHeight:1.15}},v),
-      div({style:{fontSize:"9px",color:"#64748b",marginTop:"2px"}},l)]);
-    const g3=div({style:{display:"flex",gap:"5px",marginBottom:"10px"}});
-    g3.appendChild(cell(sm.bedAvg!=null?fmtHM(sm.bedAvg):"—","平均 就寝","#a5b4fc"));
-    g3.appendChild(cell(sm.wakeAvg!=null?fmtHM(sm.wakeAvg):"—","平均 起床","#fbbf24"));
-    g3.appendChild(cell(sm.netAvg!=null?`${(Math.round(sm.netAvg*10)/10)}h`:"—","平均 実睡眠",sm.netAvg==null?"#64748b":sm.netAvg>=7?"#22c55e":sm.netAvg<=5?"#ef4444":"#eab308"));
-    g3.appendChild(cell(sm.qualAvg!=null?`${Math.round(sm.qualAvg*10)/10}`:"—",`平均 質${sm.qualN?`(${sm.qualN})`:""}`,sleepQualColor(sm.qualAvg==null?null:Math.round(sm.qualAvg))));
-    if(sm.tolN) g3.appendChild(cell(`${sm.inTol}/${sm.tolN}`,`目標±${tol}分`,sm.inTol===sm.tolN?"#22c55e":"#94a3b8"));
-    card.appendChild(g3); }
-  if(!nights.length){ card.appendChild(div({style:{fontSize:"11px",color:"#475569",textAlign:"center",padding:"10px 0"}},"まだ睡眠の記録がありません。")); return card; }
-  // 夜ごとの行
-  nights.forEach(g=>{ card.appendChild(sleepNightRow(g,tol)); });
-  card.appendChild(sleepLogLegend());
-  return card;
-}
-function sleepLogLegend(){
+function sleepLogLegend(){  // 帯と記号の読み方
   return div({style:{fontSize:"9px",color:"#475569",marginTop:"8px",lineHeight:1.5}},
     "🛏 寝支度｜🌙 就寝（かっこ内は就寝目標とのズレ）｜🌅 起床｜😪 中途覚醒（実睡眠から差し引き）｜💤 その日の昼寝。帯の点線は就寝目標、薄い帯は片方だけの記録からの推定。顔は眠りの質（その場でつけ直せます）｜📝 メモ／💭 夢。起床・眠りの質・夢は「目が覚めた朝」に記録されるので、タップすると「→」の日付（その朝）の記録が開きます。");
 }
+function goToSleepHistory(){ state.tab="分析"; state.analysisSubTab="睡眠"; state.widget=false; render(); }
 function renderSleepPanel(vd,ds,isToday){
   const wrap=div({style:{maxWidth:"600px",margin:"0 auto",padding:"10px 16px 60px"}});
   if(!isToday){ const isFuture=vd>ds; wrap.appendChild(div({style:{background:"#1e3a5f22",border:"1px solid #1e3a5f",borderRadius:"10px",padding:"8px 12px",marginBottom:"8px",fontSize:"12px",color:"#64748b"}},isFuture?"📅 未来の日付を表示中 — 事前に記録できます":"📅 過去の記録を表示中 — 編集可能です")); }
   const card=div({className:"card"},[ div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0",marginBottom:"12px"}},"😴 睡眠"), ...buildSleepSections(vd) ]);
   wrap.appendChild(card);
-  wrap.appendChild(renderSleepLogCard());
+  { const b=btn({style:{width:"100%",margin:"0 0 10px",padding:"11px",borderRadius:"10px",cursor:"pointer",fontFamily:"inherit",
+      border:"1px solid #334155",background:"#0f172a",color:"#94a3b8",fontSize:"12px",fontWeight:600}},"🛏 睡眠の履歴を見る（分析）→");
+    b.addEventListener('click',goToSleepHistory);
+    wrap.appendChild(b); }
   { const cc=div({className:"card"});
     cc.appendChild(div({style:{fontSize:"12px",color:"#94a3b8",marginBottom:"7px"}},"🎨 睡眠の実績色（予定タブのタイムライン）"));
     cc.appendChild(colorPickerRow(getSleepColor(),c=>{ setSleepColor(c); render(); }));
@@ -6382,7 +6351,7 @@ function dreamField(ds,pal){
   ta.addEventListener('change',(()=>{const k=ds;return e=>{ setDream(k,e.target.value); render(); };})());
   return ta;
 }
-// 評価を選ぶボタンの並び（睡眠タブでも睡眠ログでも同じものを使う）。sm=小さい版
+// 評価を選ぶボタンの並び（睡眠タブでも睡眠の履歴でも同じものを使う）。sm=小さい版
 function sleepQualPicker(ds,sm,after){
   const cur=sleepQualOf(ds);
   const row=div({style:{display:"flex",gap:sm?"3px":"5px"}});
@@ -8311,7 +8280,7 @@ const FEATURE_INDEX=[
   ]},
   {group:"📔 日記",items:[
     {label:"生活記録",desc:"体調・飲水・食事などの記録",go:()=>{state.tab="日記";state.diarySubTab="生活記録";}},
-    {label:"睡眠",desc:"就寝リズム・睡眠ログ・眠りの質・中途覚醒・昼寝",go:()=>{state.tab="日記";state.diarySubTab="睡眠";}},
+    {label:"睡眠",desc:"就寝リズム・眠りの質・中途覚醒・昼寝",go:()=>{state.tab="日記";state.diarySubTab="睡眠";}},
     {label:"トレーニング",desc:"体組成(写真取込)・ワークアウト・有酸素",go:()=>{state.tab="日記";state.diarySubTab="トレーニング";}},
     {label:"体調記録",desc:"症状・服薬などの記録",go:()=>{state.tab="日記";state.diarySubTab="体調記録";}},
     {label:"アルコール",desc:"飲酒記録・お酒の記録・減酒サポート",go:()=>{state.tab="日記";state.diarySubTab="アルコール";}},
@@ -13530,7 +13499,7 @@ function renderSleepHistory(){
     c.appendChild(histChips(SLEEP_HIST_METRICS,metric,k=>{state.sleepHistMetric=k;}));
     c.appendChild(sleepHistBars(nights,metric));
     wrap.appendChild(c); }
-  // ② 夜ごとの一覧（睡眠ログと同じ行）
+  // ② 夜ごとの一覧
   { const c=div({className:"card"});
     c.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0",marginBottom:"8px"}},`🌙 夜ごとの記録　${nights.length}夜`));
     if(!nights.length){ c.appendChild(div({style:{fontSize:"11px",color:"#475569",textAlign:"center",padding:"14px 0"}},"まだ睡眠の記録がありません。")); }
