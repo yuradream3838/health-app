@@ -224,7 +224,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.76"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.77"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -844,7 +844,7 @@ const state = {
   shiftPattern:defaultShiftPattern(), swapMode:false, swapFirst:null,
   planPatterns:defaultPlanPatterns(), customTodos:[], customTodoModal:null,
   scheduleSubTab:"日", editEventUid:null, editEventIsRepeat:false, editScope:"all", patternEdit:null,
-  newEvH:9, newEvM:0, newEvEndH:10, newEvEndM:0, newEvEndNextDay:false, newEvTitle:"", newEvRepeat:"none", newEvColor:"#38bdf8", newEvWeekdays:[], newEvFromTask:null, newEvGoalId:null, newEvAllDay:false, newEvRefOnly:false, newEvEndDate:null, editEventDate:null,
+  newEvH:9, newEvM:0, newEvEndH:10, newEvEndM:0, newEvEndNextDay:false, newEvTitle:"", newEvRepeat:"none", newEvColor:"#38bdf8", newEvWeekdays:[], newEvFromTask:null, newEvGoalId:null, newEvNdId:null, newEvAllDay:false, newEvRefOnly:false, newEvEndDate:null, editEventDate:null,
   aiScheduleLoading:false, aiScheduleProposal:null,
   aiAnalysisResult:null, aiAnalysisLoading:false, aiAnalysisError:null, aiAnalysisRemaining:null,
   events:{}, taskList:[], wishList:[], shopList:[],
@@ -4945,6 +4945,7 @@ function openGoalAsEvent(node, targetDate){
   state.newEvWeekdays=[parseDS(target).getDay()];
   state.newEvFromTask=null; state.newEvAllDay=false; state.newEvRefOnly=false; state.newEvPlace=""; state.newEvNote=""; state.newEvPreDays=0;
   state.newEvGoalId=(node&&node.id)||null;   // この予定がどの目標から来たかを覚える
+  state.newEvNdId=null;
   render();
 }
 // 🎯 その目標から作った予定（単発＋繰り返し）。予定側の goalId で結びつく
@@ -4963,7 +4964,7 @@ function goalEvents(goalId){
 let _goalDateSyncing=false;
 function daysBetweenDS(a,b){ return Math.round((parseDS(b)-parseDS(a))/86400000); }
 // 予定1件を delta 日ずらす（単発はscheduleの中で移動、繰り返しは開始日をずらす）
-function shiftGoalEvent(g,delta){
+function shiftLinkedEvent(g,delta){
   if(!delta) return false;
   const e=g.ev;
   if(g.repeat){
@@ -5011,7 +5012,7 @@ function syncEventsFromGoal(goalId,oldType,oldKey){
   const evs=goalEvents(goalId); if(!evs.length) return 0;
   _goalDateSyncing=true;
   let moved=0;
-  try{ evs.forEach(g=>{ if(shiftGoalEvent(g,delta)) moved++; }); }
+  try{ evs.forEach(g=>{ if(shiftLinkedEvent(g,delta)) moved++; }); }
   finally{ _goalDateSyncing=false; }
   return moved;
 }
@@ -6721,7 +6722,7 @@ function openAddEvent(vd, startH, startM){
   state.newEvEndH=(sh+1)%24;state.newEvEndM=sm;state.newEvEndNextDay=(sh+1)>=24;
   state.newEvRepeat="none";state.newEvColor=EV_DEFAULT;
   state.newEvWeekdays=[parseDS(vd).getDay()];
-  state.newEvFromTask=null;state.newEvGoalId=null;state.newEvAllDay=false;state.newEvRefOnly=false;state.newEvPlace="";state.newEvNote="";state.newEvPreDays=0;
+  state.newEvFromTask=null;state.newEvGoalId=null;state.newEvNdId=null;state.newEvAllDay=false;state.newEvRefOnly=false;state.newEvPlace="";state.newEvNote="";state.newEvPreDays=0;
   render();
 }
 // ルーティン実績ブロックの「その日だけ」表示名・メモを編集
@@ -8496,7 +8497,7 @@ function collectSearchItems(){
           state.modal="addEvent";state.editEventUid=e.uid;state.editEventIsRepeat=false;state.editEventDate=dsk;state.eventEditMode=false;
           state.newEvTitle=e.title;state.newEvH=e.startH;state.newEvM=e.startM;state.newEvEndH=e.endH;state.newEvEndM=e.endM;
           state.newEvRepeat="none";state.newEvColor=e.color||EV_DEFAULT;state.newEvWeekdays=[parseDS(dsk).getDay()];state.newEvDate=dsk;state.newEvEndDate=e.endDate||null;
-          state.newEvFromTask=e.fromTask||null;state.newEvGoalId=e.goalId||null;state.newEvAllDay=!!e.allDay;state.newEvRefOnly=!!e.refOnly;state.newEvPlace=e.place||"";state.newEvNote=e.note||"";state.newEvPreDays=e.preDays||0;state.editScope="this";render(); }});
+          state.newEvFromTask=e.fromTask||null;state.newEvGoalId=e.goalId||null;state.newEvNdId=e.ndId||null;state.newEvAllDay=!!e.allDay;state.newEvRefOnly=!!e.refOnly;state.newEvPlace=e.place||"";state.newEvNote=e.note||"";state.newEvPreDays=e.preDays||0;state.editScope="this";render(); }});
     });
   });
   // 2. 予定（繰り返し）
@@ -8510,7 +8511,7 @@ function collectSearchItems(){
         state.newEvTitle=e.title;state.newEvH=e.startH;state.newEvM=e.startM;state.newEvEndH=e.endH;state.newEvEndM=e.endM;
         state.newEvRepeat=e.repeatType||"weekly";state.newEvColor=e.color||EV_DEFAULT;
         state.newEvWeekdays=(e.weekdays&&e.weekdays.length)?[...e.weekdays]:[parseDS(e.startDate||todayStr()).getDay()];state.newEvDate=todayStr();state.newEvEndDate=null;
-        state.newEvFromTask=e.fromTask||null;state.newEvGoalId=e.goalId||null;state.newEvAllDay=!!e.allDay;state.newEvRefOnly=!!e.refOnly;state.newEvPlace=e.place||"";state.newEvNote=e.note||"";state.newEvPreDays=e.preDays||0;state.editScope="this";render(); }});
+        state.newEvFromTask=e.fromTask||null;state.newEvGoalId=e.goalId||null;state.newEvNdId=e.ndId||null;state.newEvAllDay=!!e.allDay;state.newEvRefOnly=!!e.refOnly;state.newEvPlace=e.place||"";state.newEvNote=e.note||"";state.newEvPreDays=e.preDays||0;state.editScope="this";render(); }});
   });
   // 3. 定期ルーティン
   (state.customTodos||[]).forEach(ct=>{
@@ -8887,7 +8888,7 @@ function renderDaySchedule(vd,ds,isToday){
           state.newEvRepeat=e2.isRepeat?e2.repeatType:"none";state.newEvColor=e2.color||EV_DEFAULT;
           state.newEvWeekdays=(e2.weekdays&&e2.weekdays.length)?[...e2.weekdays]:[parseDS(e2.startDate||vd).getDay()];
           state.newEvDate=owner;state.newEvEndDate=e2.endDate||e2._mdEnd||null;
-          state.newEvFromTask=e2.fromTask||null;state.newEvGoalId=e2.goalId||null;state.newEvAllDay=true;state.newEvRefOnly=!!e2.refOnly;state.newEvPlace=e2.place||"";state.newEvNote=e2.note||"";state.newEvPreDays=e2.preDays||0;state.editScope="this";render();
+          state.newEvFromTask=e2.fromTask||null;state.newEvGoalId=e2.goalId||null;state.newEvNdId=e2.ndId||null;state.newEvAllDay=true;state.newEvRefOnly=!!e2.refOnly;state.newEvPlace=e2.place||"";state.newEvNote=e2.note||"";state.newEvPreDays=e2.preDays||0;state.editScope="this";render();
         };})());
         ad.appendChild(chip);
       });
@@ -9124,7 +9125,7 @@ function renderDaySchedule(vd,ds,isToday){
     state.newEvColor=ev.color||EV_DEFAULT;
     state.newEvWeekdays=(ev.weekdays&&ev.weekdays.length)?[...ev.weekdays]:[parseDS(ev.startDate||vd).getDay()];
     state.newEvFromTask=ev.fromTask||null;
-    state.newEvGoalId=ev.goalId||null;
+    state.newEvGoalId=ev.goalId||null; state.newEvNdId=ev.ndId||null;
     state.newEvAllDay=!!ev.allDay;state.newEvRefOnly=!!ev.refOnly;
     state.newEvPlace=ev.place||"";state.newEvNote=ev.note||"";state.newEvPreDays=ev.preDays||0;
     state.editScope="this";
@@ -9602,7 +9603,7 @@ function todoItemBox(item){
     state.newEvEndH=Math.min(23,now.getHours()+1);state.newEvEndM=0;
     state.newEvRepeat="none";state.newEvColor=EV_DEFAULT;
     state.newEvWeekdays=[parseDS(target).getDay()];
-    state.newEvFromTask=it.uid; state.newEvGoalId=null;
+    state.newEvFromTask=it.uid; state.newEvGoalId=null; state.newEvNdId=null;
     state.newEvPlace="";state.newEvNote=(it.note||"");
     state.scheduleSubTab="日";
     render();
@@ -10089,7 +10090,7 @@ function renderAddEventModal(vd){
         const isNone=state.newEvRepeat==="none";
         // 複数日予定（開始日<終了日・単発のみ）は終日扱いで endDate を保存
         const mdEnd=(!isRepEdit && isNone && state.newEvEndDate && state.newEvEndDate>targetDate)?state.newEvEndDate:null;
-        const evData={title:state.newEvTitle.trim(),startH:state.newEvH,startM:state.newEvM,endH:state.newEvEndH,endM:state.newEvEndM,endNextDay:!!state.newEvEndNextDay,color:state.newEvColor,allDay:mdEnd?true:!!state.newEvAllDay,refOnly:!!state.newEvRefOnly,...(mdEnd?{endDate:mdEnd}:{}),...(evPlace?{place:evPlace}:{}),...(evNote?{note:evNote}:{}),...(ft?{fromTask:ft}:{}),...(evPre>0?{preDays:evPre}:{}),...(state.newEvGoalId?{goalId:state.newEvGoalId}:{})};
+        const evData={title:state.newEvTitle.trim(),startH:state.newEvH,startM:state.newEvM,endH:state.newEvEndH,endM:state.newEvEndM,endNextDay:!!state.newEvEndNextDay,color:state.newEvColor,allDay:mdEnd?true:!!state.newEvAllDay,refOnly:!!state.newEvRefOnly,...(mdEnd?{endDate:mdEnd}:{}),...(evPlace?{place:evPlace}:{}),...(evNote?{note:evNote}:{}),...(ft?{fromTask:ft}:{}),...(evPre>0?{preDays:evPre}:{}),...(state.newEvGoalId?{goalId:state.newEvGoalId}:{}),...(state.newEvNdId?{ndId:state.newEvNdId}:{})};
         const newWds=isW(state.newEvRepeat)?((state.newEvWeekdays&&state.newEvWeekdays.length)?[...state.newEvWeekdays].sort((a,b)=>a-b):[parseDS(targetDate).getDay()]):null;
         // 単発の予定を編集したときは**同じuidのまま**保存する。uidが変わると、この予定を指している
         // 他の記録（🫂つながる予定・実績のメモ・「やった」印など）との結びつきが切れてしまうため。
@@ -10123,8 +10124,12 @@ function renderAddEventModal(vd){
         // 🎯目標から作った予定なら、目標の期間もその日に合わせる（日次＝その日／週間〜年間＝その日を含む期間）
         let _goalMoved=null;
         if(state.newEvGoalId && isNone && !isRepEdit) _goalMoved=syncGoalFromEvent(state.newEvGoalId,targetDate);
+        // 🍺 飲みに行く予定から作った予定なら、その飲み予定の日付もこの日に合わせる
+        let _ndMoved=null;
+        if(state.newEvNdId && isNone && !isRepEdit) _ndMoved=syncNextDrinkFromEvent(state.newEvNdId,targetDate);
         saveSchedule();saveRepeatEvents();
         if(_goalMoved) showToast(`🎯 目標の期間も ${_goalMoved} に合わせました`,"#a5b4fc");
+        if(_ndMoved) showToast(`🍺 次に飲みに行く予定も ${_ndMoved} に合わせました`,"#f59e0b");
         if(!isRepEdit && targetDate!==vd){ state.viewDate=targetDate; state.scheduleSubTab="日"; }
         state.modal=null;render();
       }},"保存")
@@ -10465,6 +10470,59 @@ function alcGaugeMiniCard(vd){
 // ── 次に飲みに行く予定（計画飲酒：次の飲酒日を先に決めて、それまでの目標にする）──
 function getNextDrinkPlan(){ return (state.nextDrink&&typeof state.nextDrink==="object"&&state.nextDrink.date)?state.nextDrink:null; }
 function saveNextDrinkPlan(){ try{ if(getNextDrinkPlan())localStorage.setItem(STORAGE_KEY+"_nextdrink",JSON.stringify(state.nextDrink)); else localStorage.removeItem(STORAGE_KEY+"_nextdrink"); }catch{} }
+// ── 🍺 飲みに行く予定 ↔ 予定タブ ────────────────────────────────
+// 予定と結びつけるためのid（古いデータには使うときに補う）
+// 時刻だけだと同じミリ秒に作り直した予定が前の予定と同じidになってしまうので、乱数を足す
+function ensureNextDrinkId(){ const p=getNextDrinkPlan(); if(!p)return null; if(!p.id){ p.id="nd"+Date.now().toString(36)+Math.random().toString(36).slice(2,7); saveNextDrinkPlan(); } return p.id; }
+// この飲み予定から作った予定（単発＋繰り返し）。予定側の ndId で結びつく
+function nextDrinkEvents(){
+  const p=getNextDrinkPlan(); const out=[];
+  if(!p||!p.id) return out;
+  const sch=state.schedule||{};
+  Object.keys(sch).forEach(ds=>{ (sch[ds]||[]).forEach(e=>{ if(e.ndId===p.id) out.push({ds,ev:e,repeat:false}); }); });
+  (state.repeatEvents||[]).forEach(e=>{ if(e.ndId===p.id) out.push({ds:e.startDate||todayStr(),ev:e,repeat:true}); });
+  out.sort((a,b)=>String(a.ds).localeCompare(String(b.ds)));
+  return out;
+}
+// 「📅 予定に追加」：予定タブの追加画面を、その日・夜の時間で開く
+function openNextDrinkAsEvent(){
+  const p=getNextDrinkPlan(); if(!p) return;
+  const id=ensureNextDrinkId();
+  const target=p.date;
+  state.tab="予定"; state.scheduleSubTab="日"; state.widget=false; state.viewDate=target; state.lifeScreen=null;
+  state.modal="addEvent"; state.editEventUid=null; state.editEventIsRepeat=false; state.editEventDate=target;
+  state.newEvDate=target; state.newEvEndDate=null;
+  state.newEvTitle="🍺 "+(((p.note||"").trim())||"飲みに行く");
+  state.newEvH=19; state.newEvM=0; state.newEvEndH=22; state.newEvEndM=0; state.newEvEndNextDay=false;
+  state.newEvRepeat="none"; state.newEvColor="#f97316";
+  state.newEvWeekdays=[parseDS(target).getDay()];
+  state.newEvFromTask=null; state.newEvGoalId=null; state.newEvAllDay=false; state.newEvRefOnly=false;
+  state.newEvPlace=""; state.newEvNote=""; state.newEvPreDays=0;
+  state.newEvNdId=id;   // この予定がどの飲み予定から来たかを覚える
+  render();
+}
+// その予定を予定タブで開く
+function goToNextDrinkEvent(g){ state.widget=false; state.lifeScreen=null; state.tab="予定"; state.scheduleSubTab="日"; state.viewDate=g.ds; render(); }
+// 🍺の日付 ↔ 予定の日付 を連動させる（目標と同じ考え方。行き来で呼び合わないよう同期中は入口で止める）
+let _ndDateSyncing=false;
+// ① 予定を動かした → 飲み予定の日付も合わせる。変えたときは新しい日付のラベルを返す
+function syncNextDrinkFromEvent(ndId,newDs){
+  if(_ndDateSyncing||!ndId||!newDs) return null;
+  const p=getNextDrinkPlan(); if(!p||p.id!==ndId||p.date===newDs) return null;
+  _ndDateSyncing=true;
+  try{ state.nextDrink={...p,date:newDs}; saveNextDrinkPlan(); }finally{ _ndDateSyncing=false; }
+  return mdLabel(newDs);
+}
+// ② 飲み予定の日付を変えた → そこから作った予定も同じ日数だけずらす。動かした件数を返す
+function syncEventsFromNextDrink(oldDate,newDate){
+  if(_ndDateSyncing||!oldDate||!newDate) return 0;
+  const delta=daysBetweenDS(oldDate,newDate); if(!delta) return 0;
+  const evs=nextDrinkEvents(); if(!evs.length) return 0;
+  _ndDateSyncing=true;
+  let moved=0;
+  try{ evs.forEach(g=>{ if(shiftLinkedEvent(g,delta)) moved++; }); }finally{ _ndDateSyncing=false; }
+  return moved;
+}
 function nextDrinkCard(){
   const p=getNextDrinkPlan();
   const today=todayStr();
@@ -10487,6 +10545,26 @@ function nextDrinkCard(){
         txt(mdLabel(p.date)), span({style:{fontSize:"13px",color:"#fbbf24",marginLeft:"8px",fontWeight:700}}, diff===0?"今日":`あと${diff}日`)
       ]));
       if(p.note)c.appendChild(div({style:{fontSize:"12px",color:"#e2e8f0",marginTop:"4px",lineHeight:1.5}},p.note));
+      // 📅 予定に追加。すでにこの飲み予定から作ってあれば、ボタンではなく**その予定**を出す（タップでその日へ）
+      { const evs=nextDrinkEvents();
+        if(evs.length){
+          evs.forEach(g=>{
+            const row=btn({style:{width:"100%",marginTop:"7px",padding:"8px 10px",borderRadius:"8px",cursor:"pointer",fontFamily:"inherit",textAlign:"left",
+              border:"1px solid #0ea5e955",background:"#0ea5e90d",display:"flex",alignItems:"center",gap:"8px"}},[
+              span({style:{fontSize:"12px",color:"#7dd3fc",flexShrink:0}},`📅 ${g.repeat?"繰り返し":mdLabel(g.ds)}`),
+              span({style:{flex:1,minWidth:0,fontSize:"12px",color:"#e2e8f0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},g.ev.title||"(無題)"),
+              span({style:{fontSize:"10px",color:"#64748b",flexShrink:0}},goalEventTimeLabel(g)),
+            ]);
+            row.addEventListener('click',(()=>{const gg=g;return()=>goToNextDrinkEvent(gg);})());
+            c.appendChild(row);
+          });
+          c.appendChild(div({style:{fontSize:"9px",color:"#475569",marginTop:"5px",lineHeight:1.5}},"タップするとその日の予定を開きます。予定を消すと、ここはまた「予定に追加」に戻ります。日付はどちらを変えても合わせます。"));
+        } else {
+          const b=btn({style:{width:"100%",marginTop:"8px",padding:"9px",borderRadius:"8px",cursor:"pointer",fontFamily:"inherit",fontSize:"12px",fontWeight:600,
+            border:"1px solid #0ea5e9",background:"#0ea5e918",color:"#38bdf8"}},"📅 予定に追加");
+          b.addEventListener('click',openNextDrinkAsEvent);
+          c.appendChild(b);
+        } }
       c.appendChild(div({style:{fontSize:"11px",color:"#94a3b8",marginTop:"7px",lineHeight:1.6}},"その日まで外飲みはお預け。今日踏みとどまれば、この日をもっと楽しめて貯金も増えます。"));
     } else {
       c.appendChild(div({style:{fontSize:"13px",color:"#f87171",fontWeight:700,lineHeight:1.5}},`前回の予定日（${mdLabel(p.date)}）は過ぎています。`));
@@ -10510,7 +10588,13 @@ function nextDrinkCard(){
   const row=div({style:{display:"flex",gap:"8px"}});
   if(p){ const cancel=btn({className:"btn-ghost",style:{flex:1},onClick:()=>{ state.nextDrinkEdit=false; render(); }},"キャンセル"); row.appendChild(cancel); }
   const save=btn({style:{flex:2,padding:"10px",borderRadius:"8px",border:"none",background:"linear-gradient(135deg,#f59e0b,#f97316)",color:"#fff",fontSize:"13px",fontWeight:700,cursor:"pointer"}},"✅ 予定を決める");
-  save.addEventListener('click',()=>{ const dt=state.ndDraftDate; if(!dt){showToast("日付を選んでください");return;} state.nextDrink={date:dt,note:(state.ndDraftNote||"").trim()}; saveNextDrinkPlan(); state.nextDrinkEdit=false; showToast(`🍺 次の飲み予定：${mdLabel(dt)}`,"#f59e0b"); render(); });
+  save.addEventListener('click',()=>{ const dt=state.ndDraftDate; if(!dt){showToast("日付を選んでください");return;}
+    const old=p&&p.date;
+    state.nextDrink={...(p||{}),date:dt,note:(state.ndDraftNote||"").trim()}; saveNextDrinkPlan();
+    // 日付を変えたら、この飲み予定から作った予定も同じ日数だけずらす
+    const moved=old?syncEventsFromNextDrink(old,dt):0;
+    state.nextDrinkEdit=false;
+    showToast(moved?`🍺 予定も ${mdLabel(dt)} に動かしました`:`🍺 次の飲み予定：${mdLabel(dt)}`,"#f59e0b"); render(); });
   row.appendChild(save);
   c.appendChild(row);
   if(p){ const clr=btn({style:{width:"100%",marginTop:"8px",padding:"9px",background:"transparent",border:"1px solid #7f1d1d",borderRadius:"8px",color:"#f87171",fontSize:"12px",cursor:"pointer"}},"🗑 予定を削除");
@@ -13304,7 +13388,7 @@ function renderAchievement(vd){
           state.newEvEndH=Math.min(23,now.getHours()+1); state.newEvEndM=0; state.newEvEndNextDay=false;
           state.newEvRepeat="none"; state.newEvColor=EV_DEFAULT;
           state.newEvWeekdays=[parseDS(target).getDay()];
-          state.newEvFromTask=null; state.newEvGoalId=null; state.newEvAllDay=false; state.newEvRefOnly=false; state.newEvPlace=""; state.newEvNote=""; state.newEvPreDays=0;
+          state.newEvFromTask=null; state.newEvGoalId=null; state.newEvNdId=null; state.newEvAllDay=false; state.newEvRefOnly=false; state.newEvPlace=""; state.newEvNote=""; state.newEvPreDays=0;
           render();
         };})());
         row.appendChild(planB);
