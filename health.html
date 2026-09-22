@@ -224,7 +224,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.80"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.81"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -3292,12 +3292,22 @@ function modeCustomTodoRow(vd,ct,tt,accent,carry){
       ? `🌙 開始翌日${snt?`（${String(snt.h).padStart(2,'0')}:${String(snt.m||0).padStart(2,'0')}）`:""}`
       : `🔴 繰越${carry.daysAgo?`${carry.daysAgo}日前`:""}・未実施`;
     const row=div({style:{display:'flex',alignItems:'center',gap:'9px',padding:'7px 0',borderBottom:'1px solid #ffffff10'}});
-    const cb=btn({style:{width:'24px',height:'24px',borderRadius:'6px',flexShrink:0,border:'2px solid #ffffff3d',background:'transparent',cursor:'pointer'}},'');
-    cb.addEventListener('click',(()=>{const c2={...ct},label=lbl;return()=>{ dismissPastUnchecked(c2,vd); const cur=(state.todos[vd]||{})[c2.uid]||{}; setTodo(vd,c2.uid,{...cur,checked:true,time:new Date().toISOString()}); showToast(`✅ ${label}`); };})());
+    const _recC=(state.todos[vd]||{})[ct.uid]||{};
+    const _runC=ct.mode==='timer' && _recC.startTime && !_recC.endTime;
+    let cb;
+    if(ct.mode==='timer'){
+      // 繰り越しでも時間計測式は計測して実施する（今日ぶんとして記録される）
+      cb=btn({style:{padding:'5px 11px',borderRadius:'8px',flexShrink:0,border:`1px solid ${_runC?'#f97316':accent}`,background:(_runC?'#f97316':accent)+'22',color:_runC?'#f97316':accent,cursor:'pointer',fontSize:'12px',fontWeight:700,fontFamily:'inherit'}},_runC?'⏹ 停止':'▶ 開始');
+      cb.addEventListener('click',(()=>{const c2={...ct},label=lbl,run=_runC;return()=>{ if(run){ stopCustomTodoTimer(vd,c2); showToast(`✅ ${label}`); } else { startCustomTodoTimer(vd,c2); } };})());
+    } else {
+      cb=btn({style:{width:'24px',height:'24px',borderRadius:'6px',flexShrink:0,border:'2px solid #ffffff3d',background:'transparent',cursor:'pointer'}},'');
+      cb.addEventListener('click',(()=>{const c2={...ct},label=lbl;return()=>{ completeCustomTodoCarry(c2,vd); showToast(`✅ ${label}`); };})());
+    }
     row.appendChild(cb);
     const lw=div({style:{flex:1,minWidth:0,cursor:'pointer'}});
     lw.appendChild(div({style:{fontSize:'14px',color:'#e2e8f0',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}},lbl));
-    lw.appendChild(div({style:{fontSize:'10px',color:carry.snToday?'#94a3b8':'#f87171'}},sub));
+    lw.appendChild(div({style:{fontSize:'10px',color:_runC?'#f97316':(carry.snToday?'#94a3b8':'#f87171')}},
+      _runC?`⏱ ${carry.daysAgo?`${carry.daysAgo}日前の分を`:''}計測中（経過 ${fmtDur(Date.now()-Date.parse(_recC.startTime))}）`:sub));
     lw.addEventListener('click',(()=>{const uid=ct.uid,l=lbl,dd=carry.dueDate;return()=>{ state.planCustomTodo={uid,label:l,vd:dd,editMode:true}; state.modal='planCustomTodo'; render(); };})());
     row.appendChild(lw);
     return row;
@@ -3315,8 +3325,9 @@ function modeCustomTodoRow(vd,ct,tt,accent,carry){
   } else {
     cb=btn({style:{width:'24px',height:'24px',borderRadius:'6px',flexShrink:0,border:`2px solid ${done?accent:'#ffffff3d'}`,background:done?accent:'transparent',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',fontSize:'14px',color:'#1a1408'}},done?'✓':'');
     cb.addEventListener('click',(()=>{const id=ct.uid,c2={...ct},label=lbl,wasDone=done,r=rec;return()=>{
-      if(c2.mode==='timer'){ if(wasDone){ const cur={...((state.todos[vd]||{})[id]||{})}; delete cur.startTime; delete cur.endTime; delete cur.time; setTodo(vd,id,{...cur,checked:false}); } else { stopCustomTodoTimer(vd,c2); showToast(`✅ ${label}`); } }
-      else { setTodo(vd,id,{...r,checked:!wasDone,time:!wasDone?new Date().toISOString():null}); if(!wasDone)showToast(`✅ ${label}`); }
+      if(c2.mode==='timer'){ if(wasDone){ uncheckCustomTodo(c2,vd); } else { stopCustomTodoTimer(vd,c2); showToast(`✅ ${label}`); } }
+      else if(wasDone){ uncheckCustomTodo(c2,vd); }
+      else { completeCustomTodo(c2,vd); showToast(`✅ ${label}`); }
     };})());
   }
   row.appendChild(cb);
@@ -4213,7 +4224,22 @@ function renderWidgetView(vd,ds){
       const sub=occ.snToday
         ? `🌙 開始翌日${_snt?`（${String(_snt.h).padStart(2,'0')}:${String(_snt.m||0).padStart(2,'0')}）`:""}`
         : `🔴 繰越${occ.daysAgo?`${occ.daysAgo}日前`:""}・未実施`;
-      const rrow=checkRow(false,`🔁 ${lbl}`,sub,()=>{ dismissPastUnchecked(ct,vd); const cur=(state.todos[vd]||{})[ct.uid]||{}; setTodo(vd,ct.uid,{...cur,checked:true,time:new Date().toISOString()}); showToast(`✅ ${lbl}`); });
+      const _recW=(state.todos[vd]||{})[ct.uid]||{};
+      const _runW=ct.mode==='timer' && _recW.startTime && !_recW.endTime;
+      let rrow;
+      if(ct.mode==='timer'){
+        // 繰り越しでも時間計測式は計測して実施する
+        const _sub=_runW?`⏱ ${occ.daysAgo?`${occ.daysAgo}日前の分を`:""}計測中（経過 ${fmtDur(Date.now()-Date.parse(_recW.startTime))}）`:sub;
+        rrow=div({style:{display:"flex",alignItems:"center",gap:"10px",padding:"7px 0",borderBottom:"1px solid #1e3a5f55"}});
+        const tb=btn({style:{padding:"4px 10px",flexShrink:0,borderRadius:"6px",fontSize:"12px",fontWeight:700,cursor:"pointer",border:`1px solid ${_runW?"#f97316":"#0ea5e9"}`,background:(_runW?"#f97316":"#0ea5e9")+"22",color:_runW?"#f97316":"#38bdf8"}},_runW?"⏹":"▶");
+        tb.addEventListener('click',(()=>{const c2={...ct},l=lbl,run=_runW;return()=>{ if(run){ stopCustomTodoTimer(vd,c2); showToast(`✅ ${l}`); } else { startCustomTodoTimer(vd,c2); } };})());
+        rrow.appendChild(tb);
+        rrow.appendChild(div({style:{flex:1,minWidth:0}},[
+          div({style:{fontSize:"13px",color:"#e2e8f0",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},`🔁 ${lbl}`),
+          div({style:{fontSize:"10px",color:_runW?"#f97316":"#f87171"}},_sub)]));
+      } else {
+        rrow=checkRow(false,`🔁 ${lbl}`,sub,()=>{ completeCustomTodoCarry(ct,vd); showToast(`✅ ${lbl}`); });
+      }
       const edit=btn({style:{flexShrink:0,fontSize:"12px",padding:"3px 9px",borderRadius:"6px",cursor:"pointer",fontWeight:600,border:"1px solid #334155",background:"transparent",color:"#94a3b8"}},"✏️");
       edit.addEventListener('click',(()=>{const uid=ct.uid,l=lbl,dd=occ.dueDate;return()=>{ state.planCustomTodo={uid,label:l,vd:dd,editMode:true}; state.modal="planCustomTodo"; render(); };})());
       rrow.appendChild(edit);
@@ -4237,7 +4263,7 @@ function renderWidgetView(vd,ds){
           sub?div({style:{fontSize:"10px",color:running?"#f97316":"#64748b"}},sub):null
         ]));
       } else {
-        rrow=checkRow(false,lbl,sub,()=>{ setTodo(vd,ct.uid,{...rec,checked:true,time:new Date().toISOString()}); showToast(`✅ ${lbl}`); });
+        rrow=checkRow(false,lbl,sub,()=>{ completeCustomTodo(ct,vd); showToast(`✅ ${lbl}`); });
       }
       // ✏️ この日だけの変更（この日のみ削除／時刻変更／内容変更）をヴィジェットからも開ける
       const edit=btn({style:{flexShrink:0,fontSize:"12px",padding:"3px 9px",borderRadius:"6px",cursor:"pointer",fontWeight:600,border:"1px solid #334155",background:"transparent",color:"#94a3b8"}},"✏️");
@@ -7258,7 +7284,7 @@ function renderPlanCustomTodoModal(){
     } else {
       m.appendChild(btn({style:{width:"100%",padding:"11px",border:"none",borderRadius:"8px",color:"#fff",cursor:"pointer",fontSize:"13px",fontWeight:700,marginBottom:"14px",
         background:doneI?"#334155":"linear-gradient(135deg,#22c55e,#0ea5e9)"},
-        onClick:()=>{ const cur={...((state.todos[vd]||{})[pc.uid]||{})}; if(doneI){ delete cur.time; setTodo(vd,pc.uid,{...cur,checked:false}); showToast("未完了に戻しました"); } else { setTodo(vd,pc.uid,{...cur,checked:true,time:new Date().toISOString()}); showToast(`✅ ${lblI}`); } render(); }},
+        onClick:()=>{ const _ct=(state.customTodos||[]).find(c=>c.uid===pc.uid)||pc; if(doneI){ uncheckCustomTodo(_ct,vd); showToast("未完了に戻しました"); } else { completeCustomTodo(_ct,vd); showToast(`✅ ${lblI}`); } render(); }},
         doneI?"↩ 未完了に戻す":"✓ 完了にする"));
     }
     const infoRow=(label,val)=> val?div({style:{marginBottom:"11px"}},[
@@ -7380,7 +7406,7 @@ function renderPlanCustomTodoModal(){
     { const on=!!pc.doneNextDay; const nb=btn({style:{width:"100%",padding:"8px",marginBottom:"8px",borderRadius:"8px",cursor:"pointer",fontSize:"12px",fontWeight:600,border:`1px solid ${on?"#38bdf8":"#334155"}`,background:on?"#0ea5e922":"transparent",color:on?"#38bdf8":"#64748b"}},on?"🌙 翌日に完了（翌日の実績へ）":"☀️ 当日に完了");
       nb.addEventListener('click',()=>{pc.doneNextDay=!pc.doneNextDay;render();}); m.appendChild(nb); }
     m.appendChild(btn({style:{width:"100%",padding:"9px",marginBottom:"6px",background:"#22c55e18",border:"1px solid #22c55e",borderRadius:"8px",color:"#4ade80",fontSize:"13px",fontWeight:600,cursor:"pointer"},
-      onClick:()=>{ const p=(vd||"").split('-'); const dt=new Date(+p[0],+p[1]-1,+p[2],pc.doneH,pc.doneM,0,0); if(pc.doneNextDay)dt.setDate(dt.getDate()+1); const cur2={...((state.todos[vd]||{})[pc.uid]||{})}; setTodo(vd,pc.uid,{...cur2,checked:true,time:dt.toISOString()}); state.modal=null; showToast("完了時刻を変更しました"); render(); }},"✅ 完了時刻を保存"));
+      onClick:()=>{ const p=(vd||"").split('-'); const dt=new Date(+p[0],+p[1]-1,+p[2],pc.doneH,pc.doneM,0,0); if(pc.doneNextDay)dt.setDate(dt.getDate()+1); const _ct=(state.customTodos||[]).find(c=>c.uid===pc.uid)||pc; completeCustomTodo(_ct,vd,{time:dt.toISOString()}); state.modal=null; showToast("完了時刻を変更しました"); render(); }},"✅ 完了時刻を保存"));
     m.appendChild(btn({style:{width:"100%",padding:"8px",marginBottom:"12px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#94a3b8",cursor:"pointer",fontSize:"12px"},
       onClick:()=>{ const cur2={...((state.todos[vd]||{})[pc.uid]||{})}; delete cur2.time; setTodo(vd,pc.uid,{...cur2,checked:false}); state.modal=null; showToast("未完了に戻しました"); render(); }},"↩ 未完了に戻す"));
     m.appendChild(div({style:{borderTop:"1px solid #1e293b",margin:"0 0 10px"}}));
@@ -10223,7 +10249,8 @@ function customTodoDoneCount(uid){ let n=0; for(const d in state.todos){ const r
 function fmtDur(ms){ if(!(ms>0))return "0分"; const mins=Math.round(ms/60000); if(mins<60)return `${mins}分`; const h=Math.floor(mins/60),m=mins%60; return m?`${h}時間${m}分`:`${h}時間`; }
 // 定期ルーティン（時間計測式）の記録を開始/終了。dはチェックを記録する日付
 function startCustomTodoTimer(vd,ct){ const cur=(state.todos[vd]||{})[ct.uid]||{}; setTodo(vd,ct.uid,{...cur,startTime:new Date().toISOString(),endTime:null,checked:false}); }
-function stopCustomTodoTimer(vd,ct){ const cur=(state.todos[vd]||{})[ct.uid]||{}; dismissPastUnchecked(ct,vd); const now=new Date().toISOString(); setTodo(vd,ct.uid,{...cur,startTime:cur.startTime||now,endTime:now,checked:true,time:now}); }
+function stopCustomTodoTimer(vd,ct){ const cur=(state.todos[vd]||{})[ct.uid]||{}; const skipped=dismissPastUnchecked(ct,vd); const now=new Date().toISOString();
+  completeCustomTodo(ct,vd,{startTime:cur.startTime||now,endTime:now,time:now,skipped:skipped.length?skipped:undefined}); }
 // その日にアルコールを摂取したか（翌日開始の飲酒は翌日側にカウント）
 function dayHasAlcohol(ds){
   const onDay=(getDaily(ds).drinks||[]).some(dr=>!dr.startNextDay);
@@ -11767,19 +11794,86 @@ function customTodoOccurrence(ct, vd){
   }
   return null;
 }
-// 繰り越し実施時：直近の完了回までさかのぼって、未実施・未除外の該当日をすべて除外（予定から削除）
+// 繰り越し実施時：直近の完了回までさかのぼって、未実施・未除外の該当日をすべて除外（予定から削除）。
+// **この完了で除外した日の一覧を返す**（完了を取り消したときに元へ戻すため）。
 function dismissPastUnchecked(ct, vd){
-  let ds=vd, changed=false;
+  let ds=vd; const skipped=[];
   for(let i=0;i<400;i++){
     ds=addDays(ds,-1);
     if(ct.startDate && ds<ct.startDate) break;
     if(customTodoDue(ct,ds)){
       const rec=(state.todos[ds]||{})[ct.uid]||{};
       if(rec.checked) break; // 直近の完了回に到達 → それ以前は対象外
-      if(!rec.excluded){ if(!state.todos[ds])state.todos[ds]={}; state.todos[ds][ct.uid]={...rec,excluded:true}; changed=true; }
+      if(!rec.excluded){ if(!state.todos[ds])state.todos[ds]={}; state.todos[ds][ct.uid]={...rec,excluded:true,autoSkip:true}; skipped.push(ds); }
     }
   }
-  if(changed){ try{localStorage.setItem(STORAGE_KEY+"_todo",JSON.stringify(state.todos));}catch{} }
+  if(skipped.length){ try{localStorage.setItem(STORAGE_KEY+"_todo",JSON.stringify(state.todos));}catch{} }
+  return skipped;
+}
+// 完了を取り消したとき：その完了でまとめて除外した過去回を元に戻す（自分で「除外」した回は触らない）
+function restorePastSkipped(uid, skipped){
+  if(!Array.isArray(skipped)||!skipped.length) return 0;
+  let n=0;
+  skipped.forEach(ds=>{
+    const rec=(state.todos[ds]||{})[uid];
+    if(rec&&rec.excluded&&rec.autoSkip){ const nx={...rec}; delete nx.excluded; delete nx.autoSkip; state.todos[ds][uid]=nx; n++; }
+  });
+  if(n){ try{localStorage.setItem(STORAGE_KEY+"_todo",JSON.stringify(state.todos));}catch{} }
+  return n;
+}
+// 「やった日から数え直す」が使える間隔かどうか。
+// 曜日指定（毎週◯曜）と毎月◯日は日付そのものに意味があるので、カレンダー固定のまま。
+function ctFromDoneOk(ct){
+  if(!ct) return false;
+  if(ct.byShiftSchedule) return false;
+  if(ct.itype==="day") return true;
+  if(ct.itype==="week") return !(ct.weekdays&&ct.weekdays.length);
+  return false;
+}
+// 実施した日を新しい起点にする（reschedules に auto セグメントを積む）。直近12件だけ残す
+function reanchorCustomTodo(ct, vd){
+  const src=(state.customTodos||[]).find(c=>c.uid===(ct&&ct.uid));
+  if(!src||!src.fromDone||!ctFromDoneOk(src)) return false;
+  const eff=customTodoCfgFor(src,vd);
+  const rs=[...(src.reschedules||[])].filter(r=>!(r.auto&&r.from===vd));
+  rs.push({from:vd, itype:eff.itype, n:Math.max(1,eff.n||1),
+    weekdays:Array.isArray(eff.weekdays)?[...eff.weekdays]:[], shifts:Array.isArray(eff.shifts)?[...eff.shifts]:[], auto:true});
+  const autos=rs.filter(r=>r.auto).map(r=>r.from).sort();
+  const drop=new Set(autos.slice(0,Math.max(0,autos.length-12)));
+  src.reschedules=rs.filter(r=>!(r.auto&&drop.has(r.from)));
+  saveCustomTodos();
+  return true;
+}
+// 実施を取り消したら、その日を起点にしたぶんも取り消す（ひとつ前の起点に戻る）
+function unanchorCustomTodo(ct, vd){
+  const src=(state.customTodos||[]).find(c=>c.uid===(ct&&ct.uid));
+  if(!src||!Array.isArray(src.reschedules)) return false;
+  const rs=src.reschedules.filter(r=>!(r.auto&&r.from===vd));
+  if(rs.length===src.reschedules.length) return false;
+  src.reschedules=rs.length?rs:undefined; saveCustomTodos();
+  return true;
+}
+// 実施を記録する（すべての完了はここを通す）。fromDone の項目はこの日を新しい起点にする
+function completeCustomTodo(ct, vd, extra){
+  const cur=(state.todos[vd]||{})[ct.uid]||{};
+  const now=new Date().toISOString();
+  setTodo(vd,ct.uid,{...cur,...(extra||{}),checked:true,time:(extra&&extra.time)||now});
+  reanchorCustomTodo(ct,vd);
+}
+// 繰り越しを実施した記録（今日ぶん）を作る。除外した過去回を skipped に残す
+function completeCustomTodoCarry(ct, vd, extra){
+  const skipped=dismissPastUnchecked(ct,vd);
+  completeCustomTodo(ct,vd,{...(extra||{}),skipped:skipped.length?skipped:undefined});
+}
+// 完了の取り消し（チェック式・時間計測式の共通処理）。まとめて除外した過去回も戻す
+function uncheckCustomTodo(ct, vd){
+  const cur={...((state.todos[vd]||{})[ct.uid]||{})};
+  const back=restorePastSkipped(ct.uid,cur.skipped);
+  delete cur.skipped;
+  if(ct.mode==='timer'){ delete cur.startTime; delete cur.endTime; }
+  unanchorCustomTodo(ct,vd);
+  setTodo(vd,ct.uid,{...cur,checked:false,time:null});
+  if(back) showToast(`↩️ 未実施だった${back}回分も戻しました`);
 }
 // たまにやることの指定日dsでの時刻 {h,m}。時刻なしは null。
 // 曜日別の時間（さらに直で分けられる）があれば優先、なければ基本の timeH/timeM。
@@ -12239,7 +12333,9 @@ function renderOccasional(vd){
       const rec=(state.todos[vd]||{})[ct.uid]||{};
       const running=rec.startTime && !rec.endTime && !done;
       if(done){
-        row.appendChild(div({style:{width:"22px",height:"22px",borderRadius:"6px",flexShrink:0,border:"2px solid #22c55e",background:"#22c55e",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"13px",color:"#fff"}},"✓"));
+        const ub=btn({style:{width:"22px",height:"22px",borderRadius:"6px",flexShrink:0,border:"2px solid #22c55e",background:"#22c55e",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"13px",color:"#fff",cursor:"pointer",padding:"0"},title:"完了を取り消す"},"✓");
+        ub.addEventListener('click',(()=>{const c2={...ct};return()=>{ uncheckCustomTodo(c2,vd); };})());
+        row.appendChild(ub);
       } else if(running){
         const b=btn({style:{padding:"5px 11px",flexShrink:0,borderRadius:"7px",border:"1px solid #f97316",background:"#f9731622",color:"#f97316",fontSize:"12px",fontWeight:700,cursor:"pointer"}},"⏹ 終了");
         b.addEventListener('click',(()=>{const c2={...ct},label=ct.label;return()=>{ stopCustomTodoTimer(vd,c2); showToast(`✅ ${label}`); };})());
@@ -12251,13 +12347,11 @@ function renderOccasional(vd){
       }
     } else if(active){
       const cb=btn({style:{width:"22px",height:"22px",borderRadius:"6px",flexShrink:0,border:`2px solid ${done?"#22c55e":(occ&&occ.snToday)?"#a78bfa":overdue?"#f97316":"#334155"}`,background:done?"#22c55e":"transparent",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"13px",color:"#fff"}},done?"✓":"");
-      cb.addEventListener('click',(()=>{const o=occ,id=ct.uid,c2={...ct},label=ct.label,wasDone=done;return()=>{
-        if(wasDone){ merge(vd,id,{checked:false,time:null}); }
+      cb.addEventListener('click',(()=>{const c2={...ct},label=ct.label,wasDone=done;return()=>{
+        if(wasDone){ uncheckCustomTodo(c2,vd); }     // 取り消し：この完了でまとめて除外した回も戻す
         else {
-          // チェックしたら、以前の未実施の回（予定）はすべて削除（除外）する
-          dismissPastUnchecked(c2,vd);
-          // チェックはチェックした当日(vd)に記録
-          merge(vd,id,{checked:true,time:new Date().toISOString()});
+          // チェックしたら、以前の未実施の回（予定）はすべて除外し、戻せるよう記録しておく
+          completeCustomTodoCarry(c2,vd);
           showToast(`✅ ${label}`);
         }
       };})());
@@ -12270,12 +12364,15 @@ function renderOccasional(vd){
     const _tt=customTodoTimeFor(ct,vd), _hasWd=ct.weekdayTimes&&Object.keys(ct.weekdayTimes).length;
     const _timeStr=_tt?` ・ ${_tt.h}:${String(_tt.m||0).padStart(2,'0')}${_hasWd?"(曜日別)":""}`:(_hasWd?" ・ 曜日別":"");
     let statusStr; const _snToday=occ&&occ.snToday;
-    if(_snToday){ const st=customTodoTimeFor(ct,occ.dueDate); statusStr=`🌙 開始翌日・今日${st?`（${String(st.h).padStart(2,'0')}:${String(st.m||0).padStart(2,'0')}）`:""}`; }
+    const _recT=(state.todos[vd]||{})[ct.uid]||{};
+    const _runT=isTimer && _recT.startTime && !_recT.endTime && !done;
+    if(_runT) statusStr=overdue?`⏱ ${occ.daysAgo}日前(${mdc(occ.dueDate)})の分を実施中`:"⏱ 実施中";
+    else if(_snToday){ const st=customTodoTimeFor(ct,occ.dueDate); statusStr=`🌙 開始翌日・今日${st?`（${String(st.h).padStart(2,'0')}:${String(st.m||0).padStart(2,'0')}）`:""}`; }
     else if(overdue) statusStr=`🔴 ${occ.daysAgo}日前(${mdc(occ.dueDate)})から未実施`;
     else if(excludedToday) statusStr="除外中";
     else if(occ) statusStr="今日";
     else statusStr="次:"+mdc(nextCustomTodoDate(ct));
-    lab.appendChild(div({style:{fontSize:"9px",color:_snToday?"#a78bfa":(overdue?"#f97316":"#64748b")}},`${customTodoIntervalLabel(ct)}${_timeStr}　${statusStr}`));
+    lab.appendChild(div({style:{fontSize:"9px",color:_runT?"#f97316":(_snToday?"#a78bfa":(overdue?"#f97316":"#64748b"))}},`${customTodoIntervalLabel(ct)}${_timeStr}　${statusStr}`));
     if(isTimer){
       const rec=(state.todos[vd]||{})[ct.uid]||{};
       if(rec.startTime && rec.endTime){ lab.appendChild(div({style:{fontSize:"10px",color:"#4ade80",fontWeight:700,marginTop:"1px"}},`⏱ 所要 ${fmtDur(Date.parse(rec.endTime)-Date.parse(rec.startTime))}`)); }
@@ -12294,7 +12391,7 @@ function renderOccasional(vd){
       }
     }
     // 除外／戻す
-    if(active){
+    if(active&&!done){
       const ex=btn({style:{background:"transparent",border:"1px solid #334155",borderRadius:"6px",color:"#64748b",cursor:"pointer",fontSize:"10px",padding:"3px 7px",flexShrink:0},title:"この回を除外"},"除外");
       ex.addEventListener('click',(()=>{const dd=occ.dueDate,id=ct.uid;return()=>{pushUndo("定期ルーティンを除外しました");merge(dd,id,{excluded:true,checked:false});};})());
       row.appendChild(ex);
@@ -15939,6 +16036,18 @@ function renderCustomTodoModal(){
   unitSel.addEventListener('change',e=>{m0.itype=e.target.value;render();});
   iRow.appendChild(unitSel);
   m.appendChild(iRow);
+  // 数え方：起点から機械的に／実施した日から数え直す（曜日指定・毎月◯日のときは出さない）
+  if(ctFromDoneOk(m0)){
+    const on=!!m0.fromDone;
+    const fb=btn({style:{width:"100%",padding:"9px",borderRadius:"8px",cursor:"pointer",fontWeight:600,fontSize:"12px",fontFamily:"inherit",
+      border:`1px solid ${on?"#22c55e":"#334155"}`,background:on?"#22c55e22":"transparent",color:on?"#4ade80":"#64748b"}},
+      on?"🔄 やった日から数え直す: ON":"🔄 やった日から数え直す: OFF");
+    fb.addEventListener('click',()=>{ m0.fromDone=!m0.fromDone; render(); });
+    m.appendChild(fb);
+    m.appendChild(div({style:{fontSize:"10px",color:"#475569",margin:"5px 0 12px",lineHeight:1.5}},
+      on?"実施した日を新しい起点にします。遅れてやった分だけ次回も後ろにずれます（掃除・散髪など「前回から◯日空けたい」もの向け）。"
+        :"起点から機械的に数えます。遅れてやっても次回の日はずれません（「毎週◯曜」のような予定向け）。"));
+  }
   // 直ごとに曜日・時刻を設定するモード
   const bsToggle=btn({style:{width:"100%",padding:"9px",borderRadius:"8px",cursor:"pointer",fontWeight:600,fontSize:"12px",marginBottom:"12px",
     border:`1px solid ${m0.byShiftSchedule?"#a78bfa":"#334155"}`,background:m0.byShiftSchedule?"#a78bfa22":"transparent",color:m0.byShiftSchedule?"#a78bfa":"#64748b"}},m0.byShiftSchedule?"🔗 直ごとに曜日・時刻を設定: ON":"🔗 直ごとに曜日・時刻を設定: OFF");
@@ -16140,7 +16249,7 @@ function renderCustomTodoModal(){
     btn({style:{flex:2,padding:"10px",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:600,cursor:"pointer"},
       onClick:()=>{
         if(!(m0.label||"").trim()){alert("名前を入力してください");return;}
-        const data={uid:m0.uid||Date.now(),label:m0.label.trim(),mode:m0.mode==='timer'?'timer':'check',itype:m0.itype||"week",n:Math.max(1,m0.n||1),startDate:m0.startDate||todayStr(),timeH:m0.timeH!=null?m0.timeH:null,timeM:m0.timeH!=null?(m0.timeM||0):0,endH:m0.timeH!=null&&m0.endH!=null?m0.endH:null,endM:m0.timeH!=null&&m0.endH!=null?(m0.endM||0):null,endNextDay:!!(m0.timeH!=null&&m0.endH!=null&&m0.endNextDay),startNextDay:!!(m0.timeH!=null&&m0.startNextDay),color:m0.color||"#38bdf8",weekdays:(m0.itype==="week"&&m0.weekdays)?[...m0.weekdays]:[],shifts:m0.shifts?[...m0.shifts]:[],weekdayTimes:(m0.weekdayTimes&&Object.keys(m0.weekdayTimes).length)?JSON.parse(JSON.stringify(m0.weekdayTimes)):undefined,byShiftSchedule:!!m0.byShiftSchedule,shiftSchedule:(m0.byShiftSchedule&&m0.shiftSchedule)?JSON.parse(JSON.stringify(m0.shiftSchedule)):undefined,reschedules:(Array.isArray(m0.reschedules)&&m0.reschedules.length)?JSON.parse(JSON.stringify(m0.reschedules)):undefined};
+        const data={uid:m0.uid||Date.now(),label:m0.label.trim(),mode:m0.mode==='timer'?'timer':'check',itype:m0.itype||"week",n:Math.max(1,m0.n||1),startDate:m0.startDate||todayStr(),timeH:m0.timeH!=null?m0.timeH:null,timeM:m0.timeH!=null?(m0.timeM||0):0,endH:m0.timeH!=null&&m0.endH!=null?m0.endH:null,endM:m0.timeH!=null&&m0.endH!=null?(m0.endM||0):null,endNextDay:!!(m0.timeH!=null&&m0.endH!=null&&m0.endNextDay),startNextDay:!!(m0.timeH!=null&&m0.startNextDay),color:m0.color||"#38bdf8",weekdays:(m0.itype==="week"&&m0.weekdays)?[...m0.weekdays]:[],shifts:m0.shifts?[...m0.shifts]:[],weekdayTimes:(m0.weekdayTimes&&Object.keys(m0.weekdayTimes).length)?JSON.parse(JSON.stringify(m0.weekdayTimes)):undefined,byShiftSchedule:!!m0.byShiftSchedule,shiftSchedule:(m0.byShiftSchedule&&m0.shiftSchedule)?JSON.parse(JSON.stringify(m0.shiftSchedule)):undefined,reschedules:(Array.isArray(m0.reschedules)&&m0.reschedules.length)?JSON.parse(JSON.stringify(m0.reschedules)):undefined,fromDone:!!m0.fromDone};
         if(m0.uid){
           const prev=(state.customTodos||[]).find(x=>x.uid===m0.uid);
           // 既存の編集は「今日以降のみ」反映：変更前の定義を昨日までの過去バージョンとして凍結
