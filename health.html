@@ -224,7 +224,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.82"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.83"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -1003,8 +1003,8 @@ function loadStorage(){
     if(mgl){try{const o=JSON.parse(mgl); if(o&&typeof o==="object")state.modeGoals=o;}catch{}}
     const mlg=localStorage.getItem(STORAGE_KEY+"_modelog");
     if(mlg){try{const a=JSON.parse(mlg); if(Array.isArray(a))state.modeLog=a;}catch{}}
-    // 記録どうしが重なっていると1日の合計が24時間を超えてしまうので、読み込んだ時点で点検して直す
-    try{ const _r=normalizeModeLog(); if(_r.changed){ state.modeLog=_r.list; try{localStorage.setItem(STORAGE_KEY+'_modelog',JSON.stringify(_r.list.slice(-3000)));}catch(_){} state.modeLogFixed=_r.fix; } }catch(_){}
+    // 記録どうしが重なっていると1日の合計が24時間を超える。読み込んだ時点で**点検だけ**する（直すかどうかは本人が決める）
+    try{ const _p=modeLogProblems(); if(_p.probs.length) state.modeLogWarn={n:_p.probs.length, over:_p.over.length}; }catch(_){}
     const amd=localStorage.getItem(STORAGE_KEY+"_automode");
     if(amd){try{const o=JSON.parse(amd); if(o&&typeof o==="object"){ state.autoModeOn=o.on!==false; if('lastKey' in o)state.autoLastKey=o.lastKey; }}catch{}}
     migrateSeikatsuMode(); // 自作の「生活」モードを正式な life モードへ統合（既定モード/記録/目標の読込後に実行）
@@ -1446,6 +1446,7 @@ function render(){
   if(state.modal==="editCheckTime")content.appendChild(renderEditCheckTimeModal(vd));
   if(state.modal==="modeTime") content.appendChild(renderModeTimeModal());
   if(state.modal==="modeInsert") content.appendChild(renderModeInsertModal());
+  if(state.modal==="modeCheck") content.appendChild(renderModeCheckModal());
   if(state.customTodoModal)content.appendChild(renderCustomTodoModal());
   if(state.modal==="editSession")content.appendChild(renderEditSessionModal(vd));
   if(state.modal==="addEjac")  content.appendChild(renderAddEjacModal(vd));
@@ -2344,12 +2345,8 @@ function activeDay(now){
   if(getDaily(prev).bedTime==null) return prev;        // 前夜の就寝が未記録＝まだ「その夜」の続き
   return cal;                                          // 就寝記録済み＝翌日へ
 }
-function switchLifeMode(key,auto){
-  // 切り替える前に記録を整える。終わり忘れ（進行中が2本以上）が残っていると、
-  // そのぶんが毎日ずっと二重に数えられて1日の合計が24時間を超えてしまう
-  try{ const r=normalizeModeLog(); if(r.changed) state.modeLog=r.list; }catch(_){}
-  const cur=currentModeSession(), now=Date.now();
-  if(cur){ if(cur.key===key){ saveModeLog(); return; } cur.end=now; recordSleepAwakening(cur,key); }
+function switchLifeMode(key,auto){ const cur=currentModeSession(), now=Date.now();
+  if(cur){ if(cur.key===key)return; cur.end=now; recordSleepAwakening(cur,key); }
   const s={key,start:now}; if(auto)s.auto=true; getModeLog().push(s); saveModeLog(); }
 // 😴睡眠 → 🩹ケア → 😴睡眠 と戻ったら、そのケアの時間を「中途覚醒」として記録する。
 // 夜中に目が覚めて落ち込み・さみしいモードを使った時間は、眠れていない時間だから。
@@ -2581,61 +2578,89 @@ function deleteModeSession(sess){
   saveModeLog();
   return {ok:true};
 }
-// ── 🕒 モードの記録の点検と修復 ────────────────────────────────
+// ── 🕒 モードの記録の点検 ──────────────────────────────────────
 // 1日の合計が24時間を超えるのは、記録どうしが**重なっている**ときだけ（集計はその日で切るため）。
-// 重なりは「進行中（終わりなし）の記録が2本以上ある」「編集や復元で前後がねじれた」ときに起きる。
-// ここで時系列に並べ直し、重なりを消し、進行中は最後の1本だけにする。
-function normalizeModeLog(list){
+// ここでは**見つけるだけ**で、直し方はひとつずつ選んでもらう（勝手に書き換えない）。
+const MODE_FIX_OPTS={
+  running:[['end','次の記録の開始で終わりにする'],['delete','この記録を削除する'],['skip','そのままにする']],
+  overlap:[['later','後を優先（前を縮める）'],['earlier','前を優先（後を遅らせる）'],['skip','そのままにする']],
+  inside:[['dropInner','中の記録を削除する'],['splitOuter','外の記録を前後に分ける'],['skip','そのままにする']],
+  swapped:[['swap','開始と終了を入れ替える'],['delete','この記録を削除する'],['skip','そのままにする']],
+};
+function modeFixDefault(type){ const o=MODE_FIX_OPTS[type]; return o?o[0][0]:'skip'; }
+// 1日の合計が24時間を超えている日
+function modeOverDays(){
+  const out=[], seen=new Set();
+  getModeLog().forEach(s=>{ let d=fmtDS(new Date(s.start));
+    for(let i=0;i<8;i++){ if(!seen.has(d)){ seen.add(d);
+      const tot=modeTotalsForDay(d); const sum=Object.values(tot).reduce((a,b)=>a+b,0);
+      if(sum>86400000+1000) out.push({ds:d, h:Math.round(sum/360000)/10}); }
+      d=addDays(d,1); if(d>todayStr())break; } });
+  return out.sort((a,b)=>a.ds<b.ds?1:-1);
+}
+function modeLogProblems(){
   const now=Date.now();
-  const src=[...(list||getModeLog())].filter(s=>s&&s.key&&typeof s.start==='number'&&isFinite(s.start));
-  const fix={order:0, running:0, overlap:0, dropped:0, swapped:0};
-  if(src.length!==(list||getModeLog()).length) fix.dropped+=(list||getModeLog()).length-src.length;
-  // 終わりが始まりより前＝入れ替わっている記録は直す
-  src.forEach(s=>{ if(s.end!=null && s.end<s.start){ const t=s.start; s={...s}; fix.swapped++; } });
+  const src=getModeLog().filter(s=>s&&s.key&&typeof s.start==='number'&&isFinite(s.start));
   const sorted=[...src].sort((a,b)=>(a.start-b.start)||((a.end==null?Infinity:a.end)-(b.end==null?Infinity:b.end)));
-  for(let i=0;i<src.length;i++){ if(src[i]!==sorted[i]){ fix.order=1; break; } }
-  const out=[];
-  sorted.forEach((s,i)=>{
-    const t={...s};
-    if(t.end!=null && t.end<t.start){ const a=t.start; t.start=t.end; t.end=a; }   // 入れ替わり
-    const isLast=(i===sorted.length-1);
-    if(t.end==null && !isLast){ t.end=sorted[i+1].start; fix.running++; }            // 進行中は最後の1本だけ
-    if(t.end!=null && t.end>now && t.start<=now) t.end=now;   // 先の時間まで伸びた終わりだけ「いま」で切る
-    const prev=out[out.length-1];
-    if(prev){
-      const pe=(prev.end==null?now:prev.end), te=(t.end==null?now:t.end);
-      if(t.start<pe){                       // 重なっている
-        if(te<=pe){ fix.dropped++; return; }  // まるごと中に入っている → 捨てる
-        prev.end=t.start; fix.overlap++;      // 前を縮める
-        if(prev.end-prev.start<1000){ out.pop(); fix.dropped++; }
-      }
-    }
-    if(t.end!=null && t.end-t.start<0){ fix.dropped++; return; }
-    out.push(t);
+  let reordered=false;
+  for(let i=0;i<src.length;i++){ if(src[i]!==sorted[i]){ reordered=true; break; } }
+  const eff=x=>(x.end==null?now:Math.max(x.start,x.end));
+  const probs=[];
+  sorted.forEach((x,i)=>{
+    if(x.end!=null && x.end<x.start) probs.push({id:'sw'+i, type:'swapped', a:x});
+    if(x.end==null && i<sorted.length-1) probs.push({id:'rn'+i, type:'running', a:x, b:sorted[i+1]});
   });
-  const changed=!!(fix.order||fix.running||fix.overlap||fix.dropped||fix.swapped);
-  return {list:out, fix, changed, n:out.length};
+  // 重なりは「ここまでで一番あとまで伸びている記録」と比べる
+  //（すっぽり入った記録のうしろに、外側とまだ重なっている記録があることもあるため）
+  let ref=null, refEnd=-Infinity;
+  sorted.forEach((b,i)=>{
+    const dangling=(b.end==null && i<sorted.length-1);   // 終わり忘れは上で扱う（直せば重なりも消える）
+    const swapped=(b.end!=null && b.end<b.start);        // 入れ替わりも上で扱う
+    if(dangling||swapped) return;
+    const be=eff(b);
+    if(ref && b.start<refEnd) probs.push({id:'ov'+i, type:(be<=refEnd?'inside':'overlap'), a:ref, b});
+    if(!ref || be>refEnd){ ref=b; refEnd=be; }
+  });
+  return {probs, reordered, sorted, over:modeOverDays()};
 }
-// 点検だけ（直さない）。問題の内訳と、24時間を超えている日を返す
-function modeLogIssues(){
-  const r=normalizeModeLog();
-  const over=[];
-  const seen=new Set();
-  getModeLog().forEach(s=>{ let d=fmtDS(new Date(s.start)); for(let i=0;i<8;i++){ if(!seen.has(d)){ seen.add(d);
-    const tot=modeTotalsForDay(d); const sum=Object.values(tot).reduce((a,b)=>a+b,0);
-    if(sum>86400000+1000) over.push({ds:d, h:Math.round(sum/360000)/10}); } d=addDays(d,1); if(d>todayStr())break; } });
-  over.sort((a,b)=>a.ds<b.ds?1:-1);
-  return {...r, over};
-}
-// 直す（記録は「🕘 最近の保存」に載るので戻せる）
-function repairModeLog(){
-  const r=normalizeModeLog();
-  if(!r.changed) return r;
-  state.modeLog=r.list;
-  _modeEditLabel="モードの記録の重なりを修復";
+// 選んだ直し方を当てる。choices={問題id:選択肢}（省略は既定）。返り値＝直した件数
+function applyModeLogFixes(choices){
+  const now=Date.now();
+  const {probs,sorted,reordered}=modeLogProblems();
+  if(!probs.length && !reordered) return {n:0, changed:false};
+  const map=new Map(), work=[];
+  sorted.forEach(x=>{ const c={...x}; map.set(x,c); work.push(c); });
+  const pick=p=>{ const c=choices&&choices[p.id]; return c||modeFixDefault(p.type); };
+  let n=0;
+  probs.forEach(p=>{
+    const c=pick(p); if(c==='skip') return;
+    const a=map.get(p.a), b=p.b?map.get(p.b):null;
+    if(p.type==='swapped'){
+      if(c==='swap'){ const t=a.start; a.start=a.end; a.end=t; n++; }
+      else if(c==='delete'){ a._del=true; n++; }
+    } else if(p.type==='running'){
+      if(c==='end'){ a.end=b.start; n++; }
+      else if(c==='delete'){ a._del=true; n++; }
+    } else if(p.type==='overlap'){
+      if(c==='later'){ a.end=b.start; n++; }
+      else if(c==='earlier'){ b.start=(a.end==null?now:a.end); n++; }
+    } else if(p.type==='inside'){
+      if(c==='dropInner'){ b._del=true; n++; }
+      else if(c==='splitOuter'){ const tail={...a, start:(b.end==null?now:b.end)}; a.end=b.start; work.push(tail); n++; }
+    }
+  });
+  const out=work.filter(x=>!x._del && !(x.end!=null && x.end-x.start<1000))
+    .map(x=>{ const y={...x}; delete y._del; return y; })
+    .sort((a,b)=>(a.start-b.start)||((a.end==null?Infinity:a.end)-(b.end==null?Infinity:b.end)));
+  const changed=(n>0)||reordered||out.length!==getModeLog().length;
+  if(!changed) return {n:0, changed:false};
+  state.modeLog=out;
+  _modeEditLabel=`モードの記録を${n}件直しました`;
   saveModeLog();
-  return r;
+  return {n, changed:true};
 }
+// おすすめ（既定の直し方）でまとめて直す
+function repairModeLog(){ return applyModeLogFixes(null); }
 // 1分未満で終わっている記録（一覧で「0分」に見えるもの）をまとめて消す
 function zeroModeSessions(){ return getModeLog().filter(s=>s.end!=null && (s.end-s.start)<MODE_MIN_MS); }
 function cleanupZeroModes(){
@@ -14041,6 +14066,24 @@ function modeSessionListBox(dsList,key,totalMs,def,isDay){
   box.appendChild(div({style:{fontSize:"10px",color:"#475569",marginTop:"5px"}},`${ss.length}回・合計 ${fmtDur(totalMs)}　時間帯をタップで修正`));
   return box;
 }
+// 🩺 記録の点検：重なりが見つかったら知らせる（直し方は点検画面でひとつずつ選ぶ）。無ければ null
+function modeCheckBox(){
+  const pr=modeLogProblems();
+  if(!pr.probs.length) return null;
+  const cnt={};
+  pr.probs.forEach(p=>{ cnt[p.type]=(cnt[p.type]||0)+1; });
+  const nm={running:"終わり忘れ",overlap:"重なり",inside:"すっぽり重なり",swapped:"開始と終了の入れ替わり"};
+  const bits=Object.keys(cnt).map(k=>`${nm[k]||k}${cnt[k]}件`);
+  const box=div({style:{padding:"9px 11px",marginBottom:"9px",borderRadius:"9px",border:"1px solid #f9731655",background:"#f973160d"}});
+  box.appendChild(div({style:{fontSize:"12px",fontWeight:700,color:"#fb923c",marginBottom:"3px"}},"⚠ モードの記録に重なりがあります"));
+  box.appendChild(div({style:{fontSize:"10px",color:"#94a3b8",lineHeight:1.6,marginBottom:"7px"}},
+    `${bits.join("・")}。記録が重なっていると、1日の合計が24時間を超えて出ます。${pr.over.length?`（${pr.over.slice(0,3).map(o=>`${mdLabel(o.ds)} ${o.h}h`).join("・")}${pr.over.length>3?` ほか${pr.over.length-3}日`:""}）`:""}`));
+  const rb=btn({style:{width:"100%",padding:"8px",borderRadius:"8px",cursor:"pointer",fontSize:"12px",fontWeight:700,fontFamily:"inherit",
+    border:"1px solid #f97316",background:"#f9731622",color:"#fb923c"}},"🩺 点検して直し方を選ぶ");
+  rb.addEventListener('click',()=>{ state.modeFixChoice=null; state.modal="modeCheck"; render(); });
+  box.appendChild(rb);
+  return box;
+}
 function renderModeStatCard(){
   const card=div({className:"card"});
   if(state.modeStatRange==="today") state.modeStatRange="day"; // 旧値の移行
@@ -14054,6 +14097,7 @@ function renderModeStatCard(){
   const per=modeStatPeriod(state.modeStatRange);
   const list=per.list, days=Math.max(1,list.length);
   card.appendChild(periodNavRow(per));
+  { const cb=modeCheckBox(); if(cb) card.appendChild(cb); }
   const tot=modeTotalsForRange(list);
   const entries=Object.entries(tot).filter(([,ms])=>ms>0).sort((a,b)=>b[1]-a[1]);
   const grand=entries.reduce((a,[,ms])=>a+ms,0);
@@ -14069,28 +14113,6 @@ function renderModeStatCard(){
     ib.addEventListener('click',()=>openModeInsert({}));
     row.appendChild(ib);
     card.appendChild(row);
-    // 🩺 記録の点検：重なり・進行中の二重・先の時間の記録があれば直せるようにする
-    { const iss=modeLogIssues();
-      if(iss.changed||iss.over.length){
-        const f=iss.fix, bits=[];
-        if(f.overlap) bits.push(`重なり${f.overlap}件`);
-        if(f.running) bits.push(`進行中の二重${f.running}件`);
-        if(f.dropped) bits.push(`こわれた記録${f.dropped}件`);
-        if(f.order)   bits.push("並びのねじれ");
-        const box=div({style:{padding:"9px 11px",marginBottom:"9px",borderRadius:"9px",border:"1px solid #f9731655",background:"#f973160d"}});
-        box.appendChild(div({style:{fontSize:"12px",fontWeight:700,color:"#fb923c",marginBottom:"3px"}},"⚠ モードの記録に重なりがあります"));
-        box.appendChild(div({style:{fontSize:"10px",color:"#94a3b8",lineHeight:1.6,marginBottom:"7px"}},
-          `${bits.join("・")||"重なり"}。記録が重なっていると、1日の合計が24時間を超えて出ます。${iss.over.length?`（${iss.over.slice(0,3).map(o=>`${mdLabel(o.ds)} ${o.h}h`).join("・")}${iss.over.length>3?` ほか${iss.over.length-3}日`:""}）`:""}`));
-        const rb=btn({style:{width:"100%",padding:"8px",borderRadius:"8px",cursor:"pointer",fontSize:"12px",fontWeight:700,fontFamily:"inherit",
-          border:"1px solid #f97316",background:"#f9731622",color:"#fb923c"}},"🔧 重なりを直す");
-        rb.addEventListener('click',()=>{
-          if(!confirm("モードの記録の重なりを直します。\n・重なった時間は後から始まったモードのものにします\n・進行中は最後の1本だけにします\n（🕘 最近の保存から戻せます）")) return;
-          const r=repairModeLog();
-          showToast(r.changed?"🔧 モードの記録を直しました":"直すところはありませんでした","#fb923c"); render();
-        });
-        box.appendChild(rb);
-        card.appendChild(box);
-      } }
     // 押し間違いで1分未満になった記録（一覧で「0分」に見えるもの）をまとめて片付ける
     const zn=zeroModeSessions().length;
     if(zn){
@@ -16401,6 +16423,78 @@ function openModeInsert(opts){
   };
   state.modal="modeInsert"; render();
 }
+// 🩺 モードの記録の点検：見つかった問題をひとつずつ、どう直すか選ぶ
+function renderModeCheckModal(){
+  const bg=div({className:"modal-center"}); const m=div({className:"modal-box",style:{maxHeight:"88vh",overflowY:"auto"}});
+  bg.addEventListener('click',()=>{ state.modal=null; state.modeFixChoice=null; render(); });
+  m.addEventListener('click',e=>e.stopPropagation());
+  const close=()=>{ state.modal=null; state.modeFixChoice=null; render(); };
+  const {probs,reordered,over}=modeLogProblems();
+  if(!state.modeFixChoice) state.modeFixChoice={};
+  const ch=state.modeFixChoice;
+  const two=n=>String(n).padStart(2,'0');
+  const lab=x=>{ const d=lifeModeDef(x.key); return d?`${d.icon} ${d.label}`:x.key; };
+  const tl=ts=>{ const d=new Date(ts); return `${d.getMonth()+1}/${d.getDate()} ${d.getHours()}:${two(d.getMinutes())}`; };
+  const span2=x=>`${tl(x.start)}〜${x.end==null?"いま（終わりなし）":tl(x.end)}`;
+
+  m.appendChild(div({style:{fontSize:"15px",fontWeight:700,color:"#e2e8f0",marginBottom:"3px"}},"🩺 モードの記録を点検"));
+  m.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"10px",lineHeight:1.6}},
+    "記録どうしが重なっていると、1日の合計が24時間を超えて出ます。見つかったものを1つずつ、どう直すか選んでください。選ばなければ何も変わりません。"));
+  if(over.length) m.appendChild(div({style:{fontSize:"11px",color:"#fb923c",marginBottom:"10px",padding:"7px 9px",borderRadius:"8px",background:"#f973160d",border:"1px solid #f9731633",lineHeight:1.6}},
+    `24時間を超えている日：${over.slice(0,5).map(o=>`${mdLabel(o.ds)} ${o.h}h`).join("・")}${over.length>5?` ほか${over.length-5}日`:""}`));
+
+  if(!probs.length){
+    m.appendChild(div({style:{fontSize:"12px",color:"#4ade80",textAlign:"center",padding:"16px 0",lineHeight:1.6}},
+      "✅ 重なりは見つかりませんでした。"+(reordered?"\n（記録の並びだけ入れ替わっています）":"")));
+  }
+  const CAP=25;
+  probs.slice(0,CAP).forEach(p=>{
+    const box=div({style:{padding:"9px 10px",marginBottom:"8px",borderRadius:"9px",background:"#0f172a",border:"1px solid #1e293b"}});
+    box.dataset.modeprob=p.id;
+    const head={running:"⏳ 終わりのない記録（終わり忘れ）",overlap:"↔️ 時間が重なっています",inside:"⬛ 別の記録の中にすっぽり入っています",swapped:"🔀 開始と終了が入れ替わっています"}[p.type];
+    box.appendChild(div({style:{fontSize:"11px",fontWeight:700,color:"#fb923c",marginBottom:"5px"}},head));
+    box.appendChild(div({style:{fontSize:"11px",color:"#e2e8f0",lineHeight:1.6}},`${lab(p.a)}　${span2(p.a)}`));
+    if(p.b) box.appendChild(div({style:{fontSize:"11px",color:"#94a3b8",lineHeight:1.6}},`${p.type==='running'?"次：":""}${lab(p.b)}　${span2(p.b)}`));
+    const row=div({style:{display:"flex",flexWrap:"wrap",gap:"5px",marginTop:"7px"}});
+    (MODE_FIX_OPTS[p.type]||[]).forEach(([k,l])=>{
+      const on=(ch[p.id]||modeFixDefault(p.type))===k;
+      const b=btn({style:{flex:"1 1 auto",padding:"6px 9px",borderRadius:"7px",cursor:"pointer",fontSize:"10px",fontWeight:on?700:500,fontFamily:"inherit",whiteSpace:"nowrap",
+        border:`1px solid ${on?(k==='skip'?"#64748b":"#38bdf8"):"#334155"}`,background:on?(k==='skip'?"#64748b22":"#0ea5e922"):"transparent",color:on?(k==='skip'?"#94a3b8":"#38bdf8"):"#64748b"}},l);
+      b.addEventListener('click',(()=>{const id=p.id,kk=k;return()=>{ state.modeFixChoice={...state.modeFixChoice,[id]:kk}; render(); };})());
+      row.appendChild(b);
+    });
+    box.appendChild(row);
+    m.appendChild(box);
+  });
+  if(probs.length>CAP) m.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"8px"}},
+    `ほか${probs.length-CAP}件は、同じ種類の「おすすめ」の直し方で直します。`));
+
+  if(probs.length){
+    // まとめて選び直す
+    const allRow=div({style:{display:"flex",gap:"6px",marginBottom:"10px"}});
+    [["__rec","おすすめに戻す"],["__skip","全部そのままにする"]].forEach(([k,l])=>{
+      const b=btn({style:{flex:1,padding:"7px",borderRadius:"7px",cursor:"pointer",fontSize:"10px",fontWeight:600,fontFamily:"inherit",
+        border:"1px solid #334155",background:"transparent",color:"#94a3b8"}},l);
+      b.addEventListener('click',()=>{ const nx={}; if(k==='__skip')probs.forEach(p=>{nx[p.id]='skip';}); state.modeFixChoice=nx; render(); });
+      allRow.appendChild(b);
+    });
+    m.appendChild(allRow);
+  }
+  const willFix=probs.filter(p=>(ch[p.id]||modeFixDefault(p.type))!=='skip').length;
+  m.appendChild(div({style:{display:"flex",gap:"8px"}},[
+    btn({className:"btn-ghost",style:{flex:1},onClick:close},"閉じる"),
+    (()=>{ const b=btn({style:{flex:2,padding:"10px",borderRadius:"8px",border:"none",cursor:willFix?"pointer":"default",fontSize:"13px",fontWeight:700,fontFamily:"inherit",
+        background:willFix?"linear-gradient(135deg,#f97316,#ef4444)":"#1e293b",color:willFix?"#fff":"#475569"}},willFix?`選んだ内容で直す（${willFix}件）`:"直すものがありません");
+      if(willFix) b.addEventListener('click',()=>{
+        const r=applyModeLogFixes(state.modeFixChoice);
+        state.modal=null; state.modeFixChoice=null;
+        showToast(r.changed?`🔧 モードの記録を${r.n}件直しました（戻せます）`:"直すところはありませんでした","#fb923c"); render();
+      });
+      return b; })()
+  ]));
+  m.appendChild(div({style:{fontSize:"9px",color:"#475569",marginTop:"8px",lineHeight:1.5}},"直したあとは「🕘 最近の保存」から元に戻せます。"));
+  bg.appendChild(m); return bg;
+}
 function renderModeInsertModal(){
   const mi=state.modeIns||{};
   const bg=div({className:"modal-center"});
@@ -16695,11 +16789,9 @@ render();
 applyFontScale(); // 保存済みの文字サイズを適用
 document.title="体調管理 v"+APP_VERSION;
 if(state._goalsMigratedCount){ setTimeout(()=>{ showToast(`過去の目標 ${state._goalsMigratedCount}件を目標ツリーに移動しました`,"#22c55e"); state._goalsMigratedCount=0; },900); }
-// モードの記録に重なりがあって直したときは、黙って直さずに知らせる（1日の合計が24時間を超える原因）
-if(state.modeLogFixed){ setTimeout(()=>{ const f=state.modeLogFixed||{}; const b=[];
-  if(f.running) b.push(`終わり忘れ${f.running}件`); if(f.overlap) b.push(`重なり${f.overlap}件`);
-  if(f.dropped) b.push(`こわれた記録${f.dropped}件`); if(f.swapped) b.push(`入れ替わり${f.swapped}件`); if(f.order) b.push("並び");
-  showToast(`🔧 モードの記録を直しました（${b.join("・")||"重なり"}）`,"#fb923c"); state.modeLogFixed=null; },1400); }
+// モードの記録に重なりが見つかったら知らせる（直し方は本人が選ぶ：分析→🕒モード別の時間）
+if(state.modeLogWarn){ setTimeout(()=>{ const w=state.modeLogWarn||{};
+  showToast(`⚠ モードの記録に重なりが${w.n}件（分析→🕒モード別の時間で直せます）`,"#fb923c"); state.modeLogWarn=null; },1400); }
 checkStorageAndAlert();
 checkBackupReminder();
 // PWA: Service Worker登録＋自動更新
