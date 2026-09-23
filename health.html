@@ -224,7 +224,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.83"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.84"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -6714,15 +6714,25 @@ function getActualActivities(vd){
   });
   // アルコール記録も実際の行動として反映（琥珀色で区別）。
   // 「翌日」(startNextDay)の飲酒は入力日ではなく実際に飲んだ翌日側へ表示。
+  // **飲み終わりを記録してあれば、その幅（飲み始め〜飲み終わり）で出す**。無ければ今までどおり点。
   const daily=getDaily(vd);
   for(let off=-1; off<=0; off++){
     const D=addDays(vd,off);
     (getDaily(D).drinks||[]).forEach(dr=>{
-      if(off + (dr.startNextDay?1:0) !== 0) return; // この飲酒の実消費日がvdでなければ除外
+      const shift=off + (dr.startNextDay?1:0);          // この飲酒の実消費日 − vd（0ならvdの飲酒）
       const dt=resolveDT(dr);
-      const sMin=(dr.hour||0)*60+(dr.min||0);
+      const sAbs=shift*1440+(dr.hour||0)*60+(dr.min||0);
       const k=`drink:${dr.hour}:${dr.min}:${dt.label}`;
-      acts.push({title:`${dt.emoji}${dt.label}`+aNote(k),startMin:sMin,endMin:sMin+12,isPoint:true,color:getAlcColor(),noteKey:k});
+      if(dr.endHour==null){                              // 飲み終わりが未記録 → 点のまま
+        if(shift!==0) return;
+        acts.push({title:`${dt.emoji}${dt.label}`+aNote(k),startMin:sAbs,endMin:sAbs+12,isPoint:true,color:getAlcColor(),noteKey:k});
+        return;
+      }
+      let eAbs=shift*1440+dr.endHour*60+(dr.endMin||0);
+      if(eAbs<=sAbs) eAbs+=1440;                         // 0時をまたいだ飲み終わり
+      const s=Math.max(0,sAbs), e=Math.min(1440,eAbs);
+      if(e<=s) return;                                   // この日には掛かっていない
+      acts.push({title:`${dt.emoji}${dt.label}`+aNote(k),startMin:s,endMin:e,isPoint:(e-s)<=12,color:getAlcColor(),noteKey:k});
     });
   }
   // 睡眠：就寝日(D)を1つの夜として bed(D)→wake(D+1) を span&clip で反映
