@@ -224,7 +224,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.84"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.85"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -859,6 +859,7 @@ const state = {
   actMemoKey:null, actMemoLabel:"", actMemoVd:null, actMemoText:"", // 実績（睡眠・飲酒等）へのメモ
   analysisSubTab:"日次・週次", diarySubTab:"生活記録", taskSubTab:"ルーティン",
   sleepHistDays:30, sleepHistMetric:"net", sleepHistMore:false,  // 分析→睡眠履歴
+  alexaOn:false, alexaHooks:{}, alexaLast:null,   // 🔊 Alexa連携（モードに入ったらURLを叩く）
   trainHistDays:30, trainHistMetric:"vol", trainHistEx:null, trainHistMore:false, // 分析→トレーニング履歴
   storageAlert:false, storageExportYear:null,
   weather:[], weatherCity:null, weatherLoading:false, weatherError:null,
@@ -1001,6 +1002,8 @@ function loadStorage(){
     if(mtg){try{const o=JSON.parse(mtg); if(o&&typeof o==="object")state.modeTags=o;}catch{}}
     const mgl=localStorage.getItem(STORAGE_KEY+"_modegoals");
     if(mgl){try{const o=JSON.parse(mgl); if(o&&typeof o==="object")state.modeGoals=o;}catch{}}
+    const alx=localStorage.getItem(STORAGE_KEY+"_alexa");
+    if(alx){try{const o=JSON.parse(alx); if(o&&typeof o==="object"){ state.alexaOn=!!o.on; if(o.hooks&&typeof o.hooks==="object")state.alexaHooks=o.hooks; }}catch{}}
     const mlg=localStorage.getItem(STORAGE_KEY+"_modelog");
     if(mlg){try{const a=JSON.parse(mlg); if(Array.isArray(a))state.modeLog=a;}catch{}}
     // 記録どうしが重なっていると1日の合計が24時間を超える。読み込んだ時点で**点検だけ**する（直すかどうかは本人が決める）
@@ -2331,6 +2334,7 @@ function saveLifeModes(){ try{localStorage.setItem(STORAGE_KEY+'_lifemodes',JSON
 function lifeModeDef(key){ return getLifeModes().find(m=>m.key===key)||null; }
 // 既存の保存済みモード一覧に、新しい既定モード（朝/飲み/睡眠前など）を不足分だけ補完
 function migrateLifeModes(){ if(!Array.isArray(state.lifeModes)||!state.lifeModes.length) return; const have=new Set(state.lifeModes.map(m=>m.key)); let changed=false; DEFAULT_LIFE_MODES.forEach(d=>{ if(!have.has(d.key)){ state.lifeModes.push(JSON.parse(JSON.stringify(d))); changed=true; } }); if(changed) saveLifeModes(); }
+let _appReady=false;   // 起動が終わったか（起動直後の自動処理でAlexaを鳴らさないため）
 function getModeLog(){ if(!Array.isArray(state.modeLog))state.modeLog=[]; return state.modeLog; }
 function saveModeLog(){ try{localStorage.setItem(STORAGE_KEY+'_modelog',JSON.stringify(getModeLog().slice(-3000)));}catch(_){} }
 function currentModeSession(){ const l=getModeLog(); for(let i=l.length-1;i>=0;i--){ if(!l[i].end) return l[i]; } return null; }
@@ -2345,9 +2349,33 @@ function activeDay(now){
   if(getDaily(prev).bedTime==null) return prev;        // 前夜の就寝が未記録＝まだ「その夜」の続き
   return cal;                                          // 就寝記録済み＝翌日へ
 }
+// ── 🔊 Alexa連携 ───────────────────────────────────────────────
+// モードに入ったときに、そのモードに登録したURLを叩く（Alexa側のルーティンが起動する）。
+// アプリが叩くので**アプリを開いている間だけ**。時刻で鳴らすにはサーバ側の仕掛けが要る。
+function getAlexaHooks(){ if(!state.alexaHooks||typeof state.alexaHooks!=="object")state.alexaHooks={}; return state.alexaHooks; }
+function saveAlexa(){ try{localStorage.setItem(STORAGE_KEY+"_alexa",JSON.stringify({on:!!state.alexaOn,hooks:getAlexaHooks()}));}catch(_){} }
+function alexaUrlFor(key){ const u=(getAlexaHooks()[key]||"").trim(); return /^https:\/\//i.test(u)?u:""; }
+function setAlexaUrl(key,url){ const h=getAlexaHooks(); const v=(url||"").trim(); if(v)h[key]=v; else delete h[key]; saveAlexa(); }
+function alexaHookCount(){ return Object.keys(getAlexaHooks()).filter(k=>alexaUrlFor(k)).length; }
+// URLを叩くだけ。返事は読めない（別ドメインなので）ので、鳴ったかはAlexa側で確かめる
+function alexaCall(url){
+  if(!url) return false;
+  try{ fetch(url,{mode:"no-cors",cache:"no-store",keepalive:true}).catch(()=>{}); }
+  catch(_){ try{ const im=new Image(); im.src=url; }catch(__){ return false; } }
+  return true;
+}
+// モードに入ったとき。起動直後の自動復帰では鳴らさない（開くたびに鳴ってしまうため）
+function alexaFireMode(key){
+  if(!state.alexaOn || !_appReady) return false;
+  const u=alexaUrlFor(key); if(!u) return false;
+  if(!alexaCall(u)) return false;
+  state.alexaLast={key, ts:Date.now()};
+  return true;
+}
 function switchLifeMode(key,auto){ const cur=currentModeSession(), now=Date.now();
   if(cur){ if(cur.key===key)return; cur.end=now; recordSleepAwakening(cur,key); }
-  const s={key,start:now}; if(auto)s.auto=true; getModeLog().push(s); saveModeLog(); }
+  const s={key,start:now}; if(auto)s.auto=true; getModeLog().push(s); saveModeLog();
+  alexaFireMode(key); }
 // 😴睡眠 → 🩹ケア → 😴睡眠 と戻ったら、そのケアの時間を「中途覚醒」として記録する。
 // 夜中に目が覚めて落ち込み・さみしいモードを使った時間は、眠れていない時間だから。
 function recordSleepAwakening(careSess,nextKey){
@@ -8425,6 +8453,7 @@ const FEATURE_INDEX=[
   ]},
   {group:"📊 分析",items:[
     {label:"日次・週次／総合分析",desc:"モード時間・週の推移・相関の振り返り",go:()=>{state.tab="分析";state.analysisSubTab="日次・週次";}},
+    {label:"Alexa連携",desc:"モードに入ったらAlexaのルーティンを起動（URLを登録）",go:()=>{state.tab="設定";openSetting('alexa',true);}},
     {label:"睡眠の履歴",desc:"過去の夜をさかのぼる・就寝/起床/実睡眠/眠りの質の推移",go:()=>{state.tab="分析";state.analysisSubTab="睡眠";}},
     {label:"トレーニングの履歴",desc:"過去のトレーニング・種目べつの記録・自己ベスト",go:()=>{state.tab="分析";state.analysisSubTab="トレーニング";}},
     {label:"AI分析",desc:"AI総合分析とAIへの質問",go:()=>{state.tab="分析";state.analysisSubTab="AI分析";}},
@@ -8519,6 +8548,65 @@ function collapsibleSetting(key,card){
   else if(row.style) row.style.marginBottom='6px';
   return card;
 }
+// 🔊 Alexa連携の設定。モードごとに「起動させたいAlexaルーティンのURL」を登録する
+function renderAlexaPanel(){
+  const card=div({className:"card"});
+  const n=alexaHookCount();
+  card.appendChild(div({style:{fontSize:"14px",fontWeight:700,color:"#e2e8f0",marginBottom:"4px"}},`🔊 Alexa連携${n?`（${n}件）`:""}`));
+  card.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"9px",lineHeight:1.7}},
+    "モードに入ったときに、Alexaのルーティンを起動できます。たとえば「🌙睡眠前モードに入ったら照明を落とす」「🏋️トレーニングモードに入ったら音楽をかける」。"));
+  // 手順
+  { const box=div({style:{padding:"9px 11px",marginBottom:"10px",borderRadius:"9px",background:"#0f172a",border:"1px solid #1e293b"}});
+    box.appendChild(div({style:{fontSize:"11px",fontWeight:700,color:"#94a3b8",marginBottom:"5px"}},"準備（はじめの1回だけ）"));
+    [["①","Alexaアプリで「URL Routine Trigger」スキルを有効にし、Amazonアカウントでログインする"],
+     ["②","virtualsmarthome.xyz でトリガーを作る（名前をつけるとURLがもらえます）"],
+     ["③","Alexaで「デバイスを探す」→ そのトリガーが「ドアベル」として見つかる"],
+     ["④","Alexaルーティンの「実行条件＝スマートホーム」にそのドアベルを指定する"],
+     ["⑤","もらったURLを、下の使いたいモードの欄に貼る"]].forEach(([i,t])=>{
+      box.appendChild(div({style:{display:"flex",gap:"7px",marginBottom:"3px"}},[
+        span({style:{flexShrink:0,fontSize:"10px",color:"#38bdf8",fontWeight:700}},i),
+        span({style:{flex:1,minWidth:0,fontSize:"10px",color:"#94a3b8",lineHeight:1.6}},t)]));
+    });
+    card.appendChild(box); }
+  // 全体のON/OFF
+  { const on=!!state.alexaOn;
+    const b=btn({style:{width:"100%",padding:"10px",marginBottom:"10px",borderRadius:"9px",cursor:"pointer",fontSize:"13px",fontWeight:700,fontFamily:"inherit",
+      border:`1px solid ${on?"#22c55e":"#334155"}`,background:on?"#22c55e22":"transparent",color:on?"#4ade80":"#64748b"}},on?"🔊 Alexa連携: ON":"🔇 Alexa連携: OFF");
+    b.addEventListener('click',()=>{ state.alexaOn=!state.alexaOn; saveAlexa(); showToast(state.alexaOn?"🔊 Alexa連携をONにしました":"🔇 Alexa連携をOFFにしました"); render(); });
+    card.appendChild(b); }
+  // モードごとのURL
+  card.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"6px"}},"モードに入ったら叩くURL（空欄なら何もしません）"));
+  getLifeModes().forEach(md=>{
+    const url=(getAlexaHooks()[md.key]||"");
+    const ok=!!alexaUrlFor(md.key);
+    const row=div({style:{marginBottom:"8px"}});
+    row.dataset.alexamode=md.key;
+    row.appendChild(div({style:{display:"flex",alignItems:"center",gap:"7px",marginBottom:"3px"}},[
+      span({style:{fontSize:"15px",flexShrink:0}},md.icon),
+      span({style:{flex:1,minWidth:0,fontSize:"12px",color:ok?md.color:"#94a3b8",fontWeight:ok?700:400}},md.label),
+      ok?(()=>{ const t=btn({style:{flexShrink:0,fontSize:"10px",padding:"3px 9px",borderRadius:"6px",cursor:"pointer",fontFamily:"inherit",
+          border:"1px solid #38bdf8",background:"#0ea5e918",color:"#38bdf8"}},"テスト");
+        t.addEventListener('click',(()=>{const k=md.key,l=md.label;return()=>{ alexaCall(alexaUrlFor(k));
+          showToast(`🔊 ${l} のURLを叩きました（Alexaが動いたか確かめてください）`,"#38bdf8"); };})());
+        return t; })():null,
+      url?(()=>{ const c=btn({style:{flexShrink:0,fontSize:"10px",padding:"3px 8px",borderRadius:"6px",cursor:"pointer",fontFamily:"inherit",
+          border:"1px solid #334155",background:"transparent",color:"#64748b"}},"消す");
+        c.addEventListener('click',(()=>{const k=md.key;return()=>{ setAlexaUrl(k,""); render(); };})());
+        return c; })():null,
+    ]));
+    const inp=document.createElement('input'); inp.type='url'; inp.value=url; inp.placeholder="https://www.virtualsmarthome.xyz/url_routine_trigger/activate.php?...";
+    inp.style.cssText=`width:100%;box-sizing:border-box;padding:8px 10px;background:#0f172a;border:1px solid ${ok?"#0ea5e955":"#334155"};border-radius:8px;color:#e2e8f0;font-size:11px;font-family:inherit`;
+    inp.addEventListener('change',(()=>{const k=md.key;return e=>{ setAlexaUrl(k,e.target.value); render(); };})());
+    row.appendChild(inp);
+    card.appendChild(row);
+  });
+  card.appendChild(div({style:{fontSize:"10px",color:"#475569",marginTop:"8px",lineHeight:1.7,whiteSpace:"pre-line"}},
+    "※ 叩くのはこのアプリなので、アプリを開いている間の切り替えだけが対象です（閉じている間は鳴りません）。起動したときの自動復帰でも鳴らしません。\n※ 送るのはURLを開くことだけで、体調などの記録は一切送りません。URLは端末内にだけ保存されます。\n※ 「決めた時刻になったら鳴らす」にはサーバ側の仕掛けが必要です（アプリだけではできません）。"));
+  if(state.alexaLast){ const d=lifeModeDef(state.alexaLast.key), t=new Date(state.alexaLast.ts);
+    card.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginTop:"6px"}},
+      `最後に叩いたの：${d?d.icon+d.label:state.alexaLast.key}　${hhmm(t.getHours(),t.getMinutes())}`)); }
+  return card;
+}
 // 🕘 最近の保存（直前10件）。いちばん新しいものから1つずつ戻せる。
 function renderSaveHistoryPanel(){
   const h=getSaveHist();
@@ -8565,6 +8653,7 @@ function renderSettingsHub(){
   wrap.appendChild(collapsibleSetting('hist',renderSaveHistoryPanel()));
   wrap.appendChild(collapsibleSetting('mode',renderModeSettingsPanel()));
   { const nc=renderNotifyPanel(); nc.id='notify-settings'; wrap.appendChild(collapsibleSetting('notify',nc)); }
+  wrap.appendChild(collapsibleSetting('alexa',renderAlexaPanel()));
   wrap.appendChild(collapsibleSetting('display',renderDisplayPanel()));
   wrap.appendChild(collapsibleSetting('colors',renderColorLegendPanel()));
   wrap.appendChild(collapsibleSetting('shift',renderShiftPanel()));
@@ -15568,6 +15657,7 @@ function exportData(){
     lifeModes:state.lifeModes,
     modeLog:state.modeLog,
     modeTags:state.modeTags,
+    alexa:{on:!!state.alexaOn, hooks:getAlexaHooks()},
     wakeGoal:state.wakeGoal,
     notifyCfg:nudgeCfgPayload(),
     decisBalance:state.decisBalance,
@@ -15654,6 +15744,7 @@ function importData(e){
       if(p.selfChecksCfg&&typeof p.selfChecksCfg==="object"){state.selfChecksCfg=p.selfChecksCfg;saveSelfChecksCfg();}
       if(Array.isArray(p.lifeModes)&&p.lifeModes.length){state.lifeModes=p.lifeModes;saveLifeModes();}
       if(Array.isArray(p.modeLog)){state.modeLog=p.modeLog;saveModeLog();}
+      if(p.alexa&&typeof p.alexa==="object"){ state.alexaOn=!!p.alexa.on; state.alexaHooks=(p.alexa.hooks&&typeof p.alexa.hooks==="object")?p.alexa.hooks:{}; saveAlexa(); }
       if(p.modeTags&&typeof p.modeTags==="object"){state.modeTags=p.modeTags;saveModeTags();}
       if(p.wakeGoal&&typeof p.wakeGoal==="object"){state.wakeGoal=p.wakeGoal;saveWakeGoal();}
       if(p.notifyCfg&&typeof p.notifyCfg==="object"){applyNudgeCfg(p.notifyCfg);saveNudgeCfg();}
@@ -16796,6 +16887,7 @@ migrateResistsToInvest(); // 旧「我慢」ログを未来投資へ一度だけ
 window.addEventListener('pagehide',()=>{try{flushStorage();}catch(_){}});
 document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='hidden'){ try{flushStorage();}catch(_){}} });
 render();
+_appReady=true;   // ここから先のモード切替は「本人の操作」なのでAlexaを鳴らしてよい
 applyFontScale(); // 保存済みの文字サイズを適用
 document.title="体調管理 v"+APP_VERSION;
 if(state._goalsMigratedCount){ setTimeout(()=>{ showToast(`過去の目標 ${state._goalsMigratedCount}件を目標ツリーに移動しました`,"#22c55e"); state._goalsMigratedCount=0; },900); }
