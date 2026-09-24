@@ -224,7 +224,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.85"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.86"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -860,6 +860,7 @@ const state = {
   analysisSubTab:"日次・週次", diarySubTab:"生活記録", taskSubTab:"ルーティン",
   sleepHistDays:30, sleepHistMetric:"net", sleepHistMore:false,  // 分析→睡眠履歴
   alexaOn:false, alexaHooks:{}, alexaLast:null,   // 🔊 Alexa連携（モードに入ったらURLを叩く）
+  alexaRelay:true, alexaRelayUrl:"",              // 中継サーバ（独自ヘッダーが要るスキル向け）
   trainHistDays:30, trainHistMetric:"vol", trainHistEx:null, trainHistMore:false, // 分析→トレーニング履歴
   storageAlert:false, storageExportYear:null,
   weather:[], weatherCity:null, weatherLoading:false, weatherError:null,
@@ -1003,7 +1004,8 @@ function loadStorage(){
     const mgl=localStorage.getItem(STORAGE_KEY+"_modegoals");
     if(mgl){try{const o=JSON.parse(mgl); if(o&&typeof o==="object")state.modeGoals=o;}catch{}}
     const alx=localStorage.getItem(STORAGE_KEY+"_alexa");
-    if(alx){try{const o=JSON.parse(alx); if(o&&typeof o==="object"){ state.alexaOn=!!o.on; if(o.hooks&&typeof o.hooks==="object")state.alexaHooks=o.hooks; }}catch{}}
+    if(alx){try{const o=JSON.parse(alx); if(o&&typeof o==="object"){ state.alexaOn=!!o.on; if(o.hooks&&typeof o.hooks==="object")state.alexaHooks=o.hooks;
+      if("relay" in o)state.alexaRelay=!!o.relay; if(typeof o.relayUrl==="string")state.alexaRelayUrl=o.relayUrl; }}catch{}}
     const mlg=localStorage.getItem(STORAGE_KEY+"_modelog");
     if(mlg){try{const a=JSON.parse(mlg); if(Array.isArray(a))state.modeLog=a;}catch{}}
     // 記録どうしが重なっていると1日の合計が24時間を超える。読み込んだ時点で**点検だけ**する（直すかどうかは本人が決める）
@@ -2352,23 +2354,59 @@ function activeDay(now){
 // ── 🔊 Alexa連携 ───────────────────────────────────────────────
 // モードに入ったときに、そのモードに登録したURLを叩く（Alexa側のルーティンが起動する）。
 // アプリが叩くので**アプリを開いている間だけ**。時刻で鳴らすにはサーバ側の仕掛けが要る。
+//
+// 叩き方は2通り：
+//  ・直接      … ブラウザからそのURLへ。ヘッダーは付けられず、結果も読めない（no-cors）
+//  ・中継サーバ … 自分のサーバ(alexa.php)へ頼んで代わりに叩いてもらう。
+//                 Authorizationヘッダーが要るスキル（日本の「仮想トリガーボタン」等）はこちら。
+//                 成功/失敗が分かるのも利点。
+const ALEXA_RELAY_DEFAULT="https://nuts024.com/health/alexa.php";
 function getAlexaHooks(){ if(!state.alexaHooks||typeof state.alexaHooks!=="object")state.alexaHooks={}; return state.alexaHooks; }
-function saveAlexa(){ try{localStorage.setItem(STORAGE_KEY+"_alexa",JSON.stringify({on:!!state.alexaOn,hooks:getAlexaHooks()}));}catch(_){} }
-function alexaUrlFor(key){ const u=(getAlexaHooks()[key]||"").trim(); return /^https:\/\//i.test(u)?u:""; }
-function setAlexaUrl(key,url){ const h=getAlexaHooks(); const v=(url||"").trim(); if(v)h[key]=v; else delete h[key]; saveAlexa(); }
+function saveAlexa(){ try{localStorage.setItem(STORAGE_KEY+"_alexa",JSON.stringify({
+  on:!!state.alexaOn, hooks:getAlexaHooks(), relay:!!state.alexaRelay, relayUrl:(state.alexaRelayUrl||"")}));}catch(_){} }
+// 1モードぶんの設定 {url, auth}。古い「文字列＝URLだけ」の形も読めるようにしておく
+function alexaHookOf(key){ const v=getAlexaHooks()[key];
+  if(typeof v==="string") return {url:v.trim(), auth:""};
+  if(v&&typeof v==="object") return {url:(v.url||"").trim(), auth:(v.auth||"").trim()};
+  return {url:"", auth:""}; }
+function setAlexaHook(key,patch){
+  const h=getAlexaHooks(), cur=alexaHookOf(key), nx={...cur,...patch};
+  nx.url=(nx.url||"").trim(); nx.auth=(nx.auth||"").trim();
+  if(nx.url) h[key]=nx.auth?{url:nx.url,auth:nx.auth}:{url:nx.url}; else delete h[key];
+  saveAlexa();
+}
+function alexaUrlFor(key){ const u=alexaHookOf(key).url; return /^https:\/\//i.test(u)?u:""; }
 function alexaHookCount(){ return Object.keys(getAlexaHooks()).filter(k=>alexaUrlFor(k)).length; }
-// URLを叩くだけ。返事は読めない（別ドメインなので）ので、鳴ったかはAlexa側で確かめる
-function alexaCall(url){
-  if(!url) return false;
+function alexaRelayUrl(){ const u=(state.alexaRelayUrl||"").trim()||ALEXA_RELAY_DEFAULT; return /^https:\/\//i.test(u)?u:""; }
+function alexaUsingRelay(){ return !!state.alexaRelay && !!alexaRelayUrl(); }
+// 叩く。done({ok,msg,blind}) で結果を返す（直接のときは blind=true＝結果が分からない）
+function alexaCall(hook,done){
+  const url=(hook&&hook.url||"").trim(), auth=(hook&&hook.auth||"").trim();
+  if(!/^https:\/\//i.test(url)){ done&&done({ok:false,msg:"httpsのURLを入れてください"}); return false; }
+  if(alexaUsingRelay()){
+    fetch(alexaRelayUrl(),{method:"POST",headers:{"Content-Type":"application/json","X-Secret-Key":AI_SECRET},
+      body:JSON.stringify({url,auth})})
+      .then(r=>r.json().then(j=>({r,j})).catch(()=>({r,j:null})))
+      .then(({r,j})=>{
+        const ok=r.ok && j && j.ok;
+        done&&done({ok:!!ok, msg:ok?`Alexaに伝えました（${j.status||200}）`:((j&&(j.message||j.error))||`中継サーバがエラーを返しました（${r.status}）`)});
+      })
+      .catch(()=>{ done&&done({ok:false,msg:"中継サーバに届きませんでした"}); });
+    return true;
+  }
+  if(auth){ done&&done({ok:false,msg:"Authorizationが要るスキルは「中継サーバ経由」にしてください"}); return false; }
   try{ fetch(url,{mode:"no-cors",cache:"no-store",keepalive:true}).catch(()=>{}); }
-  catch(_){ try{ const im=new Image(); im.src=url; }catch(__){ return false; } }
+  catch(_){ try{ const im=new Image(); im.src=url; }catch(__){ done&&done({ok:false,msg:"送れませんでした"}); return false; } }
+  done&&done({ok:true,blind:true,msg:"送りました（届いたかは分かりません）"});
   return true;
 }
 // モードに入ったとき。起動直後の自動復帰では鳴らさない（開くたびに鳴ってしまうため）
 function alexaFireMode(key){
   if(!state.alexaOn || !_appReady) return false;
-  const u=alexaUrlFor(key); if(!u) return false;
-  if(!alexaCall(u)) return false;
+  const hook=alexaHookOf(key);
+  if(!/^https:\/\//i.test(hook.url)) return false;
+  const def=lifeModeDef(key);
+  alexaCall(hook,r=>{ if(!r.ok) showToast(`🔊 Alexaに伝えられませんでした（${def?def.label:key}）：${r.msg}`,"#f97316"); });
   state.alexaLast={key, ts:Date.now()};
   return true;
 }
@@ -8551,17 +8589,17 @@ function collapsibleSetting(key,card){
 // 🔊 Alexa連携の設定。モードごとに「起動させたいAlexaルーティンのURL」を登録する
 function renderAlexaPanel(){
   const card=div({className:"card"});
-  const n=alexaHookCount();
+  const n=alexaHookCount(), relay=alexaUsingRelay();
   card.appendChild(div({style:{fontSize:"14px",fontWeight:700,color:"#e2e8f0",marginBottom:"4px"}},`🔊 Alexa連携${n?`（${n}件）`:""}`));
   card.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"9px",lineHeight:1.7}},
-    "モードに入ったときに、Alexaのルーティンを起動できます。たとえば「🌙睡眠前モードに入ったら照明を落とす」「🏋️トレーニングモードに入ったら音楽をかける」。"));
+    "モードに入ったときに、Alexaのルーティン（定型アクション）を起動できます。たとえば「🌙睡眠前モードに入ったら照明を落とす」「🏋️トレーニングモードに入ったら音楽をかける」。"));
   // 手順
   { const box=div({style:{padding:"9px 11px",marginBottom:"10px",borderRadius:"9px",background:"#0f172a",border:"1px solid #1e293b"}});
     box.appendChild(div({style:{fontSize:"11px",fontWeight:700,color:"#94a3b8",marginBottom:"5px"}},"準備（はじめの1回だけ）"));
-    [["①","Alexaアプリで「URL Routine Trigger」スキルを有効にし、Amazonアカウントでログインする"],
-     ["②","virtualsmarthome.xyz でトリガーを作る（名前をつけるとURLがもらえます）"],
-     ["③","Alexaで「デバイスを探す」→ そのトリガーが「ドアベル」として見つかる"],
-     ["④","Alexaルーティンの「実行条件＝スマートホーム」にそのドアベルを指定する"],
+    [["①","Alexaアプリで、URLで起動できるトリガーのスキルを有効にする（日本なら「仮想トリガーボタン」など）"],
+     ["②","そのスキルのサイトでトリガーを作り、リクエスト先のURL（必要ならAuthorizationの値）をもらう"],
+     ["③","Alexaで「デバイスを探す」→ そのトリガーがボタンやドアベルとして見つかる"],
+     ["④","Alexaの定型アクションの「実行条件＝スマートホーム」にそれを指定する"],
      ["⑤","もらったURLを、下の使いたいモードの欄に貼る"]].forEach(([i,t])=>{
       box.appendChild(div({style:{display:"flex",gap:"7px",marginBottom:"3px"}},[
         span({style:{flexShrink:0,fontSize:"10px",color:"#38bdf8",fontWeight:700}},i),
@@ -8574,10 +8612,32 @@ function renderAlexaPanel(){
       border:`1px solid ${on?"#22c55e":"#334155"}`,background:on?"#22c55e22":"transparent",color:on?"#4ade80":"#64748b"}},on?"🔊 Alexa連携: ON":"🔇 Alexa連携: OFF");
     b.addEventListener('click',()=>{ state.alexaOn=!state.alexaOn; saveAlexa(); showToast(state.alexaOn?"🔊 Alexa連携をONにしました":"🔇 Alexa連携をOFFにしました"); render(); });
     card.appendChild(b); }
+  // 送り方（直接 / 中継サーバ経由）
+  card.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"5px"}},"送り方"));
+  { const row=div({style:{display:"flex",gap:"6px",marginBottom:"6px"}});
+    [[false,"そのまま叩く"],[true,"中継サーバ経由"]].forEach(([v,l])=>{
+      const on=!!state.alexaRelay===v;
+      const b=btn({style:{flex:1,padding:"8px",borderRadius:"8px",cursor:"pointer",fontSize:"11px",fontWeight:on?700:500,fontFamily:"inherit",
+        border:`1px solid ${on?"#38bdf8":"#334155"}`,background:on?"#0ea5e922":"transparent",color:on?"#38bdf8":"#64748b"}},l);
+      b.addEventListener('click',(()=>{const vv=v;return()=>{ state.alexaRelay=vv; saveAlexa(); render(); };})());
+      row.appendChild(b);
+    });
+    card.appendChild(row); }
+  if(state.alexaRelay){
+    const inp=document.createElement('input'); inp.type='url'; inp.value=(state.alexaRelayUrl||""); inp.placeholder=ALEXA_RELAY_DEFAULT;
+    inp.style.cssText=`width:100%;box-sizing:border-box;padding:8px 10px;margin-bottom:5px;background:#0f172a;border:1px solid ${alexaRelayUrl()?"#0ea5e955":"#7f1d1d"};border-radius:8px;color:#e2e8f0;font-size:11px;font-family:inherit`;
+    inp.addEventListener('change',e=>{ state.alexaRelayUrl=(e.target.value||"").trim(); saveAlexa(); render(); });
+    card.appendChild(inp);
+    card.appendChild(div({style:{fontSize:"10px",color:"#475569",marginBottom:"10px",lineHeight:1.7,whiteSpace:"pre-line"}},
+      "自分のサーバに置いた alexa.php が代わりに叩きます。ブラウザからは他サイトへ Authorization ヘッダーを送れないので、それが要るスキルはこちらを使ってください。\n送った結果（成功/失敗）が分かるのもこちらです。空欄なら上の既定のURLを使います。"));
+  } else {
+    card.appendChild(div({style:{fontSize:"10px",color:"#475569",marginBottom:"10px",lineHeight:1.7,whiteSpace:"pre-line"}},
+      "ブラウザからそのURLを直接開きます。Authorization が要らない（URLだけで起動する）トリガー向けです。\n届いたかどうかは分かりません（別サイトなので結果を読めません）。"));
+  }
   // モードごとのURL
   card.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"6px"}},"モードに入ったら叩くURL（空欄なら何もしません）"));
   getLifeModes().forEach(md=>{
-    const url=(getAlexaHooks()[md.key]||"");
+    const hook=alexaHookOf(md.key);
     const ok=!!alexaUrlFor(md.key);
     const row=div({style:{marginBottom:"8px"}});
     row.dataset.alexamode=md.key;
@@ -8586,22 +8646,31 @@ function renderAlexaPanel(){
       span({style:{flex:1,minWidth:0,fontSize:"12px",color:ok?md.color:"#94a3b8",fontWeight:ok?700:400}},md.label),
       ok?(()=>{ const t=btn({style:{flexShrink:0,fontSize:"10px",padding:"3px 9px",borderRadius:"6px",cursor:"pointer",fontFamily:"inherit",
           border:"1px solid #38bdf8",background:"#0ea5e918",color:"#38bdf8"}},"テスト");
-        t.addEventListener('click',(()=>{const k=md.key,l=md.label;return()=>{ alexaCall(alexaUrlFor(k));
-          showToast(`🔊 ${l} のURLを叩きました（Alexaが動いたか確かめてください）`,"#38bdf8"); };})());
+        t.addEventListener('click',(()=>{const k=md.key,l=md.label;return()=>{
+          showToast(`🔊 ${l} を送っています…`,"#38bdf8");
+          alexaCall(alexaHookOf(k),r=>{ showToast(`${r.ok?"✅":"⚠️"} ${l}：${r.msg}`, r.ok?(r.blind?"#38bdf8":"#22c55e"):"#f97316"); });
+        };})());
         return t; })():null,
-      url?(()=>{ const c=btn({style:{flexShrink:0,fontSize:"10px",padding:"3px 8px",borderRadius:"6px",cursor:"pointer",fontFamily:"inherit",
+      hook.url?(()=>{ const c=btn({style:{flexShrink:0,fontSize:"10px",padding:"3px 8px",borderRadius:"6px",cursor:"pointer",fontFamily:"inherit",
           border:"1px solid #334155",background:"transparent",color:"#64748b"}},"消す");
-        c.addEventListener('click',(()=>{const k=md.key;return()=>{ setAlexaUrl(k,""); render(); };})());
+        c.addEventListener('click',(()=>{const k=md.key;return()=>{ setAlexaHook(k,{url:"",auth:""}); render(); };})());
         return c; })():null,
     ]));
-    const inp=document.createElement('input'); inp.type='url'; inp.value=url; inp.placeholder="https://www.virtualsmarthome.xyz/url_routine_trigger/activate.php?...";
+    const inp=document.createElement('input'); inp.type='url'; inp.value=hook.url; inp.placeholder="https://…（トリガーのリクエスト先）";
     inp.style.cssText=`width:100%;box-sizing:border-box;padding:8px 10px;background:#0f172a;border:1px solid ${ok?"#0ea5e955":"#334155"};border-radius:8px;color:#e2e8f0;font-size:11px;font-family:inherit`;
-    inp.addEventListener('change',(()=>{const k=md.key;return e=>{ setAlexaUrl(k,e.target.value); render(); };})());
+    inp.addEventListener('change',(()=>{const k=md.key;return e=>{ setAlexaHook(k,{url:e.target.value}); render(); };})());
     row.appendChild(inp);
+    // Authorization（中継のときだけ。ブラウザ直叩きでは送れないため）
+    if(state.alexaRelay && hook.url){
+      const ai=document.createElement('input'); ai.type='text'; ai.value=hook.auth; ai.placeholder="Authorization（例：Bearer xxxxx・不要なら空欄）";
+      ai.style.cssText="width:100%;box-sizing:border-box;margin-top:4px;padding:7px 10px;background:#0b1220;border:1px solid #334155;border-radius:8px;color:#cbd5e1;font-size:11px;font-family:inherit";
+      ai.addEventListener('change',(()=>{const k=md.key;return e=>{ setAlexaHook(k,{auth:e.target.value}); render(); };})());
+      row.appendChild(ai);
+    }
     card.appendChild(row);
   });
   card.appendChild(div({style:{fontSize:"10px",color:"#475569",marginTop:"8px",lineHeight:1.7,whiteSpace:"pre-line"}},
-    "※ 叩くのはこのアプリなので、アプリを開いている間の切り替えだけが対象です（閉じている間は鳴りません）。起動したときの自動復帰でも鳴らしません。\n※ 送るのはURLを開くことだけで、体調などの記録は一切送りません。URLは端末内にだけ保存されます。\n※ 「決めた時刻になったら鳴らす」にはサーバ側の仕掛けが必要です（アプリだけではできません）。"));
+    "※ 叩くのはこのアプリなので、アプリを開いている間の切り替えだけが対象です（閉じている間は鳴りません）。起動したときの自動復帰でも鳴らしません。\n※ 送るのはトリガーを叩くことだけで、体調などの記録は一切送りません。URLとAuthorizationは端末内にだけ保存されます。\n※ 「決めた時刻になったら鳴らす」にはサーバ側の仕掛けが必要です（アプリだけではできません）。"));
   if(state.alexaLast){ const d=lifeModeDef(state.alexaLast.key), t=new Date(state.alexaLast.ts);
     card.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginTop:"6px"}},
       `最後に叩いたの：${d?d.icon+d.label:state.alexaLast.key}　${hhmm(t.getHours(),t.getMinutes())}`)); }

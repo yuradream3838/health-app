@@ -2,7 +2,8 @@
 
 > AIが参照しやすいよう、`api.php`（Geminiプロキシ）と、それを呼ぶクライアント関数の
 > **正確な契約**をまとめた常設リファレンス。実装は `health.html`（クライアント）と
-> サーバー上の `api.php`（リポジトリ管理外）。最終更新: アプリ v13.41 / api.php v4.1。
+> サーバー上の `api.php` / `alexa.php`（どちらもリポジトリ管理外）。
+> 最終更新: アプリ v14.86 / api.php v4.1 / alexa.php v1.0。
 
 ---
 
@@ -171,3 +172,55 @@ curl -i -X POST https://nuts024.com/health/api.php \
   `api.php` の両方を対応させる
 - エラーコード `__DAILY_LIMIT__` / `__GEMINI_RATE__` はクライアントが特別扱いするため名称固定
 - `api.php` を変更したら `?debug=1` と直叩き403で動作確認
+
+---
+
+## 10. 🔊 Alexa中継エンドポイント（`alexa.php` v1.0）
+
+ブラウザからは他サイトへ `Authorization` ヘッダーを送れない（CORSのプリフライトで止まる）ため、
+**サーバが代わりにトリガーURLを叩く**ための小さな中継。AIとは無関係で、`api.php` とは別ファイル。
+
+| 項目 | 値 |
+|---|---|
+| URL | `https://nuts024.com/health/alexa.php`（アプリ側の既定値・設定画面で変更可） |
+| メソッド | `POST`（本処理） / `OPTIONS`（CORSプリフライト） |
+| 認証 | ヘッダー `X-Secret-Key`（`AI_SECRET` と同値）＋ Origin 制限 |
+| 置き場所 | `api.php` と同じフォルダ。**リポジトリには置かない** |
+
+### 10-1. リクエスト（JSON）
+```json
+{ "url": "https://…（トリガーのリクエスト先・httpsのみ）",
+  "auth": "Bearer xxxxx",          // 任意。Authorizationヘッダーの値
+  "method": "GET" | "POST",        // 任意。既定は body があれば POST、無ければ GET
+  "body": "…",                     // 任意（POSTのとき）
+  "contentType": "application/json" // 任意
+}
+```
+
+### 10-2. レスポンス
+```json
+{ "ok": true,  "status": 200, "body": "…（先頭300文字）" }
+{ "ok": false, "error": "STATUS", "status": 401, "message": "宛先が 401 を返しました" }
+```
+
+| `error` | HTTP | 意味 |
+|---|---|---|
+| `METHOD` | 405 | POST以外 |
+| `ORIGIN` | 403 | 許可していない Origin |
+| `AUTH` | 401 | `X-Secret-Key` 不一致 |
+| `BODY` / `JSON` / `VERB` / `TOO_LONG` | 400 | 入力が不正 |
+| `URL` | 400 | https以外／URLとして不正 |
+| `HOST` | 403 | 許可外のホスト、または private/予約アドレスに解決された |
+| `RATE` | 429 | 1時間あたりの上限（既定120回）を超えた |
+| `FETCH` | 502 | 宛先に届かなかった（タイムアウト等） |
+| `STATUS` | 200 | 宛先が 2xx 以外を返した（`ok:false` で返す） |
+
+### 10-3. 踏み台にされないための決まり
+- **https のみ**。`gethostbyname` の結果が private/予約レンジなら拒否（社内やlocalhostを叩かせない）
+- **リダイレクトを追わない**（`CURLOPT_FOLLOWLOCATION=false`）
+- `$ALLOW_HOSTS` に宛先ホストを並べれば、そこだけに限定できる（空なら公開のhttpsならどこでも）
+- レート制限は `alexa_rate.json` に回数を持つ（1時間枠）
+
+### 10-4. クライアント側
+`health.html` の `alexaCall(hook,done)`。設定→🔊 Alexa連携 の「中継サーバ経由」がONのときに使う。
+送るのは `{url, auth}` だけで、**体調などの記録は一切送らない**。
