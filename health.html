@@ -224,7 +224,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.90"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.91"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -8598,6 +8598,16 @@ function alexaShareLinkWarn(url){
     return "これは定型アクションの「共有リンク」のようです。開いてもQRコードのページが出るだけで、ルーティンは起動しません。トリガーのスキル（仮想トリガーボタン等）が発行するURLを貼ってください。";
   return "";
 }
+// 宛先が返した番号から、次に見るところの見当をつける
+function alexaStatusHint(st){
+  const n=Number(st)||0;
+  if(n===401||n===403) return "認証が通っていません。①ヘッダー欄は空になっていないか ②値の前に「Bearer 」が要るか／不要か ③ヘッダーの名前が合っているか（Authorization ではなく X-API-Key など。その場合は「X-API-Key: 値」と見出しごと書く） ④キーの写し間違い（前後の空白・途中で切れている）を順に確かめてください。";
+  if(n===404) return "その宛先が見つかりません。URLの写し間違い（トリガーのIDの部分）か、トリガーが消えている可能性があります。";
+  if(n===405) return "送信方法が違います。GET と POST を切り替えて試してください。";
+  if(n===429) return "呼びすぎです。少し待ってからもう一度お試しください。";
+  if(n>=500) return "宛先のサーバ側でエラーが起きています。少し待ってからもう一度お試しください。";
+  return "";
+}
 function alexaShareLinkBody(body){
   const b=(body||"");
   return /Scan this QR code|You've received an Alexa Routine|routines-static-page/.test(b)
@@ -8630,7 +8640,7 @@ function alexaTestResultBox(){
   } else {
     box.appendChild(div({style:{fontSize:"10px",color:"#64748b",lineHeight:1.6}},"返事の本文はありませんでした。"));
   }
-  { const w=alexaShareLinkBody(t.body);
+  { const w=alexaShareLinkBody(t.body) || (t.ok?"":alexaStatusHint(t.status));
     if(w) box.appendChild(div({style:{fontSize:"10px",color:"#fb923c",marginTop:"6px",padding:"7px 9px",borderRadius:"7px",
       background:"#f973160d",border:"1px solid #f9731655",lineHeight:1.7}},"⚠ "+w)); }
   box.appendChild(div({style:{fontSize:"9px",color:"#475569",marginTop:"5px",lineHeight:1.6}},

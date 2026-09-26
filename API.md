@@ -191,7 +191,9 @@ curl -i -X POST https://nuts024.com/health/api.php \
 ```json
 { "url": "https://…（トリガーのリクエスト先・httpsのみ）",
   "auth": "Bearer xxxxx",          // 任意。値だけなら Authorization ヘッダーに載せる
-                                   //        「X-API-Key: xxx」のように「見出し: 値」ならその見出しで送る
+                                   //   「X-API-Key: xxx」のように「見出し: 値」ならその見出しで送る
+                                   //   （見出しとみなすのは Authorization か、ハイフンを含む名前のときだけ。
+                                   //     キー自体に : が入っていても壊さないため）
   "method": "GET" | "POST",        // 任意。既定は body があれば POST、無ければ GET
   "body": "…",                     // 任意（POSTのとき）
   "contentType": "application/json" // 任意
