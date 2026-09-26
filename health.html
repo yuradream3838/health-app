@@ -224,7 +224,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.92"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.93"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -844,7 +844,7 @@ const state = {
   shiftPattern:defaultShiftPattern(), swapMode:false, swapFirst:null,
   planPatterns:defaultPlanPatterns(), customTodos:[], customTodoModal:null,
   scheduleSubTab:"日", editEventUid:null, editEventIsRepeat:false, editScope:"all", patternEdit:null,
-  newEvH:9, newEvM:0, newEvEndH:10, newEvEndM:0, newEvEndNextDay:false, newEvTitle:"", newEvRepeat:"none", newEvColor:"#38bdf8", newEvWeekdays:[], newEvFromTask:null, newEvGoalId:null, newEvNdId:null, newEvAllDay:false, newEvRefOnly:false, newEvEndDate:null, editEventDate:null,
+  newEvH:9, newEvM:0, newEvEndH:10, newEvEndM:0, newEvEndNextDay:false, newEvTitle:"", newEvRepeat:"none", newEvColor:"#38bdf8", newEvWeekdays:[], newEvFromTask:null, newEvGoalId:null, newEvNdId:null, newEvAlexa:null, newEvAllDay:false, newEvRefOnly:false, newEvEndDate:null, editEventDate:null,
   aiScheduleLoading:false, aiScheduleProposal:null,
   aiAnalysisResult:null, aiAnalysisLoading:false, aiAnalysisError:null, aiAnalysisRemaining:null,
   events:{}, taskList:[], wishList:[], shopList:[],
@@ -861,6 +861,8 @@ const state = {
   sleepHistDays:30, sleepHistMetric:"net", sleepHistMore:false,  // 分析→睡眠履歴
   alexaOn:false, alexaHooks:{}, alexaLast:null,   // 🔊 Alexa連携（モードに入ったらURLを叩く）
   alexaRelay:true, alexaRelayUrl:"", alexaTest:null,  // 中継サーバ（独自ヘッダーが要るスキル向け）＋最後のテスト結果
+  alexaTriggers:[], alexaModes:{}, alexaSleep:{},     // 名前付きトリガー／モード割り当て／就寝・寝支度
+  alexaPlanOn:true, alexaPlan:null,                   // ⏰ 時刻で鳴らす（サーバに預ける）
   trainHistDays:30, trainHistMetric:"vol", trainHistEx:null, trainHistMore:false, // 分析→トレーニング履歴
   storageAlert:false, storageExportYear:null,
   weather:[], weatherCity:null, weatherLoading:false, weatherError:null,
@@ -1005,7 +1007,13 @@ function loadStorage(){
     if(mgl){try{const o=JSON.parse(mgl); if(o&&typeof o==="object")state.modeGoals=o;}catch{}}
     const alx=localStorage.getItem(STORAGE_KEY+"_alexa");
     if(alx){try{const o=JSON.parse(alx); if(o&&typeof o==="object"){ state.alexaOn=!!o.on; if(o.hooks&&typeof o.hooks==="object")state.alexaHooks=o.hooks;
-      if("relay" in o)state.alexaRelay=!!o.relay; if(typeof o.relayUrl==="string")state.alexaRelayUrl=o.relayUrl; }}catch{}}
+      if("relay" in o)state.alexaRelay=!!o.relay; if(typeof o.relayUrl==="string")state.alexaRelayUrl=o.relayUrl;
+      if(Array.isArray(o.triggers))state.alexaTriggers=o.triggers;
+      if(o.modes&&typeof o.modes==="object")state.alexaModes=o.modes;
+      if(o.sleep&&typeof o.sleep==="object")state.alexaSleep=o.sleep;
+      if("planOn" in o)state.alexaPlanOn=!!o.planOn;
+      if(o.plan&&typeof o.plan==="object")state.alexaPlan=o.plan; }}catch{}}
+    try{ migrateAlexaHooks(); }catch(_){}
     const mlg=localStorage.getItem(STORAGE_KEY+"_modelog");
     if(mlg){try{const a=JSON.parse(mlg); if(Array.isArray(a))state.modeLog=a;}catch{}}
     // 記録どうしが重なっていると1日の合計が24時間を超える。読み込んだ時点で**点検だけ**する（直すかどうかは本人が決める）
@@ -1411,7 +1419,7 @@ function render(){
       [_rgb('#f1f5f9'),_t0],[_rgb('#e2e8f0'),_t1],[_rgb('#cbd5e1'),_t1b],[_rgb('#94a3b8'),_t2],[_rgb('#64748b'),_t3],[_rgb('#475569'),_t4],[_rgb('#334155'),_tdim]
     ];
   }catch(_){}
-  if(!window._autoTick) window._autoTick=setInterval(()=>{ const changed=autoModeTick(); nudgeNotifyTick(); if(changed) render(); },60000);
+  if(!window._autoTick) window._autoTick=setInterval(()=>{ const changed=autoModeTick(); nudgeNotifyTick(); try{alexaMaybeSyncPlan();}catch(_){} if(changed) render(); },60000);
 
   // 🌙 睡眠前モード：起動中は全画面で専用画面に切り替える（他は描画しない）
   if(state.sleepMode){ content.appendChild(renderSleepMode()); tintSurfaces(content); return; }
@@ -2361,28 +2369,47 @@ function activeDay(now){
 //                 Authorizationヘッダーが要るスキル（日本の「仮想トリガーボタン」等）はこちら。
 //                 成功/失敗が分かるのも利点。
 const ALEXA_RELAY_DEFAULT="https://nuts024.com/health/alexa.php";
-function getAlexaHooks(){ if(!state.alexaHooks||typeof state.alexaHooks!=="object")state.alexaHooks={}; return state.alexaHooks; }
-function saveAlexa(){ try{localStorage.setItem(STORAGE_KEY+"_alexa",JSON.stringify({
-  on:!!state.alexaOn, hooks:getAlexaHooks(), relay:!!state.alexaRelay, relayUrl:(state.alexaRelayUrl||"")}));}catch(_){} }
-// 1モードぶんの設定 {url, auth}。古い「文字列＝URLだけ」の形も読めるようにしておく
-function alexaHookOf(key){ const v=getAlexaHooks()[key];
-  if(typeof v==="string") return {url:v.trim(), auth:"", method:"GET"};
-  if(v&&typeof v==="object") return {url:(v.url||"").trim(), auth:(v.auth||"").trim(), method:(v.method==="POST"?"POST":"GET")};
-  return {url:"", auth:"", method:"GET"}; }
-function setAlexaHook(key,patch){
-  const h=getAlexaHooks(), cur=alexaHookOf(key), nx={...cur,...patch};
-  nx.url=(nx.url||"").trim(); nx.auth=(nx.auth||"").trim();
-  if(!nx.url){ delete h[key]; saveAlexa(); return; }
-  const o={url:nx.url};
-  if(nx.auth) o.auth=nx.auth;
-  if(nx.method==="POST") o.method="POST";
-  h[key]=o; saveAlexa();
+// ── 名前付きトリガー ──
+// 「照明を落とす」のように名前を付けて1つ作っておき、モード・予定・就寝目標などから選ぶ。
+function getAlexaTriggers(){ if(!Array.isArray(state.alexaTriggers))state.alexaTriggers=[]; return state.alexaTriggers; }
+function getAlexaModes(){ if(!state.alexaModes||typeof state.alexaModes!=="object")state.alexaModes={}; return state.alexaModes; }
+function getAlexaSleep(){ if(!state.alexaSleep||typeof state.alexaSleep!=="object")state.alexaSleep={}; return state.alexaSleep; }
+function alexaTrigger(id){ return getAlexaTriggers().find(t=>t&&t.id===id)||null; }
+function alexaTriggerName(id){ const t=alexaTrigger(id); return t?(t.name||"(名前なし)"):""; }
+function alexaTriggerReady(t){ return !!(t&&/^https:\/\//i.test((t.url||"").trim())); }
+function newAlexaTriggerId(){ return "at"+Date.now().toString(36)+Math.random().toString(36).slice(2,6); }
+function addAlexaTrigger(){ const t={id:newAlexaTriggerId(),name:"",url:"",auth:"",method:"GET"}; getAlexaTriggers().push(t); saveAlexa(); return t; }
+function setAlexaTrigger(id,patch){ const t=alexaTrigger(id); if(!t)return; Object.assign(t,patch); saveAlexa(); }
+function removeAlexaTrigger(id){
+  state.alexaTriggers=getAlexaTriggers().filter(t=>t.id!==id);
+  const m=getAlexaModes(); Object.keys(m).forEach(k=>{ if(m[k]===id) delete m[k]; });
+  const sl=getAlexaSleep(); ["bed","wind"].forEach(k=>{ if(sl[k]&&sl[k].t===id) delete sl[k]; });
+  saveAlexa();
 }
-function alexaUrlFor(key){ const u=alexaHookOf(key).url; return /^https:\/\//i.test(u)?u:""; }
-function alexaHookCount(){ return Object.keys(getAlexaHooks()).filter(k=>alexaUrlFor(k)).length; }
+function saveAlexa(){ try{localStorage.setItem(STORAGE_KEY+"_alexa",JSON.stringify({
+  on:!!state.alexaOn, relay:!!state.alexaRelay, relayUrl:(state.alexaRelayUrl||""),
+  triggers:getAlexaTriggers(), modes:getAlexaModes(), sleep:getAlexaSleep(),
+  planOn:!!state.alexaPlanOn, plan:state.alexaPlan||null, hooks:state.alexaHooks||{}}));}catch(_){} }
+// 旧い形（モードごとにURLを直接持っていた）を、名前付きトリガーへ移す
+function migrateAlexaHooks(){
+  const h=state.alexaHooks;
+  if(!h||typeof h!=="object"||!Object.keys(h).length) return 0;
+  let n=0;
+  Object.keys(h).forEach(k=>{
+    const v=h[k];
+    const url=((typeof v==="string"?v:(v&&v.url))||"").trim();
+    if(!/^https:\/\//i.test(url)) return;
+    const auth=((v&&v.auth)||"").trim(), method=((v&&v.method)==="POST")?"POST":"GET";
+    let tr=getAlexaTriggers().find(t=>(t.url||"")===url&&(t.auth||"")===auth&&((t.method||"GET")===method));
+    if(!tr){ const d=lifeModeDef(k); tr={id:newAlexaTriggerId(),name:(d?d.label:k),url,auth,method}; getAlexaTriggers().push(tr); }
+    getAlexaModes()[k]=tr.id; n++;
+  });
+  state.alexaHooks={}; saveAlexa();
+  return n;
+}
 function alexaRelayUrl(){ const u=(state.alexaRelayUrl||"").trim()||ALEXA_RELAY_DEFAULT; return /^https:\/\//i.test(u)?u:""; }
 function alexaUsingRelay(){ return !!state.alexaRelay && !!alexaRelayUrl(); }
-// 叩く。done({ok,msg,blind}) で結果を返す（直接のときは blind=true＝結果が分からない）
+// 叩く。done({ok,msg,body,status,blind}) で結果を返す（そのまま叩くときは blind=true＝結果が分からない）
 function alexaCall(hook,done){
   const url=(hook&&hook.url||"").trim(), auth=(hook&&hook.auth||"").trim();
   if(!/^https:\/\//i.test(url)){ done&&done({ok:false,msg:"httpsのURLを入れてください"}); return false; }
@@ -2408,10 +2435,10 @@ function alexaCall(hook,done){
 // モードに入ったとき。起動直後の自動復帰では鳴らさない（開くたびに鳴ってしまうため）
 function alexaFireMode(key){
   if(!state.alexaOn || !_appReady) return false;
-  const hook=alexaHookOf(key);
-  if(!/^https:\/\//i.test(hook.url)) return false;
+  const t=alexaTrigger(getAlexaModes()[key]);
+  if(!alexaTriggerReady(t)) return false;
   const def=lifeModeDef(key);
-  alexaCall(hook,r=>{ if(!r.ok) showToast(`🔊 Alexaに伝えられませんでした（${def?def.label:key}）：${r.msg}`,"#f97316"); });
+  alexaCall(t,r=>{ if(!r.ok) showToast(`🔊 Alexaに伝えられませんでした（${def?def.label:key}）：${r.msg}`,"#f97316"); });
   state.alexaLast={key, ts:Date.now()};
   return true;
 }
@@ -5129,7 +5156,7 @@ function openGoalAsEvent(node, targetDate){
   state.newEvWeekdays=[parseDS(target).getDay()];
   state.newEvFromTask=null; state.newEvAllDay=false; state.newEvRefOnly=false; state.newEvPlace=""; state.newEvNote=""; state.newEvPreDays=0;
   state.newEvGoalId=(node&&node.id)||null;   // この予定がどの目標から来たかを覚える
-  state.newEvNdId=null;
+  state.newEvNdId=null; state.newEvAlexa=null;
   render();
 }
 // 🎯 その目標から作った予定（単発＋繰り返し）。予定側の goalId で結びつく
@@ -6916,7 +6943,7 @@ function openAddEvent(vd, startH, startM){
   state.newEvEndH=(sh+1)%24;state.newEvEndM=sm;state.newEvEndNextDay=(sh+1)>=24;
   state.newEvRepeat="none";state.newEvColor=EV_DEFAULT;
   state.newEvWeekdays=[parseDS(vd).getDay()];
-  state.newEvFromTask=null;state.newEvGoalId=null;state.newEvNdId=null;state.newEvAllDay=false;state.newEvRefOnly=false;state.newEvPlace="";state.newEvNote="";state.newEvPreDays=0;
+  state.newEvFromTask=null;state.newEvGoalId=null;state.newEvNdId=null;state.newEvAlexa=null;state.newEvAllDay=false;state.newEvRefOnly=false;state.newEvPlace="";state.newEvNote="";state.newEvPreDays=0;
   render();
 }
 // ルーティン実績ブロックの「その日だけ」表示名・メモを編集
@@ -8659,34 +8686,193 @@ function copyText(txt){
     document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); showToast("📋 コピーしました"); }
   catch(__){ showToast("コピーできませんでした。長押しで選べます"); }
 }
-// 🔊 Alexa連携の設定。モードごとに「起動させたいAlexaルーティンのURL」を登録する
+// ── ⏰ 時刻で鳴らす（サーバに予約を預ける）─────────────────────
+// アプリは閉じていると動けないので、これから鳴らす時刻を**サーバに預けて**おき、
+// サーバ側の定期実行（cron）が時刻の来たものを叩く。預けるのは時刻とURLだけ。
+const ALEXA_PLAN_DAYS=7, ALEXA_PLAN_MAX=200;
+function alexaRefOf(o){ const a=o&&o.alexa; if(!a||typeof a!=="object")return null;
+  const t=alexaTrigger(a.t); if(!alexaTriggerReady(t))return null;
+  return {t, lead:Math.max(0,Math.min(1440,parseInt(a.lead)||0))}; }
+function alexaPlanItem(ds,mins,ref,label){
+  const base=parseDS(ds).getTime()+Math.round(mins)*60000;
+  const at=base-ref.lead*60000;
+  return {at, url:ref.t.url, auth:ref.t.auth||"", method:ref.t.method==="POST"?"POST":"GET",
+    label:`${label}${ref.lead?`（${ref.lead}分前）`:""}`, name:ref.t.name||""};
+}
+// これから ALEXA_PLAN_DAYS 日ぶんの「鳴らす予定」を作る（古い順）
+function alexaReservations(){
+  const out=[], now=Date.now(), today=todayStr();
+  if(!state.alexaOn||!state.alexaPlanOn) return out;
+  for(let i=0;i<ALEXA_PLAN_DAYS;i++){
+    const ds=addDays(today,i);
+    // ① 予定（単発・繰り返し。終日は時刻がないので対象外）
+    try{ getEventsForDate(ds).forEach(ev=>{
+      if(ev.allDay||ev.refOnly) return;
+      const ref=alexaRefOf(ev); if(!ref) return;
+      out.push(alexaPlanItem(ds,(ev.startH||0)*60+(ev.startM||0),ref,ev.title||"予定"));
+    }); }catch(_){}
+    // ② 就寝・寝支度の目標時刻（シフトで日ごとに変わる）
+    try{ const sl=getAlexaSleep();
+      const bt=bedTargetNightMin(ds);          // 夜基準（24:00=1440）
+      if(bt!=null){
+        const bref=alexaRefOf({alexa:sl.bed});
+        if(bref) out.push(alexaPlanItem(ds,bt,bref,"🌙 就寝の目標"));
+        const wref=alexaRefOf({alexa:sl.wind});
+        if(wref) out.push(alexaPlanItem(ds,bt-windLeadMin(),wref,"🛏 寝支度の目標"));
+      }
+    }catch(_){}
+    // ③ 定期ルーティン（時刻を設定しているもの）
+    try{ dueCustomTodos(ds).forEach(ct=>{
+      const ref=alexaRefOf(ct); if(!ref) return;
+      const tt=customTodoTimeFor(ct,ds); if(!tt) return;
+      out.push(alexaPlanItem(ds,(tt.sn?1440:0)+tt.h*60+(tt.m||0),ref,`🔁 ${ct.label||"定期ルーティン"}`));
+    }); }catch(_){}
+  }
+  return out.filter(x=>x.at>now+30000).sort((a,b)=>a.at-b.at).slice(0,ALEXA_PLAN_MAX);
+}
+function alexaPlanHash(list){ return list.map(x=>`${x.at}|${x.url}|${x.method}`).join("\n"); }
+// サーバへ預ける。中身が前と同じなら送らない
+function alexaSyncPlan(force,done){
+  if(!alexaUsingRelay()){ done&&done({ok:false,msg:"中継サーバ経由にしてください"}); return false; }
+  const list=alexaReservations(), hash=alexaPlanHash(list);
+  const prev=state.alexaPlan||{};
+  if(!force && prev.hash===hash && prev.sent && (Date.now()-prev.sent)<12*3600000){ done&&done({ok:true,skipped:true,n:list.length}); return false; }
+  fetch(alexaRelayUrl(),{method:"POST",headers:{"Content-Type":"application/json","X-Secret-Key":AI_SECRET},
+    body:JSON.stringify({action:"plan",items:list.map(x=>({at:Math.round(x.at/1000),url:x.url,auth:x.auth,method:x.method,label:x.label}))})})
+    .then(r=>r.json().then(j=>({r,j})).catch(()=>({r,j:null})))
+    .then(({r,j})=>{
+      const ok=r.ok&&j&&j.ok;
+      state.alexaPlan={hash:ok?hash:(prev.hash||""), sent:ok?Date.now():(prev.sent||0), n:list.length,
+        err:ok?"":((j&&(j.message||j.error))||`エラー（${r.status}）`)};
+      saveAlexa();
+      done&&done({ok:!!ok,n:list.length,msg:ok?`${list.length}件の予約をサーバに預けました`:state.alexaPlan.err});
+    })
+    .catch(()=>{ state.alexaPlan={...prev,err:"中継サーバに届きませんでした",n:list.length}; saveAlexa();
+      done&&done({ok:false,msg:"中継サーバに届きませんでした"}); });
+  return true;
+}
+// 起動後と1分ごとの見回りから呼ぶ（変わっていなければ何も送らない）
+function alexaMaybeSyncPlan(){ if(!_appReady||!state.alexaOn||!state.alexaPlanOn) return; alexaSyncPlan(false); }
+// トリガーを選ぶ小さな部品（予定・就寝・定期ルーティンで共用）。値は {t,lead} か null
+function alexaRefPicker(cur,onChange,opts){
+  const o=opts||{};
+  const wrap=div({style:{display:"flex",alignItems:"center",gap:"6px",flexWrap:"wrap"}});
+  const list=getAlexaTriggers().filter(alexaTriggerReady);
+  if(!list.length){ wrap.appendChild(span({style:{fontSize:"10px",color:"#64748b"}},"設定→🔊 Alexa連携でトリガーを作ると選べます")); return wrap; }
+  const sel=document.createElement('select'); sel.className='sel'; sel.style.cssText="flex:1;min-width:120px;font-size:12px";
+  const add=(v,l,on)=>{const op=document.createElement('option');op.value=v;op.textContent=l;if(on)op.selected=true;sel.appendChild(op);};
+  add("","🔇 鳴らさない",!(cur&&cur.t));
+  list.forEach(t=>add(t.id,`🔊 ${t.name||"(名前なし)"}`,!!(cur&&cur.t===t.id)));
+  sel.addEventListener('change',e=>{ const v=e.target.value; onChange(v?{t:v,lead:(cur&&cur.lead)||0}:null); });
+  wrap.appendChild(sel);
+  if(cur&&cur.t && !o.noLead){
+    const ln=document.createElement('input'); ln.type='number'; ln.min="0"; ln.max="1440"; ln.value=String((cur&&cur.lead)||0);
+    ln.style.cssText="width:58px;padding:6px 4px;background:#0f172a;border:1px solid #334155;border-radius:7px;color:#e2e8f0;font-size:12px;font-family:inherit;text-align:center";
+    ln.addEventListener('change',e=>{ onChange({t:cur.t,lead:Math.max(0,Math.min(1440,parseInt(e.target.value)||0))}); });
+    wrap.appendChild(ln);
+    wrap.appendChild(span({style:{fontSize:"10px",color:"#64748b",flexShrink:0}},"分前"));
+  }
+  return wrap;
+}
+// よくある貼り間違い：Alexaアプリの「共有リンク」はルーティンを起動しない（QRコードのページが出るだけ）
+function alexaShareLinkWarn(url){
+  let host=""; try{ host=new URL((url||"").trim()).host.toLowerCase(); }catch(_){ return ""; }
+  if(/(^|\.)alexa\.amazon\./.test(host) || /(^|\.)amazon\.(co\.jp|com|[a-z.]+)$/.test(host))
+    return "これは定型アクションの「共有リンク」のようです。開いてもQRコードのページが出るだけで、ルーティンは起動しません。トリガーのスキル（仮想トリガーボタン等）が発行するURLを貼ってください。";
+  return "";
+}
+// 宛先が返した番号から、次に見るところの見当をつける
+function alexaStatusHint(st){
+  const n=Number(st)||0;
+  if(n===401||n===403) return "認証が通っていません。①ヘッダー欄は空になっていないか ②値の前に「Bearer 」が要るか／不要か ③ヘッダーの名前が合っているか（Authorization ではなく X-API-Key など。その場合は「X-API-Key: 値」と見出しごと書く） ④キーの写し間違い（前後の空白・途中で切れている）を順に確かめてください。";
+  if(n===404) return "その宛先が見つかりません。URLの写し間違い（トリガーのIDの部分）か、トリガーが消えている可能性があります。";
+  if(n===405) return "送信方法が違います。GET と POST を切り替えて試してください。";
+  if(n===429) return "呼びすぎです。少し待ってからもう一度お試しください。";
+  if(n>=500) return "宛先のサーバ側でエラーが起きています。少し待ってからもう一度お試しください。";
+  return "";
+}
+function alexaShareLinkBody(body){
+  const b=(body||"");
+  return /Scan this QR code|You've received an Alexa Routine|routines-static-page/.test(b)
+    ? "返事の中身は「定型アクションの共有ページ」です。届いてはいますが、これではルーティンは起動しません。トリガー用のURLに貼り替えてください。" : "";
+}
+// テストの結果。返事が長いので消えるトーストではなく、画面に残して全部読めるようにする
+function alexaTestResultBox(){
+  const t=state.alexaTest||{};
+  const col=t.sending?"#38bdf8":(t.ok?(t.blind?"#38bdf8":"#22c55e"):"#f97316");
+  const box=div({style:{marginTop:"6px",padding:"9px 10px",borderRadius:"9px",background:"#0b1220",border:`1px solid ${col}55`}});
+  box.id="alexa-test-result";
+  const head=div({style:{display:"flex",alignItems:"center",gap:"7px",marginBottom:t.sending?"0":"5px"}});
+  head.appendChild(span({style:{flex:1,minWidth:0,fontSize:"11px",fontWeight:700,color:col}},
+    t.sending?`🔊 ${t.label} を送っています…`:`${t.ok?"✅":"⚠️"} ${t.label}：${t.msg}`));
+  if(!t.sending){ const x=btn({style:{flexShrink:0,fontSize:"10px",padding:"2px 8px",borderRadius:"6px",cursor:"pointer",fontFamily:"inherit",
+      border:"1px solid #334155",background:"transparent",color:"#64748b"}},"閉じる");
+    x.addEventListener('click',()=>{ state.alexaTest=null; render(); }); head.appendChild(x); }
+  box.appendChild(head);
+  if(t.sending) return box;
+  if(t.body){
+    box.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"3px"}},"宛先からの返事"));
+    box.appendChild(div({style:{maxHeight:"180px",overflowY:"auto",padding:"7px 9px",borderRadius:"7px",background:"#0f172a",border:"1px solid #1e293b",
+      fontSize:"11px",color:"#cbd5e1",lineHeight:1.6,whiteSpace:"pre-wrap",wordBreak:"break-all",userSelect:"text",WebkitUserSelect:"text"}},t.body));
+    const cp=btn({style:{marginTop:"5px",fontSize:"10px",padding:"4px 10px",borderRadius:"6px",cursor:"pointer",fontFamily:"inherit",
+      border:"1px solid #334155",background:"transparent",color:"#94a3b8"}},"📋 返事をコピー");
+    cp.addEventListener('click',()=>{ copyText(t.body); });
+    box.appendChild(cp);
+  } else if(t.ok && t.blind){
+    box.appendChild(div({style:{fontSize:"10px",color:"#64748b",lineHeight:1.6}},"「そのまま叩く」では返事を読めません。中継サーバ経由にすると結果が分かります。"));
+  } else if(t.ok){
+    box.appendChild(div({style:{fontSize:"10px",color:"#64748b",lineHeight:1.6}},
+      `返事の本文はありません（${t.status||204} は「受け付けました」の返事です）。ここまでは成功しています。あとはAlexa側で定型アクションが動くか確かめてください。`));
+  } else {
+    box.appendChild(div({style:{fontSize:"10px",color:"#64748b",lineHeight:1.6}},"返事の本文はありませんでした。"));
+  }
+  { const w=alexaShareLinkBody(t.body) || (t.ok?"":alexaStatusHint(t.status));
+    if(w) box.appendChild(div({style:{fontSize:"10px",color:"#fb923c",marginTop:"6px",padding:"7px 9px",borderRadius:"7px",
+      background:"#f973160d",border:"1px solid #f9731655",lineHeight:1.7}},"⚠ "+w)); }
+  box.appendChild(div({style:{fontSize:"9px",color:"#475569",marginTop:"5px",lineHeight:1.6}},
+    "※ 200でも本文にエラーが書かれていることがあります。ここが空か「ok」系なら、あとはAlexa側（定型アクションの実行条件）の設定を確かめてください。"));
+  return box;
+}
+// 文字列をコピー（クリップボードが使えないときは選択してもらう）
+function copyText(txt){
+  try{
+    if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(txt).then(()=>showToast("📋 コピーしました"),()=>showToast("コピーできませんでした。長押しで選べます")); return; }
+  }catch(_){}
+  try{ const ta=document.createElement('textarea'); ta.value=txt; ta.style.cssText="position:fixed;left:-9999px";
+    document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); showToast("📋 コピーしました"); }
+  catch(__){ showToast("コピーできませんでした。長押しで選べます"); }
+}
+// 🔊 Alexa連携の設定。トリガーを作り、モード・予定・就寝目標などから選ぶ
 function renderAlexaPanel(){
   const card=div({className:"card"});
-  const n=alexaHookCount(), relay=alexaUsingRelay();
-  card.appendChild(div({style:{fontSize:"14px",fontWeight:700,color:"#e2e8f0",marginBottom:"4px"}},`🔊 Alexa連携${n?`（${n}件）`:""}`));
+  const trs=getAlexaTriggers(), ready=trs.filter(alexaTriggerReady).length;
+  card.appendChild(div({style:{fontSize:"14px",fontWeight:700,color:"#e2e8f0",marginBottom:"4px"}},`🔊 Alexa連携${ready?`（${ready}件）`:""}`));
   card.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"9px",lineHeight:1.7}},
-    "モードに入ったときに、Alexaのルーティン（定型アクション）を起動できます。たとえば「🌙睡眠前モードに入ったら照明を落とす」「🏋️トレーニングモードに入ったら音楽をかける」。"));
+    "Alexaのルーティン（定型アクション）を、このアプリから起動できます。まずトリガーを作り、それをモード・予定・就寝目標などから選びます。"));
   // 手順
   { const box=div({style:{padding:"9px 11px",marginBottom:"10px",borderRadius:"9px",background:"#0f172a",border:"1px solid #1e293b"}});
     box.appendChild(div({style:{fontSize:"11px",fontWeight:700,color:"#94a3b8",marginBottom:"5px"}},"準備（はじめの1回だけ）"));
     [["①","Alexaアプリで、URLで起動できるトリガーのスキルを有効にする（日本なら「仮想トリガーボタン」など）"],
      ["⚠","Alexaアプリの「共有」で出るリンクではありません。あれは開いてもQRコードが出るだけで、ルーティンは動きません"],
-     ["②","そのスキルのサイトでトリガーを作り、リクエスト先のURL（必要ならAuthorizationの値）をもらう"],
+     ["②","そのスキルのサイトでトリガーを作り、リクエスト先のURL（必要ならヘッダーの値）をもらう"],
      ["③","Alexaで「デバイスを探す」→ そのトリガーがボタンやドアベルとして見つかる"],
      ["④","Alexaの定型アクションの「実行条件＝スマートホーム」にそれを指定する"],
-     ["⑤","もらったURLを、下の使いたいモードの欄に貼る"]].forEach(([i,t])=>{
+     ["⑤","もらったURLを、下の「トリガー」に貼る"]].forEach(([i,t])=>{
       box.appendChild(div({style:{display:"flex",gap:"7px",marginBottom:"3px"}},[
-        span({style:{flexShrink:0,fontSize:"10px",color:"#38bdf8",fontWeight:700}},i),
-        span({style:{flex:1,minWidth:0,fontSize:"10px",color:"#94a3b8",lineHeight:1.6}},t)]));
+        span({style:{flexShrink:0,fontSize:"10px",color:i==="⚠"?"#fb923c":"#38bdf8",fontWeight:700}},i),
+        span({style:{flex:1,minWidth:0,fontSize:"10px",color:i==="⚠"?"#fb923c":"#94a3b8",lineHeight:1.6}},t)]));
     });
     card.appendChild(box); }
   // 全体のON/OFF
   { const on=!!state.alexaOn;
     const b=btn({style:{width:"100%",padding:"10px",marginBottom:"10px",borderRadius:"9px",cursor:"pointer",fontSize:"13px",fontWeight:700,fontFamily:"inherit",
       border:`1px solid ${on?"#22c55e":"#334155"}`,background:on?"#22c55e22":"transparent",color:on?"#4ade80":"#64748b"}},on?"🔊 Alexa連携: ON":"🔇 Alexa連携: OFF");
-    b.addEventListener('click',()=>{ state.alexaOn=!state.alexaOn; saveAlexa(); showToast(state.alexaOn?"🔊 Alexa連携をONにしました":"🔇 Alexa連携をOFFにしました"); render(); });
+    b.addEventListener('click',()=>{ state.alexaOn=!state.alexaOn; saveAlexa(); showToast(state.alexaOn?"🔊 Alexa連携をONにしました":"🔇 Alexa連携をOFFにしました");
+      // OFFにしたらサーバに預けた予約も空にする（閉じている間に鳴らないように）
+      if(state.alexaPlanOn&&alexaUsingRelay()) alexaSyncPlan(true,()=>render());
+      render(); });
     card.appendChild(b); }
-  // 送り方（直接 / 中継サーバ経由）
+  // 送り方
   card.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"5px"}},"送り方"));
   { const row=div({style:{display:"flex",gap:"6px",marginBottom:"6px"}});
     [[false,"そのまま叩く"],[true,"中継サーバ経由"]].forEach(([v,l])=>{
@@ -8703,67 +8889,132 @@ function renderAlexaPanel(){
     inp.addEventListener('change',e=>{ state.alexaRelayUrl=(e.target.value||"").trim(); saveAlexa(); render(); });
     card.appendChild(inp);
     card.appendChild(div({style:{fontSize:"10px",color:"#475569",marginBottom:"10px",lineHeight:1.7,whiteSpace:"pre-line"}},
-      "自分のサーバに置いた alexa.php が代わりに叩きます。ブラウザからは他サイトへ Authorization ヘッダーを送れないので、それが要るスキルはこちらを使ってください。\n送った結果（成功/失敗）が分かるのもこちらです。空欄なら上の既定のURLを使います。"));
+      "自分のサーバに置いた alexa.php が代わりに叩きます。ヘッダーが要るスキルはこちら。成功/失敗が分かるのもこちらです。空欄なら上の既定のURLを使います。"));
   } else {
     card.appendChild(div({style:{fontSize:"10px",color:"#475569",marginBottom:"10px",lineHeight:1.7,whiteSpace:"pre-line"}},
-      "ブラウザからそのURLを直接開きます。Authorization が要らない（URLだけで起動する）トリガー向けです。\n届いたかどうかは分かりません（別サイトなので結果を読めません）。"));
+      "ブラウザからそのURLを直接開きます。ヘッダーが要らないトリガー向けで、届いたかは分かりません。\n※「⏰ 時刻で鳴らす」は中継サーバ経由でないと使えません。"));
   }
-  // モードごとのURL
-  card.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"6px"}},"モードに入ったら叩くURL（空欄なら何もしません）"));
-  getLifeModes().forEach(md=>{
-    const hook=alexaHookOf(md.key);
-    const ok=!!alexaUrlFor(md.key);
-    const row=div({style:{marginBottom:"8px"}});
-    row.dataset.alexamode=md.key;
-    row.appendChild(div({style:{display:"flex",alignItems:"center",gap:"7px",marginBottom:"3px"}},[
-      span({style:{fontSize:"15px",flexShrink:0}},md.icon),
-      span({style:{flex:1,minWidth:0,fontSize:"12px",color:ok?md.color:"#94a3b8",fontWeight:ok?700:400}},md.label),
-      ok?(()=>{ const t=btn({style:{flexShrink:0,fontSize:"10px",padding:"3px 9px",borderRadius:"6px",cursor:"pointer",fontFamily:"inherit",
-          border:"1px solid #38bdf8",background:"#0ea5e918",color:"#38bdf8"}},"テスト");
-        t.addEventListener('click',(()=>{const k=md.key,l=md.label;return()=>{
-          state.alexaTest={key:k,label:l,sending:true}; render();
-          alexaCall(alexaHookOf(k),r=>{
-            state.alexaTest={key:k,label:l,ok:!!r.ok,blind:!!r.blind,msg:r.msg||"",body:r.body||"",status:r.status||null,ts:Date.now()};
-            render();
-          });
-        };})());
-        return t; })():null,
-      hook.url?(()=>{ const c=btn({style:{flexShrink:0,fontSize:"10px",padding:"3px 8px",borderRadius:"6px",cursor:"pointer",fontFamily:"inherit",
-          border:"1px solid #334155",background:"transparent",color:"#64748b"}},"消す");
-        c.addEventListener('click',(()=>{const k=md.key;return()=>{ setAlexaHook(k,{url:"",auth:""}); render(); };})());
-        return c; })():null,
-    ]));
-    const inp=document.createElement('input'); inp.type='url'; inp.value=hook.url; inp.placeholder="https://…（トリガーのリクエスト先）";
-    inp.style.cssText=`width:100%;box-sizing:border-box;padding:8px 10px;background:#0f172a;border:1px solid ${ok?"#0ea5e955":"#334155"};border-radius:8px;color:#e2e8f0;font-size:11px;font-family:inherit`;
-    inp.addEventListener('change',(()=>{const k=md.key;return e=>{ setAlexaHook(k,{url:e.target.value}); render(); };})());
-    row.appendChild(inp);
-    { const w=hook.url?alexaShareLinkWarn(hook.url):"";
-      if(w) row.appendChild(div({style:{fontSize:"10px",color:"#fb923c",marginTop:"4px",padding:"6px 8px",borderRadius:"7px",
+
+  // ── トリガー ──
+  card.appendChild(div({style:{display:"flex",alignItems:"center",gap:"8px",marginBottom:"6px"}},[
+    span({style:{flex:1,fontSize:"12px",fontWeight:700,color:"#e2e8f0"}},"🔗 トリガー"),
+    (()=>{ const b=btn({style:{flexShrink:0,fontSize:"11px",padding:"4px 10px",borderRadius:"7px",cursor:"pointer",fontFamily:"inherit",
+        border:"1px solid #0ea5e9",background:"#0ea5e918",color:"#38bdf8",fontWeight:600}},"＋ 追加");
+      b.addEventListener('click',()=>{ addAlexaTrigger(); render(); }); return b; })()
+  ]));
+  if(!trs.length) card.appendChild(div({style:{fontSize:"11px",color:"#475569",textAlign:"center",padding:"10px 0",lineHeight:1.6}},
+    "「＋ 追加」でトリガーを作り、名前とURLを入れてください。"));
+  trs.forEach(t=>{
+    const ok=alexaTriggerReady(t);
+    const box=div({style:{padding:"9px 10px",marginBottom:"8px",borderRadius:"9px",background:"#0f172a",border:`1px solid ${ok?"#0ea5e955":"#334155"}`}});
+    box.dataset.alexatrigger=t.id;
+    const top=div({style:{display:"flex",alignItems:"center",gap:"6px",marginBottom:"5px"}});
+    const nm=document.createElement('input'); nm.type='text'; nm.value=t.name||""; nm.placeholder="名前（例：照明を落とす）";
+    nm.style.cssText="flex:1;min-width:0;padding:7px 9px;background:#0b1220;border:1px solid #334155;border-radius:7px;color:#e2e8f0;font-size:12px;font-weight:700;font-family:inherit";
+    nm.addEventListener('change',(()=>{const id=t.id;return e=>{ setAlexaTrigger(id,{name:e.target.value.trim()}); render(); };})());
+    top.appendChild(nm);
+    if(ok){ const tb=btn({style:{flexShrink:0,fontSize:"10px",padding:"4px 9px",borderRadius:"6px",cursor:"pointer",fontFamily:"inherit",
+        border:"1px solid #38bdf8",background:"#0ea5e918",color:"#38bdf8"}},"テスト");
+      tb.addEventListener('click',(()=>{const id=t.id;return()=>{ const tr=alexaTrigger(id); const l=tr.name||"トリガー";
+        state.alexaTest={key:id,label:l,sending:true}; render();
+        alexaCall(tr,r=>{ state.alexaTest={key:id,label:l,ok:!!r.ok,blind:!!r.blind,msg:r.msg||"",body:r.body||"",status:r.status||null,ts:Date.now()}; render(); });
+      };})());
+      top.appendChild(tb); }
+    const del=btn({style:{flexShrink:0,fontSize:"10px",padding:"4px 8px",borderRadius:"6px",cursor:"pointer",fontFamily:"inherit",
+      border:"1px solid #334155",background:"transparent",color:"#64748b"}},"削除");
+    del.addEventListener('click',(()=>{const id=t.id;return()=>{ removeAlexaTrigger(id); render(); };})());
+    top.appendChild(del);
+    box.appendChild(top);
+    const ui=document.createElement('input'); ui.type='url'; ui.value=t.url||""; ui.placeholder="https://…（トリガーのリクエスト先）";
+    ui.style.cssText=`width:100%;box-sizing:border-box;padding:7px 9px;background:#0b1220;border:1px solid ${ok?"#0ea5e955":"#334155"};border-radius:7px;color:#e2e8f0;font-size:11px;font-family:inherit`;
+    ui.addEventListener('change',(()=>{const id=t.id;return e=>{ setAlexaTrigger(id,{url:(e.target.value||"").trim()}); render(); };})());
+    box.appendChild(ui);
+    { const w=t.url?alexaShareLinkWarn(t.url):"";
+      if(w) box.appendChild(div({style:{fontSize:"10px",color:"#fb923c",marginTop:"4px",padding:"6px 8px",borderRadius:"7px",
         background:"#f973160d",border:"1px solid #f9731555",lineHeight:1.7}},"⚠ "+w)); }
-    // ヘッダーと送信方法（中継のときだけ。ブラウザ直叩きでは送れないため）
-    if(state.alexaRelay && hook.url){
-      const ai=document.createElement('input'); ai.type='text'; ai.value=hook.auth;
+    if(state.alexaRelay){
+      const ai=document.createElement('input'); ai.type='text'; ai.value=t.auth||"";
       ai.placeholder="ヘッダー（例：Bearer xxxxx ／ X-API-Key: xxxxx・不要なら空欄）";
-      ai.style.cssText="width:100%;box-sizing:border-box;margin-top:4px;padding:7px 10px;background:#0b1220;border:1px solid #334155;border-radius:8px;color:#cbd5e1;font-size:11px;font-family:inherit";
-      ai.addEventListener('change',(()=>{const k=md.key;return e=>{ setAlexaHook(k,{auth:e.target.value}); render(); };})());
-      row.appendChild(ai);
+      ai.style.cssText="width:100%;box-sizing:border-box;margin-top:4px;padding:7px 9px;background:#0b1220;border:1px solid #334155;border-radius:7px;color:#cbd5e1;font-size:11px;font-family:inherit";
+      ai.addEventListener('change',(()=>{const id=t.id;return e=>{ setAlexaTrigger(id,{auth:(e.target.value||"").trim()}); render(); };})());
+      box.appendChild(ai);
       const mr=div({style:{display:"flex",alignItems:"center",gap:"6px",marginTop:"4px"}});
       mr.appendChild(span({style:{fontSize:"10px",color:"#64748b",flexShrink:0}},"送信方法"));
       ["GET","POST"].forEach(v=>{
-        const on=(hook.method==="POST"?"POST":"GET")===v;
+        const on=((t.method==="POST")?"POST":"GET")===v;
         const b=btn({style:{padding:"3px 12px",borderRadius:"6px",cursor:"pointer",fontSize:"10px",fontWeight:on?700:500,fontFamily:"inherit",
           border:`1px solid ${on?"#38bdf8":"#334155"}`,background:on?"#0ea5e922":"transparent",color:on?"#38bdf8":"#64748b"}},v);
-        b.addEventListener('click',(()=>{const k=md.key,vv=v;return()=>{ setAlexaHook(k,{method:vv}); render(); };})());
+        b.addEventListener('click',(()=>{const id=t.id,vv=v;return()=>{ setAlexaTrigger(id,{method:vv}); render(); };})());
         mr.appendChild(b);
       });
-      mr.appendChild(span({style:{flex:1,minWidth:0,fontSize:"9px",color:"#475569"}},"スキルの説明にある書き方に合わせてください"));
-      row.appendChild(mr);
+      box.appendChild(mr);
     }
-    if(state.alexaTest && state.alexaTest.key===md.key) row.appendChild(alexaTestResultBox());
+    if(state.alexaTest && state.alexaTest.key===t.id) box.appendChild(alexaTestResultBox());
+    card.appendChild(box);
+  });
+
+  // ── ⏰ 時刻で鳴らす ──
+  { const on=!!state.alexaPlanOn, canPlan=alexaUsingRelay();
+    card.appendChild(div({style:{fontSize:"12px",fontWeight:700,color:"#e2e8f0",margin:"12px 0 5px"}},"⏰ 時刻で鳴らす（アプリを閉じていても）"));
+    card.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"7px",lineHeight:1.7}},
+      "これから鳴らす時刻をサーバに預けておき、サーバが時刻の来たものを叩きます。予定・就寝や寝支度の目標・定期ルーティンに、それぞれトリガーを割り当ててください。"));
+    const b=btn({style:{width:"100%",padding:"9px",marginBottom:"7px",borderRadius:"9px",cursor:canPlan?"pointer":"default",fontSize:"12px",fontWeight:700,fontFamily:"inherit",
+      border:`1px solid ${on&&canPlan?"#22c55e":"#334155"}`,background:on&&canPlan?"#22c55e22":"transparent",color:on&&canPlan?"#4ade80":"#64748b"}},
+      canPlan?(on?"⏰ 時刻で鳴らす: ON":"⏰ 時刻で鳴らす: OFF"):"⏰ 中継サーバ経由にすると使えます");
+    if(canPlan) b.addEventListener('click',()=>{ state.alexaPlanOn=!state.alexaPlanOn; saveAlexa();
+      if(state.alexaPlanOn) alexaSyncPlan(true,r=>{ showToast(r.ok?`⏰ ${r.msg}`:`⚠️ ${r.msg}`, r.ok?"#22c55e":"#f97316"); render(); });
+      else alexaSyncPlan(true,()=>render());
+      render(); });
+    card.appendChild(b);
+    if(canPlan && on){
+      const list=alexaReservations(), pl=state.alexaPlan||{};
+      const st=div({style:{padding:"8px 10px",borderRadius:"8px",background:"#0f172a",border:"1px solid #1e293b",marginBottom:"7px"}});
+      st.id="alexa-plan-status";
+      st.appendChild(div({style:{fontSize:"11px",color:pl.err?"#fb923c":"#94a3b8",lineHeight:1.7}},
+        pl.err?`⚠ ${pl.err}`:`サーバに預けた予約 ${pl.n!=null?pl.n:list.length}件${pl.sent?`・最後の送信 ${hhmm(new Date(pl.sent).getHours(),new Date(pl.sent).getMinutes())}`:"（まだ送っていません）"}`));
+      if(!list.length) st.appendChild(div({style:{fontSize:"10px",color:"#475569",marginTop:"4px",lineHeight:1.6}},
+        "鳴らすものがまだありません。予定の編集画面、下の「就寝・寝支度」、定期ルーティンの編集画面でトリガーを選んでください。"));
+      list.slice(0,3).forEach(x=>{ const d=new Date(x.at);
+        st.appendChild(div({style:{fontSize:"10px",color:"#cbd5e1",marginTop:"3px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},
+          `${mdLabel(fmtDS(d))} ${hhmm(d.getHours(),d.getMinutes())}　${x.label}　→ ${x.name}`)); });
+      if(list.length>3) st.appendChild(div({style:{fontSize:"10px",color:"#475569",marginTop:"3px"}},`ほか${list.length-3}件`));
+      card.appendChild(st);
+      const sb=btn({style:{width:"100%",padding:"8px",marginBottom:"7px",borderRadius:"8px",cursor:"pointer",fontSize:"11px",fontWeight:600,fontFamily:"inherit",
+        border:"1px solid #334155",background:"transparent",color:"#94a3b8"}},"🔄 いま送り直す");
+      sb.addEventListener('click',()=>{ alexaSyncPlan(true,r=>{ showToast(r.ok?`⏰ ${r.msg}`:`⚠️ ${r.msg}`, r.ok?"#22c55e":"#f97316"); render(); }); });
+      card.appendChild(sb);
+      // 就寝・寝支度
+      const sl=getAlexaSleep();
+      [["bed","🌙 就寝の目標時刻"],["wind","🛏 寝支度の目標時刻"]].forEach(([k,l])=>{
+        const r=div({style:{marginBottom:"6px"}});
+        r.dataset.alexasleep=k;
+        r.appendChild(div({style:{fontSize:"11px",color:"#94a3b8",marginBottom:"3px"}},l));
+        r.appendChild(alexaRefPicker(sl[k],(v)=>{ const s2=getAlexaSleep(); if(v)s2[k]=v; else delete s2[k]; saveAlexa(); alexaSyncPlan(true); render(); }));
+        card.appendChild(r);
+      });
+      card.appendChild(div({style:{fontSize:"9px",color:"#475569",marginTop:"2px",marginBottom:"8px",lineHeight:1.6}},
+        "予定は予定の編集画面、定期ルーティンはその編集画面に「🔊 Alexa」が出ます。"));
+    }
+  }
+
+  // ── モードに入ったとき ──
+  card.appendChild(div({style:{fontSize:"12px",fontWeight:700,color:"#e2e8f0",margin:"12px 0 5px"}},"🔀 モードに入ったとき"));
+  card.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"7px",lineHeight:1.7}},
+    "アプリを開いている間の切り替えだけが対象です（閉じている間は鳴りません）。"));
+  getLifeModes().forEach(md=>{
+    const cur=getAlexaModes()[md.key];
+    const row=div({style:{display:"flex",alignItems:"center",gap:"7px",marginBottom:"5px"}});
+    row.dataset.alexamode=md.key;
+    row.appendChild(span({style:{fontSize:"14px",flexShrink:0}},md.icon));
+    row.appendChild(span({style:{width:"74px",flexShrink:0,fontSize:"11px",color:cur?md.color:"#94a3b8",fontWeight:cur?700:400,
+      whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},md.label));
+    row.appendChild(div({style:{flex:1,minWidth:0}},[alexaRefPicker(cur?{t:cur}:null,(v)=>{
+      const m=getAlexaModes(); if(v)m[md.key]=v.t; else delete m[md.key]; saveAlexa(); render(); },{noLead:true})]));
     card.appendChild(row);
   });
+
   card.appendChild(div({style:{fontSize:"10px",color:"#475569",marginTop:"8px",lineHeight:1.7,whiteSpace:"pre-line"}},
-    "※ 叩くのはこのアプリなので、アプリを開いている間の切り替えだけが対象です（閉じている間は鳴りません）。起動したときの自動復帰でも鳴らしません。\n※ 送るのはトリガーを叩くことだけで、体調などの記録は一切送りません。URLとAuthorizationは端末内にだけ保存されます。\n※ 「決めた時刻になったら鳴らす」にはサーバ側の仕掛けが必要です（アプリだけではできません）。"));
+    "※ 送るのはトリガーを叩くことだけで、体調などの記録は一切送りません。URLとヘッダーは端末内にだけ保存されます（時刻で鳴らすときは、鳴らす時刻とURLをサーバにも預けます）。\n※ 起動したときの自動復帰では鳴らしません。"));
   if(state.alexaLast){ const d=lifeModeDef(state.alexaLast.key), t=new Date(state.alexaLast.ts);
     card.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginTop:"6px"}},
       `最後に叩いたの：${d?d.icon+d.label:state.alexaLast.key}　${hhmm(t.getHours(),t.getMinutes())}`)); }
@@ -8871,7 +9122,7 @@ function collectSearchItems(){
           state.modal="addEvent";state.editEventUid=e.uid;state.editEventIsRepeat=false;state.editEventDate=dsk;state.eventEditMode=false;
           state.newEvTitle=e.title;state.newEvH=e.startH;state.newEvM=e.startM;state.newEvEndH=e.endH;state.newEvEndM=e.endM;
           state.newEvRepeat="none";state.newEvColor=e.color||EV_DEFAULT;state.newEvWeekdays=[parseDS(dsk).getDay()];state.newEvDate=dsk;state.newEvEndDate=e.endDate||null;
-          state.newEvFromTask=e.fromTask||null;state.newEvGoalId=e.goalId||null;state.newEvNdId=e.ndId||null;state.newEvAllDay=!!e.allDay;state.newEvRefOnly=!!e.refOnly;state.newEvPlace=e.place||"";state.newEvNote=e.note||"";state.newEvPreDays=e.preDays||0;state.editScope="this";render(); }});
+          state.newEvFromTask=e.fromTask||null;state.newEvGoalId=e.goalId||null;state.newEvNdId=e.ndId||null;state.newEvAlexa=e.alexa||null;state.newEvAllDay=!!e.allDay;state.newEvRefOnly=!!e.refOnly;state.newEvPlace=e.place||"";state.newEvNote=e.note||"";state.newEvPreDays=e.preDays||0;state.editScope="this";render(); }});
     });
   });
   // 2. 予定（繰り返し）
@@ -8885,7 +9136,7 @@ function collectSearchItems(){
         state.newEvTitle=e.title;state.newEvH=e.startH;state.newEvM=e.startM;state.newEvEndH=e.endH;state.newEvEndM=e.endM;
         state.newEvRepeat=e.repeatType||"weekly";state.newEvColor=e.color||EV_DEFAULT;
         state.newEvWeekdays=(e.weekdays&&e.weekdays.length)?[...e.weekdays]:[parseDS(e.startDate||todayStr()).getDay()];state.newEvDate=todayStr();state.newEvEndDate=null;
-        state.newEvFromTask=e.fromTask||null;state.newEvGoalId=e.goalId||null;state.newEvNdId=e.ndId||null;state.newEvAllDay=!!e.allDay;state.newEvRefOnly=!!e.refOnly;state.newEvPlace=e.place||"";state.newEvNote=e.note||"";state.newEvPreDays=e.preDays||0;state.editScope="this";render(); }});
+        state.newEvFromTask=e.fromTask||null;state.newEvGoalId=e.goalId||null;state.newEvNdId=e.ndId||null;state.newEvAlexa=e.alexa||null;state.newEvAllDay=!!e.allDay;state.newEvRefOnly=!!e.refOnly;state.newEvPlace=e.place||"";state.newEvNote=e.note||"";state.newEvPreDays=e.preDays||0;state.editScope="this";render(); }});
   });
   // 3. 定期ルーティン
   (state.customTodos||[]).forEach(ct=>{
@@ -9262,7 +9513,7 @@ function renderDaySchedule(vd,ds,isToday){
           state.newEvRepeat=e2.isRepeat?e2.repeatType:"none";state.newEvColor=e2.color||EV_DEFAULT;
           state.newEvWeekdays=(e2.weekdays&&e2.weekdays.length)?[...e2.weekdays]:[parseDS(e2.startDate||vd).getDay()];
           state.newEvDate=owner;state.newEvEndDate=e2.endDate||e2._mdEnd||null;
-          state.newEvFromTask=e2.fromTask||null;state.newEvGoalId=e2.goalId||null;state.newEvNdId=e2.ndId||null;state.newEvAllDay=true;state.newEvRefOnly=!!e2.refOnly;state.newEvPlace=e2.place||"";state.newEvNote=e2.note||"";state.newEvPreDays=e2.preDays||0;state.editScope="this";render();
+          state.newEvFromTask=e2.fromTask||null;state.newEvGoalId=e2.goalId||null;state.newEvNdId=e2.ndId||null;state.newEvAlexa=e2.alexa||null;state.newEvAllDay=true;state.newEvRefOnly=!!e2.refOnly;state.newEvPlace=e2.place||"";state.newEvNote=e2.note||"";state.newEvPreDays=e2.preDays||0;state.editScope="this";render();
         };})());
         ad.appendChild(chip);
       });
@@ -9499,7 +9750,7 @@ function renderDaySchedule(vd,ds,isToday){
     state.newEvColor=ev.color||EV_DEFAULT;
     state.newEvWeekdays=(ev.weekdays&&ev.weekdays.length)?[...ev.weekdays]:[parseDS(ev.startDate||vd).getDay()];
     state.newEvFromTask=ev.fromTask||null;
-    state.newEvGoalId=ev.goalId||null; state.newEvNdId=ev.ndId||null;
+    state.newEvGoalId=ev.goalId||null; state.newEvNdId=ev.ndId||null; state.newEvAlexa=ev.alexa||null;
     state.newEvAllDay=!!ev.allDay;state.newEvRefOnly=!!ev.refOnly;
     state.newEvPlace=ev.place||"";state.newEvNote=ev.note||"";state.newEvPreDays=ev.preDays||0;
     state.editScope="this";
@@ -9977,7 +10228,7 @@ function todoItemBox(item){
     state.newEvEndH=Math.min(23,now.getHours()+1);state.newEvEndM=0;
     state.newEvRepeat="none";state.newEvColor=EV_DEFAULT;
     state.newEvWeekdays=[parseDS(target).getDay()];
-    state.newEvFromTask=it.uid; state.newEvGoalId=null; state.newEvNdId=null;
+    state.newEvFromTask=it.uid; state.newEvGoalId=null; state.newEvNdId=null; state.newEvAlexa=null;
     state.newEvPlace="";state.newEvNote=(it.note||"");
     state.scheduleSubTab="日";
     render();
@@ -10306,6 +10557,15 @@ function renderAddEventModal(vd){
     preRow.appendChild(span({style:{fontSize:"12px",color:"#94a3b8"}},"日前から表示"));
     m.appendChild(preRow);
   }
+  // 🔊 この予定の時刻にAlexaを鳴らす（時刻のある予定だけ。設定でONにしていれば出す）
+  if(state.alexaOn && state.alexaPlanOn && alexaUsingRelay() && !state.newEvAllDay){
+    m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"5px"}},"🔊 Alexa（この予定の開始時刻に鳴らす）"));
+    const box=div({style:{marginBottom:"12px"}}); box.id="ev-alexa";
+    box.appendChild(alexaRefPicker(state.newEvAlexa,(v)=>{ state.newEvAlexa=v; render(); }));
+    box.appendChild(div({style:{fontSize:"9px",color:"#475569",marginTop:"4px",lineHeight:1.6}},
+      "アプリを閉じていても鳴ります（サーバに時刻を預けます）。繰り返しの予定にも付けられます。"));
+    m.appendChild(box);
+  }
 
   const mkT=(label,getH,getM,setH,setM)=>{
     const w2=div({style:{marginBottom:"12px"}});
@@ -10464,7 +10724,7 @@ function renderAddEventModal(vd){
         const isNone=state.newEvRepeat==="none";
         // 複数日予定（開始日<終了日・単発のみ）は終日扱いで endDate を保存
         const mdEnd=(!isRepEdit && isNone && state.newEvEndDate && state.newEvEndDate>targetDate)?state.newEvEndDate:null;
-        const evData={title:state.newEvTitle.trim(),startH:state.newEvH,startM:state.newEvM,endH:state.newEvEndH,endM:state.newEvEndM,endNextDay:!!state.newEvEndNextDay,color:state.newEvColor,allDay:mdEnd?true:!!state.newEvAllDay,refOnly:!!state.newEvRefOnly,...(mdEnd?{endDate:mdEnd}:{}),...(evPlace?{place:evPlace}:{}),...(evNote?{note:evNote}:{}),...(ft?{fromTask:ft}:{}),...(evPre>0?{preDays:evPre}:{}),...(state.newEvGoalId?{goalId:state.newEvGoalId}:{}),...(state.newEvNdId?{ndId:state.newEvNdId}:{})};
+        const evData={title:state.newEvTitle.trim(),startH:state.newEvH,startM:state.newEvM,endH:state.newEvEndH,endM:state.newEvEndM,endNextDay:!!state.newEvEndNextDay,color:state.newEvColor,allDay:mdEnd?true:!!state.newEvAllDay,refOnly:!!state.newEvRefOnly,...(mdEnd?{endDate:mdEnd}:{}),...(evPlace?{place:evPlace}:{}),...(evNote?{note:evNote}:{}),...(ft?{fromTask:ft}:{}),...(evPre>0?{preDays:evPre}:{}),...(state.newEvGoalId?{goalId:state.newEvGoalId}:{}),...(state.newEvNdId?{ndId:state.newEvNdId}:{}),...(state.newEvAlexa&&state.newEvAlexa.t?{alexa:state.newEvAlexa}:{})};
         const newWds=isW(state.newEvRepeat)?((state.newEvWeekdays&&state.newEvWeekdays.length)?[...state.newEvWeekdays].sort((a,b)=>a-b):[parseDS(targetDate).getDay()]):null;
         // 単発の予定を編集したときは**同じuidのまま**保存する。uidが変わると、この予定を指している
         // 他の記録（🫂つながる予定・実績のメモ・「やった」印など）との結びつきが切れてしまうため。
@@ -10502,6 +10762,7 @@ function renderAddEventModal(vd){
         let _ndMoved=null;
         if(state.newEvNdId && isNone && !isRepEdit) _ndMoved=syncNextDrinkFromEvent(state.newEvNdId,targetDate);
         saveSchedule();saveRepeatEvents();
+        try{ alexaSyncPlan(true); }catch(_){}      // 🔊 鳴らす予約はサーバに預け直す
         if(_goalMoved) showToast(`🎯 目標の期間も ${_goalMoved} に合わせました`,"#a5b4fc");
         if(_ndMoved) showToast(`🍺 次に飲みに行く予定も ${_ndMoved} に合わせました`,"#f59e0b");
         if(!isRepEdit && targetDate!==vd){ state.viewDate=targetDate; state.scheduleSubTab="日"; }
@@ -10874,6 +11135,7 @@ function openNextDrinkAsEvent(){
   state.newEvFromTask=null; state.newEvGoalId=null; state.newEvAllDay=false; state.newEvRefOnly=false;
   state.newEvPlace=""; state.newEvNote=""; state.newEvPreDays=0;
   state.newEvNdId=id;   // この予定がどの飲み予定から来たかを覚える
+  state.newEvAlexa=null;
   render();
 }
 // ── 🔗 すでに入れてある予定を、この飲み予定に結びつける ──
@@ -13893,7 +14155,7 @@ function renderAchievement(vd){
           state.newEvEndH=Math.min(23,now.getHours()+1); state.newEvEndM=0; state.newEvEndNextDay=false;
           state.newEvRepeat="none"; state.newEvColor=EV_DEFAULT;
           state.newEvWeekdays=[parseDS(target).getDay()];
-          state.newEvFromTask=null; state.newEvGoalId=null; state.newEvNdId=null; state.newEvAllDay=false; state.newEvRefOnly=false; state.newEvPlace=""; state.newEvNote=""; state.newEvPreDays=0;
+          state.newEvFromTask=null; state.newEvGoalId=null; state.newEvNdId=null; state.newEvAlexa=null; state.newEvAllDay=false; state.newEvRefOnly=false; state.newEvPlace=""; state.newEvNote=""; state.newEvPreDays=0;
           render();
         };})());
         row.appendChild(planB);
@@ -16416,6 +16678,14 @@ function renderCustomTodoModal(){
       on?"実施した日を新しい起点にします。遅れてやった分だけ次回も後ろにずれます（掃除・散髪など「前回から◯日空けたい」もの向け）。"
         :"起点から機械的に数えます。遅れてやっても次回の日はずれません（「毎週◯曜」のような予定向け）。"));
   }
+  // 🔊 この定期ルーティンの時刻にAlexaを鳴らす
+  if(state.alexaOn && state.alexaPlanOn && alexaUsingRelay()){
+    m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"5px"}},"🔊 Alexa（この項目の時刻に鳴らす）"));
+    const box=div({style:{marginBottom:"12px"}}); box.id="ct-alexa";
+    box.appendChild(alexaRefPicker(m0.alexa,(v)=>{ m0.alexa=v; render(); }));
+    box.appendChild(div({style:{fontSize:"9px",color:"#475569",marginTop:"4px",lineHeight:1.6}},"時刻を設定している項目だけが鳴ります。"));
+    m.appendChild(box);
+  }
   // 直ごとに曜日・時刻を設定するモード
   const bsToggle=btn({style:{width:"100%",padding:"9px",borderRadius:"8px",cursor:"pointer",fontWeight:600,fontSize:"12px",marginBottom:"12px",
     border:`1px solid ${m0.byShiftSchedule?"#a78bfa":"#334155"}`,background:m0.byShiftSchedule?"#a78bfa22":"transparent",color:m0.byShiftSchedule?"#a78bfa":"#64748b"}},m0.byShiftSchedule?"🔗 直ごとに曜日・時刻を設定: ON":"🔗 直ごとに曜日・時刻を設定: OFF");
@@ -16617,7 +16887,7 @@ function renderCustomTodoModal(){
     btn({style:{flex:2,padding:"10px",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:600,cursor:"pointer"},
       onClick:()=>{
         if(!(m0.label||"").trim()){alert("名前を入力してください");return;}
-        const data={uid:m0.uid||Date.now(),label:m0.label.trim(),mode:m0.mode==='timer'?'timer':'check',itype:m0.itype||"week",n:Math.max(1,m0.n||1),startDate:m0.startDate||todayStr(),timeH:m0.timeH!=null?m0.timeH:null,timeM:m0.timeH!=null?(m0.timeM||0):0,endH:m0.timeH!=null&&m0.endH!=null?m0.endH:null,endM:m0.timeH!=null&&m0.endH!=null?(m0.endM||0):null,endNextDay:!!(m0.timeH!=null&&m0.endH!=null&&m0.endNextDay),startNextDay:!!(m0.timeH!=null&&m0.startNextDay),color:m0.color||"#38bdf8",weekdays:(m0.itype==="week"&&m0.weekdays)?[...m0.weekdays]:[],shifts:m0.shifts?[...m0.shifts]:[],weekdayTimes:(m0.weekdayTimes&&Object.keys(m0.weekdayTimes).length)?JSON.parse(JSON.stringify(m0.weekdayTimes)):undefined,byShiftSchedule:!!m0.byShiftSchedule,shiftSchedule:(m0.byShiftSchedule&&m0.shiftSchedule)?JSON.parse(JSON.stringify(m0.shiftSchedule)):undefined,reschedules:(Array.isArray(m0.reschedules)&&m0.reschedules.length)?JSON.parse(JSON.stringify(m0.reschedules)):undefined,fromDone:!!m0.fromDone};
+        const data={uid:m0.uid||Date.now(),label:m0.label.trim(),mode:m0.mode==='timer'?'timer':'check',itype:m0.itype||"week",n:Math.max(1,m0.n||1),startDate:m0.startDate||todayStr(),timeH:m0.timeH!=null?m0.timeH:null,timeM:m0.timeH!=null?(m0.timeM||0):0,endH:m0.timeH!=null&&m0.endH!=null?m0.endH:null,endM:m0.timeH!=null&&m0.endH!=null?(m0.endM||0):null,endNextDay:!!(m0.timeH!=null&&m0.endH!=null&&m0.endNextDay),startNextDay:!!(m0.timeH!=null&&m0.startNextDay),color:m0.color||"#38bdf8",weekdays:(m0.itype==="week"&&m0.weekdays)?[...m0.weekdays]:[],shifts:m0.shifts?[...m0.shifts]:[],weekdayTimes:(m0.weekdayTimes&&Object.keys(m0.weekdayTimes).length)?JSON.parse(JSON.stringify(m0.weekdayTimes)):undefined,byShiftSchedule:!!m0.byShiftSchedule,shiftSchedule:(m0.byShiftSchedule&&m0.shiftSchedule)?JSON.parse(JSON.stringify(m0.shiftSchedule)):undefined,reschedules:(Array.isArray(m0.reschedules)&&m0.reschedules.length)?JSON.parse(JSON.stringify(m0.reschedules)):undefined,fromDone:!!m0.fromDone,alexa:(m0.alexa&&m0.alexa.t)?{...m0.alexa}:undefined};
         if(m0.uid){
           const prev=(state.customTodos||[]).find(x=>x.uid===m0.uid);
           // 既存の編集は「今日以降のみ」反映：変更前の定義を昨日までの過去バージョンとして凍結
@@ -16630,7 +16900,9 @@ function renderCustomTodoModal(){
           state.customTodos=(state.customTodos||[]).map(x=>x.uid===m0.uid?data:x);
         }
         else state.customTodos=[...(state.customTodos||[]),data];
-        saveCustomTodos();state.customTodoModal=null;render();
+        saveCustomTodos();
+        try{ alexaSyncPlan(true); }catch(_){}      // 🔊 鳴らす予約はサーバに預け直す
+        state.customTodoModal=null;render();
       }},"保存")
   ]));
   bg.appendChild(m);return bg;
@@ -17050,6 +17322,7 @@ window.addEventListener('pagehide',()=>{try{flushStorage();}catch(_){}});
 document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='hidden'){ try{flushStorage();}catch(_){}} });
 render();
 _appReady=true;   // ここから先のモード切替は「本人の操作」なのでAlexaを鳴らしてよい
+setTimeout(()=>{ try{ alexaMaybeSyncPlan(); }catch(_){} },2500);   // 🔊 鳴らす予約をサーバへ（変わっていなければ送らない）
 applyFontScale(); // 保存済みの文字サイズを適用
 document.title="体調管理 v"+APP_VERSION;
 if(state._goalsMigratedCount){ setTimeout(()=>{ showToast(`過去の目標 ${state._goalsMigratedCount}件を目標ツリーに移動しました`,"#22c55e"); state._goalsMigratedCount=0; },900); }
