@@ -200,7 +200,7 @@ curl -i -X POST https://nuts024.com/health/api.php \
 
 ### 10-2. レスポンス
 ```json
-{ "ok": true,  "status": 200, "body": "…（先頭300文字）" }
+{ "ok": true,  "status": 200, "body": "…（先頭2000文字）" }
 { "ok": false, "error": "STATUS", "status": 401, "message": "宛先が 401 を返しました" }
 ```
 

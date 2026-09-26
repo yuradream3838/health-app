@@ -224,7 +224,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.88"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.89"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -860,7 +860,7 @@ const state = {
   analysisSubTab:"日次・週次", diarySubTab:"生活記録", taskSubTab:"ルーティン",
   sleepHistDays:30, sleepHistMetric:"net", sleepHistMore:false,  // 分析→睡眠履歴
   alexaOn:false, alexaHooks:{}, alexaLast:null,   // 🔊 Alexa連携（モードに入ったらURLを叩く）
-  alexaRelay:true, alexaRelayUrl:"",              // 中継サーバ（独自ヘッダーが要るスキル向け）
+  alexaRelay:true, alexaRelayUrl:"", alexaTest:null,  // 中継サーバ（独自ヘッダーが要るスキル向け）＋最後のテスト結果
   trainHistDays:30, trainHistMetric:"vol", trainHistEx:null, trainHistMore:false, // 分析→トレーニング履歴
   storageAlert:false, storageExportYear:null,
   weather:[], weatherCity:null, weatherLoading:false, weatherError:null,
@@ -2392,8 +2392,8 @@ function alexaCall(hook,done){
       .then(r=>r.json().then(j=>({r,j})).catch(()=>({r,j:null})))
       .then(({r,j})=>{
         const ok=r.ok && j && j.ok;
-        const bd=(j&&typeof j.body==="string")?j.body.replace(/\s+/g," ").trim():"";
-        done&&done({ok:!!ok, body:bd,
+        const bd=(j&&typeof j.body==="string")?j.body.trim():"";
+        done&&done({ok:!!ok, body:bd, status:(j&&j.status)||r.status,
           msg:ok?`Alexaに伝えました（${j.status||200}）`:((j&&(j.message||j.error))||`中継サーバがエラーを返しました（${r.status}）`)});
       })
       .catch(()=>{ done&&done({ok:false,msg:"中継サーバに届きませんでした"}); });
@@ -8591,6 +8591,46 @@ function collapsibleSetting(key,card){
   else if(row.style) row.style.marginBottom='6px';
   return card;
 }
+// テストの結果。返事が長いので消えるトーストではなく、画面に残して全部読めるようにする
+function alexaTestResultBox(){
+  const t=state.alexaTest||{};
+  const col=t.sending?"#38bdf8":(t.ok?(t.blind?"#38bdf8":"#22c55e"):"#f97316");
+  const box=div({style:{marginTop:"6px",padding:"9px 10px",borderRadius:"9px",background:"#0b1220",border:`1px solid ${col}55`}});
+  box.id="alexa-test-result";
+  const head=div({style:{display:"flex",alignItems:"center",gap:"7px",marginBottom:t.sending?"0":"5px"}});
+  head.appendChild(span({style:{flex:1,minWidth:0,fontSize:"11px",fontWeight:700,color:col}},
+    t.sending?`🔊 ${t.label} を送っています…`:`${t.ok?"✅":"⚠️"} ${t.label}：${t.msg}`));
+  if(!t.sending){ const x=btn({style:{flexShrink:0,fontSize:"10px",padding:"2px 8px",borderRadius:"6px",cursor:"pointer",fontFamily:"inherit",
+      border:"1px solid #334155",background:"transparent",color:"#64748b"}},"閉じる");
+    x.addEventListener('click',()=>{ state.alexaTest=null; render(); }); head.appendChild(x); }
+  box.appendChild(head);
+  if(t.sending) return box;
+  if(t.body){
+    box.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"3px"}},"宛先からの返事"));
+    box.appendChild(div({style:{maxHeight:"180px",overflowY:"auto",padding:"7px 9px",borderRadius:"7px",background:"#0f172a",border:"1px solid #1e293b",
+      fontSize:"11px",color:"#cbd5e1",lineHeight:1.6,whiteSpace:"pre-wrap",wordBreak:"break-all",userSelect:"text",WebkitUserSelect:"text"}},t.body));
+    const cp=btn({style:{marginTop:"5px",fontSize:"10px",padding:"4px 10px",borderRadius:"6px",cursor:"pointer",fontFamily:"inherit",
+      border:"1px solid #334155",background:"transparent",color:"#94a3b8"}},"📋 返事をコピー");
+    cp.addEventListener('click',()=>{ copyText(t.body); });
+    box.appendChild(cp);
+  } else if(t.ok && t.blind){
+    box.appendChild(div({style:{fontSize:"10px",color:"#64748b",lineHeight:1.6}},"「そのまま叩く」では返事を読めません。中継サーバ経由にすると結果が分かります。"));
+  } else {
+    box.appendChild(div({style:{fontSize:"10px",color:"#64748b",lineHeight:1.6}},"返事の本文はありませんでした。"));
+  }
+  box.appendChild(div({style:{fontSize:"9px",color:"#475569",marginTop:"5px",lineHeight:1.6}},
+    "※ 200でも本文にエラーが書かれていることがあります。ここが空か「ok」系なら、あとはAlexa側（定型アクションの実行条件）の設定を確かめてください。"));
+  return box;
+}
+// 文字列をコピー（クリップボードが使えないときは選択してもらう）
+function copyText(txt){
+  try{
+    if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(txt).then(()=>showToast("📋 コピーしました"),()=>showToast("コピーできませんでした。長押しで選べます")); return; }
+  }catch(_){}
+  try{ const ta=document.createElement('textarea'); ta.value=txt; ta.style.cssText="position:fixed;left:-9999px";
+    document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); showToast("📋 コピーしました"); }
+  catch(__){ showToast("コピーできませんでした。長押しで選べます"); }
+}
 // 🔊 Alexa連携の設定。モードごとに「起動させたいAlexaルーティンのURL」を登録する
 function renderAlexaPanel(){
   const card=div({className:"card"});
@@ -8652,10 +8692,10 @@ function renderAlexaPanel(){
       ok?(()=>{ const t=btn({style:{flexShrink:0,fontSize:"10px",padding:"3px 9px",borderRadius:"6px",cursor:"pointer",fontFamily:"inherit",
           border:"1px solid #38bdf8",background:"#0ea5e918",color:"#38bdf8"}},"テスト");
         t.addEventListener('click',(()=>{const k=md.key,l=md.label;return()=>{
-          showToast(`🔊 ${l} を送っています…`,"#38bdf8");
+          state.alexaTest={key:k,label:l,sending:true}; render();
           alexaCall(alexaHookOf(k),r=>{
-            const bd=(r.body||"").slice(0,80);
-            showToast(`${r.ok?"✅":"⚠️"} ${l}：${r.msg}${bd?`\n返事：${bd}`:""}`, r.ok?(r.blind?"#38bdf8":"#22c55e"):"#f97316");
+            state.alexaTest={key:k,label:l,ok:!!r.ok,blind:!!r.blind,msg:r.msg||"",body:r.body||"",status:r.status||null,ts:Date.now()};
+            render();
           });
         };})());
         return t; })():null,
@@ -8687,6 +8727,7 @@ function renderAlexaPanel(){
       mr.appendChild(span({style:{flex:1,minWidth:0,fontSize:"9px",color:"#475569"}},"スキルの説明にある書き方に合わせてください"));
       row.appendChild(mr);
     }
+    if(state.alexaTest && state.alexaTest.key===md.key) row.appendChild(alexaTestResultBox());
     card.appendChild(row);
   });
   card.appendChild(div({style:{fontSize:"10px",color:"#475569",marginTop:"8px",lineHeight:1.7,whiteSpace:"pre-line"}},
