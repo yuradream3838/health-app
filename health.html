@@ -224,7 +224,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.87"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.88"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -2392,7 +2392,9 @@ function alexaCall(hook,done){
       .then(r=>r.json().then(j=>({r,j})).catch(()=>({r,j:null})))
       .then(({r,j})=>{
         const ok=r.ok && j && j.ok;
-        done&&done({ok:!!ok, msg:ok?`Alexaに伝えました（${j.status||200}）`:((j&&(j.message||j.error))||`中継サーバがエラーを返しました（${r.status}）`)});
+        const bd=(j&&typeof j.body==="string")?j.body.replace(/\s+/g," ").trim():"";
+        done&&done({ok:!!ok, body:bd,
+          msg:ok?`Alexaに伝えました（${j.status||200}）`:((j&&(j.message||j.error))||`中継サーバがエラーを返しました（${r.status}）`)});
       })
       .catch(()=>{ done&&done({ok:false,msg:"中継サーバに届きませんでした"}); });
     return true;
@@ -8651,7 +8653,10 @@ function renderAlexaPanel(){
           border:"1px solid #38bdf8",background:"#0ea5e918",color:"#38bdf8"}},"テスト");
         t.addEventListener('click',(()=>{const k=md.key,l=md.label;return()=>{
           showToast(`🔊 ${l} を送っています…`,"#38bdf8");
-          alexaCall(alexaHookOf(k),r=>{ showToast(`${r.ok?"✅":"⚠️"} ${l}：${r.msg}`, r.ok?(r.blind?"#38bdf8":"#22c55e"):"#f97316"); });
+          alexaCall(alexaHookOf(k),r=>{
+            const bd=(r.body||"").slice(0,80);
+            showToast(`${r.ok?"✅":"⚠️"} ${l}：${r.msg}${bd?`\n返事：${bd}`:""}`, r.ok?(r.blind?"#38bdf8":"#22c55e"):"#f97316");
+          });
         };})());
         return t; })():null,
       hook.url?(()=>{ const c=btn({style:{flexShrink:0,fontSize:"10px",padding:"3px 8px",borderRadius:"6px",cursor:"pointer",fontFamily:"inherit",
