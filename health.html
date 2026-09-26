@@ -224,7 +224,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.91"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.92"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -8637,6 +8637,9 @@ function alexaTestResultBox(){
     box.appendChild(cp);
   } else if(t.ok && t.blind){
     box.appendChild(div({style:{fontSize:"10px",color:"#64748b",lineHeight:1.6}},"「そのまま叩く」では返事を読めません。中継サーバ経由にすると結果が分かります。"));
+  } else if(t.ok){
+    box.appendChild(div({style:{fontSize:"10px",color:"#64748b",lineHeight:1.6}},
+      `返事の本文はありません（${t.status||204} は「受け付けました」の返事です）。ここまでは成功しています。あとはAlexa側で定型アクションが動くか確かめてください。`));
   } else {
     box.appendChild(div({style:{fontSize:"10px",color:"#64748b",lineHeight:1.6}},"返事の本文はありませんでした。"));
   }
