@@ -224,7 +224,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.89"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.90"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -8591,6 +8591,18 @@ function collapsibleSetting(key,card){
   else if(row.style) row.style.marginBottom='6px';
   return card;
 }
+// よくある貼り間違い：Alexaアプリの「共有リンク」はルーティンを起動しない（QRコードのページが出るだけ）
+function alexaShareLinkWarn(url){
+  let host=""; try{ host=new URL((url||"").trim()).host.toLowerCase(); }catch(_){ return ""; }
+  if(/(^|\.)alexa\.amazon\./.test(host) || /(^|\.)amazon\.(co\.jp|com|[a-z.]+)$/.test(host))
+    return "これは定型アクションの「共有リンク」のようです。開いてもQRコードのページが出るだけで、ルーティンは起動しません。トリガーのスキル（仮想トリガーボタン等）が発行するURLを貼ってください。";
+  return "";
+}
+function alexaShareLinkBody(body){
+  const b=(body||"");
+  return /Scan this QR code|You've received an Alexa Routine|routines-static-page/.test(b)
+    ? "返事の中身は「定型アクションの共有ページ」です。届いてはいますが、これではルーティンは起動しません。トリガー用のURLに貼り替えてください。" : "";
+}
 // テストの結果。返事が長いので消えるトーストではなく、画面に残して全部読めるようにする
 function alexaTestResultBox(){
   const t=state.alexaTest||{};
@@ -8618,6 +8630,9 @@ function alexaTestResultBox(){
   } else {
     box.appendChild(div({style:{fontSize:"10px",color:"#64748b",lineHeight:1.6}},"返事の本文はありませんでした。"));
   }
+  { const w=alexaShareLinkBody(t.body);
+    if(w) box.appendChild(div({style:{fontSize:"10px",color:"#fb923c",marginTop:"6px",padding:"7px 9px",borderRadius:"7px",
+      background:"#f973160d",border:"1px solid #f9731655",lineHeight:1.7}},"⚠ "+w)); }
   box.appendChild(div({style:{fontSize:"9px",color:"#475569",marginTop:"5px",lineHeight:1.6}},
     "※ 200でも本文にエラーが書かれていることがあります。ここが空か「ok」系なら、あとはAlexa側（定型アクションの実行条件）の設定を確かめてください。"));
   return box;
@@ -8642,6 +8657,7 @@ function renderAlexaPanel(){
   { const box=div({style:{padding:"9px 11px",marginBottom:"10px",borderRadius:"9px",background:"#0f172a",border:"1px solid #1e293b"}});
     box.appendChild(div({style:{fontSize:"11px",fontWeight:700,color:"#94a3b8",marginBottom:"5px"}},"準備（はじめの1回だけ）"));
     [["①","Alexaアプリで、URLで起動できるトリガーのスキルを有効にする（日本なら「仮想トリガーボタン」など）"],
+     ["⚠","Alexaアプリの「共有」で出るリンクではありません。あれは開いてもQRコードが出るだけで、ルーティンは動きません"],
      ["②","そのスキルのサイトでトリガーを作り、リクエスト先のURL（必要ならAuthorizationの値）をもらう"],
      ["③","Alexaで「デバイスを探す」→ そのトリガーがボタンやドアベルとして見つかる"],
      ["④","Alexaの定型アクションの「実行条件＝スマートホーム」にそれを指定する"],
@@ -8708,6 +8724,9 @@ function renderAlexaPanel(){
     inp.style.cssText=`width:100%;box-sizing:border-box;padding:8px 10px;background:#0f172a;border:1px solid ${ok?"#0ea5e955":"#334155"};border-radius:8px;color:#e2e8f0;font-size:11px;font-family:inherit`;
     inp.addEventListener('change',(()=>{const k=md.key;return e=>{ setAlexaHook(k,{url:e.target.value}); render(); };})());
     row.appendChild(inp);
+    { const w=hook.url?alexaShareLinkWarn(hook.url):"";
+      if(w) row.appendChild(div({style:{fontSize:"10px",color:"#fb923c",marginTop:"4px",padding:"6px 8px",borderRadius:"7px",
+        background:"#f973160d",border:"1px solid #f9731555",lineHeight:1.7}},"⚠ "+w)); }
     // ヘッダーと送信方法（中継のときだけ。ブラウザ直叩きでは送れないため）
     if(state.alexaRelay && hook.url){
       const ai=document.createElement('input'); ai.type='text'; ai.value=hook.auth;
