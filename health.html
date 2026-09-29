@@ -224,7 +224,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.93"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.94"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -270,6 +270,7 @@ const SAVE_TARGETS=[
   ["saveMIValues","miValues","💎 価値"],
   ["saveChangePlan","changePlan","📋 変化の計画"],
   ["saveWidgetSections","widgetSections","🧩 ウィジェットの表示"],
+  ["saveFoodCats",["foodCats","foodEmoji"],"🍽 食べたものの一覧"],
   ["saveWidgetOrder","widgetSecOrder","🧩 ウィジェットの並び"],
   ["saveNudgeCfg",["nudgesOff","notifyOn","moodCheckH","moodCheckM","dayCutoffH","nudgeRules","notifyQuiet","notifyRepeat"],"🔔 通知の設定"],
   ["saveBacProfile",["bacWeight","bacSex"],"🍺 BACプロファイル"],
@@ -642,7 +643,7 @@ const FOOD_EMOJI = {
   "乳酸菌飲料":"🥛","ヨーグルト":"🥛","チーズ":"🧀","ヨーグルト・乳酸菌飲料":"🥛",
   "クレアチン":"💪","Q&P KOWA ヒーリング":"🧴","亜鉛マルチビタミン":"💊","ノコギリヤシ":"🌴"
 };
-const fe = n => FOOD_EMOJI[n] || "🍽️";
+const fe = n => (state&&state.foodEmoji&&state.foodEmoji[n]) || FOOD_EMOJI[n] || "🍽️"; // 自分で付けた絵文字が優先
 
 
 // ═══════════════════════════════════════════════════
@@ -869,6 +870,7 @@ const state = {
   editHour:null, editDate:null, editScore:null, editMental:null, editSymptoms:[], editNote:"", editCraving:null,
   modal:null, // "food"|"addDrink"|"editEnd"
   foodOpenCat:null, foodSelected:[],
+  foodCats:null, foodEmoji:{}, foodEdit:false, foodAddCat:null,   // 🍽 食べたものの一覧（null＝初期の一覧）
   newDrink:{typeId:"beer",ml:350,hour:new Date().getHours(),min:new Date().getMinutes(),pct:5},
   editEndUid:null, editEndH:0, editEndM:0,
   editTimerItemId:null, editTimerStart:{h:0,m:0}, editTimerEnd:{h:0,m:0},
@@ -1014,6 +1016,8 @@ function loadStorage(){
       if("planOn" in o)state.alexaPlanOn=!!o.planOn;
       if(o.plan&&typeof o.plan==="object")state.alexaPlan=o.plan; }}catch{}}
     try{ migrateAlexaHooks(); }catch(_){}
+    const fct=localStorage.getItem(STORAGE_KEY+"_foodcats");
+    if(fct){try{const o=JSON.parse(fct); if(o&&Array.isArray(o.cats)&&o.cats.length)state.foodCats=o.cats; if(o&&o.emoji&&typeof o.emoji==="object")state.foodEmoji=o.emoji;}catch{}}
     const mlg=localStorage.getItem(STORAGE_KEY+"_modelog");
     if(mlg){try{const a=JSON.parse(mlg); if(Array.isArray(a))state.modeLog=a;}catch{}}
     // 記録どうしが重なっていると1日の合計が24時間を超える。読み込んだ時点で**点検だけ**する（直すかどうかは本人が決める）
@@ -3625,7 +3629,7 @@ function renderLifeScreen(){
     inner.appendChild(div({style:{fontSize:'11px',color:'#94a3b8',textAlign:'center',marginBottom:'8px'}},'食事のルーティンを▶開始/⏹停止で時間記録（既存ルーティンに連携）'));
     addAssigned();
     const foodN=(getDaily(vd).foods||[]).length;
-    inner.appendChild(lifeActionBtn(`🍽 食べたものを記録${foodN?`（${foodN}品）`:''}`,def.color,()=>{ state.viewDate=activeDay(); state.foodSelected=[...(getDaily(activeDay()).foods||[])]; state.foodOpenCat=null; state.modal='food'; render(); }));
+    inner.appendChild(lifeActionBtn(`🍽 食べたものを記録${foodN?`（${foodN}品）`:''}`,def.color,()=>{ state.viewDate=activeDay(); state.foodSelected=[...(getDaily(activeDay()).foods||[])]; state.foodOpenCat=null; state.foodEdit=false; state.modal='food'; render(); }));
     inner.appendChild(lifeActionBtn('💧 水を1杯 飲んだ（+0.2L）',def.color,()=>{ const d=getDaily(vd); setDaily(vd,{water:Math.round(((d.water||0)+0.2)*10)/10}); showToast('💧 水 +0.2L'); render(); }));
   } else if(c==='rest'){
     if(state.lifeBreathing) inner.appendChild(breathingGuide(def.color));
@@ -4268,7 +4272,7 @@ function renderWidgetView(vd,ds){
     const qbtn=(label,border,bg,color,onClick)=>{const b=btn({style:{padding:"11px",borderRadius:"8px",cursor:"pointer",fontSize:"13px",fontWeight:600,border:`1px solid ${border}`,background:bg,color}},label);b.addEventListener('click',onClick);return b;};
     grid.appendChild(qbtn(`💗 体調（今）${nowScore!=null?`：${nowScore}`:""}`,"#f43f5e","#f43f5e18","#fb7185",()=>{ openScoreModal(vd,curH); }));
     grid.appendChild(qbtn(`🍺 アルコール${drN?`（${drN}）`:""}`,"#f59e0b","#f59e0b18","#fbbf24",()=>{ const now=new Date(); state.modal="addDrink"; state.newDrink={typeId:"beer",ml:350,hour:now.getHours(),min:now.getMinutes(),pct:5,startNextDay:false,tasting:{}}; state.drinkNoteOpen=undefined; render(); }));
-    grid.appendChild(qbtn(`🍽️ 食べたもの${foodN?`（${foodN}）`:""}`,"#0ea5e9","#0ea5e918","#38bdf8",()=>{ state.modal="food"; state.foodSelected=[...(d.foods||[])]; state.foodOpenCat=null; render(); }));
+    grid.appendChild(qbtn(`🍽️ 食べたもの${foodN?`（${foodN}）`:""}`,"#0ea5e9","#0ea5e918","#38bdf8",()=>{ state.modal="food"; state.foodSelected=[...(d.foods||[])]; state.foodOpenCat=null; state.foodEdit=false; render(); }));
     grid.appendChild(qbtn(`💧 射精${ejN?`（${ejN}）`:""}`,"#6366f1","#6366f118","#a5b4fc",()=>openEjacModal(null)));
     c.appendChild(grid);
     secNodes.quick=c;
@@ -4942,7 +4946,7 @@ function renderDailyPanel(vd){
       div({style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"6px"}},[
         span({style:{fontSize:"12px",color:"#94a3b8"}},"🍽️ 食べたもの"),
         btn({style:{fontSize:"11px",padding:"3px 10px",background:"#0ea5e918",border:"1px solid #0ea5e9",borderRadius:"8px",color:"#38bdf8",cursor:"pointer",fontWeight:600},
-          onClick:()=>{state.modal="food";state.foodSelected=[...(foods)];state.foodOpenCat=null;render();}},"+ 記録")
+          onClick:()=>{state.modal="food";state.foodSelected=[...(foods)];state.foodOpenCat=null;state.foodEdit=false;render();}},"+ 記録")
       ]),
       foods.length===0
         ?div({style:{fontSize:"11px",color:"#475569",textAlign:"center",padding:"6px 0"}},"まだ記録がありません")
@@ -6429,33 +6433,156 @@ function renderScoreModal(){
   bg.appendChild(m);return bg;
 }
 
+// ── 🍽 食べたものの一覧（自分で編集できる）──────────────────
+// 初期の一覧は FOOD_CATS。一度でも編集したら _foodcats（{cats, emoji}）に丸ごと持つ。
+// 記録（daily.foods）は品目の「名前」の配列なので、一覧から消しても過去の記録はそのまま残る。
+function defaultFoodCats(){ return FOOD_CATS.map(c=>({id:c.id,label:c.label,emoji:c.emoji,items:[...c.items]})); }
+function getFoodCats(){ if(!Array.isArray(state.foodCats)||!state.foodCats.length) state.foodCats=defaultFoodCats(); return state.foodCats; }
+function saveFoodCats(){ safeSet(STORAGE_KEY+"_foodcats",JSON.stringify({cats:getFoodCats(),emoji:state.foodEmoji||{}})); }
+function foodCatOf(name){ return getFoodCats().find(c=>c.items.includes(name))||null; }
+function foodDaysWith(name){ return state.dailies.filter(d=>Array.isArray(d.foods)&&d.foods.includes(name)).length; }
+// 追加：空・同名（どのカテゴリでも）は受け付けない。戻り値はエラー文（""＝成功）
+function addFoodItem(catId,name){
+  const n=(name||"").trim(); if(!n) return "名前を入れてください";
+  const other=foodCatOf(n); if(other) return `「${n}」は「${other.label}」にあります`;
+  const c=getFoodCats().find(x=>x.id===catId); if(!c) return "カテゴリが見つかりません";
+  c.items.push(n); saveFoodCats(); return "";
+}
+// 名前を変える。past=true なら過去の記録の名前も変える（同じ食べ物として続けて数えるため）
+function renameFoodItem(oldName,newName,past){
+  const n=(newName||"").trim(); if(!n||n===oldName) return "";
+  const other=foodCatOf(n); if(other) return `「${n}」は「${other.label}」にあります`;
+  const c=foodCatOf(oldName); if(!c) return "品目が見つかりません";
+  c.items=c.items.map(x=>x===oldName?n:x);
+  const em=state.foodEmoji||(state.foodEmoji={});
+  if(em[oldName]){ em[n]=em[oldName]; delete em[oldName]; }
+  else if(FOOD_EMOJI[oldName]&&!FOOD_EMOJI[n]) em[n]=FOOD_EMOJI[oldName];   // 絵文字は名前についていく
+  if(past){
+    state.dailies=state.dailies.map(d=>Array.isArray(d.foods)&&d.foods.includes(oldName)
+      ?{...d,foods:[...new Set(d.foods.map(f=>f===oldName?n:f))]}:d);
+    saveStorage();
+  }
+  state.foodSelected=[...new Set((state.foodSelected||[]).map(f=>f===oldName?n:f))];
+  saveFoodCats(); return "";
+}
+function removeFoodItem(name){
+  const c=foodCatOf(name); if(!c) return;
+  c.items=c.items.filter(x=>x!==name); saveFoodCats();
+}
+function setFoodEmoji(name,emo){
+  const em=state.foodEmoji||(state.foodEmoji={}); const v=(emo||"").trim();
+  if(v) em[name]=v; else delete em[name];
+  saveFoodCats();
+}
+function moveFoodItem(name,delta){
+  const c=foodCatOf(name); if(!c) return; const i=c.items.indexOf(name), j=i+delta;
+  if(j<0||j>=c.items.length) return; [c.items[i],c.items[j]]=[c.items[j],c.items[i]]; saveFoodCats();
+}
+function addFoodCat(label,emoji){
+  const l=(label||"").trim(); if(!l) return null;
+  const c={id:"fc"+Date.now().toString(36)+Math.random().toString(36).slice(2,5),label:l,emoji:(emoji||"").trim()||"🍽️",items:[]};
+  getFoodCats().push(c); saveFoodCats(); return c;
+}
+function setFoodCat(id,patch){ const c=getFoodCats().find(x=>x.id===id); if(!c) return; Object.assign(c,patch); saveFoodCats(); }
+function removeFoodCat(id){ state.foodCats=getFoodCats().filter(x=>x.id!==id); saveFoodCats(); }
+function moveFoodCat(id,delta){
+  const a=getFoodCats(), i=a.findIndex(x=>x.id===id), j=i+delta;
+  if(i<0||j<0||j>=a.length) return; [a[i],a[j]]=[a[j],a[i]]; saveFoodCats();
+}
+function resetFoodCats(){ state.foodCats=defaultFoodCats(); state.foodEmoji={}; saveFoodCats(); }
+
 // ── 食材選択モーダル ──────────────────────────────
+function foodInput(val,ph,width,onCommit){
+  const i=document.createElement('input'); i.type='text'; i.value=val||""; i.placeholder=ph||"";
+  i.style.cssText=`${width?`width:${width};flex-shrink:0`:"flex:1;min-width:0"};box-sizing:border-box;padding:6px 8px;background:#0a1120;border:1px solid #334155;border-radius:7px;color:#e2e8f0;font-size:12px;font-family:inherit`;
+  if(onCommit) i.addEventListener('change',e=>onCommit(e.target.value));
+  return i;
+}
+function foodMiniBtn(label,onClick,danger,disabled){
+  return btn({style:{flexShrink:0,padding:"4px 7px",fontSize:"11px",borderRadius:"6px",fontFamily:"inherit",cursor:disabled?"default":"pointer",
+    background:"transparent",border:`1px solid ${danger?"#7f1d1d":"#334155"}`,color:disabled?"#334155":(danger?"#f87171":"#94a3b8")},
+    onClick:disabled?null:onClick},label);
+}
+// 「＋」から出す追加欄（選択モードでも編集モードでも共通）
+function foodAddRow(cat,selectToo){
+  const row=div({style:{display:"flex",gap:"5px",alignItems:"center",padding:"2px 0 8px"}});
+  const inp=foodInput("","品目の名前（例：サバ缶）",null,null); inp.setAttribute('data-foodadd',cat.id);
+  const go=()=>{ const v=inp.value; const err=addFoodItem(cat.id,v);
+    if(err){ showToast(`⚠️ ${err}`,"#f97316"); return; }
+    if(selectToo){ const n=v.trim(); if(!state.foodSelected.includes(n)) state.foodSelected=[...state.foodSelected,n]; }
+    state.foodAddCat=cat.id; render();
+    setTimeout(()=>{ const x=document.querySelector(`[data-foodadd="${cat.id}"]`); if(x) x.focus(); },0); };
+  inp.addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); go(); } });
+  row.appendChild(inp);
+  row.appendChild(btn({style:{flexShrink:0,padding:"6px 12px",borderRadius:"7px",border:"none",background:"#0ea5e9",color:"#fff",fontSize:"12px",fontWeight:600,cursor:"pointer",fontFamily:"inherit"},onClick:go},"追加"));
+  return row;
+}
 function renderFoodModal(vd){
   const bg=div({className:"modal-bg"});
   const m=div({style:{width:"100%",maxWidth:"600px",margin:"0 auto",background:"#1e293b",borderRadius:"16px 16px 0 0",padding:"16px 0 36px",maxHeight:"88vh",display:"flex",flexDirection:"column"}});
-  bg.addEventListener('click',()=>saveFoods());
+  const edit=!!state.foodEdit;
+  bg.addEventListener('click',()=>{ if(edit){ state.foodEdit=false; state.foodAddCat=null; render(); } else saveFoods(); });
   m.addEventListener('click',e=>e.stopPropagation());
+  const cats=getFoodCats();
   // ヘッダー
   const hdr=div({style:{padding:"0 16px 10px",borderBottom:"1px solid #1e3a5f",flexShrink:0}},[ 
     div({style:{width:"36px",height:"4px",background:"#334155",borderRadius:"4px",margin:"0 auto 12px"}}),
-    div({style:{display:"flex",justifyContent:"space-between",alignItems:"center"}},[
-      div({},[div({style:{fontSize:"14px",fontWeight:700,color:"#e2e8f0"}},"🍽️ 食べたものを記録"),div({style:{fontSize:"11px",color:"#64748b",marginTop:"2px"}},`${state.foodSelected.length}品目選択中`)]),
-      btn({style:{padding:"7px 16px",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:600,cursor:"pointer"},onClick:()=>saveFoods()},"保存")
+    div({style:{display:"flex",justifyContent:"space-between",alignItems:"center",gap:"8px"}},[
+      div({style:{flex:1,minWidth:0}},[div({style:{fontSize:"14px",fontWeight:700,color:"#e2e8f0"}},edit?"✏️ 食べたものの一覧を編集":"🍽️ 食べたものを記録"),
+        div({style:{fontSize:"11px",color:"#64748b",marginTop:"2px"}},edit?"名前・絵文字・並びを変えられます。消しても過去の記録は残ります":`${state.foodSelected.length}品目選択中`)]),
+      btn({style:{flexShrink:0,padding:"7px 10px",background:edit?"#0ea5e922":"transparent",border:`1px solid ${edit?"#0ea5e9":"#334155"}`,borderRadius:"8px",color:edit?"#38bdf8":"#94a3b8",fontSize:"12px",fontWeight:600,cursor:"pointer",fontFamily:"inherit"},
+        onClick:()=>{ state.foodEdit=!edit; state.foodAddCat=null; render(); }},edit?"✓ 編集を終える":"✏️ 編集"),
+      edit?null:btn({style:{flexShrink:0,padding:"7px 16px",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:600,cursor:"pointer"},onClick:()=>saveFoods()},"保存")
     ])
   ]);
   m.appendChild(hdr);
-  if(state.foodSelected.length>0){
+  if(!edit && state.foodSelected.length>0){
     const chips=div({style:{padding:"8px 16px",borderBottom:"1px solid #1e3a5f",flexShrink:0,display:"flex",flexWrap:"wrap",gap:"5px"}},
       state.foodSelected.map(f=>span({style:{fontSize:"11px",padding:"3px 10px",borderRadius:"20px",background:"#0ea5e933",color:"#38bdf8",border:"1px solid #0ea5e955",cursor:"pointer"},onClick:()=>{state.foodSelected=state.foodSelected.filter(x=>x!==f);render();}},`${fe(f)} ${f} ×`))
     );
     m.appendChild(chips);
   }
   const list=div({style:{flex:1,overflowY:"auto",padding:"8px 16px"}});
-  FOOD_CATS.forEach(cat=>{
+  cats.forEach((cat,ci)=>{
     const n=cat.items.filter(i=>state.foodSelected.includes(i)).length;
     const isOpen=state.foodOpenCat===cat.id;
+    if(edit){
+      // カテゴリの行：絵文字・名前・並び・削除
+      const row=div({style:{display:"flex",alignItems:"center",gap:"5px",padding:"7px 8px",background:"#0f172a",border:`1px solid ${isOpen?"#0ea5e955":"#1e3a5f"}`,borderRadius:"10px",marginBottom:"6px"}});
+      row.setAttribute('data-foodcat',cat.id);
+      row.appendChild(foodInput(cat.emoji,"🍽️","42px",v=>{ setFoodCat(cat.id,{emoji:(v||"").trim()||"🍽️"}); render(); }));
+      row.appendChild(foodInput(cat.label,"カテゴリ名",null,v=>{ const l=(v||"").trim(); if(!l){ render(); return; } setFoodCat(cat.id,{label:l}); render(); }));
+      row.appendChild(foodMiniBtn("▲",()=>{ moveFoodCat(cat.id,-1); render(); },false,ci===0));
+      row.appendChild(foodMiniBtn("▼",()=>{ moveFoodCat(cat.id,1); render(); },false,ci===cats.length-1));
+      row.appendChild(foodMiniBtn(isOpen?"閉じる":`品目 ${cat.items.length}`,()=>{ state.foodOpenCat=isOpen?null:cat.id; state.foodAddCat=null; render(); }));
+      row.appendChild(foodMiniBtn("🗑",()=>{
+        if(cat.items.length && !confirm(`「${cat.label}」と中の${cat.items.length}品目を一覧から消しますか？\n（過去の記録は残ります）`)) return;
+        removeFoodCat(cat.id); render(); },true));
+      list.appendChild(row);
+      if(isOpen){
+        const box=div({style:{padding:"0 0 4px 10px",marginBottom:"6px",borderLeft:"2px solid #0ea5e944"}});
+        cat.items.forEach((item,ii)=>{
+          const r=div({style:{display:"flex",alignItems:"center",gap:"5px",marginBottom:"5px"}});
+          r.setAttribute('data-fooditem',item);
+          r.appendChild(foodInput(state.foodEmoji&&state.foodEmoji[item]||FOOD_EMOJI[item]||"","🍽️","42px",v=>{ setFoodEmoji(item,v); render(); }));
+          r.appendChild(foodInput(item,"品目の名前",null,v=>{
+            const nn=(v||"").trim(); if(!nn||nn===item){ render(); return; }
+            const days=foodDaysWith(item);
+            const past=days>0 && confirm(`過去の記録（${days}日ぶん）の「${item}」も「${nn}」に変えますか？\n\nOK：過去の記録も変える（同じ食べ物として続けて数える）\nキャンセル：過去の記録は「${item}」のまま残す`);
+            const err=renameFoodItem(item,nn,past); if(err) showToast(`⚠️ ${err}`,"#f97316"); render(); }));
+          r.appendChild(foodMiniBtn("▲",()=>{ moveFoodItem(item,-1); render(); },false,ii===0));
+          r.appendChild(foodMiniBtn("▼",()=>{ moveFoodItem(item,1); render(); },false,ii===cat.items.length-1));
+          r.appendChild(foodMiniBtn("🗑",()=>{ removeFoodItem(item); showToast(`「${item}」を一覧から消しました（過去の記録は残ります）`); render(); },true));
+          box.appendChild(r);
+        });
+        if(!cat.items.length) box.appendChild(div({style:{fontSize:"11px",color:"#475569",padding:"2px 0 6px"}},"まだ品目がありません"));
+        box.appendChild(foodAddRow(cat,false));
+        list.appendChild(box);
+      }
+      return;
+    }
     const catBtn=btn({style:{width:"100%",display:"flex",alignItems:"center",justifyContent:"space-between",padding:"9px 12px",background:n>0?"#0ea5e911":"#0f172a",border:`1px solid ${n>0?"#0ea5e944":"#1e3a5f"}`,borderRadius:"10px",cursor:"pointer",marginBottom:"6px"},
-      onClick:()=>{state.foodOpenCat=isOpen?null:cat.id;render();}
+      onClick:()=>{state.foodOpenCat=isOpen?null:cat.id; state.foodAddCat=null; render();}
     },[
       div({style:{display:"flex",alignItems:"center",gap:"8px"}},[
         span({style:{fontSize:"17px"}},cat.emoji),
@@ -6474,15 +6601,33 @@ function renderFoodModal(vd){
           },`${fe(item)} ${item}`);
         })
       );
+      // その場で一覧に足して選ぶ
+      const plus=btn({style:{padding:"5px 12px",borderRadius:"20px",fontSize:"12px",cursor:"pointer",background:"transparent",color:"#38bdf8",border:"1px dashed #0ea5e9"},
+        onClick:()=>{ state.foodAddCat=state.foodAddCat===cat.id?null:cat.id; render(); setTimeout(()=>{ const x=document.querySelector(`[data-foodadd="${cat.id}"]`); if(x) x.focus(); },0); }},"＋ 追加");
+      plus.setAttribute('data-foodplus',cat.id);
+      items.appendChild(plus);
       list.appendChild(items);
+      if(state.foodAddCat===cat.id) list.appendChild(foodAddRow(cat,true));
     }
   });
+  if(edit){
+    const add=div({style:{display:"flex",gap:"5px",alignItems:"center",marginTop:"10px"}});
+    const em=foodInput("","🍽️","42px",null), lb=foodInput("","新しいカテゴリ（例：外食）",null,null);
+    lb.setAttribute('data-foodnewcat','1');
+    const go=()=>{ const c=addFoodCat(lb.value,em.value); if(!c){ showToast("⚠️ カテゴリ名を入れてください","#f97316"); return; } state.foodOpenCat=c.id; render(); };
+    lb.addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); go(); } });
+    add.appendChild(em); add.appendChild(lb);
+    add.appendChild(btn({style:{flexShrink:0,padding:"6px 12px",borderRadius:"7px",border:"1px solid #0ea5e9",background:"#0ea5e918",color:"#38bdf8",fontSize:"12px",fontWeight:600,cursor:"pointer",fontFamily:"inherit"},onClick:go},"＋ カテゴリ"));
+    list.appendChild(add);
+    list.appendChild(btn({style:{width:"100%",marginTop:"14px",padding:"8px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#64748b",fontSize:"11px",cursor:"pointer",fontFamily:"inherit"},
+      onClick:()=>{ if(confirm("食べたものの一覧を初期の状態に戻しますか？\n（自分で足した品目・名前の変更・絵文字は消えます。過去の記録は残ります）")){ resetFoodCats(); state.foodOpenCat=null; render(); } }},"↺ 初期の一覧に戻す"));
+  }
   m.appendChild(list);
   bg.appendChild(m);return bg;
 }
 function saveFoods(){
   setDaily(state.viewDate,{foods:[...state.foodSelected]});
-  state.modal=null;
+  state.modal=null; state.foodEdit=false; state.foodAddCat=null;
   render();
 }
 
@@ -16073,6 +16218,7 @@ function exportData(){
     connectGoal:state.connectGoal,
     ctJournal:state.ctJournal,
     nextDrink:state.nextDrink,
+    foodCats:(Array.isArray(state.foodCats)&&state.foodCats.length)?{cats:state.foodCats,emoji:state.foodEmoji||{}}:null,
     sleepGoal:state.sleepGoal,
     bodyComps:state.bodyComps,
     todoItems:state.todoItems,
@@ -16137,6 +16283,7 @@ function importData(e){
       if(p.todoOrder){try{localStorage.setItem(STORAGE_KEY+"_todo_order",JSON.stringify(p.todoOrder));}catch{}}
       if(p.shiftColors&&typeof p.shiftColors==="object"){try{localStorage.setItem(STORAGE_KEY+"_shiftcolors",JSON.stringify(p.shiftColors));}catch{} Object.keys(p.shiftColors).forEach(k=>{ if(SHIFT_TYPES[k]&&p.shiftColors[k])SHIFT_TYPES[k].color=p.shiftColors[k]; });}
       if(p.ejacColor){try{localStorage.setItem(STORAGE_KEY+"_ejaccolor",p.ejacColor);}catch{}}
+      if(p.foodCats&&Array.isArray(p.foodCats.cats)&&p.foodCats.cats.length){ state.foodCats=p.foodCats.cats; state.foodEmoji=(p.foodCats.emoji&&typeof p.foodCats.emoji==="object")?p.foodCats.emoji:{}; saveFoodCats(); }
       if(p.colorLabels&&typeof p.colorLabels==="object"){try{localStorage.setItem(STORAGE_KEY+"_colorlabels",JSON.stringify(p.colorLabels));}catch{}}
       if(p.sleepColor){try{localStorage.setItem(STORAGE_KEY+"_sleepcolor",p.sleepColor);}catch{}}
       if(p.alcColor){try{localStorage.setItem(STORAGE_KEY+"_alccolor",p.alcColor);}catch{}}
