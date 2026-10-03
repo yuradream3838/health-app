@@ -224,7 +224,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.97"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.98"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -2464,13 +2464,30 @@ function recordSleepAwakening(careSess,nextKey){
     const day=awakeDayOf(s);
     const list=[...(getDaily(day).awakenings||[])];
     const op=list.find(x=>x&&x.open);
-    // 睡眠以外へ出た＝起床。ケアに入ったときに自動で入れた「目が覚めた」は中途覚醒ではないので消す
-    if(nextKey!=='sleep'){
-      if(op&&op.autoOpen) setDaily(day,{awakenings:list.filter(x=>x!==op)});
-      return;
-    }
     const log=getModeLog(), i=log.indexOf(careSess);
     const prev=i>0?log[i-1]:null;
+    // 睡眠以外へ出た＝起床。ケアに入ったときに自動で入れた「目が覚めた」は中途覚醒ではないので消し、
+    // 目が覚めたのはケアに入った時点なので、その時刻を起床として記録する（記録済みなら上書きしない）
+    if(nextKey!=='sleep'){
+      let j=i; while(j>0&&isCareMode(log[j-1].key)) j--;          // ケアが続いていれば最初のケアまでさかのぼる
+      const fromSleepChain=j>0&&log[j-1].key==='sleep';
+      const wakeAt=op?new Date(parseDS(day).getTime()-(op.hour<12?0:86400000)+(op.hour*60+(op.min||0))*60000)
+                   :(fromSleepChain?new Date(log[j].start):null);
+      const upd={};
+      if(op&&op.autoOpen) upd.awakenings=list.filter(x=>x!==op);
+      if(wakeAt&&fromSleepChain){                                 // 睡眠から入ったケアのときだけ
+        const wd=awakeDayOf(wakeAt);
+        if(getDaily(wd).wakeTime==null){
+          if(op) upd.awakenings=list.filter(x=>x!==op);         // 起床に移したので記録中は片付ける
+          if(wd===day){ upd.wakeTime=wakeAt.getHours()+wakeAt.getMinutes()/60; }
+          else setDaily(wd,{wakeTime:wakeAt.getHours()+wakeAt.getMinutes()/60});
+          const def=lifeModeDef(log[j].key)||{};
+          showToast(`🌅 起床 ${hhmm(wakeAt.getHours(),wakeAt.getMinutes())} を記録（${op&&!op.autoOpen?"目が覚めた時刻":`${def.icon||""}${def.label||"ケア"}に入った時刻`}）`,'#a5b4fc');
+        }
+      }
+      if(Object.keys(upd).length) setDaily(day,upd);
+      return;
+    }
     const fromSleep=!!(prev&&prev.key==='sleep');
     if(!fromSleep&&!op) return;                   // 睡眠から入ったもの（か、目が覚めたが記録中のもの）だけ
     const mins=Math.round((e-s)/60000);
