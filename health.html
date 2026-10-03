@@ -224,7 +224,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.99"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.00"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -15569,6 +15569,99 @@ function renderScoreTrend(){
   return card;
 }
 
+// ═══ 📊 分析エンジン（総合分析・AI分析で共用）═══════════════
+// ① 体調スコアは**時間帯の差を補正**して「その日の体調」にする（anaScoreModel）。
+//    朝は低め・夜は高め…のような時間帯の傾向があると、朝だけ記録した日が不利になるため。
+//    時間帯ごとの差は記録数が少ないうちは小さめに見積もる（件数/(件数+5) を掛ける）。
+// ② 比べるときは日数とばらつきから**信頼度**（確か／傾向あり／まだ判断できない）を付ける（anaCompare）。
+//    目安は Welch の t 値：|t|≥2.6 かつ両側5日以上＝確か、|t|≥1.7 かつ3日以上＝傾向あり。
+const ANA_LEVELS={sure:{label:"確か",color:"#22c55e"},trend:{label:"傾向あり",color:"#eab308"},unsure:{label:"まだ判断できない",color:"#64748b"}};
+const ANA_BLOCKS=[{k:"morning",l:"朝 5-11時"},{k:"afternoon",l:"昼 11-17時"},{k:"evening",l:"夕 17-22時"},{k:"night",l:"夜 22-5時"}];
+function anaBlockOf(h){ return (h>=5&&h<11)?"morning":(h>=11&&h<17)?"afternoon":(h>=17&&h<22)?"evening":"night"; }
+let _anaScoreCache=null;
+function anaScoreModel(){
+  const all=state.logs||[];
+  const logs=all.filter(l=>l&&l.score!=null&&l.dateStr);
+  const sig=logs.length+"|"+logs.reduce((a,l)=>a+l.score*(l.hour+1),0);
+  if(_anaScoreCache&&_anaScoreCache.ref===all&&_anaScoreCache.sig===sig) return _anaScoreCache.m;
+  const mu=logs.length?logs.reduce((a,l)=>a+l.score,0)/logs.length:null;
+  const by={}; logs.forEach(l=>{ const b=anaBlockOf(l.hour); (by[b]=by[b]||[]).push(l.score); });
+  const eff={}; ANA_BLOCKS.forEach(b=>{ const a=by[b.k]||[]; eff[b.k]=a.length?(a.reduce((x,y)=>x+y,0)/a.length-mu)*a.length/(a.length+5):0; });
+  const day={};
+  logs.forEach(l=>{ const d=day[l.dateStr]||(day[l.dateStr]={sum:0,raw:0,n:0}); d.sum+=l.score-eff[anaBlockOf(l.hour)]; d.raw+=l.score; d.n++; });
+  Object.values(day).forEach(d=>{ d.adj=d.sum/d.n; d.rawAvg=d.raw/d.n; });
+  const m={mu,eff,blocks:by,day,n:logs.length};
+  _anaScoreCache={ref:all,sig,m}; return m;
+}
+function anaDayScore(ds){ const d=anaScoreModel().day[ds]; return d?d.adj:null; }
+function anaLogAdj(l){ const m=anaScoreModel(); return l.score-(m.eff[anaBlockOf(l.hour)]||0); }
+// t分布の両側95%点（表を直線で補間）
+function anaTCrit(df){
+  const T=[[1,12.71],[2,4.30],[3,3.18],[4,2.78],[5,2.57],[6,2.45],[7,2.36],[8,2.31],[9,2.26],[10,2.23],[12,2.18],[15,2.13],[20,2.09],[30,2.04],[60,2.00],[1e9,1.96]];
+  if(!(df>=1)) return 12.71;
+  for(let i=1;i<T.length;i++){ if(df<=T[i][0]){ const [a,ta]=T[i-1],[b,tb]=T[i]; return ta+(tb-ta)*(df-a)/(b-a); } }
+  return 1.96;
+}
+function anaDesc(arr){
+  const v=(arr||[]).filter(x=>x!=null&&isFinite(x)); const n=v.length;
+  if(!n) return {n:0,mean:null,sd:null,se:null,lo:null,hi:null};
+  const mean=v.reduce((a,b)=>a+b,0)/n;
+  const sd=n>1?Math.sqrt(v.reduce((a,b)=>a+(b-mean)**2,0)/(n-1)):null;
+  const se=sd!=null?sd/Math.sqrt(n):null, h=se!=null?anaTCrit(n-1)*se:null;
+  return {n,mean,sd,se,lo:h!=null?mean-h:null,hi:h!=null?mean+h:null};
+}
+function anaLevel(t,nMin){ const a=Math.abs(t||0); if(nMin>=5&&a>=2.6) return 'sure'; if(nMin>=3&&a>=1.7) return 'trend'; return 'unsure'; }
+// 2グループの平均の差（a−b）。ばらつきが0でも割れるよう、分散の下限を 0.25（標準偏差0.5点）に置く
+function anaCompare(a,b){
+  const A=anaDesc(a),B=anaDesc(b);
+  const diff=(A.mean!=null&&B.mean!=null)?A.mean-B.mean:null;
+  if(A.n<2||B.n<2) return {diff,se:null,t:0,level:'unsure',nA:A.n,nB:B.n};
+  const se=Math.sqrt(Math.max(A.sd**2,0.25)/A.n+Math.max(B.sd**2,0.25)/B.n), t=diff/se;
+  return {diff,se,t,level:anaLevel(t,Math.min(A.n,B.n)),nA:A.n,nB:B.n};
+}
+function anaLevelChip(level){
+  const L=ANA_LEVELS[level]||ANA_LEVELS.unsure;
+  return span({style:{fontSize:"9px",fontWeight:700,padding:"1px 7px",borderRadius:"9px",color:L.color,background:L.color+"1f",border:`1px solid ${L.color}55`,whiteSpace:"nowrap",flexShrink:0}},L.label);
+}
+function anaSigned(x,d){ return (x>=0?"+":"−")+Math.abs(x).toFixed(d==null?1:d); }
+// 比べた結果の1行（「AはBより +0.8点」＋信頼度）
+function anaVerdictRow(la,lb,c,unit){
+  if(c.diff==null) return null;
+  const u=unit||"点";
+  const txtV=c.level==='unsure'
+    ?`${la} と ${lb} の差（${anaSigned(c.diff)}${u}）は、まだ偶然の範囲です（${c.nA}日 vs ${c.nB}日）`
+    :`${la} は ${lb} より ${anaSigned(c.diff)}${u}（${c.nA}日 vs ${c.nB}日）`;
+  return div({style:{display:"flex",gap:"6px",alignItems:"center",marginTop:"5px",fontSize:"11px",color:c.level==='unsure'?"#64748b":"#cbd5e1",lineHeight:1.5}},[
+    anaLevelChip(c.level), span({style:{flex:1,minWidth:0}},txtV)]);
+}
+// グループごとの平均（棒）と95%の範囲（細い線）。3件未満の行は薄くして「少ない」と出す。
+function anaGroupRows(groups,unit){
+  const box=div({});
+  groups.forEach(g=>{
+    const D=anaDesc(g.vals); if(!D.n) return;
+    const few=D.n<3, pct=v=>`${Math.max(0,Math.min(10,v))*10}%`;
+    const track=div({style:{flex:1,height:"10px",position:"relative",background:"#0f172a",borderRadius:"4px"}},[
+      div({style:{position:"absolute",left:0,top:"2px",height:"6px",width:pct(D.mean),background:g.c,opacity:few?0.35:1,borderRadius:"4px"}}),
+      (D.lo!=null&&!few)?div({style:{position:"absolute",left:pct(D.lo),width:`calc(${pct(D.hi)} - ${pct(D.lo)})`,top:"4px",height:"2px",background:"#e2e8f0aa"}}):null
+    ]);
+    box.appendChild(div({style:{display:"flex",alignItems:"center",gap:"8px",marginBottom:"5px",opacity:few?0.6:1}},[
+      div({style:{fontSize:"11px",color:"#94a3b8",minWidth:"72px"}},g.l), track,
+      div({style:{fontSize:"12px",fontWeight:700,color:few?"#64748b":g.c,minWidth:"26px",textAlign:"right"}},D.mean.toFixed(1)),
+      div({style:{fontSize:"10px",color:"#475569",minWidth:"30px"}},few?`${D.n}${unit||"日"}・少`:`${D.n}${unit||"日"}`)
+    ]));
+  });
+  return box;
+}
+function anaGroupCard(title,groups,opts){
+  opts=opts||{};
+  const card=div({className:"card"},[div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0",marginBottom:"10px"}},title)]);
+  if(!groups.some(g=>(g.vals||[]).length)) return null;
+  card.appendChild(anaGroupRows(groups,opts.unit));
+  (opts.cmps||[]).forEach(cp=>{ if(!cp||!(cp.a||[]).length||!(cp.b||[]).length) return; const r=anaVerdictRow(cp.la,cp.lb,anaCompare(cp.a,cp.b)); if(r) card.appendChild(r); });
+  if(opts.note) card.appendChild(div({style:{fontSize:"9px",color:"#475569",marginTop:"6px",lineHeight:1.5}},opts.note));
+  return card;
+}
+
 function renderAnalysis(){
   const wrap=div({style:{maxWidth:"600px",margin:"0 auto",padding:"12px 16px 60px"}});
   wrap.appendChild(renderScoreTrend());
@@ -15579,7 +15672,7 @@ function renderAnalysis(){
 
   // 日付を1日進める
   const nextD=ds=>{const p=ds.split('-');const n=new Date(parseInt(p[0]),parseInt(p[1])-1,parseInt(p[2]));n.setDate(n.getDate()+1);return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}-${String(n.getDate()).padStart(2,'0')}`;};
-  const dayAvgScore=ds=>{const ls=scored.filter(l=>l.dateStr===ds);return ls.length?ls.reduce((a,b)=>a+b.score,0)/ls.length:null;};
+  const dayAvgScore=anaDayScore;   // 時間帯の差を補正した「その日の体調」（anaScoreModel）
 
   // 睡眠と当日体調
   const sleepG={s:[],m:[],l:[]};
@@ -15627,35 +15720,27 @@ function renderAnalysis(){
   const sc2={};bad.forEach(l=>l.symptoms.forEach(s=>{sc2[s]=(sc2[s]||0)+1;}));
   const topS=Object.entries(sc2).sort((a,b)=>b[1]-a[1]).slice(0,4);
 
-  const barCard=(title,rows)=>{
-    const card=div({className:"card"},[div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0",marginBottom:"10px"}},title)]);
-    rows.forEach(({l,v,c,sub})=>{
-      if(!v)return;
-      card.appendChild(div({style:{display:"flex",alignItems:"center",gap:"8px",marginBottom:"5px"}},[
-        div({style:{fontSize:"11px",color:"#94a3b8",minWidth:"72px"}},l),
-        div({style:{flex:1,height:"6px",background:"#0f172a",borderRadius:"4px",overflow:"hidden"}},[div({style:{height:"100%",width:`${(parseFloat(v)/10)*100}%`,background:c,borderRadius:"4px"}})]),
-        div({style:{fontSize:"12px",fontWeight:700,color:c,minWidth:"26px",textAlign:"right"}},v),
-        sub?div({style:{fontSize:"10px",color:"#475569"}},sub):null
-      ]));
-    });
-    return card;
-  };
+  // 平均と95%の範囲（anaGroupCard）。opts.cmps で「どれとどれを比べるか」を指定すると信頼度つきの1行を添える
+  const barCard=(title,rows,opts)=>anaGroupCard(title,rows,opts)||div({});
+  const merged=(...arrs)=>[].concat(...arrs);
 
   // サマリー
   wrap.appendChild(div({style:{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"8px",marginBottom:"10px"}},[
     {l:"記録日数",v:`${[...new Set(scored.map(l=>l.dateStr))].length}日`},{l:"平均体調",v:avg?`${avg}/10`:"—"},{l:"不調記録",v:`${bad.length}件`}
   ].map(({l,v})=>div({className:"card",style:{textAlign:"center",marginBottom:"0"}},[div({style:{fontSize:"10px",color:"#64748b",marginBottom:"3px"}},l),div({style:{fontSize:"17px",fontWeight:800,color:"#e2e8f0"}},v)]))));
 
+  wrap.appendChild(div({style:{fontSize:"10px",color:"#64748b",margin:"-4px 2px 10px",lineHeight:1.6}},
+    "体調は時間帯の差を補正した「その日の体調」で比べています。差には信頼度（確か／傾向あり／まだ判断できない）を付け、細い線は95%の範囲です。"));
   if(scored.length<3){
     wrap.appendChild(div({className:"card",style:{textAlign:"center",color:"#64748b",padding:"32px 16px"}},[div({style:{fontSize:"32px",marginBottom:"8px"}},"📋"),"体調を3件以上記録すると分析できます"]));
     return wrap;
   }
 
   wrap.appendChild(barCard("😴 睡眠と当日体調",[
-    {l:"5h以下",v:ga(sleepG.s),c:"#ef4444",sub:`${sleepG.s.length}日`},
-    {l:"6〜7h", v:ga(sleepG.m),c:"#eab308",sub:`${sleepG.m.length}日`},
-    {l:"8h以上",v:ga(sleepG.l),c:"#22c55e",sub:`${sleepG.l.length}日`}
-  ]));
+    {l:"5h以下",vals:sleepG.s,c:"#ef4444"},
+    {l:"6〜7h", vals:sleepG.m,c:"#eab308"},
+    {l:"8h以上",vals:sleepG.l,c:"#22c55e"}
+  ],{cmps:[{a:sleepG.l,b:sleepG.s,la:"8h以上",lb:"5h以下"},{a:sleepG.m,b:sleepG.s,la:"6〜7h",lb:"5h以下"}]}));
 
   // 😴+💤 合計睡眠（夜＋昼寝）と当日体調
   const totalSleepG={s:[],m:[],l:[]};
@@ -15672,49 +15757,46 @@ function renderAnalysis(){
   });
   if(hasNapData){
     wrap.appendChild(barCard("💤 合計睡眠（夜＋昼寝）と当日体調",[
-      {l:"5h以下",v:ga(totalSleepG.s),c:"#ef4444",sub:`${totalSleepG.s.length}日`},
-      {l:"6〜7h", v:ga(totalSleepG.m),c:"#eab308",sub:`${totalSleepG.m.length}日`},
-      {l:"8h以上",v:ga(totalSleepG.l),c:"#22c55e",sub:`${totalSleepG.l.length}日`}
-    ]));
+      {l:"5h以下",vals:totalSleepG.s,c:"#ef4444"},
+      {l:"6〜7h", vals:totalSleepG.m,c:"#eab308"},
+      {l:"8h以上",vals:totalSleepG.l,c:"#22c55e"}
+    ],{cmps:[{a:totalSleepG.l,b:totalSleepG.s,la:"8h以上",lb:"5h以下"}]}));
   }
   wrap.appendChild(barCard("🍺 飲酒と翌日体調（純アルコール量）",[
-    {l:"飲まない",v:ga(alcG.n), c:"#22c55e",sub:`${alcG.n.length}日`},
-    {l:"〜20g",   v:ga(alcG.l), c:"#a3e635",sub:`${alcG.l.length}日`},
-    {l:"〜40g",   v:ga(alcG.m), c:"#eab308",sub:`${alcG.m.length}日`},
-    {l:"〜60g",   v:ga(alcG.h), c:"#f97316",sub:`${alcG.h.length}日`},
-    {l:"60g超",   v:ga(alcG.vh),c:"#ef4444",sub:`${alcG.vh.length}日`}
-  ]));
+    {l:"飲まない",vals:alcG.n,c:"#22c55e"},
+    {l:"〜20g",   vals:alcG.l,c:"#a3e635"},
+    {l:"〜40g",   vals:alcG.m,c:"#eab308"},
+    {l:"〜60g",   vals:alcG.h,c:"#f97316"},
+    {l:"60g超",   vals:alcG.vh,c:"#ef4444"}
+  ],{cmps:[{a:merged(alcG.m,alcG.h,alcG.vh),b:alcG.n,la:"20g超",lb:"飲まない"},{a:alcG.l,b:alcG.n,la:"〜20g",lb:"飲まない"}]}));
   wrap.appendChild(div({style:{fontSize:"9px",color:"#475569",margin:"-6px 0 10px",paddingLeft:"2px"}},"目安: 20g≒ビール中瓶1本 / 40g≒2本 / 60g≒3本"));
   wrap.appendChild(barCard("💧 飲水と当日体調（0.2L単位）",[
-    {l:"〜0.2L",v:ga(waterG.w02),c:"#ef4444",sub:`${waterG.w02.length}日`},
-    {l:"〜0.4L",v:ga(waterG.w04),c:"#ef4444",sub:`${waterG.w04.length}日`},
-    {l:"〜0.6L",v:ga(waterG.w06),c:"#f97316",sub:`${waterG.w06.length}日`},
-    {l:"〜0.8L",v:ga(waterG.w08),c:"#f97316",sub:`${waterG.w08.length}日`},
-    {l:"〜1.0L",v:ga(waterG.w10),c:"#eab308",sub:`${waterG.w10.length}日`},
-    {l:"〜1.2L",v:ga(waterG.w12),c:"#eab308",sub:`${waterG.w12.length}日`},
-    {l:"〜1.4L",v:ga(waterG.w14),c:"#22c55e",sub:`${waterG.w14.length}日`},
-    {l:"〜1.6L",v:ga(waterG.w16),c:"#22c55e",sub:`${waterG.w16.length}日`},
-    {l:"〜1.8L",v:ga(waterG.w18),c:"#22c55e",sub:`${waterG.w18.length}日`},
-    {l:"2.0L以上",v:ga(waterG.w20),c:"#38bdf8",sub:`${waterG.w20.length}日`},
-  ]));
+    {l:"〜0.2L",vals:waterG.w02,c:"#ef4444"},
+    {l:"〜0.4L",vals:waterG.w04,c:"#ef4444"},
+    {l:"〜0.6L",vals:waterG.w06,c:"#f97316"},
+    {l:"〜0.8L",vals:waterG.w08,c:"#f97316"},
+    {l:"〜1.0L",vals:waterG.w10,c:"#eab308"},
+    {l:"〜1.2L",vals:waterG.w12,c:"#eab308"},
+    {l:"〜1.4L",vals:waterG.w14,c:"#22c55e"},
+    {l:"〜1.6L",vals:waterG.w16,c:"#22c55e"},
+    {l:"〜1.8L",vals:waterG.w18,c:"#22c55e"},
+    {l:"2.0L以上",vals:waterG.w20,c:"#38bdf8"},
+  ],{cmps:[{a:merged(waterG.w14,waterG.w16,waterG.w18,waterG.w20),b:merged(waterG.w02,waterG.w04,waterG.w06,waterG.w08),la:"1.2L超",lb:"0.8L以下"}]}));
 
   // 🕐 時間帯別の体調（別観点：1日の中でいつ調子が良い/悪いか）
   const todG={morning:[],afternoon:[],evening:[],night:[]};
   scored.forEach(l=>{
     const h=l.hour;
-    if(h>=5&&h<11)todG.morning.push(l.score);
-    else if(h>=11&&h<17)todG.afternoon.push(l.score);
-    else if(h>=17&&h<22)todG.evening.push(l.score);
-    else todG.night.push(l.score);
+    todG[anaBlockOf(h)].push(l.score);
   });
-  const todRow=(l,arr)=>{const v=ga(arr);return {l,v,c:v?scoreColor(parseFloat(v)):"#475569",sub:`${arr.length}件`};};
+  const todRow=(l,arr)=>{const D=anaDesc(arr);return {l,vals:arr,c:D.mean!=null?scoreColor(D.mean):"#475569"};};
   if(scored.length>=3){
     wrap.appendChild(barCard("🕐 時間帯別の体調",[
       todRow("朝 5-11時",todG.morning),
       todRow("昼 11-17時",todG.afternoon),
       todRow("夕 17-22時",todG.evening),
       todRow("夜 22-5時",todG.night)
-    ]));
+    ],{unit:"件",note:"この時間帯ごとの差は、ほかの分析で「その日の体調」を出すときに補正しています（朝だけ記録した日が不利にならないように）。"}));
   }
 
   // 🏭 仕事シフトと当日体調
@@ -15727,10 +15809,10 @@ function renderAnalysis(){
     else {shiftG.s2.push(a);}
   });
   wrap.appendChild(barCard("🏭 仕事シフトと当日体調",[
-    {l:"1直",v:ga(shiftG.s1), c:"#38bdf8",sub:`${shiftG.s1.length}日`},
-    {l:"2直",v:ga(shiftG.s2), c:"#a78bfa",sub:`${shiftG.s2.length}日`},
-    {l:"休み",v:ga(shiftG.off),c:"#22c55e",sub:`${shiftG.off.length}日`}
-  ]));
+    {l:"1直",vals:shiftG.s1,c:"#38bdf8"},
+    {l:"2直",vals:shiftG.s2,c:"#a78bfa"},
+    {l:"休み",vals:shiftG.off,c:"#22c55e"}
+  ],{cmps:[{a:shiftG.s1,b:shiftG.off,la:"1直",lb:"休み"},{a:shiftG.s2,b:shiftG.off,la:"2直",lb:"休み"}]}));
 
   // 🌡️ 飲酒欲求の分析
   const cravingDays=state.dailies
@@ -15765,10 +15847,12 @@ function renderAnalysis(){
     if(highScore.length>=2&&lowScore.length>=2){
       const hAvg=highScore.reduce((a,b)=>a+b,0)/highScore.length;
       const lAvg=lowScore.reduce((a,b)=>a+b,0)/lowScore.length;
-      if(lAvg-hAvg>=0.5){
+      const _cc=anaCompare(lowScore,highScore);
+      if(lAvg-hAvg>=0.3&&_cc.level!=='unsure'){
         cc.appendChild(div({style:{display:"flex",gap:"8px",alignItems:"flex-start",marginBottom:"7px",padding:"7px 10px",borderRadius:"8px",background:"#ef444408",border:"1px solid #ef444422"}},[
           span({style:{fontSize:"14px",flexShrink:0}},"📉"),
-          div({style:{fontSize:"12px",color:"#cbd5e1",lineHeight:1.6}},`欲求が高い日（7以上）は体調も低い傾向（平均${hAvg.toFixed(1)} vs ${lAvg.toFixed(1)}）。体調不良が飲酒欲求の引き金になっている可能性があります`)
+          anaLevelChip(_cc.level),
+          div({style:{fontSize:"12px",color:"#cbd5e1",lineHeight:1.6}},`欲求が高い日（7以上）は体調も低い（平均${hAvg.toFixed(1)} vs ${lAvg.toFixed(1)}）。体調不良が飲酒欲求の引き金になっている可能性があります`)
         ]));
       }
     }
@@ -15788,10 +15872,12 @@ function renderAnalysis(){
     if(prevSleepHigh.length>=2&&prevSleepLow.length>=2){
       const hS=prevSleepHigh.reduce((a,b)=>a+b,0)/prevSleepHigh.length;
       const lS=prevSleepLow.reduce((a,b)=>a+b,0)/prevSleepLow.length;
-      if(lS-hS>=0.5){
+      const _sc=anaCompare(prevSleepLow,prevSleepHigh);
+      if(lS-hS>=0.3&&_sc.level!=='unsure'){
         cc.appendChild(div({style:{display:"flex",gap:"8px",alignItems:"flex-start",marginBottom:"7px",padding:"7px 10px",borderRadius:"8px",background:"#f9731608",border:"1px solid #f9731622"}},[
           span({style:{fontSize:"14px",flexShrink:0}},"😴"),
-          div({style:{fontSize:"12px",color:"#cbd5e1",lineHeight:1.6}},`欲求が高い日の前日は睡眠が短い傾向（平均${hS.toFixed(1)}h vs ${lS.toFixed(1)}h）。睡眠不足が翌日の欲求を高めている可能性があります`)
+          anaLevelChip(_sc.level),
+          div({style:{fontSize:"12px",color:"#cbd5e1",lineHeight:1.6}},`欲求が高い日の前日は睡眠が短い（平均${hS.toFixed(1)}h vs ${lS.toFixed(1)}h）。睡眠不足が翌日の欲求を高めている可能性があります`)
         ]));
       }
     }
@@ -15814,29 +15900,20 @@ function renderAnalysis(){
       if(a!=null)(has?withE.same:withoutE.same).push(a);
       if(aN!=null)(has?withE.next:withoutE.next).push(aN);
     });
-    const ejacCard=div({className:"card"},[div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0",marginBottom:"4px"}},"💧 射精と体調")]);
-    ejacCard.appendChild(div({style:{fontSize:"10px",color:"#475569",marginBottom:"10px"}},`記録あり${ejacDays.length}日 / 月間平均 ${(ejacDays.length/Math.max(1,state.dailies.length)*30).toFixed(1)}回`));
-    const rows=[
-      {l:"あり日の体調",v:ga(withE.same),c:"#38bdf8",sub:`${withE.same.length}日`},
-      {l:"なし日の体調",v:ga(withoutE.same),c:"#64748b",sub:`${withoutE.same.length}日`},
-      {l:"あり翌日",v:ga(withE.next),c:"#a78bfa",sub:`${withE.next.length}日`},
-      {l:"なし翌日",v:ga(withoutE.next),c:"#64748b",sub:`${withoutE.next.length}日`}
-    ];
-    rows.forEach(({l,v,c,sub})=>{
-      if(!v)return;
-      ejacCard.appendChild(div({style:{display:"flex",alignItems:"center",gap:"8px",marginBottom:"5px"}},[
-        div({style:{fontSize:"11px",color:"#94a3b8",minWidth:"90px"}},l),
-        div({style:{flex:1,height:"6px",background:"#0f172a",borderRadius:"4px",overflow:"hidden"}},[div({style:{height:"100%",width:`${(parseFloat(v)/10)*100}%`,background:c,borderRadius:"4px"}})]),
-        div({style:{fontSize:"12px",fontWeight:700,color:c,minWidth:"26px",textAlign:"right"}},v),
-        div({style:{fontSize:"10px",color:"#475569"}},sub)
-      ]));
-    });
+    const ejacCard=anaGroupCard("💧 射精と体調",[
+      {l:"あり日の体調",vals:withE.same,c:"#38bdf8"},
+      {l:"なし日の体調",vals:withoutE.same,c:"#64748b"},
+      {l:"あり翌日",vals:withE.next,c:"#a78bfa"},
+      {l:"なし翌日",vals:withoutE.next,c:"#64748b"}
+    ],{cmps:[{a:withE.same,b:withoutE.same,la:"あった日",lb:"なかった日"},{a:withE.next,b:withoutE.next,la:"あった翌日",lb:"なかった翌日"}],
+       note:`記録あり${ejacDays.length}日 / 月間平均 ${(ejacDays.length/Math.max(1,state.dailies.length)*30).toFixed(1)}回`})||div({});
     wrap.appendChild(ejacCard);
   }
-  if(pd.length>0||ps.length>0) wrap.appendChild(barCard("🌡️ 気圧と体調",[
-    {l:"急降下",v:pd.length?(pd.reduce((a,b)=>a+b.score,0)/pd.length).toFixed(1):null,c:"#ef4444",sub:`${pd.length}件`},
-    {l:"安定",v:ps.length?(ps.reduce((a,b)=>a+b.score,0)/ps.length).toFixed(1):null,c:"#22c55e",sub:`${ps.length}件`}
-  ]));
+  if(pd.length>0||ps.length>0){ const pdv=pd.map(anaLogAdj), psv=ps.map(anaLogAdj);
+    wrap.appendChild(barCard("🌡️ 気圧と体調",[
+      {l:"急降下",vals:pdv,c:"#ef4444"},
+      {l:"安定",vals:psv,c:"#22c55e"}
+    ],{unit:"件",cmps:[{a:pdv,b:psv,la:"気圧の急降下",lb:"安定"}]})); }
   if(topS.length>0){
     const sc=div({className:"card"},[div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0",marginBottom:"10px"}},"🤒 不調時の体調状態")]);
     topS.forEach(([s,n])=>sc.appendChild(div({style:{display:"flex",alignItems:"center",gap:"8px",marginBottom:"5px"}},[
@@ -15963,33 +16040,22 @@ function renderAnalysis(){
     wrap.appendChild(fc);
   }
 
-  // 📌 わかったこと（ルールベース知見・自動生成）
+  // 📌 わかったこと（自動生成）：偶然の範囲（まだ判断できない）のものは出さない
   const insights=(()=>{
     const out=[];
-    const gaN=arr=>arr.length?arr.reduce((a,b)=>a+b,0)/arr.length:null;
-    // 飲酒→翌日（20g超＝m/h/vhを合算）
     const alcHeavy=[...alcG.m,...alcG.h,...alcG.vh];
-    const an=gaN(alcG.n), ah=gaN(alcHeavy);
-    if(an!=null&&ah!=null&&alcG.n.length>=2&&alcHeavy.length>=2){
-      const diff=an-ah;
-      if(diff>=0.5) out.push({icon:"🍺",text:`飲酒20g超の翌日は、飲まない日の翌日より平均${diff.toFixed(1)}点低い（${alcHeavy.length}日 vs ${alcG.n.length}日）`,neg:true});
+    const ca=anaCompare(alcG.n,alcHeavy);
+    if(ca.level!=='unsure'&&ca.diff>=0.3) out.push({icon:"🍺",level:ca.level,text:`飲酒20g超の翌日は、飲まない日の翌日より ${ca.diff.toFixed(1)}点低い（${alcHeavy.length}日 vs ${alcG.n.length}日）`,neg:true});
+    const cs=anaCompare(sleepG.l,sleepG.s);
+    if(cs.level!=='unsure'&&cs.diff>=0.3) out.push({icon:"😴",level:cs.level,text:`8h以上眠った日は、5h以下の日より ${cs.diff.toFixed(1)}点高い（${sleepG.l.length}日 vs ${sleepG.s.length}日）`,neg:false});
+    // 時間帯：いちばん良い時間帯といちばん悪い時間帯（記録件数で比べる）
+    const tb=ANA_BLOCKS.map(b=>({b,vals:todG[b.k]})).filter(x=>x.vals.length>=3).map(x=>({...x,m:anaDesc(x.vals).mean}));
+    if(tb.length>=2){
+      const best=tb.reduce((a,b)=>b.m>a.m?b:a), worst=tb.reduce((a,b)=>b.m<a.m?b:a);
+      const ct=anaCompare(best.vals,worst.vals);
+      if(ct.level!=='unsure'&&ct.diff>=0.5) out.push({icon:"⏰",level:ct.level,text:`${best.b.l}が最も好調（平均${best.m.toFixed(1)}）、${worst.b.l}が最も不調（平均${worst.m.toFixed(1)}）`,neg:false});
     }
-    // 睡眠
-    const ss=gaN(sleepG.s), sl=gaN(sleepG.l);
-    if(ss!=null&&sl!=null&&sleepG.s.length>=2&&sleepG.l.length>=2){
-      const diff=sl-ss;
-      if(diff>=0.5) out.push({icon:"😴",text:`8h以上眠った日は、5h以下の日より平均${diff.toFixed(1)}点高い（${sleepG.l.length}日 vs ${sleepG.s.length}日）`,neg:false});
-    }
-    // 時間帯パターン
-    const hourScores={};
-    scored.forEach(l=>{if(!hourScores[l.hour])hourScores[l.hour]=[];hourScores[l.hour].push(l.score);});
-    const hourAvgs=Object.entries(hourScores).filter(([,v])=>v.length>=3).map(([h,v])=>({h:parseInt(h),avg:gaN(v),n:v.length}));
-    if(hourAvgs.length>=3){
-      const best=hourAvgs.reduce((a,b)=>b.avg>a.avg?b:a);
-      const worst=hourAvgs.reduce((a,b)=>b.avg<a.avg?b:a);
-      if(best.avg-worst.avg>=1) out.push({icon:"⏰",text:`${best.h}時台が最も好調（平均${best.avg.toFixed(1)}）、${worst.h}時台が最も不調（平均${worst.avg.toFixed(1)}）`,neg:false});
-    }
-    // 連続飲酒
+    // 連続飲酒（事実の記述なので信頼度は付けない）
     const sortedD=[...state.dailies].sort((a,b)=>a.dateStr<b.dateStr?-1:1);
     let maxRun=0,run=0;
     sortedD.forEach(d=>{
@@ -15997,19 +16063,20 @@ function renderAnalysis(){
       const g=drinks.reduce((x,b)=>x+pureAlcohol(b.ml,b.drinkType.pct),0);
       if(g>0){run++;maxRun=Math.max(maxRun,run);}else run=0;
     });
-    if(maxRun>=3) out.push({icon:"📅",text:`最長${maxRun}日連続で飲酒。休肝日を挟むと翌朝スコアが上がる傾向があります`,neg:true});
+    if(maxRun>=3) out.push({icon:"📅",level:null,text:`最長${maxRun}日連続で飲酒しています`,neg:true});
     return out;
   })();
 
   if(insights.length>0){
     const ic=div({className:"card"},[div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0",marginBottom:"10px"}},"📌 データからわかったこと")]);
-    insights.forEach(({icon,text,neg})=>{
+    insights.forEach(({icon,text,neg,level})=>{
       ic.appendChild(div({style:{display:"flex",gap:"8px",alignItems:"flex-start",marginBottom:"7px",padding:"7px 10px",borderRadius:"8px",background:neg?"#ef444408":"#22c55e08",border:`1px solid ${neg?"#ef444422":"#22c55e22"}`}},[
         span({style:{fontSize:"14px",flexShrink:0}},icon),
-        div({style:{fontSize:"12px",color:"#cbd5e1",lineHeight:1.6}},text)
+        div({style:{flex:1,fontSize:"12px",color:"#cbd5e1",lineHeight:1.6}},text),
+        level?anaLevelChip(level):null
       ]));
     });
-    ic.appendChild(div({style:{fontSize:"10px",color:"#334155",marginTop:"6px"}},"※ 記録データから自動計算（AI不使用・毎回更新）"));
+    ic.appendChild(div({style:{fontSize:"10px",color:"#334155",marginTop:"6px"}},"※ 記録データから自動計算（AI不使用・毎回更新）。偶然の範囲の差は載せていません"));
     wrap.appendChild(ic);
   }
 
@@ -16050,6 +16117,7 @@ function renderAnalysis(){
       // 体調比較
       if(withS.length>=2 && withoutS.length>=2){
         const aS=parseFloat(ga(withS)), aN=parseFloat(ga(withoutS));
+        const _vr=anaVerdictRow("突発があった日","なかった日",anaCompare(withS,withoutS));
         card.appendChild(div({style:{borderTop:"1px solid #1e3a5f",paddingTop:"8px"}},[
           div({style:{display:"flex",alignItems:"center",gap:"8px",marginBottom:"5px"}},[
             div({style:{fontSize:"11px",color:"#94a3b8",minWidth:"96px"}},"突発あった日"),
@@ -16060,7 +16128,8 @@ function renderAnalysis(){
             div({style:{fontSize:"11px",color:"#94a3b8",minWidth:"96px"}},"なかった日"),
             div({style:{flex:1,height:"6px",background:"#0f172a",borderRadius:"4px",overflow:"hidden"}},[div({style:{height:"100%",width:`${aN/10*100}%`,background:scoreColor(aN)}})]),
             div({style:{fontSize:"12px",fontWeight:700,color:scoreColor(aN),minWidth:"26px",textAlign:"right"}},aN.toFixed(1))
-          ])
+          ]),
+          _vr
         ]));
       }
       wrap.appendChild(card);
