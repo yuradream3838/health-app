@@ -224,7 +224,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.96"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.97"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -2447,41 +2447,68 @@ function alexaFireMode(key){
   return true;
 }
 function switchLifeMode(key,auto){ const cur=currentModeSession(), now=Date.now();
-  if(cur){ if(cur.key===key)return; cur.end=now; recordSleepAwakening(cur,key); }
+  if(cur){ if(cur.key===key)return; cur.end=now; }
   const s={key,start:now}; if(auto)s.auto=true; getModeLog().push(s); saveModeLog();
+  // 中途覚醒の記録は新しいモードを積んでから（記録の保存で描き直しが走るので、
+  // 「いまのモードが無い」瞬間に描くと既定モードが割り込んでしまう）
+  if(cur){ recordSleepAwakening(cur,key); noteAwakeOnCareEnter(cur.key,key,now); }
   alexaFireMode(key); }
 // 😴睡眠 → 🩹ケア → 😴睡眠 と戻ったら、そのケアの時間を「中途覚醒」として記録する。
 // 夜中に目が覚めて落ち込み・さみしいモードを使った時間は、眠れていない時間だから。
 function recordSleepAwakening(careSess,nextKey){
   try{
-    if(nextKey!=='sleep') return;                 // 睡眠へ戻るときだけ（朝へ出るのは起床）
     if(!isCareMode(careSess.key)) return;         // ケアの時間だけ
+    if(isCareMode(nextKey)) return;               // ケア→ケアはまだ起きている途中（記録中のまま）
+    const s=new Date(careSess.start), e=new Date(careSess.end||Date.now());
+    // 中途覚醒は「その夜の朝の日」に持つ（0〜12時はその日、12時以降は翌日）
+    const day=awakeDayOf(s);
+    const list=[...(getDaily(day).awakenings||[])];
+    const op=list.find(x=>x&&x.open);
+    // 睡眠以外へ出た＝起床。ケアに入ったときに自動で入れた「目が覚めた」は中途覚醒ではないので消す
+    if(nextKey!=='sleep'){
+      if(op&&op.autoOpen) setDaily(day,{awakenings:list.filter(x=>x!==op)});
+      return;
+    }
     const log=getModeLog(), i=log.indexOf(careSess);
     const prev=i>0?log[i-1]:null;
-    if(!prev || prev.key!=='sleep') return;       // 睡眠から入ったものだけ
-    const s=new Date(careSess.start), e=new Date(careSess.end||Date.now());
+    const fromSleep=!!(prev&&prev.key==='sleep');
+    if(!fromSleep&&!op) return;                   // 睡眠から入ったもの（か、目が覚めたが記録中のもの）だけ
     const mins=Math.round((e-s)/60000);
-    if(mins<1) return;                            // 1分未満は押し間違い扱い
-    // 中途覚醒は「その夜の朝の日」に持つ（0〜12時はその日、12時以降は翌日）
-    const day=s.getHours()<12?fmtDS(s):addDays(fmtDS(s),1);
-    const list=[...(getDaily(day).awakenings||[])];
-    if(list.some(x=>!x.open&&x.hour===s.getHours()&&x.min===s.getMinutes())) return; // 同じ時刻は二重に入れない
+    if(mins<1&&(!op||op.autoOpen)){               // 1分未満は押し間違い扱い（自動で入れた記録中も片付ける）
+      if(op&&op.autoOpen) setDaily(day,{awakenings:list.filter(x=>x!==op)});
+      return;
+    }
+    if(!op&&list.some(x=>!x.open&&x.hour===s.getHours()&&x.min===s.getMinutes())) return; // 同じ時刻は二重に入れない
     const def=lifeModeDef(careSess.key)||{};
-    const tag={fromMode:careSess.key, modeLabel:`${def.icon||'🩹'}${def.label||''}`};
+    const tag={fromMode:(op&&op.fromMode)||careSess.key, modeLabel:(op&&op.modeLabel)||`${def.icon||'🩹'}${def.label||''}`};
     let rec={uid:newAwakeUid(list),hour:s.getHours(),min:s.getMinutes(),endHour:e.getHours(),endMin:e.getMinutes(),mins,...tag};
-    // 手で「目が覚めた」を押して記録中なら、それと同じ覚醒なので別の1件にせず、睡眠へ戻った時刻で締める
-    const op=list.find(x=>x&&x.open);
+    // 「目が覚めた」が記録中（手で押した／ケアに入ったときに自動で入れた）なら、別の1件にせず睡眠へ戻った時刻で締める
     let closedOpen=false;
     if(op){
       const [o0]=awakeRange({...op,mins:0}), [c0,c1]=awakeRange(rec);
-      if(o0<=c1){ rec=awakeFromRange(Math.min(o0,c0),c1,{...op,...tag}); delete rec.open; closedOpen=true; }
+      if(o0<=c1){ rec=awakeFromRange(fromSleep?Math.min(o0,c0):o0,c1,{...op,...tag}); delete rec.open; delete rec.autoOpen; closedOpen=true; }
     }
     const r=mergeAwakeInto(list.filter(x=>!(closedOpen&&x===op)),rec);
     setDaily(day,{awakenings:r.list});
     const fin=r.rec;
-    showToast(closedOpen?`🌙 記録中の中途覚醒を締めました（${hhmm(fin.hour,fin.min)}〜${hhmm(fin.endHour,fin.endMin)}・${fin.mins}分）`
-      :r.merged?`🌙 重なる中途覚醒とまとめました（${hhmm(fin.hour,fin.min)}〜${hhmm(fin.endHour,fin.endMin)}・${fin.mins}分）`
-      :`🌙 中途覚醒に記録（${def.icon||''}${def.label||''} ${mins}分）`,'#a5b4fc');
+    showToast(r.merged?`🌙 重なる中途覚醒とまとめました（${hhmm(fin.hour,fin.min)}〜${hhmm(fin.endHour,fin.endMin)}・${fin.mins}分）`
+      :closedOpen&&!op.autoOpen?`🌙 記録中の中途覚醒を締めました（${hhmm(fin.hour,fin.min)}〜${hhmm(fin.endHour,fin.endMin)}・${fin.mins}分）`
+      :`🌙 中途覚醒に記録（${fin.modeLabel||''} ${hhmm(fin.hour,fin.min)}〜${hhmm(fin.endHour,fin.endMin)}・${fin.mins}分）`,'#a5b4fc');
+  }catch(_){}
+}
+function awakeDayOf(d){ return d.getHours()<12?fmtDS(d):addDays(fmtDS(d),1); }
+// 😴睡眠から🩹ケアへ入った＝目が覚めた。その時刻を「目が覚めた」に入れておく（記録中）。
+// 手で先に押してあればそちらを使う。睡眠へ戻ると上で締め、朝などへ出たら起床なので消す。
+function noteAwakeOnCareEnter(prevKey,key,now){
+  try{
+    if(prevKey!=='sleep'||!isCareMode(key)) return;
+    const d=new Date(now), day=awakeDayOf(d);
+    const list=[...(getDaily(day).awakenings||[])];
+    if(list.some(x=>x&&x.open)) return;
+    const def=lifeModeDef(key)||{};
+    list.push({uid:newAwakeUid(list),hour:d.getHours(),min:d.getMinutes(),endHour:null,endMin:null,mins:0,open:true,autoOpen:true,
+      fromMode:key, modeLabel:`${def.icon||'🩹'}${def.label||''}`});
+    setDaily(day,{awakenings:list});
   }catch(_){}
 }
 // 常に1つの生活モードに属する：進行中セッションが無ければ既定モードを開始（モード未選択を無くす）
@@ -4581,14 +4608,14 @@ function openAwake(vd){ return (getDaily(vd).awakenings||[]).find(x=>x&&x.open)|
 function awakeSpanMins(h,m,eh,em){ let s0=h*60+(m||0), e0=eh*60+(em||0); if(e0<s0) e0+=1440; return e0-s0; }
 function setAwakeStart(vd,H,M){
   const list=[...(getDaily(vd).awakenings||[])], o=list.find(x=>x&&x.open);
-  const nl=o?list.map(x=>x===o?{...x,hour:H,min:M}:x)
+  const nl=o?list.map(x=>x===o?{...x,hour:H,min:M,autoOpen:false}:x)   // 手で直したら自動の印は外す
             :[...list,{uid:newAwakeUid(list),hour:H,min:M,endHour:null,endMin:null,mins:0,open:true}];
   setDaily(vd,{awakenings:nl});
 }
 function setAwakeEnd(vd,H,M){
   const o=openAwake(vd); if(!o) return null;
   const mins=awakeSpanMins(o.hour,o.min,H,M);
-  const done={...o,endHour:H,endMin:M,mins}; delete done.open;
+  const done={...o,endHour:H,endMin:M,mins}; delete done.open; delete done.autoOpen;
   const r=mergeAwakeInto((getDaily(vd).awakenings||[]).filter(x=>x&&x.uid!==o.uid),done);
   setDaily(vd,{awakenings:r.list});
   return {...r.rec,merged:r.merged};
@@ -4713,7 +4740,7 @@ function buildSleepSections(vd){
         (H,M)=>{ const r=setAwakeEnd(vd,H,M); if(r) showToast(r.merged?`🌙 重なる中途覚醒とまとめました（${hhmm(r.hour,r.min)}〜${hhmm(r.endHour,r.endMin)}・${r.mins}分）`:`🌙 中途覚醒を記録（${hhmm(r.hour,r.min)}〜${hhmm(H,M)}・${r.mins}分）`,"#a5b4fc"); render(); },
         null,!op));
       sec.appendChild(div({style:{fontSize:"10px",color:"#475569",marginBottom:"6px"}},
-        op?"また寝た時刻を入れると1件の記録になります（それまでは実睡眠から引きません）":"目が覚めた時刻 → また寝た時刻 の順に入れると1件ずつ記録されます。「今」で現在時刻"));
+        op?(op.autoOpen?`${op.modeLabel||"ケア"}に入った時刻を「目が覚めた」にしました。睡眠モードへ戻るか、また寝た時刻を入れると1件になります`:"また寝た時刻を入れると1件の記録になります（それまでは実睡眠から引きません）"):"目が覚めた時刻 → また寝た時刻 の順に入れると1件ずつ記録されます。「今」で現在時刻"));
       if(awakes.length>0){
         const list=div({style:{display:"flex",flexWrap:"wrap",gap:"5px"}});
         [...awakes].sort((a,b)=>(a.hour*60+(a.min||0))-(b.hour*60+(b.min||0))).forEach(n=>{
