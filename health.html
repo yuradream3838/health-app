@@ -224,7 +224,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.94"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.95"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -4561,6 +4561,45 @@ function renderToday(vd,ds,curH,isToday){
   return wrap;
 }
 
+// ── 🌙 中途覚醒を睡眠と同じ「時刻の欄＋今」で記録する ──
+// 目が覚めた時刻だけ入れると「記録中」（open:true・mins:0）として持ち、また寝た時刻を入れたら1件に確定する。
+// 記録中のあいだは mins=0 なので実睡眠からは何も引かれない。
+function openAwake(vd){ return (getDaily(vd).awakenings||[]).find(x=>x&&x.open)||null; }
+function awakeSpanMins(h,m,eh,em){ let s0=h*60+(m||0), e0=eh*60+(em||0); if(e0<s0) e0+=1440; return e0-s0; }
+function setAwakeStart(vd,H,M){
+  const list=[...(getDaily(vd).awakenings||[])], o=list.find(x=>x&&x.open);
+  const nl=o?list.map(x=>x===o?{...x,hour:H,min:M}:x)
+            :[...list,{uid:Date.now(),hour:H,min:M,endHour:null,endMin:null,mins:0,open:true}];
+  setDaily(vd,{awakenings:nl});
+}
+function setAwakeEnd(vd,H,M){
+  const o=openAwake(vd); if(!o) return null;
+  const mins=awakeSpanMins(o.hour,o.min,H,M);
+  const done={...o,endHour:H,endMin:M,mins}; delete done.open;
+  setDaily(vd,{awakenings:(getDaily(vd).awakenings||[]).map(x=>x&&x.uid===o.uid?done:x)});
+  return done;
+}
+function cancelOpenAwake(vd){ setDaily(vd,{awakenings:(getDaily(vd).awakenings||[]).filter(x=>!(x&&x.open))}); }
+function awakeTimeRow(label,val,onSet,onClear,disabled){
+  const row=div({style:{display:"flex",alignItems:"center",gap:"6px",marginBottom:"6px"}});
+  row.appendChild(div({style:{fontSize:"11px",color:disabled?"#475569":"#94a3b8",width:"104px",flexShrink:0}},label));
+  const inp=document.createElement('input'); inp.type='time'; inp.disabled=!!disabled;
+  if(val) inp.value=hhmm(val[0],val[1]);
+  inp.style.cssText=`flex:1;min-width:0;padding:8px 10px;background:#0f172a;border:1px solid ${disabled?"#1e293b":"#334155"};border-radius:8px;color:${disabled?"#475569":"#e2e8f0"};font-size:15px;font-family:inherit;color-scheme:dark`;
+  inp.addEventListener('change',e=>{ const v=e.target.value; if(!v){ if(onClear)onClear(); return; }
+    const q=v.split(':'), H=Number(q[0]), M=Number(q[1]); if(!isNaN(H)&&!isNaN(M)) onSet(H,M); });
+  row.appendChild(inp);
+  if(!val){
+    const nowBtn=btn({style:{fontSize:"12px",padding:"8px 12px",background:disabled?"transparent":"#6366f118",border:`1px solid ${disabled?"#1e293b":"#6366f1"}`,borderRadius:"8px",color:disabled?"#334155":"#a5b4fc",cursor:disabled?"default":"pointer",fontWeight:700,flexShrink:0}},"今");
+    if(!disabled) nowBtn.addEventListener('click',()=>{ const n=new Date(); onSet(n.getHours(),n.getMinutes()); });
+    row.appendChild(nowBtn);
+  } else if(onClear){
+    const cl=btn({style:{fontSize:"16px",padding:"0 4px",background:"transparent",border:"none",color:"#475569",cursor:"pointer",flexShrink:0}},"×");
+    cl.addEventListener('click',onClear); row.appendChild(cl);
+  }
+  return row;
+}
+
 // 睡眠関係のセクション（睡眠・就寝リズム・中途覚醒・昼寝）。生活記録から【睡眠】サブタブへ分離
 function buildSleepSections(vd){
   const d=getDaily(vd);
@@ -4622,20 +4661,28 @@ function buildSleepSections(vd){
     (vd===todayStr()?div({style:{marginBottom:"12px"}},[sleepRhythmCard(true)]):null),
     // 中途覚醒
     (()=>{
-      const awakes=d.awakenings||[];
+      const awakes=(d.awakenings||[]).filter(x=>x&&!x.open);   // 記録中の1件は上の欄に出す
+      const op=openAwake(vd);
       const total=awakes.reduce((a,x)=>a+(x.mins||0),0);
       const sec=div({style:{marginBottom:"12px"}});
+      sec.setAttribute('data-awakesec','1');
       sec.appendChild(div({style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"6px"}},[
         span({style:{fontSize:"12px",color:"#94a3b8"}},[
           txt("🌙 中途覚醒"),
           awakes.length>0?span({style:{fontSize:"11px",color:"#64748b",marginLeft:"6px"}},`${awakes.length}回・計${total>=60?`${Math.floor(total/60)}h`:""}${total%60}m`):null
         ]),
-        btn({style:{fontSize:"11px",padding:"3px 10px",background:"#6366f118",border:"1px solid #6366f1",borderRadius:"8px",color:"#a5b4fc",cursor:"pointer",fontWeight:600},
-          onClick:()=>{ state.modal="addAwake"; state.newAwakeH=3; state.newAwakeM=0; state.newAwakeEndH=3; state.newAwakeEndM=20; render(); }},"+ 記録")
+        op?span({style:{fontSize:"10px",padding:"2px 8px",borderRadius:"10px",background:"#6366f122",color:"#a5b4fc",fontWeight:700}},"記録中"):null
       ]));
-      if(awakes.length===0){
-        sec.appendChild(div({style:{fontSize:"11px",color:"#475569",textAlign:"center",padding:"6px 0"}},"まだ記録がありません"));
-      } else {
+      // 睡眠と同じ：時刻の欄＋「今」。目が覚めた→また寝た の順に入れると1件になる
+      sec.appendChild(awakeTimeRow("😳 目が覚めた",op?[op.hour,op.min||0]:null,
+        (H,M)=>{ setAwakeStart(vd,H,M); render(); },
+        op?()=>{ pushUndo("中途覚醒の記録中を取り消しました"); cancelOpenAwake(vd); render(); }:null,false));
+      sec.appendChild(awakeTimeRow("😴 また寝た",null,
+        (H,M)=>{ const r=setAwakeEnd(vd,H,M); if(r) showToast(`🌙 中途覚醒を記録（${hhmm(r.hour,r.min)}〜${hhmm(H,M)}・${r.mins}分）`,"#a5b4fc"); render(); },
+        null,!op));
+      sec.appendChild(div({style:{fontSize:"10px",color:"#475569",marginBottom:"6px"}},
+        op?"また寝た時刻を入れると1件の記録になります（それまでは実睡眠から引きません）":"目が覚めた時刻 → また寝た時刻 の順に入れると1件ずつ記録されます。「今」で現在時刻"));
+      if(awakes.length>0){
         const list=div({style:{display:"flex",flexWrap:"wrap",gap:"5px"}});
         [...awakes].sort((a,b)=>(a.hour*60+(a.min||0))-(b.hour*60+(b.min||0))).forEach(n=>{
           const tL=`${String(n.hour).padStart(2,'0')}:${String(n.min||0).padStart(2,'0')}`;
@@ -4652,7 +4699,7 @@ function buildSleepSections(vd){
           list.appendChild(item);
         });
         sec.appendChild(list);
-        sec.appendChild(div({style:{fontSize:"10px",color:"#475569",marginTop:"4px"}},"前夜の睡眠中に目が覚めた分。実睡眠から差し引かれます"));
+        sec.appendChild(div({style:{fontSize:"10px",color:"#475569",marginTop:"4px"}},"前夜の睡眠中に目が覚めた分。実睡眠から差し引かれます。タップで編集"));
       }
       return sec;
     })(),
@@ -4717,7 +4764,7 @@ function sleepLogNight(ds){
   const dayB=getDaily(ds), dayW=getDaily(nd);
   const bed=dayB.bedTime, wake=dayW.wakeTime;
   const wind=dayB.windDownAt||null;
-  const awakes=[...(dayW.awakenings||[])].sort((a,b)=>(toNightMin(a.hour*60+(a.min||0)))-(toNightMin(b.hour*60+(b.min||0))));
+  const awakes=[...(dayW.awakenings||[])].filter(x=>x&&!x.open).sort((a,b)=>(toNightMin(a.hour*60+(a.min||0)))-(toNightMin(b.hour*60+(b.min||0))));
   const naps=dayW.naps||[];
   // ds 0:00 を起点にした分（就寝が正午前なら翌日の就寝）
   const bedAbs = bed!=null ? ((bed<12?1440:0)+Math.round(bed*60)) : null;
