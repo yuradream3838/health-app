@@ -224,7 +224,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "14.98"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "14.99"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -12584,10 +12584,29 @@ function customTodoCfgFor(ct, ds){
   }
   return cfg;
 }
+// ── ⏸ 定期ルーティンの休止 ──
+// ct.pauses=[{from, to}]（to=null は休止中）。休止した日は該当日にしない＝今日のやること・繰り越し・通知・Alexaに出ない。
+// 期間で持つので、再開しても休止前の記録や間隔の数え方（開始日からの周期）は変わらない。
+function ctPauseOn(ct, ds){ return (ct&&Array.isArray(ct.pauses))?(ct.pauses.find(p=>p&&p.from<=ds&&(p.to==null||ds<=p.to))||null):null; }
+function ctPausedNow(ct){ return (ct&&Array.isArray(ct.pauses))?(ct.pauses.find(p=>p&&p.to==null)||null):null; }
+function pauseCustomTodo(uid){
+  const ct=(state.customTodos||[]).find(x=>x.uid===uid); if(!ct||ctPausedNow(ct)) return;
+  ct.pauses=[...(ct.pauses||[]),{from:todayStr(),to:null}];
+  saveCustomTodos(); try{ alexaSyncPlan(true); }catch(_){}
+}
+function resumeCustomTodo(uid){
+  const ct=(state.customTodos||[]).find(x=>x.uid===uid); const p=ct&&ctPausedNow(ct); if(!p) return;
+  const to=addDays(todayStr(),-1);
+  // 休止したその日のうちに再開したら、休止はなかったことにする
+  ct.pauses=ct.pauses.map(x=>x===p?{...x,to}:x).filter(x=>!(x.to!=null&&x.to<x.from));
+  saveCustomTodos(); try{ alexaSyncPlan(true); }catch(_){}
+}
 function customTodoDue(ct, ds){
   if(!ct||!ct.startDate)return false;
   // 特定日を別の日へ移動してきた臨時オカレンス（moved）は、その日を該当日として扱う
   if((state.todos[ds]||{})[ct.uid]?.moved) return true;
+  // 休止中の日は該当しない（ただし休止した日にすでに完了していた回は残す）
+  if(ctPauseOn(ct,ds) && !(state.todos[ds]||{})[ct.uid]?.checked) return false;
   ct=customTodoCfgFor(ct,ds);
   const d=parseDS(ds), s=parseDS(ct.startDate);
   if(d<s)return false;
@@ -12649,10 +12668,12 @@ function customTodoOccurrence(ct, vd){
   if(customTodoDue(ct,vd)){
     return {dueDate:vd, overdue:false, excluded:!!recVd.excluded, checked:false};
   }
+  if(ctPauseOn(ct,vd)) return null;               // 休止中は今日のやることにも繰り越しにも出さない
   let ds=vd;
   for(let i=0;i<60;i++){
     ds=addDays(ds,-1);
     if(ct.startDate && ds<ct.startDate) break;
+    if(ctPauseOn(ct,ds)) break;                    // 休止をまたいで休止前の回を繰り越さない
     if(customTodoDue(ct,ds)){
       const rec=(state.todos[ds]||{})[ct.uid]||{};
       if(rec.checked||rec.excluded) return null; // 直近回は完了/除外 → 繰り越さない
@@ -12678,6 +12699,7 @@ function dismissPastUnchecked(ct, vd){
   for(let i=0;i<400;i++){
     ds=addDays(ds,-1);
     if(ct.startDate && ds<ct.startDate) break;
+    if(ctPauseOn(ct,ds)) break;                    // 休止より前の回はそのまま
     if(customTodoDue(ct,ds)){
       const rec=(state.todos[ds]||{})[ct.uid]||{};
       if(rec.checked) break; // 直近の完了回に到達 → それ以前は対象外
@@ -12820,7 +12842,7 @@ let _nctCache={day:null,map:new Map()};
 function nextCustomTodoDate(ct){
   const today=todayStr();
   if(_nctCache.day!==today){ _nctCache={day:today,map:new Map()}; }
-  const key=ct.uid!=null?ct.uid+"|"+ct.startDate+"|"+ct.itype+"|"+ct.n+"|"+(ct.weekdays||[]).join(",")+"|"+(ct.shifts||[]).join(",")+"|"+JSON.stringify(ct.reschedules||[]):JSON.stringify(ct);
+  const key=ct.uid!=null?ct.uid+"|"+ct.startDate+"|"+ct.itype+"|"+ct.n+"|"+(ct.weekdays||[]).join(",")+"|"+(ct.shifts||[]).join(",")+"|"+JSON.stringify(ct.reschedules||[])+"|"+JSON.stringify(ct.pauses||[]):JSON.stringify(ct);
   if(_nctCache.map.has(key)) return _nctCache.map.get(key);
   let ds=today, res=ct.startDate;
   for(let i=0;i<800;i++){ if(customTodoDue(ct,ds)){ res=ds; break; } ds=addDays(ds,1); }
@@ -13196,14 +13218,16 @@ function renderOccasional(vd){
   }
   const merge=(date,id,patch)=>{ const cur=(state.todos[date]||{})[id]||{}; setTodo(date,id,{...cur,...patch}); };
   // 並び：当日該当→繰り越し（未実施）→その他
-  const rank=ct=>{const o=customTodoOccurrence(ct,vd);if(o&&!o.excluded&&!o.overdue)return 0;if(o&&o.overdue)return 1;if(o&&o.excluded)return 2;return 3;};
+  const rank=ct=>{if(ctPausedNow(ct))return 4;const o=customTodoOccurrence(ct,vd);if(o&&!o.excluded&&!o.overdue)return 0;if(o&&o.overdue)return 1;if(o&&o.excluded)return 2;return 3;};
   [...list].sort((a,b)=>{const ra=rank(a),rb=rank(b);if(ra!==rb)return ra-rb;return nextCustomTodoDate(a)<nextCustomTodoDate(b)?-1:1;}).forEach(ct=>{
     const occ=customTodoOccurrence(ct,vd);
     const active = occ && !occ.excluded;         // チェック可能（当日 or 繰り越し）
     const done = occ && occ.checked;
     const overdue = occ && occ.overdue;
     const excludedToday = occ && occ.excluded;   // 当日該当だが除外中
+    const paused = ctPausedNow(ct);
     const row=div({style:{display:"flex",alignItems:"center",gap:"10px",padding:"8px 2px",borderBottom:"1px solid #1e3a5f33",opacity:active?1:0.55}});
+    row.setAttribute('data-ctrow',String(ct.uid));
     const isTimer=ct.mode==='timer';
     if(active && isTimer){
       // 時間計測式：▶開始 / ⏹終了
@@ -13234,7 +13258,7 @@ function renderOccasional(vd){
       };})());
       row.appendChild(cb);
     } else {
-      row.appendChild(div({style:{width:"22px",textAlign:"center",fontSize:"12px",color:"#475569",flexShrink:0}},excludedToday?"⊘":"🔁"));
+      row.appendChild(div({style:{width:"22px",textAlign:"center",fontSize:"12px",color:"#475569",flexShrink:0}},paused?"⏸":excludedToday?"⊘":"🔁"));
     }
     const lab=div({style:{flex:1,minWidth:0}});
     lab.appendChild(div({style:{fontSize:"13px",color:done?"#475569":"#e2e8f0",textDecoration:done?"line-through":"none"}},ct.label||"(無題)"));
@@ -13246,6 +13270,7 @@ function renderOccasional(vd){
     if(_runT) statusStr=overdue?`⏱ ${occ.daysAgo}日前(${mdc(occ.dueDate)})の分を実施中`:"⏱ 実施中";
     else if(_snToday){ const st=customTodoTimeFor(ct,occ.dueDate); statusStr=`🌙 開始翌日・今日${st?`（${String(st.h).padStart(2,'0')}:${String(st.m||0).padStart(2,'0')}）`:""}`; }
     else if(overdue) statusStr=`🔴 ${occ.daysAgo}日前(${mdc(occ.dueDate)})から未実施`;
+    else if(paused&&!occ) statusStr=`⏸ 休止中（${mdc(paused.from)}から）`;
     else if(excludedToday) statusStr="除外中";
     else if(occ) statusStr="今日";
     else statusStr="次:"+mdc(nextCustomTodoDate(ct));
@@ -13277,6 +13302,14 @@ function renderOccasional(vd){
       un.addEventListener('click',(()=>{const id=ct.uid;return()=>{merge(vd,id,{excluded:false});};})());
       row.appendChild(un);
     }
+    // ⏸ 休止／▶ 再開
+    { const pb=btn({style:{background:paused?"#22c55e18":"transparent",border:`1px solid ${paused?"#22c55e":"#334155"}`,borderRadius:"6px",color:paused?"#4ade80":"#64748b",cursor:"pointer",fontSize:"10px",padding:"3px 7px",flexShrink:0,fontWeight:paused?700:400},title:paused?"再開する":"休止する"},paused?"▶ 再開":"⏸ 休止");
+      pb.setAttribute('data-ctpause',String(ct.uid));
+      pb.addEventListener('click',(()=>{const id=ct.uid,l=ct.label||"定期ルーティン",wasP=!!paused;return()=>{
+        if(wasP){ resumeCustomTodo(id); showToast(`▶ 「${l}」を再開しました`,"#22c55e"); }
+        else { pauseCustomTodo(id); showToast(`⏸ 「${l}」を休止しました（再開するまで出ません）`,"#64748b"); }
+        render(); };})());
+      row.appendChild(pb); }
     const ed=btn({style:{background:"transparent",border:"1px solid #334155",borderRadius:"6px",color:"#64748b",cursor:"pointer",fontSize:"11px",padding:"3px 8px",flexShrink:0}},"✏️");
     ed.addEventListener('click',(()=>{const c={...ct};return()=>{state.customTodoModal=c;render();};})());
     row.appendChild(ed);
@@ -17171,6 +17204,7 @@ function renderCustomTodoModal(){
             const hasPast = prev.startDate && prev.startDate<=yb; // 過去に発生があるものだけ凍結
             data.pastVer = hasPast ? freezePastVersion(prev) : (Array.isArray(prev.pastVer)?prev.pastVer:undefined);
             data.startDate = prev.startDate||data.startDate; // 周期の位相を保つ
+            if(Array.isArray(prev.pauses)&&prev.pauses.length) data.pauses=JSON.parse(JSON.stringify(prev.pauses)); // ⏸ 休止の期間は引き継ぐ
           }
           state.customTodos=(state.customTodos||[]).map(x=>x.uid===m0.uid?data:x);
         }
