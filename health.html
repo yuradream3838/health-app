@@ -224,7 +224,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.00"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.01"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -15662,6 +15662,169 @@ function anaGroupCard(title,groups,opts){
   return card;
 }
 
+// ③ **ほかの条件をそろえた影響**：その日の体調を、睡眠・前日の飲酒・飲水・シフトなどで同時に説明する
+//    リッジ回帰（anaModel）。「飲んだ夜は睡眠も短い」のように重なっている要因を切り分けるため。
+//    各要因は標準化し、記録のない日は平均で埋める。ゆっくりした体調の上下（季節など）はトレンド項で吸収する。
+//    係数の標準誤差から t を出し、比較と同じ基準で信頼度を付ける。
+const ANA_MIN_DAYS=14;
+function anaPrevDs(ds){ return addDays(ds,-1); }
+function anaHasDay(ds){ const d=getDaily(ds); return Object.keys(d).some(k=>k!=="dateStr"); }
+function anaShiftOf(ds){ const d=getDaily(ds); if(!anaHasDay(ds)) return null; return d.workStart==null?"off":(d.workStart<12?"s1":"s2"); }
+function anaModeHoursFirst(){ const l=getModeLog(); return l.length?fmtDS(new Date(l[0].start)):null; }
+// 要因の定義。get(ds) はその日の体調に対する値（記録がなければ null）。unit＝表示に使う変化の大きさ
+const ANA_FACTORS=[
+  {k:"sleep", icon:"😴",label:"睡眠（前夜）",       unit:1,  how:"1時間多く眠ると",        get:ds=>getNightSleepHours(ds)},
+  {k:"alc",   icon:"🍺",label:"飲酒（前日）",       unit:20, how:"前日に20g多く飲むと",     get:ds=>anaHasDay(anaPrevDs(ds))?pureAlcoholG(anaPrevDs(ds)):null},
+  {k:"water", icon:"💧",label:"飲水",               unit:0.5,how:"0.5L多く飲むと",          get:ds=>{ const w=getDaily(ds).water; return (w==null||w==="")?null:+w; }},
+  {k:"s1",    icon:"🏭",label:"1直の日",            unit:1,  how:"休みの日と比べて", binary:true, get:ds=>{ const s=anaShiftOf(ds); return s==null?null:(s==="s1"?1:0); }},
+  {k:"s2",    icon:"🌆",label:"2直の日",            unit:1,  how:"休みの日と比べて", binary:true, get:ds=>{ const s=anaShiftOf(ds); return s==null?null:(s==="s2"?1:0); }},
+  {k:"qual",  icon:"🛌",label:"眠りの質（実感）",   unit:1,  how:"1段階よいと",            get:ds=>sleepQualOf(ds)},
+  {k:"awake", icon:"😪",label:"中途覚醒",           unit:30, how:"30分多いと",              get:ds=>getNightSleepHours(ds)==null?null:getNightAwakeMins(ds)},
+  {k:"ejac",  icon:"💧",label:"射精（前日）",       unit:1,  how:"前日にあると", binary:true, get:ds=>anaHasDay(anaPrevDs(ds))?((getDaily(anaPrevDs(ds)).ejaculations||[]).length>0?1:0):null},
+  {k:"press", icon:"🌡️",label:"気圧の低下",         unit:5,  how:"5hPa下がると",            get:ds=>{ const ls=(state.logs||[]).filter(l=>l.dateStr===ds&&l.pressureDiff!=null); return ls.length?-ls.reduce((a,l)=>a+l.pressureDiff,0)/ls.length:null; }},
+  {k:"train", icon:"🏋️",label:"運動（前日）",       unit:1,  how:"前日に1時間多いと",       get:ds=>{ const f=anaModeHoursFirst(); if(!f||anaPrevDs(ds)<f) return null; return (modeTotalsForDay(anaPrevDs(ds)).train||0)/3600000; }},
+];
+function anaFactorDef(k){ return ANA_FACTORS.find(f=>f.k===k)||null; }
+// 小さな行列の逆行列（ガウス・ジョルダン）。p は十数個まで
+function anaInv(A){
+  const n=A.length, M=A.map((r,i)=>[...r,...Array.from({length:n},(_,j)=>i===j?1:0)]);
+  for(let c=0;c<n;c++){
+    let piv=c; for(let r=c+1;r<n;r++) if(Math.abs(M[r][c])>Math.abs(M[piv][c])) piv=r;
+    if(Math.abs(M[piv][c])<1e-12) return null;
+    [M[c],M[piv]]=[M[piv],M[c]];
+    const d=M[c][c]; for(let j=0;j<2*n;j++) M[c][j]/=d;
+    for(let r=0;r<n;r++){ if(r===c) continue; const f=M[r][c]; if(!f) continue; for(let j=0;j<2*n;j++) M[r][j]-=f*M[c][j]; }
+  }
+  return M.map(r=>r.slice(n));
+}
+// 日ごとの表（y＝その日の体調、x＝各要因）。days を指定すると直近その日数だけ
+function anaDayTable(opt){
+  opt=opt||{};
+  const m=anaScoreModel();
+  let dss=Object.keys(m.day).sort();
+  if(opt.until) dss=dss.filter(d=>d<=opt.until);
+  const facs=(opt.factors||ANA_FACTORS);
+  return {dss, facs, rows:dss.map(ds=>({ds, y:m.day[ds].adj, x:facs.map(f=>{ try{ const v=f.get(ds); return (v==null||!isFinite(v))?null:+v; }catch(_){ return null; } })}))};
+}
+// リッジ回帰。戻り値 {n, effects:[{k,label,icon,how,unit,beta,se,t,level,eff,effSe,nObs,impact}], resid:{ds:残差}, skipped:[要因]}
+function anaModel(opt){
+  opt=opt||{};
+  const T=anaDayTable(opt), rows=T.rows, n=rows.length;
+  const res={n, effects:[], skipped:[], resid:{}, ok:false, need:Math.max(0,ANA_MIN_DAYS-n)};
+  if(n<ANA_MIN_DAYS) return res;
+  // 使う要因：記録が8日以上あり、ばらつきがあるもの（2値は両側4日以上）
+  const cols=[];
+  T.facs.forEach((f,j)=>{
+    const v=rows.map(r=>r.x[j]).filter(x=>x!=null);
+    const D=anaDesc(v);
+    const ok=f.binary? (v.filter(x=>x===1).length>=4 && v.filter(x=>x===0).length>=4) : (v.length>=8 && D.sd!=null && D.sd>1e-9);
+    if(!ok){ res.skipped.push({k:f.k,label:f.label,icon:f.icon,nObs:v.length}); return; }
+    const sorted=[...v].sort((a,b)=>a-b), q=p=>sorted[Math.min(sorted.length-1,Math.max(0,Math.round(p*(sorted.length-1))))];
+    cols.push({f,j,mean:D.mean,sd:D.sd,nObs:f.binary?Math.min(v.filter(x=>x===1).length,v.filter(x=>x===0).length):v.length,iqr:q(0.75)-q(0.25)});
+  });
+  const useTrend=opt.trend!==false;
+  const p=cols.length+(useTrend?1:0);
+  if(!p) return res;
+  const yMean=rows.reduce((a,r)=>a+r.y,0)/n;
+  const X=rows.map((r,i)=>{ const v=cols.map(c=>{ const x=r.x[c.j]; return x==null?0:(x-c.mean)/c.sd; }); if(useTrend) v.push(n>1?(i/(n-1)-0.5)*Math.sqrt(12):0); return v; });
+  const y=rows.map(r=>r.y-yMean);
+  const lam=opt.lambda!=null?opt.lambda:2;
+  const XtX=Array.from({length:p},(_,a)=>Array.from({length:p},(_,b)=>X.reduce((s,r)=>s+r[a]*r[b],0)));
+  const Xty=Array.from({length:p},(_,a)=>X.reduce((s,r,i)=>s+r[a]*y[i],0));
+  const Ainv=anaInv(XtX.map((r,a)=>r.map((v,b)=>v+(a===b?lam:0))));
+  if(!Ainv) return res;
+  const beta=Ainv.map(r=>r.reduce((s,v,b)=>s+v*Xty[b],0));
+  let rss=0; rows.forEach((r,i)=>{ const fit=X[i].reduce((s,v,a)=>s+v*beta[a],0); const e=y[i]-fit; rss+=e*e; res.resid[r.ds]=e; });
+  const sigma2=rss/Math.max(1,n-p-1);
+  // Var(β) ≈ σ² A XtX A（A＝(XtX+λI)⁻¹）
+  const AX=Ainv.map(r=>Array.from({length:p},(_,b)=>r.reduce((s,v,k)=>s+v*XtX[k][b],0)));
+  const V=AX.map(r=>Array.from({length:p},(_,b)=>r.reduce((s,v,k)=>s+v*Ainv[k][b],0)));
+  cols.forEach((c,a)=>{
+    const se=Math.sqrt(Math.max(V[a][a]*sigma2,1e-12)), t=beta[a]/se;
+    const per=c.f.unit/c.sd;                        // 標準化1あたり → 表示単位あたり
+    const eff=beta[a]*per, effSe=se*per;
+    const typical=c.f.binary?1:Math.max(c.iqr,c.f.unit)/c.f.unit;   // よくある幅（単位いくつ分）
+    res.effects.push({k:c.f.k,label:c.f.label,icon:c.f.icon,how:c.f.how,unit:c.f.unit,binary:!!c.f.binary,
+      beta:beta[a],se,t,level:anaLevel(t,c.nObs),eff,effSe,nObs:c.nObs,impact:Math.abs(eff)*typical});
+  });
+  const rank={sure:0,trend:1,unsure:2};
+  res.effects.sort((a,b)=>rank[a.level]-rank[b.level]||b.impact-a.impact);
+  res.ok=true; res.sigma=Math.sqrt(sigma2); res.yMean=yMean;
+  return res;
+}
+// 1行の説明（「1時間多く眠ると +0.8点」）
+function anaEffectText(e){ return `${e.how} ${anaSigned(e.eff)}点`; }
+
+// 🏆 体調への影響ランキング：ほかの条件をそろえた影響を、信頼度→影響の大きさの順に1枚で見せる。
+// 行をタップすると、その要因のグループ別の平均（詳しい内容）が開く。
+function anaFactorDetail(f){
+  // 専用の詳しい内容がない要因：値で3つ（2値なら2つ）に分けた平均
+  const rows=Object.keys(anaScoreModel().day).map(ds=>{ let v=null; try{ v=f.get(ds); }catch(_){} return {v,y:anaDayScore(ds)}; }).filter(r=>r.v!=null&&isFinite(r.v));
+  if(rows.length<3) return null;
+  if(f.binary){
+    const a=rows.filter(r=>r.v===1).map(r=>r.y), b=rows.filter(r=>r.v===0).map(r=>r.y);
+    return anaGroupCard(`${f.icon} ${f.label}と体調`,[{l:"あり",vals:a,c:"#38bdf8"},{l:"なし",vals:b,c:"#64748b"}],{cmps:[{a,b,la:"あり",lb:"なし"}]});
+  }
+  const vs=rows.map(r=>r.v).sort((a,b)=>a-b), q1=vs[Math.floor(vs.length/3)], q2=vs[Math.floor(vs.length*2/3)];
+  const fmt=x=>Math.round(x*10)/10;
+  const lo=rows.filter(r=>r.v<=q1).map(r=>r.y), mid=rows.filter(r=>r.v>q1&&r.v<=q2).map(r=>r.y), hi=rows.filter(r=>r.v>q2).map(r=>r.y);
+  return anaGroupCard(`${f.icon} ${f.label}と体調`,[{l:`〜${fmt(q1)}`,vals:lo,c:"#f97316"},{l:`〜${fmt(q2)}`,vals:mid,c:"#eab308"},{l:`${fmt(q2)}超`,vals:hi,c:"#22c55e"}],
+    {cmps:[{a:hi,b:lo,la:"多い日",lb:"少ない日"}]});
+}
+function anaRankingCard(M,det){
+  det=det||{};
+  const card=div({className:"card"}); card.setAttribute('data-anarank','1');
+  card.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0",marginBottom:"3px"}},"🏆 体調への影響ランキング"));
+  const detailOf=k=>{ const box=div({style:{margin:"4px 0 10px"}}); const d=(det[k]||[]).filter(Boolean);
+    box.appendChild(div({style:{fontSize:"10px",color:"#64748b",margin:"2px 2px 6px",lineHeight:1.5}},"↓ グループごとの単純な平均です（ほかの条件はそろえていないので、上の数字より差が大きく出ることがあります）"));
+    if(d.length) d.forEach(x=>box.appendChild(x)); else { const f=anaFactorDef(k); const c=f&&anaFactorDetail(f); if(c) box.appendChild(c); else box.appendChild(div({style:{fontSize:"11px",color:"#475569"}},"まだ記録が少ないため表示できません")); }
+    return box; };
+  if(!M.ok){
+    card.appendChild(div({style:{fontSize:"12px",color:"#94a3b8",lineHeight:1.7,margin:"6px 0"}},`あと${M.need}日ぶん体調を記録すると、要因ごとの影響を比べられます（いまは${M.n}日）。`));
+    card.appendChild(div({style:{fontSize:"10px",color:"#475569",marginBottom:"6px"}},"それまでは、要因ごとの平均だけを見られます。"));
+    ["sleep","alc","water","shift","ejac","press"].forEach(k=>{ (det[k]||[]).forEach(x=>{ if(x) card.appendChild(x); }); });
+    return card;
+  }
+  card.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"9px",lineHeight:1.6}},`ほかの条件をそろえたうえでの、その日の体調への影響（${M.n}日分）。行をタップすると詳しい内容が開きます。`));
+  const shown=M.effects.filter(e=>e.level!=='unsure'), hidden=M.effects.filter(e=>e.level==='unsure');
+  if(shown.length){
+    const top=shown[0];
+    card.appendChild(div({style:{fontSize:"12px",color:"#e2e8f0",lineHeight:1.6,padding:"7px 10px",borderRadius:"8px",background:"#0ea5e912",border:"1px solid #0ea5e933",marginBottom:"9px"}},
+      `いちばん効いているのは「${top.icon} ${top.label}」：${anaEffectText(top)}`));
+  }
+  const row=(e,dim)=>{
+    const open=state.anaOpen===e.k;
+    const pos=e.eff>=0, w=Math.min(50,Math.abs(e.eff)/1.5*50);
+    const bar=div({style:{position:"relative",height:"6px",background:"#0f172a",borderRadius:"4px",marginTop:"5px"}},[
+      div({style:{position:"absolute",left:"50%",top:"-2px",width:"1px",height:"10px",background:"#334155"}}),
+      div({style:{position:"absolute",top:0,height:"6px",borderRadius:"4px",background:pos?"#22c55e":"#ef4444",opacity:dim?0.4:1,
+        left:pos?"50%":`${50-w}%`,width:`${w}%`}})]);
+    const r=div({style:{padding:"8px 4px",borderTop:"1px solid #1e3a5f55",cursor:"pointer",opacity:dim?0.7:1}});
+    r.setAttribute('data-anafactor',e.k);
+    r.appendChild(div({style:{display:"flex",alignItems:"center",gap:"7px"}},[
+      span({style:{fontSize:"15px",flexShrink:0}},e.icon),
+      div({style:{flex:1,minWidth:0}},[
+        div({style:{fontSize:"12px",fontWeight:700,color:dim?"#94a3b8":"#e2e8f0"}},e.label),
+        div({style:{fontSize:"11px",color:dim?"#64748b":(pos?"#4ade80":"#f87171")}},anaEffectText(e)+(dim?"（偶然の範囲）":""))]),
+      anaLevelChip(e.level),
+      span({style:{fontSize:"10px",color:"#475569",flexShrink:0}},open?"▲":"▼")]));
+    r.appendChild(bar);
+    r.addEventListener('click',()=>{ state.anaOpen=open?null:e.k; render(); });
+    card.appendChild(r);
+    if(open) card.appendChild(detailOf(e.k));
+  };
+  shown.forEach(e=>row(e,false));
+  if(hidden.length){
+    card.appendChild(div({style:{fontSize:"11px",color:"#64748b",margin:"10px 0 2px",fontWeight:700}},`まだ判断できない要因（${hidden.length}）`));
+    hidden.forEach(e=>row(e,true));
+  }
+  if(M.skipped.length) card.appendChild(div({style:{fontSize:"10px",color:"#475569",marginTop:"8px",lineHeight:1.6}},
+    `記録が少なく調べていない：${M.skipped.map(x=>`${x.icon}${x.label}`).join("・")}`));
+  card.appendChild(div({style:{fontSize:"9px",color:"#475569",marginTop:"8px",lineHeight:1.6}},
+    "※ 差は「その要因だけが変わったとき」の目安です。体調が悪いから飲む、のように原因と結果が逆のこともあります。ゆっくりした体調の上下（季節など）は差し引いています。"));
+  return card;
+}
+
 function renderAnalysis(){
   const wrap=div({style:{maxWidth:"600px",margin:"0 auto",padding:"12px 16px 60px"}});
   wrap.appendChild(renderScoreTrend());
@@ -15735,8 +15898,11 @@ function renderAnalysis(){
     wrap.appendChild(div({className:"card",style:{textAlign:"center",color:"#64748b",padding:"32px 16px"}},[div({style:{fontSize:"32px",marginBottom:"8px"}},"📋"),"体調を3件以上記録すると分析できます"]));
     return wrap;
   }
+  // 要因ごとの詳しい内容（影響ランキングの行をタップすると開く）。下で組み立てて最後にランキングへ渡す
+  const det={sleep:[],alc:[],water:[],shift:[],ejac:[],press:[]};
+  const rankSlot=div({}); wrap.appendChild(rankSlot);
 
-  wrap.appendChild(barCard("😴 睡眠と当日体調",[
+  det.sleep.push(barCard("😴 睡眠と当日体調",[
     {l:"5h以下",vals:sleepG.s,c:"#ef4444"},
     {l:"6〜7h", vals:sleepG.m,c:"#eab308"},
     {l:"8h以上",vals:sleepG.l,c:"#22c55e"}
@@ -15756,21 +15922,21 @@ function renderAnalysis(){
     if(total<=5)totalSleepG.s.push(a);else if(total<=7)totalSleepG.m.push(a);else totalSleepG.l.push(a);
   });
   if(hasNapData){
-    wrap.appendChild(barCard("💤 合計睡眠（夜＋昼寝）と当日体調",[
+    det.sleep.push(barCard("💤 合計睡眠（夜＋昼寝）と当日体調",[
       {l:"5h以下",vals:totalSleepG.s,c:"#ef4444"},
       {l:"6〜7h", vals:totalSleepG.m,c:"#eab308"},
       {l:"8h以上",vals:totalSleepG.l,c:"#22c55e"}
     ],{cmps:[{a:totalSleepG.l,b:totalSleepG.s,la:"8h以上",lb:"5h以下"}]}));
   }
-  wrap.appendChild(barCard("🍺 飲酒と翌日体調（純アルコール量）",[
+  det.alc.push(barCard("🍺 飲酒と翌日体調（純アルコール量）",[
     {l:"飲まない",vals:alcG.n,c:"#22c55e"},
     {l:"〜20g",   vals:alcG.l,c:"#a3e635"},
     {l:"〜40g",   vals:alcG.m,c:"#eab308"},
     {l:"〜60g",   vals:alcG.h,c:"#f97316"},
     {l:"60g超",   vals:alcG.vh,c:"#ef4444"}
   ],{cmps:[{a:merged(alcG.m,alcG.h,alcG.vh),b:alcG.n,la:"20g超",lb:"飲まない"},{a:alcG.l,b:alcG.n,la:"〜20g",lb:"飲まない"}]}));
-  wrap.appendChild(div({style:{fontSize:"9px",color:"#475569",margin:"-6px 0 10px",paddingLeft:"2px"}},"目安: 20g≒ビール中瓶1本 / 40g≒2本 / 60g≒3本"));
-  wrap.appendChild(barCard("💧 飲水と当日体調（0.2L単位）",[
+  det.alc.push(div({style:{fontSize:"9px",color:"#475569",margin:"-6px 0 10px",paddingLeft:"2px"}},"目安: 20g≒ビール中瓶1本 / 40g≒2本 / 60g≒3本"));
+  det.water.push(barCard("💧 飲水と当日体調（0.2L単位）",[
     {l:"〜0.2L",vals:waterG.w02,c:"#ef4444"},
     {l:"〜0.4L",vals:waterG.w04,c:"#ef4444"},
     {l:"〜0.6L",vals:waterG.w06,c:"#f97316"},
@@ -15808,7 +15974,7 @@ function renderAnalysis(){
     else if(d.workStart<12){shiftG.s1.push(a);}
     else {shiftG.s2.push(a);}
   });
-  wrap.appendChild(barCard("🏭 仕事シフトと当日体調",[
+  det.shift.push(barCard("🏭 仕事シフトと当日体調",[
     {l:"1直",vals:shiftG.s1,c:"#38bdf8"},
     {l:"2直",vals:shiftG.s2,c:"#a78bfa"},
     {l:"休み",vals:shiftG.off,c:"#22c55e"}
@@ -15907,10 +16073,10 @@ function renderAnalysis(){
       {l:"なし翌日",vals:withoutE.next,c:"#64748b"}
     ],{cmps:[{a:withE.same,b:withoutE.same,la:"あった日",lb:"なかった日"},{a:withE.next,b:withoutE.next,la:"あった翌日",lb:"なかった翌日"}],
        note:`記録あり${ejacDays.length}日 / 月間平均 ${(ejacDays.length/Math.max(1,state.dailies.length)*30).toFixed(1)}回`})||div({});
-    wrap.appendChild(ejacCard);
+    det.ejac.push(ejacCard);
   }
   if(pd.length>0||ps.length>0){ const pdv=pd.map(anaLogAdj), psv=ps.map(anaLogAdj);
-    wrap.appendChild(barCard("🌡️ 気圧と体調",[
+    det.press.push(barCard("🌡️ 気圧と体調",[
       {l:"急降下",vals:pdv,c:"#ef4444"},
       {l:"安定",vals:psv,c:"#22c55e"}
     ],{unit:"件",cmps:[{a:pdv,b:psv,la:"気圧の急降下",lb:"安定"}]})); }
@@ -16040,45 +16206,11 @@ function renderAnalysis(){
     wrap.appendChild(fc);
   }
 
-  // 📌 わかったこと（自動生成）：偶然の範囲（まだ判断できない）のものは出さない
-  const insights=(()=>{
-    const out=[];
-    const alcHeavy=[...alcG.m,...alcG.h,...alcG.vh];
-    const ca=anaCompare(alcG.n,alcHeavy);
-    if(ca.level!=='unsure'&&ca.diff>=0.3) out.push({icon:"🍺",level:ca.level,text:`飲酒20g超の翌日は、飲まない日の翌日より ${ca.diff.toFixed(1)}点低い（${alcHeavy.length}日 vs ${alcG.n.length}日）`,neg:true});
-    const cs=anaCompare(sleepG.l,sleepG.s);
-    if(cs.level!=='unsure'&&cs.diff>=0.3) out.push({icon:"😴",level:cs.level,text:`8h以上眠った日は、5h以下の日より ${cs.diff.toFixed(1)}点高い（${sleepG.l.length}日 vs ${sleepG.s.length}日）`,neg:false});
-    // 時間帯：いちばん良い時間帯といちばん悪い時間帯（記録件数で比べる）
-    const tb=ANA_BLOCKS.map(b=>({b,vals:todG[b.k]})).filter(x=>x.vals.length>=3).map(x=>({...x,m:anaDesc(x.vals).mean}));
-    if(tb.length>=2){
-      const best=tb.reduce((a,b)=>b.m>a.m?b:a), worst=tb.reduce((a,b)=>b.m<a.m?b:a);
-      const ct=anaCompare(best.vals,worst.vals);
-      if(ct.level!=='unsure'&&ct.diff>=0.5) out.push({icon:"⏰",level:ct.level,text:`${best.b.l}が最も好調（平均${best.m.toFixed(1)}）、${worst.b.l}が最も不調（平均${worst.m.toFixed(1)}）`,neg:false});
-    }
-    // 連続飲酒（事実の記述なので信頼度は付けない）
-    const sortedD=[...state.dailies].sort((a,b)=>a.dateStr<b.dateStr?-1:1);
+  // 連続飲酒（事実）。「📌 わかったこと」は影響ランキングに一本化したので、飲酒の詳しい内容に添える
+  { const sortedD=[...state.dailies].sort((a,b)=>a.dateStr<b.dateStr?-1:1);
     let maxRun=0,run=0;
-    sortedD.forEach(d=>{
-      const drinks=(d.drinks||[]).map(dr=>({...dr,drinkType:resolveDT(dr)}));
-      const g=drinks.reduce((x,b)=>x+pureAlcohol(b.ml,b.drinkType.pct),0);
-      if(g>0){run++;maxRun=Math.max(maxRun,run);}else run=0;
-    });
-    if(maxRun>=3) out.push({icon:"📅",level:null,text:`最長${maxRun}日連続で飲酒しています`,neg:true});
-    return out;
-  })();
-
-  if(insights.length>0){
-    const ic=div({className:"card"},[div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0",marginBottom:"10px"}},"📌 データからわかったこと")]);
-    insights.forEach(({icon,text,neg,level})=>{
-      ic.appendChild(div({style:{display:"flex",gap:"8px",alignItems:"flex-start",marginBottom:"7px",padding:"7px 10px",borderRadius:"8px",background:neg?"#ef444408":"#22c55e08",border:`1px solid ${neg?"#ef444422":"#22c55e22"}`}},[
-        span({style:{fontSize:"14px",flexShrink:0}},icon),
-        div({style:{flex:1,fontSize:"12px",color:"#cbd5e1",lineHeight:1.6}},text),
-        level?anaLevelChip(level):null
-      ]));
-    });
-    ic.appendChild(div({style:{fontSize:"10px",color:"#334155",marginTop:"6px"}},"※ 記録データから自動計算（AI不使用・毎回更新）。偶然の範囲の差は載せていません"));
-    wrap.appendChild(ic);
-  }
+    sortedD.forEach(d=>{ const g=(d.drinks||[]).reduce((x,dr)=>{ const dt=resolveDT(dr); return x+pureAlcohol(dr.ml,dr.pct!=null?dr.pct:dt.pct); },0); if(g>0){run++;maxRun=Math.max(maxRun,run);}else run=0; });
+    if(maxRun>=3) det.alc.push(div({style:{fontSize:"11px",color:"#fca5a5",margin:"-4px 2px 10px"}},`📅 最長${maxRun}日連続で飲酒しています`)); }
 
   // ⚡ 突発的な行動（予定外の実績）の解析
   {
@@ -16136,6 +16268,7 @@ function renderAnalysis(){
     }
   }
 
+  rankSlot.appendChild(anaRankingCard(anaModel(),{...det,s1:det.shift,s2:det.shift}));
   // ※ ✨AI総合分析は「AI分析」タブへ移した（AIを使うものを1か所にまとめるため）。
   //    このタブは記録から自動計算する統計だけを載せる。
   return wrap;
