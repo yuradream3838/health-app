@@ -224,7 +224,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.02"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.03"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -271,6 +271,7 @@ const SAVE_TARGETS=[
   ["saveChangePlan","changePlan","📋 変化の計画"],
   ["saveWidgetSections","widgetSections","🧩 ウィジェットの表示"],
   ["saveFoodCats",["foodCats","foodEmoji"],"🍽 食べたものの一覧"],
+  ["saveAnaChanges","anaChanges","🔬 変えたことの記録"],
   ["saveWidgetOrder","widgetSecOrder","🧩 ウィジェットの並び"],
   ["saveNudgeCfg",["nudgesOff","notifyOn","moodCheckH","moodCheckM","dayCutoffH","nudgeRules","notifyQuiet","notifyRepeat"],"🔔 通知の設定"],
   ["saveBacProfile",["bacWeight","bacSex"],"🍺 BACプロファイル"],
@@ -870,7 +871,8 @@ const state = {
   editHour:null, editDate:null, editScore:null, editMental:null, editSymptoms:[], editNote:"", editCraving:null,
   modal:null, // "food"|"addDrink"|"editEnd"
   foodOpenCat:null, foodSelected:[],
-  foodCats:null, foodEmoji:{}, foodEdit:false, foodAddCat:null,   // 🍽 食べたものの一覧（null＝初期の一覧）
+  foodCats:null, foodEmoji:{}, foodEdit:false, foodAddCat:null,
+  anaChanges:[], anaOpen:null, anaChgLabel:"", anaChgDate:null,   // 📊 分析（🔬 変えたことの記録・ランキングで開いている要因）   // 🍽 食べたものの一覧（null＝初期の一覧）
   newDrink:{typeId:"beer",ml:350,hour:new Date().getHours(),min:new Date().getMinutes(),pct:5},
   editEndUid:null, editEndH:0, editEndM:0,
   editTimerItemId:null, editTimerStart:{h:0,m:0}, editTimerEnd:{h:0,m:0},
@@ -1016,6 +1018,8 @@ function loadStorage(){
       if("planOn" in o)state.alexaPlanOn=!!o.planOn;
       if(o.plan&&typeof o.plan==="object")state.alexaPlan=o.plan; }}catch{}}
     try{ migrateAlexaHooks(); }catch(_){}
+    const ach=localStorage.getItem(STORAGE_KEY+"_anachanges");
+    if(ach){try{const a=JSON.parse(ach); if(Array.isArray(a))state.anaChanges=a;}catch{}}
     const fct=localStorage.getItem(STORAGE_KEY+"_foodcats");
     if(fct){try{const o=JSON.parse(fct); if(o&&Array.isArray(o.cats)&&o.cats.length)state.foodCats=o.cats; if(o&&o.emoji&&typeof o.emoji==="object")state.foodEmoji=o.emoji;}catch{}}
     const mlg=localStorage.getItem(STORAGE_KEY+"_modelog");
@@ -15774,8 +15778,10 @@ let _anaBestCache=null;
 function anaBestModel(opt){
   opt=opt||{};
   const sm=anaScoreModel();
-  const sig=sm.n+"|"+(state.dailies||[]).length+"|"+JSON.stringify(opt)+"|"+todayStr();
-  if(!opt.noCache&&_anaBestCache&&_anaBestCache.sm===sm&&_anaBestCache.dl===state.dailies&&_anaBestCache.sig===sig) return _anaBestCache.m;
+  const sig=sm.n+"|"+(state.dailies||[]).length+"|"+JSON.stringify(opt)+"|"+todayStr()+"|"+getModeLog().length;
+  if(!_anaBestCache||_anaBestCache.sm!==sm||_anaBestCache.dl!==state.dailies) _anaBestCache={sm,dl:state.dailies,map:new Map()};
+  if(!opt.noCache&&_anaBestCache.map.has(sig)) return _anaBestCache.map.get(sig);
+  const put=m=>{ _anaBestCache.map.set(sig,m); return m; };
   const cache=new Map();
   const withV=(sv,av)=>ANA_FACTORS.map(f=>f.k==="sleep"?sv:f.k==="alc"?av:f);
   let best=null, bs=null, ba=null;
@@ -15783,7 +15789,7 @@ function anaBestModel(opt){
     const m=anaModel({...opt,factors:withV(sv,av),cache});
     if(m.ok&&(best==null||m.rss<best.rss)){ best=m; bs=sv; ba=av; }
   }));
-  if(!best){ const m=anaModel({...opt,cache}); _anaBestCache={sm,dl:state.dailies,sig,m}; return m; }
+  if(!best) return put(anaModel({...opt,cache}));
   const variants={sleep:[],alc:[]};
   const pick=(m,k)=>{ const e=m.ok&&m.effects.find(x=>x.k===k); return e?{k,label:anaFactorDef(k).label,eff:e.eff,level:e.level,rss:m.rss,how:e.how}:{k,label:anaFactorDef(k).label,eff:null,level:"unsure",rss:null}; };
   ANA_VARIANTS.sleep.forEach(sv=>{ const m=(sv===bs)?best:anaModel({...opt,factors:withV(sv,ba),cache}); variants.sleep.push({...pick(m,sv.k),chosen:sv===bs}); });
@@ -15791,8 +15797,7 @@ function anaBestModel(opt){
   best.variants=variants;
   // ③ 自分の分かれ目（連続値の要因）
   best.effects.forEach(e=>{ const f=anaFactorDef(e.k); if(f&&f.cut&&e.level!=='unsure') e.threshold=anaThreshold(best,e,f); });
-  _anaBestCache={sm,dl:state.dailies,sig,m:best};
-  return best;
+  return put(best);
 }
 // ③ 自分の分かれ目：その要因の「部分残差」（ほかの要因の影響を除いた体調）を、ある値の上下で比べ、
 //    差がいちばんはっきりする値を探す。たくさんの値を試すぶん偶然の差が出やすいので、t を 1.25 で割って厳しめに判定する。
@@ -15864,6 +15869,104 @@ function anaFoodCard(F){
   if(more.length) fc.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginTop:"6px",lineHeight:1.6}},more.join("／")));
   fc.appendChild(div({style:{fontSize:"9px",color:"#334155",marginTop:"6px",lineHeight:1.6}},"※ 品目が多いほど偶然の差が出やすいので、日数が少ない品目の差は小さめに見積もっています。"));
   return fc;
+}
+
+// ⑨ 🔬 変えたことの効果：本人が登録した「変えた日」の前後（各28日まで）を比べる。
+//    「そのままの差」＝その日の体調（時間帯補正済み）の前後差。変えたことの効果がまるごと入る（飲酒が減って良くなった分も）。
+//    「ほかの条件をそろえた差」＝トレンド項なしのモデル残差の前後差（睡眠・飲酒などの変化では説明できない部分）。
+//    どちらも両側5日以上で信頼度を付け、あわせて主な要因（睡眠・飲酒・飲水）の平均が前後でどう変わったかを出す。
+const ANA_CHG_WIN=28;
+function saveAnaChanges(){ safeSet(STORAGE_KEY+"_anachanges",JSON.stringify(state.anaChanges||[])); }
+function addAnaChange(label,date){
+  const l=(label||"").trim(); if(!l||!date) return null;
+  const c={id:"ac"+Date.now().toString(36)+Math.random().toString(36).slice(2,5),label:l,date};
+  state.anaChanges=[...(state.anaChanges||[]),c].sort((a,b)=>a.date<b.date?-1:1); saveAnaChanges(); return c;
+}
+function removeAnaChange(id){ state.anaChanges=(state.anaChanges||[]).filter(c=>c.id!==id); saveAnaChanges(); }
+function anaChangeResult(c,M){
+  const sm=anaScoreModel(), today=todayStr();
+  const before=[], after=[];
+  for(let i=1;i<=ANA_CHG_WIN;i++) before.push(addDays(c.date,-i));
+  for(let i=0;i<ANA_CHG_WIN;i++){ const d=addDays(c.date,i); if(d>today) break; after.push(d); }
+  const yv=ds=>sm.day[ds]?sm.day[ds].adj:null;
+  const rv=ds=>(M&&M.ok&&M.resid[ds]!=null)?M.resid[ds]:null;
+  const A=after.map(yv).filter(x=>x!=null), B=before.map(yv).filter(x=>x!=null);
+  const raw=anaCompare(A,B);
+  const RA=after.map(rv).filter(x=>x!=null), RB=before.map(rv).filter(x=>x!=null);
+  const adj=(RA.length&&RB.length)?anaCompare(RA,RB):null;
+  const fac=[{k:"sleep",l:"睡眠",u:"h",d:1},{k:"alc",l:"前日の飲酒",u:"g",d:0},{k:"water",l:"飲水",u:"L",d:1}].map(x=>{
+    const f=anaFactorDef(x.k); const g=ds=>{ try{ return f.get(ds); }catch(_){ return null; } };
+    const a=anaDesc(after.map(g)), b=anaDesc(before.map(g));
+    return (a.n>=3&&b.n>=3)?{...x,before:b.mean,after:a.mean}:null; }).filter(Boolean);
+  return {nA:A.length,nB:B.length,raw,adj,fac,need:Math.max(0,5-A.length),future:c.date>today};
+}
+// AI に渡す「アプリで計算した分析結果」（AI には解釈と提案だけを頼み、傾向の読み取りはこちらの計算に揃える）
+function anaSummaryText(){
+  const M=anaBestModel(), L=l=>`［${(ANA_LEVELS[l]||ANA_LEVELS.unsure).label}］`;
+  const lines=[];
+  if(!M.ok) lines.push(`体調の記録が${M.n}日で、${ANA_MIN_DAYS}日に満たないため、要因ごとの影響はまだ計算していません。`);
+  else {
+    lines.push(`対象：体調を記録した${M.n}日。体調は時間帯の差を補正した「その日の体調」（10点満点）。各要因の影響は、ほかの要因をそろえたうえでの差。`);
+    M.effects.forEach(e=>{
+      lines.push(`- ${e.icon}${e.label}：${anaEffectText(e)}${L(e.level)}${e.threshold?`／分かれ目：${anaThresholdText(e)}${L(e.threshold.level)}`:""}`);
+    });
+    if(M.skipped.length) lines.push(`記録が少なく調べていない要因：${M.skipped.map(x=>x.label).join("・")}`);
+    const F=anaFoods(M);
+    if(F.days){
+      lines.push(`食べ物（食べた翌日・翌々日、ほかの要因を除いた差）：${F.shown.length?F.shown.map(x=>`${x.name} ${anaSigned(x.shr)}点${L(x.level)}`).join("、"):"はっきり関係している品目はまだない"}（偶然の範囲${F.unsure.length}品目・記録が少ない${F.few.length}品目）`);
+    }
+  }
+  const M0=anaBestModel({trend:false});
+  (state.anaChanges||[]).forEach(c=>{
+    const r=anaChangeResult(c,M0);
+    if(r.future||r.nA<5||r.nB<5){ lines.push(`変えたこと「${c.label}」（${c.date}〜）：まだ比べられない（前${r.nB}日・後${r.nA}日）`); return; }
+    lines.push(`変えたこと「${c.label}」（${c.date}〜）：そのままの差 ${anaSigned(r.raw.diff)}点${L(r.raw.level)}`+(r.adj&&r.adj.diff!=null?`、ほかの条件をそろえた差 ${anaSigned(r.adj.diff)}点${L(r.adj.level)}`:"")
+      +(r.fac.length?`（前→後：${r.fac.map(f=>`${f.l}${f.before.toFixed(f.d)}→${f.after.toFixed(f.d)}${f.u}`).join("、")}）`:""));
+  });
+  return `【アプリで計算した分析結果（統計・信頼度つき）】\n${lines.join("\n")}\n※［まだ判断できない］ものは偶然の範囲。断定せず、必要なら「記録を続けると分かる」と伝えること。\n※ 傾向の読み取りはこの結果を優先し、下の生の記録は具体例・補足として使うこと。`;
+}
+function anaChangesCard(){
+  const card=div({className:"card"}); card.setAttribute('data-anachg','1');
+  card.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0",marginBottom:"3px"}},"🔬 変えたことの効果"));
+  card.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"9px",lineHeight:1.6}},`「休肝日を週2日にした」「寝支度を始めた」など、変えた日を登録すると、その前後（各${ANA_CHG_WIN}日まで）の体調を比べます。`));
+  const M0=anaBestModel({trend:false});
+  (state.anaChanges||[]).slice().reverse().forEach(c=>{
+    const r=anaChangeResult(c,M0);
+    const box=div({style:{padding:"8px 10px",borderRadius:"8px",background:"#0f172a",border:"1px solid #1e293b",marginBottom:"7px"}});
+    box.setAttribute('data-anachgitem',c.id);
+    const del=btn({style:{background:"transparent",border:"none",color:"#475569",cursor:"pointer",fontSize:"14px",padding:"0 2px",flexShrink:0}},"×");
+    del.addEventListener('click',()=>{ if(confirm(`「${c.label}」の記録を消しますか？`)){ removeAnaChange(c.id); render(); } });
+    box.appendChild(div({style:{display:"flex",alignItems:"center",gap:"6px",marginBottom:"4px"}},[
+      span({style:{flex:1,minWidth:0,fontSize:"12px",fontWeight:700,color:"#e2e8f0"}},`${c.label}`),
+      span({style:{fontSize:"10px",color:"#64748b",flexShrink:0}},`${mdLabel(c.date)}〜`), del]));
+    if(r.future){ box.appendChild(div({style:{fontSize:"11px",color:"#64748b"}},"この日が来たら比べ始めます")); card.appendChild(box); return; }
+    if(r.nA<5||r.nB<5){ box.appendChild(div({style:{fontSize:"11px",color:"#64748b"}},
+      r.nB<5?`変える前の体調の記録が少ないため比べられません（${r.nB}日）`:`あと${r.need}日ぶん体調を記録すると比べられます（変えた後 ${r.nA}日）`)); card.appendChild(box); return; }
+    const line=(lbl,cp,hint)=>cp&&cp.diff!=null?div({style:{display:"flex",gap:"6px",alignItems:"center",fontSize:"11px",color:cp.level==='unsure'?"#64748b":"#cbd5e1",marginBottom:"3px"}},[
+      span({style:{flex:1,minWidth:0}},[txt(`${lbl}：`),span({style:{fontWeight:700,color:cp.level==='unsure'?"#64748b":(cp.diff>=0?"#4ade80":"#f87171")}},`${anaSigned(cp.diff)}点`),span({style:{fontSize:"9px",color:"#475569"}},hint?` ${hint}`:"")]),
+      anaLevelChip(cp.level)]):null;
+    box.appendChild(line("そのままの差",r.raw,`（前${r.nB}日・後${r.nA}日）`));
+    box.appendChild(line("ほかの条件をそろえた差",r.adj,""));
+    if(r.fac.length) box.appendChild(div({style:{fontSize:"10px",color:"#94a3b8",marginTop:"3px"}},"前→後："+r.fac.map(f=>`${f.l} ${f.before.toFixed(f.d)}→${f.after.toFixed(f.d)}${f.u}`).join("／")));
+    card.appendChild(box);
+  });
+  // 追加フォーム
+  const row=div({style:{display:"flex",gap:"5px",alignItems:"center",marginTop:"4px"}});
+  const li=document.createElement('input'); li.type='text'; li.placeholder='変えたこと（例：休肝日を週2日に）'; li.value=state.anaChgLabel||"";
+  li.setAttribute('data-anachglabel','1');
+  li.style.cssText="flex:1;min-width:0;padding:7px 8px;background:#0a1120;border:1px solid #334155;border-radius:7px;color:#e2e8f0;font-size:12px;font-family:inherit;box-sizing:border-box";
+  li.addEventListener('input',e=>{ state.anaChgLabel=e.target.value; });
+  const di=document.createElement('input'); di.type='date'; di.value=state.anaChgDate||todayStr(); di.max=todayStr();
+  di.setAttribute('data-anachgdate','1');
+  di.style.cssText="flex-shrink:0;width:128px;padding:6px;background:#0a1120;border:1px solid #334155;border-radius:7px;color:#e2e8f0;font-size:12px;color-scheme:dark;font-family:inherit;box-sizing:border-box";
+  di.addEventListener('change',e=>{ state.anaChgDate=e.target.value; });
+  const ad=btn({style:{flexShrink:0,padding:"7px 10px",borderRadius:"7px",border:"1px solid #0ea5e9",background:"#0ea5e918",color:"#38bdf8",fontSize:"12px",fontWeight:600,cursor:"pointer",fontFamily:"inherit"}},"＋ 登録");
+  ad.addEventListener('click',()=>{ const c=addAnaChange(li.value,di.value||todayStr()); if(!c){ showToast("⚠️ 変えたことを入れてください","#f97316"); return; } state.anaChgLabel=""; state.anaChgDate=null; render(); });
+  row.appendChild(li); row.appendChild(di); row.appendChild(ad);
+  card.appendChild(row);
+  card.appendChild(div({style:{fontSize:"9px",color:"#475569",marginTop:"7px",lineHeight:1.6}},
+    "※「そのままの差」は変えたことの効果がまるごと入ります（飲酒が減って体調が良くなった分も）。「ほかの条件をそろえた差」は睡眠・飲酒などの変化では説明できない部分です。季節や出来事の影響も混ざりうるので、目安として見てください。"));
+  return card;
 }
 
 // 🏆 体調への影響ランキング：ほかの条件をそろえた影響を、信頼度→影響の大きさの順に1枚で見せる。
@@ -16280,6 +16383,7 @@ function renderAnalysis(){
   }
 
   rankSlot.appendChild(anaRankingCard(anaBestModel(),{...det,s1:det.shift,s2:det.shift}));
+  rankSlot.appendChild(anaChangesCard());
   // ※ ✨AI総合分析は「AI分析」タブへ移した（AIを使うものを1か所にまとめるため）。
   //    このタブは記録から自動計算する統計だけを載せる。
   return wrap;
@@ -16360,7 +16464,8 @@ function buildAnalysisContext(){
     }
     return lines.join('\n')||'なし';
   })();
-  return `【日次記録（シフト・実際の行動つき）】\n${ds2}\n\n【時間別体調】\n${hs}\n\n【今後1週間の予定】\n${upcoming}\n\n${buildModeContext(14)}`;
+  let anaTxt=""; try{ anaTxt=anaSummaryText()+"\n\n"; }catch(_){}
+  return `${anaTxt}【日次記録（シフト・実際の行動つき）】\n${ds2}\n\n【時間別体調】\n${hs}\n\n【今後1週間の予定】\n${upcoming}\n\n${buildModeContext(14)}`;
 }
 // AIに渡す「生活モード（時間の使い方）」の要約。1日平均・構成比・目標達成・日別内訳。
 function buildModeContext(days){
@@ -16395,7 +16500,7 @@ async function runAI(scored,dailies){
       method:"POST",
       headers:aiHeaders(),
       body:JSON.stringify({
-        system:`あなたは健康データアナリストです。ユーザーはシフト勤務者（1直/2直/休み）です。体調・睡眠・飲酒・飲水・食事に加え、仕事シフトやその日の実際の行動（スケジュール）、今後の予定も踏まえて総合的に分析してください。要因とアドバイスには必ずタグ（分類）を付けてください。tagは「睡眠」「運動」「飲酒」「食事」「メンタル」「生活リズム」「仕事」「その他」のいずれか1つ。以下のJSON形式のみで返答してください。前後に説明文やMarkdownの装飾は不要です:
+        system:`あなたは健康データアナリストです。ユーザーはシフト勤務者（1直/2直/休み）です。体調・睡眠・飲酒・飲水・食事に加え、仕事シフトやその日の実際の行動（スケジュール）、今後の予定も踏まえて総合的に分析してください。冒頭の【アプリで計算した分析結果】は、ほかの条件をそろえて信頼度を付けた統計なので、要因の有無と大きさはこれに合わせ、［まだ判断できない］ものは要因として断定しないでください。要因とアドバイスには必ずタグ（分類）を付けてください。tagは「睡眠」「運動」「飲酒」「食事」「メンタル」「生活リズム」「仕事」「その他」のいずれか1つ。以下のJSON形式のみで返答してください。前後に説明文やMarkdownの装飾は不要です:
 {"summary":"全体傾向の要約2〜3文","topFactors":[{"factor":"要因名","impact":"positive または negative","detail":"具体的な説明","score":1から5の整数,"tag":"分類タグ"}],"worstCondition":"体調が悪くなる条件","bestCondition":"体調が良くなる条件","advice":[{"tag":"分類タグ","text":"具体的で実行可能なアドバイス"}],"newPerspective":"表面的な相関ではなく、データから読み取れる本人が気づきにくい別の観点・仮説を1〜2文で"}
 adviceは3〜4個、できるだけ異なるタグでバランスよく。`,
         prompt:`${buildAnalysisContext()}\n\n分析してください。`
@@ -16430,7 +16535,7 @@ async function aiAnalysisChatSend(){
   state.aiAnalysisInput=""; state.aiAnalysisChatLoading=true; render();
   try{
     const prompt=`【あなたが参照できるユーザーのデータ】\n${buildAnalysisContext()}\n\n【これまでの会話】\n${chatHistoryText(state.aiAnalysisChat)}\n\nアシスタントとして、最新の質問に日本語の自然な文章で簡潔（3〜6文）に、具体的で実行しやすいように答えてください。`;
-    const text=await callAIText("あなたはユーザー専属の健康データアナリスト兼アドバイザーです。上記データに基づき、親身かつ具体的に、会話形式で答えます。JSONやMarkdown装飾は使わないでください。", prompt);
+    const text=await callAIText("あなたはユーザー専属の健康データアナリスト兼アドバイザーです。上記データに基づき、親身かつ具体的に、会話形式で答えます。要因の有無や大きさは【アプリで計算した分析結果】に合わせ、［まだ判断できない］ものは断定しないでください。JSONやMarkdown装飾は使わないでください。", prompt);
     state.aiAnalysisChat=[...state.aiAnalysisChat,{role:"ai",text}];
   }catch(e){
     state.aiAnalysisChat=[...state.aiAnalysisChat,{role:"ai",text:`（エラー: ${e.message}）`}];
@@ -16588,6 +16693,7 @@ function exportData(){
     ctJournal:state.ctJournal,
     nextDrink:state.nextDrink,
     foodCats:(Array.isArray(state.foodCats)&&state.foodCats.length)?{cats:state.foodCats,emoji:state.foodEmoji||{}}:null,
+    anaChanges:state.anaChanges||[],
     sleepGoal:state.sleepGoal,
     bodyComps:state.bodyComps,
     todoItems:state.todoItems,
@@ -16652,6 +16758,7 @@ function importData(e){
       if(p.todoOrder){try{localStorage.setItem(STORAGE_KEY+"_todo_order",JSON.stringify(p.todoOrder));}catch{}}
       if(p.shiftColors&&typeof p.shiftColors==="object"){try{localStorage.setItem(STORAGE_KEY+"_shiftcolors",JSON.stringify(p.shiftColors));}catch{} Object.keys(p.shiftColors).forEach(k=>{ if(SHIFT_TYPES[k]&&p.shiftColors[k])SHIFT_TYPES[k].color=p.shiftColors[k]; });}
       if(p.ejacColor){try{localStorage.setItem(STORAGE_KEY+"_ejaccolor",p.ejacColor);}catch{}}
+      if(Array.isArray(p.anaChanges)){ state.anaChanges=p.anaChanges; saveAnaChanges(); }
       if(p.foodCats&&Array.isArray(p.foodCats.cats)&&p.foodCats.cats.length){ state.foodCats=p.foodCats.cats; state.foodEmoji=(p.foodCats.emoji&&typeof p.foodCats.emoji==="object")?p.foodCats.emoji:{}; saveFoodCats(); }
       if(p.colorLabels&&typeof p.colorLabels==="object"){try{localStorage.setItem(STORAGE_KEY+"_colorlabels",JSON.stringify(p.colorLabels));}catch{}}
       if(p.sleepColor){try{localStorage.setItem(STORAGE_KEY+"_sleepcolor",p.sleepColor);}catch{}}
