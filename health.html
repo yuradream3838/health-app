@@ -224,7 +224,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.04"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.05"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -16812,6 +16812,146 @@ async function aiAnalysisChatSend(){
 // ── AIに質問（単体チャット）：アプリ内データを幅広く参照して事実ベースで答える ──
 // 1日ごとの記録（体調メモ・睡眠・飲酒・食事・実際の行動・予定）を過去約120日ぶん＋
 // トレーニング・目標をまとめ、「〇〇はいつ？」「〇〇の日の体調は？」などに対応する。
+// ═══ 💬 AIに質問：記録の索引・検索・期間・根拠 ═════════════════
+// ① AI に渡していなかった記録（予定のメモ・場所、TODO、モードのタグ、ケアのメモ、睡眠メモ・夢、お酒の記録 など）も
+//    「日付・出どころ・本文」の1件ずつに並べる（qaRecords）。期間の制限はない。
+// ② 質問から言葉を取り出し（qaKeywords）、アプリが全期間を探して（qaSearch）、見つかった記録を先頭に置いてから AI に渡す。
+//    探す作業はアプリ、答える作業は AI。ひらがな／カタカナ・全角／半角の違いは吸収する（qaNorm）。
+// ③ 答えには日付と出どころを書かせ、見つからないときは「何で・どこを探したか」を言わせる。見つかった記録は回答の下に並べ、タップでその日へ。
+// ④ 質問に期間（先月・9月・先週の土曜…）があれば、その期間の1日ごとの記録を詳しく渡す（qaRange）。
+function qaNorm(t){ return String(t||"").normalize("NFKC").toLowerCase().replace(/[ァ-ヶ]/g,c=>String.fromCharCode(c.charCodeAt(0)-0x60)).replace(/\s+/g,""); }
+const QA_SRC={plan:"予定",rplan:"繰り返し予定",act:"実績",cond:"体調メモ",sleep:"睡眠メモ",drink:"お酒",food:"食事",task:"TODO",shop:"買物",
+  ctdef:"定期ルーティン",mode:"モードのタグ",care:"ケアのメモ",ctj:"チェンジトーク",goal:"目標",train:"トレーニング",body:"体組成",ejac:"射精"};
+function qaDsOf(iso){ try{ return fmtDS(new Date(iso)); }catch(_){ return null; } }
+function qaEvText(e){
+  const tm=e.allDay?"終日":`${hhmm(e.startH||0,e.startM||0)}〜${hhmm(e.endH!=null?e.endH:(e.startH||0),e.endM||0)}`;
+  return `${tm} ${e.title||"(無題)"}${e.endDate?`（〜${e.endDate}）`:""}${e.place?` 場所:${e.place}`:""}${e.note?` メモ:${e.note}`:""}${e.refOnly?"（参考）":""}`;
+}
+function qaRecordDays(){
+  const set=new Set();
+  (state.dailies||[]).forEach(d=>d.dateStr&&set.add(d.dateStr));
+  (state.logs||[]).forEach(l=>l.dateStr&&set.add(l.dateStr));
+  Object.keys(state.todos||{}).forEach(ds=>set.add(ds));
+  Object.keys(state.schedule||{}).forEach(ds=>set.add(ds));
+  const t=todayStr(); return [...set].filter(ds=>/^\d{4}-\d{2}-\d{2}$/.test(ds)&&ds<=addDays(t,90)).sort();
+}
+function qaRecords(){
+  const R=[], push=(ds,src,text)=>{ if(ds&&text&&String(text).trim()) R.push({ds,src,text:String(text).trim()}); };
+  const today=todayStr();
+  // 予定（単発・複数日）と繰り返し予定（規則として1件）
+  Object.entries(state.schedule||{}).forEach(([ds,evs])=>(evs||[]).forEach(e=>push(ds,"plan",qaEvText(e))));
+  (state.repeatEvents||[]).forEach(e=>{
+    const rule=e.repeatType==="custom"||(e.weekdays&&e.weekdays.length)?`毎週${(e.weekdays||[]).map(w=>WEEKDAYS_JP[w]).join("・")}曜`:repeatLabel(e.repeatType,e.startDate);
+    push(e.startDate,"rplan",`${rule||"繰り返し"} ${qaEvText(e)}（${e.startDate}〜${e.endDate||""}${(e.exceptions||[]).length?`・休み${e.exceptions.length}回`:""}）`);
+  });
+  qaRecordDays().forEach(ds=>{
+    if(ds>today) return;
+    const d=getDaily(ds);
+    // 実績（実績のメモ・ルーティンや定期ルーティンの実施・予定外の行動を含む）
+    try{ getActualActivities(ds).forEach(a=>{ const t=(a.title||"").replace(/^[✓]/,""); if(t) push(ds,"act",`${a.isPoint?"":`${fmtHM(a.startMin)}〜${fmtHM(a.endMin)} `}${t}`); }); }catch(_){}
+    (state.logs||[]).filter(l=>l.dateStr===ds&&(l.note||(l.symptoms||[]).length)).forEach(l=>push(ds,"cond",`${l.hour}時 体調${l.score??"?"}/10${(l.symptoms||[]).length?` [${l.symptoms.join("・")}]`:""}${l.note?` 「${l.note}」`:""}`));
+    const sl=[d.sleepNote?`メモ:${d.sleepNote}`:"",d.dream?`夢:${d.dream}`:""].filter(Boolean).join(" ");
+    if(sl) push(ds,"sleep",sl);
+    (d.drinks||[]).forEach(dr=>{ const dt=resolveDT(dr), t=dr.tasting||{};
+      const tx=Object.values(TASTE_FIELDS).map(f=>t[f.k]).filter(Boolean).join(" ");
+      push(ds,"drink",`${dt.label} ${dr.ml||"?"}ml${dr.pct!=null?` ${dr.pct}%`:""}${tx?` ${tx}`:""}${t.total?` 総評★${t.total}`:""}`); });
+    if((d.foods||[]).length) push(ds,"food",d.foods.join("・"));
+    (d.workouts||[]).forEach(w=>push(ds,"train",`${w.name||"種目"}${w.weight!=null?` ${w.weight}kg`:""}${w.reps!=null?`×${w.reps}`:""}${w.sets!=null?`×${w.sets}set`:""}${w.note?` メモ:${w.note}`:""}`));
+    (d.cardio||[]).forEach(w=>{ if(!w.running) push(ds,"train",`${w.name||"有酸素"}${w.distance!=null?` ${w.distance}km`:""}${w.minutes!=null?` ${Math.round(w.minutes)}分`:""}`); });
+    if((d.ejaculations||[]).length) push(ds,"ejac",`${d.ejaculations.length}回`);
+  });
+  (state.bodyComps||[]).forEach(b=>push(b.date,"body",`体重${b.weight??"?"}kg 体脂肪${b.bodyFat??"?"}%`));
+  const tsk=(arr,src)=>(arr||[]).forEach(t=>{ const ds=(typeof t.uid==="number"&&t.uid>1e12)?fmtDS(new Date(t.uid)):today; push(ds,src,`${t.text||""}${t.done?"（完了）":"（未完了）"}${t.kind==="wish"?"（やりたいこと）":""}${t.note?` メモ:${t.note}`:""}`); });
+  tsk((state.tasks||{}).todo,"task"); tsk((state.tasks||{}).shopping,"shop");
+  (state.customTodos||[]).forEach(ct=>push(ct.startDate,"ctdef",`${ct.label}（${customTodoIntervalLabel(ct)}・${ct.startDate}〜）${ct.note?` メモ:${ct.note}`:""}${ctPausedNow(ct)?"（休止中）":""}`));
+  getModeLog().forEach(x=>{ if(!x.tag) return; const def=lifeModeDef(x.key)||{}; const st=new Date(x.start); push(fmtDS(st),"mode",`${def.icon||""}${def.label||x.key} ${hhmm(st.getHours(),st.getMinutes())}〜 タグ:${x.tag}`); });
+  (state.selfModeLog||[]).forEach(x=>{ if(!x.note) return; const def=lifeModeDef(x.mode)||{}; push(qaDsOf(x.t),"care",`${def.icon||""}${def.label||x.mode} 「${x.note}」`); });
+  (state.ctJournal||[]).forEach(x=>{ if(x.text) push(qaDsOf(x.t),"ctj",`${x.prompt?x.prompt+" → ":""}${x.text}`); });
+  const walk=ns=>(ns||[]).forEach(n=>{ if(n.text) push(n.doneAt?qaDsOf(n.doneAt):(n.start||n.date||n.deadline||today),"goal",`${n.text}${n.done?`（達成${n.doneAt?" "+qaDsOf(n.doneAt):""}）`:""}${n.note?` メモ:${n.note}`:""}`); if(n.children) walk(n.children); });
+  walk(state.goalTree);
+  return R;
+}
+const QA_STOP=new Set(["いつ","どこ","なに","なん","何","だれ","誰","どれ","どの","どう","教えて","おしえて","ください","でしたか","ですか","でした","ました","しました","した","して","する","った","のは","こと","とき","時","日","回","最近","前回","最後","最初","一番","いちばん","何回","何日","回数","記録","今日","昨日","一昨日","おととい","今週","先週","今月","先月","今年","去年","来週","来月","年","月","週","前","後","くらい","ぐらい","ある","あった","ない","なかった","行った","いった","やった","食べた","飲んだ","あります","ありますか","ありました","いつごろ","何時","時間","予定","実績","メモ","したか","った日","それ","これ","あれ","その","この","あの","そこ","ここ","どこだった","なんだった","だった","でした","どうだった","どうでした"]);
+// 質問から探す言葉を取り出す：漢字・カタカナ・英数字のかたまり（2文字以上）＋「飲み会」のような送りがな入りの語。
+//   それが無いときだけ、ひらがなのかたまりを助詞で区切って使う
+function qaKeywords(q){
+  const n=String(q||"").normalize("NFKC").replace(/\d+\s*(年|月|日|週間?|ヶ月|か月|カ月|時)(前|後)?/g," ");
+  const out=[];
+  const add=w=>{ w=(w||"").trim(); if(w.length<2||QA_STOP.has(w)||/^\d+$/.test(w)) return; if(!out.includes(w)) out.push(w); };
+  // 送りがな1文字（助詞を除く）でつながった語：飲み会・打ち合わせ・取り扱い
+  //   助詞でつながっているところでは切る（「飲み会と打ち合わせ」→ 飲み会／打ち合）
+  (n.match(/[一-鿿々]+(?:[ぁ-ん][一-鿿々]+)+/g)||[]).forEach(w=>w.split(/(?<=[一-鿿々])[をはがにでとものへやかねよだ](?=[一-鿿々])/).forEach(p=>{ if(/[一-鿿々][ぁ-ん][一-鿿々]/.test(p)) add(p); }));
+  (n.match(/[一-鿿々]{2,}|[゠-ヿー]{2,}|[a-zA-Z0-9][a-zA-Z0-9\-]+/g)||[]).forEach(add);
+  // 1文字だけの漢字（雷・肩など）：ほかに言葉が無いときだけ
+  if(!out.length) (n.match(/[一-鿿々]+/g)||[]).forEach(c=>{ if(c.length===1&&!"日時月週年前後回何今昨先来行飲食起寝".includes(c)&&!out.includes(c)) out.push(c); });
+  if(!out.length) (n.match(/[ぁ-んー]+/g)||[]).forEach(r=>r.split(/[はがをにでともへやのかねよ]/).forEach(add));
+  return out.slice(0,6);
+}
+function qaSearch(q,prevQ){
+  let kw=qaKeywords(q);
+  if(!kw.length&&prevQ) kw=qaKeywords(prevQ);         // 「それはいつ？」のように言葉が無いときは、ひとつ前の質問の言葉で探す
+  const recs=qaRecords();
+  const res={kw,total:recs.length,hits:[],fuzzy:false};
+  if(!kw.length) return res;
+  const nk=kw.map(qaNorm);
+  const score=r=>{ const t=qaNorm(r.text); return nk.reduce((a,k)=>a+(t.includes(k)?k.length:0),0); };
+  let hits=recs.map(r=>({...r,score:score(r)})).filter(r=>r.score>0);
+  if(!hits.length){
+    // 見つからないときは、3文字以上の言葉を2文字ずつに分けて探す（言い回しの違いを拾う・あいまい扱い）
+    const bi=[...new Set(nk.filter(k=>k.length>=3).flatMap(k=>Array.from({length:k.length-1},(_,i)=>k.slice(i,i+2))))];
+    if(bi.length){ hits=recs.map(r=>{ const t=qaNorm(r.text); return {...r,score:bi.filter(b=>t.includes(b)).length}; }).filter(r=>r.score>=Math.min(2,bi.length)); res.fuzzy=hits.length>0; }
+  }
+  hits.sort((a,b)=>b.score-a.score||(a.ds<b.ds?1:a.ds>b.ds?-1:0));
+  res.hits=hits;
+  return res;
+}
+// 質問の期間：今日・昨日・今週・先週・今月・先月・今年・去年・M月・M月D日・M/D・N日前・N週間前・Nヶ月前
+function qaRange(q){
+  const n=String(q||"").normalize("NFKC"), t=todayStr(), td=parseDS(t);
+  const mon=ds=>{ const d=parseDS(ds), w=d.getDay(); return addDays(ds,w===0?-6:1-w); };
+  const monthRange=(y,m)=>({from:`${y}-${String(m).padStart(2,"0")}-01`,to:fmtDS(new Date(y,m,0))});
+  const pastYear=(m,d)=>{ let y=td.getFullYear(); const ds=fmtDS(new Date(y,m-1,d||1)); if(ds>t) y--; return y; };
+  let r=null, m;
+  if(/一昨日|おととい/.test(n)) r={from:addDays(t,-2),to:addDays(t,-2),label:"おととい"};
+  else if(/昨日|きのう/.test(n)) r={from:addDays(t,-1),to:addDays(t,-1),label:"昨日"};
+  else if(/今日|きょう/.test(n)) r={from:t,to:t,label:"今日"};
+  else if(/先週/.test(n)){ const a=addDays(mon(t),-7); r={from:a,to:addDays(a,6),label:"先週"}; }
+  else if(/今週/.test(n)) r={from:mon(t),to:addDays(mon(t),6),label:"今週"};
+  else if(/先月/.test(n)){ const y=td.getMonth()===0?td.getFullYear()-1:td.getFullYear(), mm=td.getMonth()===0?12:td.getMonth(); r={...monthRange(y,mm),label:"先月"}; }
+  else if(/今月/.test(n)) r={...monthRange(td.getFullYear(),td.getMonth()+1),label:"今月"};
+  else if(/去年|昨年/.test(n)) r={from:`${td.getFullYear()-1}-01-01`,to:`${td.getFullYear()-1}-12-31`,label:"去年"};
+  else if(/今年/.test(n)) r={from:`${td.getFullYear()}-01-01`,to:t,label:"今年"};
+  else if((m=n.match(/(\d{1,2})\s*月\s*(\d{1,2})\s*日/))||(m=n.match(/(?<![\d.])(\d{1,2})\/(\d{1,2})(?![\d])/))){ const mm=+m[1], dd=+m[2]; if(mm>=1&&mm<=12&&dd>=1&&dd<=31){ const ds=fmtDS(new Date(pastYear(mm,dd),mm-1,dd)); r={from:ds,to:ds,label:`${mm}/${dd}`}; } }
+  else if((m=n.match(/(\d{1,2})\s*月/))){ const mm=+m[1]; if(mm>=1&&mm<=12){ const y=pastYear(mm,1); r={...monthRange(y,mm),label:`${y}年${mm}月`}; } }
+  else if((m=n.match(/(\d+)\s*日前/))){ const ds=addDays(t,-(+m[1])); r={from:ds,to:ds,label:`${m[1]}日前`}; }
+  else if((m=n.match(/(\d+)\s*週間前/))){ const a=addDays(mon(t),-7*(+m[1])); r={from:a,to:addDays(a,6),label:`${m[1]}週間前`}; }
+  else if((m=n.match(/(\d+)\s*(ヶ月|か月|カ月)前/))){ const d=new Date(td.getFullYear(),td.getMonth()-(+m[1]),1); r={...monthRange(d.getFullYear(),d.getMonth()+1),label:`${m[1]}ヶ月前`}; }
+  // 曜日の指定（「先週の土曜」）は、その週の中のその曜日に絞る
+  if(r&&(m=n.match(/([月火水木金土日])曜/))&&r.to>r.from){ const w=WEEKDAYS_JP.indexOf(m[1]); let ds=r.from; while(ds<=r.to&&parseDS(ds).getDay()!==w) ds=addDays(ds,1); if(ds<=r.to) r={from:ds,to:ds,label:`${r.label}の${m[1]}曜`}; }
+  return r;
+}
+function qaHitLine(h){ const wd=WEEKDAYS_JP[parseDS(h.ds).getDay()]; return `${h.ds}(${wd}) 【${QA_SRC[h.src]||h.src}】${h.text}`; }
+// 根拠の一覧（回答の下）：タップでその日へ。予定はその日の予定、ほかは日記
+function qaHitsBox(m){
+  const hits=m.hits||[]; if(!hits.length&&!(m.kw||[]).length) return null;
+  const box=div({style:{margin:"2px 0 8px",padding:"7px 9px",borderRadius:"8px",background:"#0f172a",border:"1px solid #1e293b",maxWidth:"85%"}});
+  box.setAttribute('data-qahits','1');
+  if(!hits.length){ box.appendChild(div({style:{fontSize:"10px",color:"#64748b"}},`🔎「${(m.kw||[]).join("・")}」で全期間の記録を探しましたが、見つかりませんでした`)); return box; }
+  const open=!!m._open, show=open?hits:hits.slice(0,5);
+  box.appendChild(div({style:{fontSize:"10px",color:"#94a3b8",fontWeight:700,marginBottom:"4px"}},`🔎 記録から見つかったもの（${m.hitTotal||hits.length}件${m.fuzzy?"・言い回しが近いもの":""}・タップでその日へ）`));
+  show.forEach(h=>{
+    const r=div({style:{fontSize:"10px",color:"#cbd5e1",padding:"3px 0",borderTop:"1px solid #1e293b",cursor:"pointer",lineHeight:1.5,wordBreak:"break-word"}},qaHitLine(h));
+    r.setAttribute('data-qahit',h.ds);
+    r.addEventListener('click',()=>{ state.viewDate=h.ds; state.widget=false;
+      if(h.src==="plan"||h.src==="rplan"){ state.tab="予定"; state.scheduleSubTab="日"; } else { state.tab="日記"; }
+      render(); });
+    box.appendChild(r);
+  });
+  if(hits.length>5){ const b=btn({style:{marginTop:"4px",fontSize:"10px",color:"#38bdf8",background:"transparent",border:"none",cursor:"pointer",padding:0}},open?"▲ たたむ":`▼ のこり${hits.length-5}件`);
+    b.addEventListener('click',()=>{ m._open=!open; render(); }); box.appendChild(b); }
+  return box;
+}
+
 function qaDateLine(ds){
   const d=getDaily(ds);
   const wd=["日","月","火","水","木","金","土"][parseDS(ds).getDay()];
@@ -16830,6 +16970,9 @@ function qaDateLine(ds){
   if(g>0)parts.push(`酒${g.toFixed(0)}g${drinkNames?`[${drinkNames}]`:''}`);
   if((d.foods||[]).length)parts.push(`食事[${d.foods.join(',')}]`);
   if(acts)parts.push(`行動[${acts}]`);
+  try{ const evs=getEventsForDate(ds).filter(e=>!e._mdCont).map(qaEvText); if(evs.length) parts.push(`予定[${evs.join(" / ")}]`); }catch(_){}
+  if(d.sleepNote) parts.push(`睡眠メモ「${d.sleepNote}」`);
+  if(d.dream) parts.push(`夢「${String(d.dream).slice(0,80)}」`);
   // 生活モード（その日の時間の使い方）
   try{
     const mt=modeTotalsForDay(ds);
@@ -16839,21 +16982,31 @@ function qaDateLine(ds){
   }catch(_){}
   return parts.length?`${ds}(${wd}${shift}) ${parts.join(' ')}`:null;
 }
-function buildQAContext(){
-  const cutoff=addDays(todayStr(),-120);
-  const dateSet=new Set();
-  (state.dailies||[]).forEach(d=>{ if(d.dateStr&&d.dateStr>=cutoff)dateSet.add(d.dateStr); });
-  (state.logs||[]).forEach(l=>{ if(l.dateStr&&l.dateStr>=cutoff)dateSet.add(l.dateStr); });
-  Object.keys(state.todos||{}).forEach(ds=>{ if(ds>=cutoff)dateSet.add(ds); });
-  const dates=[...dateSet].sort();
-  const lines=dates.map(qaDateLine).filter(Boolean).join('\n');
-  const up=[]; for(let i=0;i<21;i++){ const dd=addDays(todayStr(),i); let pl=[]; try{pl=getPlannedExtras(dd).map(e=>e.title);}catch(_){}; if(pl.length)up.push(`${dd}: ${pl.join(',')}`); }
+function buildQAContext(q,prevQ){
+  const S=qaSearch(q,prevQ), R=qaRange(q), t=todayStr();
+  // 1日ごとの記録：質問に期間があればその期間（最大92日）、なければ直近60日
+  const from=R?R.from:addDays(t,-60), to=R?(R.to>addDays(R.from,91)?addDays(R.from,91):R.to):addDays(t,30);
+  const days=qaRecordDays().filter(ds=>ds>=from&&ds<=to);
+  const lines=days.map(qaDateLine).filter(Boolean).join('\n');
+  const hitLines=S.hits.slice(0,60).map(qaHitLine).join('\n');
+  const searchSec=S.kw.length
+    ?`【探した結果（アプリが全期間の記録を「${S.kw.join("・")}」で検索）】\n${S.hits.length?`${S.hits.length}件見つかりました${S.fuzzy?"（完全一致は無く、言い回しが近いもの）":""}${S.hits.length>60?"（上位60件）":""}：\n${hitLines}`:"見つかりませんでした（予定・繰り返し予定・実績・体調メモ・睡眠メモ・お酒・食事・TODO・買物・定期ルーティン・モードのタグ・ケアのメモ・チェンジトーク・目標・トレーニング・体組成を、全期間で探しています）"}`
+    :`【探した結果】質問から探す言葉を取り出せませんでした（期間や全体についての質問として扱います）`;
+  // 月ごとのまとめ（直近12か月）：期間の外の流れをつかむため
+  const months=[]; for(let i=0;i<12;i++){ const d=new Date(parseDS(t).getFullYear(),parseDS(t).getMonth()-i,1); months.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`); }
+  const sm=anaScoreModel();
+  const monthLines=months.map(ym=>{ const ds=qaRecordDays().filter(x=>x.startsWith(ym)&&x<=t); if(!ds.length) return null;
+    const sc=ds.map(x=>sm.day[x]?sm.day[x].rawAvg:null).filter(x=>x!=null), sl=ds.map(getNightSleepHours).filter(x=>x!=null);
+    const dr=ds.filter(x=>pureAlcoholG(x)>0).length;
+    return `${ym}: 記録${ds.length}日 体調平均${sc.length?(sc.reduce((a,b)=>a+b,0)/sc.length).toFixed(1):"?"} 睡眠平均${sl.length?(sl.reduce((a,b)=>a+b,0)/sl.length).toFixed(1)+"h":"?"} 飲酒${dr}日`; }).filter(Boolean).join('\n');
+  const up=[]; for(let i=0;i<21;i++){ const dd=addDays(t,i); let pl=[]; try{pl=getEventsForDate(dd).filter(e=>!e._mdCont).map(qaEvText);}catch(_){}; if(pl.length)up.push(`${dd}: ${pl.join(' / ')}`); }
   const bc=(state.bodyComps||[]).slice(-8).map(b=>`${b.date} 体重${b.weight??'?'}kg 体脂肪${b.bodyFat??'?'}%`).join('\n')||'なし';
   let wk="なし",cd="なし";
   try{ wk=allWorkouts().slice(0,20).map(w=>`${w.date} ${w.name} ${w.weight!=null?w.weight+'kg':''}${w.reps!=null?'×'+w.reps:''}${w.sets!=null?'×'+w.sets+'set':''}`).join('\n')||'なし'; }catch(_){}
   try{ cd=allCardio().slice(0,15).map(w=>`${w.date} ${w.name} ${w.distance!=null?w.distance+'km':''}${w.minutes!=null?' '+Math.round(w.minutes)+'分':''}`).join('\n')||'なし'; }catch(_){}
   const goals=[]; const walk=ns=>(ns||[]).forEach(n=>{ if(n.text)goals.push(`${n.text}${n.done?'(達成)':''}`); if(n.children)walk(n.children); }); walk(state.goalTree);
-  return `【1日ごとの記録（過去約120日・記録がある日のみ）】\n${lines||'記録なし'}\n\n${buildModeContext(30)}\n\n【今後3週間の予定】\n${up.join('\n')||'なし'}\n\n【体組成（最近）】\n${bc}\n\n【ワークアウト（最近）】\n${wk}\n\n【有酸素（最近）】\n${cd}\n\n【目標】\n${goals.slice(0,30).join(' / ')||'なし'}\n\n※日付はYYYY-MM-DD形式。今日は${todayStr()}。`;
+  const ctx=`今日は${t}（${WEEKDAYS_JP[parseDS(t).getDay()]}曜）。\n\n${searchSec}\n\n【1日ごとの記録（${R?`質問の期間：${R.label}＝${R.from}〜${R.to}`:`直近60日と今後30日`}・記録がある日のみ）】\n${lines||'記録なし'}\n\n【月ごとのまとめ（直近12か月）】\n${monthLines||'なし'}\n\n${buildModeContext(30)}\n\n【今後3週間の予定】\n${up.join('\n')||'なし'}\n\n【体組成（最近）】\n${bc}\n\n【ワークアウト（最近）】\n${wk}\n\n【有酸素（最近）】\n${cd}\n\n【目標】\n${goals.slice(0,30).join(' / ')||'なし'}\n\n※日付はYYYY-MM-DD形式。今日は${todayStr()}。`;
+  return {ctx,search:S,range:R};
 }
 async function aiQAChatSend(){
   const msg=(state.aiQAInput||"").trim();
@@ -16861,9 +17014,17 @@ async function aiQAChatSend(){
   state.aiQAChat=[...(state.aiQAChat||[]),{role:"user",text:msg}];
   state.aiQAInput=""; state.aiQAChatLoading=true; render();
   try{
-    const prompt=`【あなたが参照できるユーザーのアプリ内データ】\n${buildQAContext()}\n\n【これまでの会話】\n${chatHistoryText(state.aiQAChat)}\n\n上記データに基づき、最新の質問に日本語で簡潔・具体的に答えてください。「いつ？」と聞かれたら該当する日付を挙げる。データに無い事は「記録にありません」と正直に答え、憶測で作らないこと。`;
-    const text=await callAIText("あなたはユーザーの健康管理アプリ専属アシスタントです。アプリ内の記録データ（体調・睡眠・飲酒・食事・行動・予定・トレーニング・目標）を検索し、事実に基づいて答えます。データに無い事は正直に『記録にありません』と答え、作り話をしません。JSONやMarkdown装飾は使いません。", prompt);
-    state.aiQAChat=[...state.aiQAChat,{role:"ai",text}];
+    // ひとつ前の質問（「それはいつ？」のように言葉が無いときの検索に使う）
+    const users=(state.aiQAChat||[]).filter(m=>m.role==="user"), prevQ=users.length>=2?users[users.length-2].text:"";
+    const Q=buildQAContext(msg,prevQ);
+    const prompt=`【あなたが参照できるユーザーのアプリ内データ】\n${Q.ctx}\n\n【これまでの会話】\n${chatHistoryText(state.aiQAChat)}\n\n上記データに基づき、最新の質問に日本語で簡潔・具体的に答えてください。
+・「いつ？」には、【探した結果】から当てはまる日付を新しい順に挙げる（多ければ最大10件＋件数）。
+・事実を書くときは、必ず日付と出どころ（【予定】【実績】【体調メモ】など）を添える。
+・【予定】【繰り返し予定】は「予定していたこと」、【実績】は「実際にやったこと」。予定しかない日を「やった」と言わない。繰り返し予定は規則なので、個々の日は推定だと分かるように書く。
+・【探した結果】が「見つかりませんでした」のときは、「全期間の記録を『探した言葉』で探しましたが見つかりませんでした」と答え、言い換えの候補を1〜2個出す。記録に無いことを「していない」とは断定しない。
+・憶測で作らないこと。`;
+    const text=await callAIText("あなたはユーザーの健康管理アプリ専属アシスタントです。アプリが全期間の記録を検索した結果と、日ごとの記録が渡されます。事実は渡された記録だけから答え、日付と出どころを添えます。見つからないときは、何で探したかを伝え、無かったと断定しません。作り話をしません。JSONやMarkdown装飾は使いません。", prompt);
+    state.aiQAChat=[...state.aiQAChat,{role:"ai",text,hits:Q.search.hits.slice(0,30),hitTotal:Q.search.hits.length,kw:Q.search.kw,fuzzy:Q.search.fuzzy,range:Q.range}];
   }catch(e){ state.aiQAChat=[...state.aiQAChat,{role:"ai",text:`（エラー: ${e.message}）`}]; }
   state.aiQAChatLoading=false; render();
 }
@@ -16878,7 +17039,7 @@ function renderAIHub(){
 function renderAIQACard(){
   const card=div({className:"card"});
   card.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0",marginBottom:"4px"}},"💬 AIに質問"));
-  card.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"8px",lineHeight:1.6}},"アプリの記録（体調・睡眠・飲酒・食事・行動・予定・トレーニング・目標）について自由に質問できます。例：「ジムに行ったのはいつ？」「頭痛を記録した日の睡眠は？」（無料・1日20回まで）"));
+  card.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"8px",lineHeight:1.6}},"アプリの記録について自由に質問できます。予定のメモ・場所、TODO、メモ類まで全期間をアプリが探してからAIが答え、答えの下に見つかった記録が出ます（タップでその日へ）。例：「歯医者に行ったのはいつ？」「先月飲んだ日は？」（無料・1日20回まで）"));
   const chips=["最近の体調の傾向は？","よく眠れた日の共通点は？","飲酒が多い曜日は？","運動した日の体調は？"];
   const chipRow=div({style:{display:"flex",flexWrap:"wrap",gap:"6px",marginBottom:"4px"}});
   chips.forEach(q=>{ const b=btn({style:{fontSize:"11px",padding:"5px 10px",borderRadius:"13px",border:"1px solid #334155",background:"#0f172a",color:"#94a3b8",cursor:"pointer",fontFamily:"inherit"}},q); b.addEventListener('click',()=>{ if(state.aiQAChatLoading)return; state.aiQAInput=q; aiQAChatSend(); }); chipRow.appendChild(b); });
@@ -16893,10 +17054,12 @@ function renderAIChat(chat, loading, inputKey, onSend, placeholder){
   wrap.appendChild(div({style:{fontSize:"11px",fontWeight:700,color:"#a5b4fc",marginBottom:"8px"}},"💬 AIと相談する"));
   (chat||[]).forEach(m=>{
     const isUser=m.role==="user";
+    const after=(!isUser&&(m.hits||m.kw))?qaHitsBox(m):null;   // 💬AIに質問：答えの根拠（検索で見つかった記録）
     wrap.appendChild(div({style:{display:"flex",justifyContent:isUser?"flex-end":"flex-start",marginBottom:"6px"}},[
       div({style:{maxWidth:"85%",fontSize:"12px",lineHeight:1.6,padding:"8px 11px",borderRadius:"12px",whiteSpace:"pre-wrap",wordBreak:"break-word",
         background:isUser?"#0ea5e922":"#6366f118",border:`1px solid ${isUser?"#0ea5e955":"#6366f133"}`,color:isUser?"#e2e8f0":"#cbd5e1"}},m.text)
     ]));
+    if(after) wrap.appendChild(after);
   });
   if(loading)wrap.appendChild(div({style:{fontSize:"11px",color:"#64748b",padding:"4px 2px"}},"🤖 考え中..."));
   const inRow=div({style:{display:"flex",gap:"6px",marginTop:"6px"}});
