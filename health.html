@@ -224,7 +224,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.05"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.06"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -845,6 +845,7 @@ const state = {
   routines:cloneRoutines(),
   shiftPattern:defaultShiftPattern(), swapMode:false, swapFirst:null,
   planPatterns:defaultPlanPatterns(), customTodos:[], customTodoModal:null,
+  ctPauseSel:null,   // ⏸ 休止する項目を選んでいる間だけ uid の配列（null＝ふだんの表示）
   scheduleSubTab:"日", editEventUid:null, editEventIsRepeat:false, editScope:"all", patternEdit:null,
   newEvH:9, newEvM:0, newEvEndH:10, newEvEndM:0, newEvEndNextDay:false, newEvTitle:"", newEvRepeat:"none", newEvColor:"#38bdf8", newEvWeekdays:[], newEvFromTask:null, newEvGoalId:null, newEvNdId:null, newEvAlexa:null, newEvAllDay:false, newEvRefOnly:false, newEvEndDate:null, editEventDate:null,
   aiScheduleLoading:false, aiScheduleProposal:null,
@@ -12598,6 +12599,17 @@ function pauseCustomTodo(uid){
   ct.pauses=[...(ct.pauses||[]),{from:todayStr(),to:null}];
   saveCustomTodos(); try{ alexaSyncPlan(true); }catch(_){}
 }
+// まとめて休止・再開（休止の選択→確定から）。保存とAlexaの予約の送り直しは1回だけ
+function applyCustomTodoPauses(pauseIds,resumeIds){
+  const t=todayStr(), y=addDays(t,-1); let np=0, nr=0;
+  (state.customTodos||[]).forEach(ct=>{
+    const p=ctPausedNow(ct);
+    if(pauseIds.includes(ct.uid)&&!p){ ct.pauses=[...(ct.pauses||[]),{from:t,to:null}]; np++; }
+    else if(resumeIds.includes(ct.uid)&&p){ ct.pauses=ct.pauses.map(x=>x===p?{...x,to:y}:x).filter(x=>!(x.to!=null&&x.to<x.from)); nr++; }
+  });
+  if(np||nr){ saveCustomTodos(); try{ alexaSyncPlan(true); }catch(_){} }
+  return {np,nr};
+}
 function resumeCustomTodo(uid){
   const ct=(state.customTodos||[]).find(x=>x.uid===uid); const p=ct&&ctPausedNow(ct); if(!p) return;
   const to=addDays(todayStr(),-1);
@@ -13211,12 +13223,28 @@ function renderOccasional(vd){
   const wrap=div({style:{maxWidth:"600px",margin:"0 auto",padding:"10px 16px 60px"}});
   const mdc=mdLabel;
   const card=div({className:"card"});
-  card.appendChild(div({style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"8px"}},[
-    div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0"}},"🔁 定期ルーティン"),
-    (()=>{const b=btn({style:{fontSize:"11px",padding:"4px 10px",background:"#0ea5e918",border:"1px solid #0ea5e9",borderRadius:"7px",color:"#38bdf8",cursor:"pointer",fontWeight:600}},"＋ 追加");
-      b.addEventListener('click',()=>{state.customTodoModal={uid:null,label:"",itype:"week",n:1,startDate:vd,timeH:null,timeM:0,color:"#38bdf8",weekdays:[],shifts:[]};render();});return b;})()
-  ]));
   const list=state.customTodos||[];
+  const sel=Array.isArray(state.ctPauseSel)?state.ctPauseSel:null;   // ⏸ 休止する項目を選んでいるところ
+  const hbtn=(label,st,onClick,attr)=>{ const b=btn({style:{fontSize:"11px",padding:"4px 10px",borderRadius:"7px",cursor:"pointer",fontWeight:600,fontFamily:"inherit",...st}},label); if(attr) b.setAttribute(attr,"1"); b.addEventListener('click',onClick); return b; };
+  if(sel){
+    const before=list.filter(ct=>ctPausedNow(ct)).map(ct=>ct.uid);
+    const toP=sel.filter(id=>!before.includes(id)), toR=before.filter(id=>!sel.includes(id));
+    card.appendChild(div({style:{display:"flex",alignItems:"center",gap:"6px",marginBottom:"4px"}},[
+      div({style:{flex:1,fontSize:"13px",fontWeight:700,color:"#e2e8f0"}},"⏸ 休止する項目を選ぶ"),
+      hbtn("キャンセル",{background:"transparent",border:"1px solid #334155",color:"#94a3b8"},()=>{ state.ctPauseSel=null; render(); },"data-ctpausecancel"),
+      hbtn(`確定${(toP.length+toR.length)?`（${toP.length+toR.length}）`:""}`,{background:"#a78bfa22",border:"1px solid #a78bfa",color:"#c4b5fd"},()=>{
+        const r=applyCustomTodoPauses(toP,toR); state.ctPauseSel=null;
+        showToast(r.np||r.nr?[r.np?`⏸ ${r.np}件を休止`:"",r.nr?`▶ ${r.nr}件を再開`:""].filter(Boolean).join("・"):"変更はありません",r.np||r.nr?"#a78bfa":"#64748b");
+        render(); },"data-ctpauseok")
+    ]));
+    card.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"6px",lineHeight:1.6}},"チェックした項目を今日から休止します（再開するまで今日のやること・通知・Alexaに出ません）。チェックを外すと再開します。"));
+  } else {
+    card.appendChild(div({style:{display:"flex",alignItems:"center",gap:"6px",marginBottom:"8px"}},[
+      div({style:{flex:1,fontSize:"13px",fontWeight:700,color:"#e2e8f0"}},"🔁 定期ルーティン"),
+      list.length?hbtn("⏸ 休止",{background:"transparent",border:"1px solid #334155",color:"#94a3b8"},()=>{ state.ctPauseSel=list.filter(ct=>ctPausedNow(ct)).map(ct=>ct.uid); render(); },"data-ctpausemode"):null,
+      hbtn("＋ 追加",{background:"#0ea5e918",border:"1px solid #0ea5e9",color:"#38bdf8"},()=>{state.customTodoModal={uid:null,label:"",itype:"week",n:1,startDate:vd,timeH:null,timeM:0,color:"#38bdf8",weekdays:[],shifts:[]};render();})
+    ]));
+  }
   if(list.length===0){
     card.appendChild(div({style:{fontSize:"11px",color:"#475569",textAlign:"center",padding:"10px 0"}},"「＋追加」でN日/N週/Nヶ月ごとの項目を登録（曜日・シフト連動も可）"));
   }
@@ -13230,6 +13258,19 @@ function renderOccasional(vd){
     const overdue = occ && occ.overdue;
     const excludedToday = occ && occ.excluded;   // 当日該当だが除外中
     const paused = ctPausedNow(ct);
+    if(sel){
+      // 選んでいる間は、チェック欄と名前だけ（完了・除外・編集は出さない）。行のどこを押しても切り替わる
+      const on=sel.includes(ct.uid);
+      const r=div({style:{display:"flex",alignItems:"center",gap:"10px",padding:"9px 2px",borderBottom:"1px solid #1e3a5f33",cursor:"pointer"}});
+      r.setAttribute('data-ctsel',String(ct.uid));
+      r.appendChild(div({style:{width:"22px",height:"22px",borderRadius:"6px",flexShrink:0,border:`2px solid ${on?"#a78bfa":"#334155"}`,background:on?"#a78bfa":"transparent",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"13px",color:"#fff"}},on?"✓":""));
+      r.appendChild(div({style:{flex:1,minWidth:0}},[
+        div({style:{fontSize:"13px",color:"#e2e8f0"}},ct.label||"(無題)"),
+        div({style:{fontSize:"9px",color:paused?"#a78bfa":"#64748b"}},`${customTodoIntervalLabel(ct)}${paused?`　⏸ 休止中（${mdc(paused.from)}から）`:""}`)]));
+      r.addEventListener('click',()=>{ state.ctPauseSel=on?sel.filter(x=>x!==ct.uid):[...sel,ct.uid]; render(); });
+      card.appendChild(r);
+      return;
+    }
     const row=div({style:{display:"flex",alignItems:"center",gap:"10px",padding:"8px 2px",borderBottom:"1px solid #1e3a5f33",opacity:active?1:0.55}});
     row.setAttribute('data-ctrow',String(ct.uid));
     const isTimer=ct.mode==='timer';
@@ -13306,14 +13347,6 @@ function renderOccasional(vd){
       un.addEventListener('click',(()=>{const id=ct.uid;return()=>{merge(vd,id,{excluded:false});};})());
       row.appendChild(un);
     }
-    // ⏸ 休止／▶ 再開
-    { const pb=btn({style:{background:paused?"#22c55e18":"transparent",border:`1px solid ${paused?"#22c55e":"#334155"}`,borderRadius:"6px",color:paused?"#4ade80":"#64748b",cursor:"pointer",fontSize:"10px",padding:"3px 7px",flexShrink:0,fontWeight:paused?700:400},title:paused?"再開する":"休止する"},paused?"▶ 再開":"⏸ 休止");
-      pb.setAttribute('data-ctpause',String(ct.uid));
-      pb.addEventListener('click',(()=>{const id=ct.uid,l=ct.label||"定期ルーティン",wasP=!!paused;return()=>{
-        if(wasP){ resumeCustomTodo(id); showToast(`▶ 「${l}」を再開しました`,"#22c55e"); }
-        else { pauseCustomTodo(id); showToast(`⏸ 「${l}」を休止しました（再開するまで出ません）`,"#64748b"); }
-        render(); };})());
-      row.appendChild(pb); }
     const ed=btn({style:{background:"transparent",border:"1px solid #334155",borderRadius:"6px",color:"#64748b",cursor:"pointer",fontSize:"11px",padding:"3px 8px",flexShrink:0}},"✏️");
     ed.addEventListener('click',(()=>{const c={...ct};return()=>{state.customTodoModal=c;render();};})());
     row.appendChild(ed);
