@@ -3,7 +3,7 @@
 > AIが参照しやすいよう、`api.php`（Geminiプロキシ）と、それを呼ぶクライアント関数の
 > **正確な契約**をまとめた常設リファレンス。実装は `health.html`（クライアント）と
 > サーバー上の `api.php` / `alexa.php`（どちらもリポジトリ管理外）。
-> 最終更新: アプリ v14.93 / api.php v4.1 / alexa.php v2.0。
+> 最終更新: アプリ v15.07 / api.php v4.1 / alexa.php v2.1。
 
 ---
 
@@ -175,7 +175,7 @@ curl -i -X POST https://nuts024.com/health/api.php \
 
 ---
 
-## 10. 🔊 Alexa中継エンドポイント（`alexa.php` v2.0）
+## 10. 🔊 Alexa中継エンドポイント（`alexa.php` v2.1）
 
 ブラウザからは他サイトへ `Authorization` ヘッダーを送れない（CORSのプリフライトで止まる）ため、
 **サーバが代わりにトリガーURLを叩く**ための小さな中継。AIとは無関係で、`api.php` とは別ファイル。
@@ -222,7 +222,7 @@ curl -i -X POST https://nuts024.com/health/api.php \
 ### 10-3. 予約（`action:"plan"`）とcron
 
 アプリは**これから7日ぶんの「鳴らす時刻」**をまとめて預ける。サーバは受け取った配列で
-`alexa_plan.json` を**丸ごと置き換える**（差分ではない）。空配列を送れば予約は消える。
+予約ファイル（10-6）を**丸ごと置き換える**（差分ではない）。空配列を送れば予約は消える。
 
 ```json
 { "action": "plan",
@@ -233,32 +233,69 @@ curl -i -X POST https://nuts024.com/health/api.php \
                "label": "通院（15分前）" } ]   // 任意・ログ用の表示名（60文字まで）
 }
 ```
-レスポンス：`{ "ok": true, "n": 12 }`（保存した件数）。
+レスポンス：`{ "ok": true, "n": 12, "ticked": 1790409000, "now": 1790409300, "version": "2.1" }`
+（保存した件数・**最後に時報が動いた時刻**（0＝一度も動いていない）・サーバーの今の時刻・版）。
+アプリはこれで時報が止まっていないかを見る（10-5）。
 `items` が配列でない＝`BODY`、URLが不正な項目は**その項目だけ落として**残りを保存する。
 上限 `$PLAN_MAX`＝300件。
 
-**cron（ConoHa WING のジョブスケジューラー等）**を**1分ごと**に回す：
+**時報（cron）**を**1分〜5分ごと**に回す。ConoHa WING のジョブスケジューラーに、次の**どちらか一方**を登録する：
 
 ```
-/usr/bin/php /home/<ユーザー>/public_html/health/alexa.php tick
+# A) URLで（おすすめ：PHPの種類やフォルダの場所に左右されない）
+curl -s "https://nuts024.com/health/alexa.php?tick=1" > /dev/null
+# B) PHPで（ConoHa WING はドメインのフォルダが public_html の下にある）
+/usr/bin/php /home/<アカウント名>/public_html/nuts024.com/health/alexa.php tick
 ```
 
-- CLIから `tick` を渡したときだけ動く（Web からは呼べない）
+- **B**：コマンドライン（CLI）でも、**CGI版のPHP**でも、Web のリクエストでなければ（`REQUEST_METHOD` が無ければ）時報として動く。
+  引数の `tick` は `$argv`／`$_SERVER['argv']`／`$_GET`（php-cgi は引数を `$_GET` に入れることがある）のどれでもよい。
+  v2.0 は CLI のときしか動かなかったので、ジョブスケジューラーのPHPがCGI版だと何もしていなかった。
+- **A**：`GET ?tick=1`。時刻の来たものを叩くだけなので鍵は不要。**前回から20秒以内は何もしない**（`{"ok":true,"skipped":true}`）。
+  返事は `{"ok":true,"fired":1,"kept":5}`。
 - `at <= 今` の項目を順に叩き、**叩いたものは予約から消す**。未来の項目は残す
 - 遅れて動いたときのために `$TICK_GRACE`＝**3600秒**より古いものは**叩かずに捨てる**
   （サーバが止まっていた間の予約を、復旧時にまとめて鳴らさないため）
-- 結果は `alexa_tick.log` に残す（時刻・label・HTTPステータス）
+- 結果はログ（10-6）に残す（時刻（日本時間）・label・HTTPステータス／`ERR …`／捨てたものは `SKIP 遅れすぎ（予定時刻）`）。直近200行
 - アプリを開かなくても鳴るが、**予約は7日ぶんしかない**ので、1週間に一度はアプリを開く必要がある
 
 ### 10-4. 踏み台にされないための決まり
 - **https のみ**。`gethostbyname` の結果が private/予約レンジなら拒否（社内やlocalhostを叩かせない）
 - **リダイレクトを追わない**（`CURLOPT_FOLLOWLOCATION=false`）
 - `$ALLOW_HOSTS` に宛先ホストを並べれば、そこだけに限定できる（空なら公開のhttpsならどこでも）
-- レート制限は `alexa_rate.json` に回数を持つ（1時間枠）
+- レート制限は回数ファイル（10-6）に持つ（1時間枠）
+
+### 10-4b. 状態（`action:"status"`）
+アプリの「🩺 サーバーの状態を確認」から。**URL や認証の値は返さない**。
+
+```json
+{ "action": "status" }
+→ { "ok": true, "version": "2.1", "now": 1790409300, "n": 5,
+    "next": [ { "at": 1790409600, "label": "通院（15分前）" } ],      // 先頭5件
+    "updated": 1790409000, "ticked": 1790409240, "lastFired": 1790405000,
+    "log": [ "2026-10-05 17:00:01\t会議\t204" ] }                    // 直近10行（タブ区切り）
+```
+古い版（v2.0 より前）は `action` を知らないので `{ "ok": false, "error": "URL" }` が返る。アプリはこれを「古い版」と表示する。
+
+### 10-6. 保存ファイル（外から読めない形）
+| ファイル | 中身 |
+|---|---|
+| `alexa_plan.php` | 預かった予約（**トリガーURLと認証を含む**）・`updated`・`ticked`・`lastFired` |
+| `alexa_tick.php` | 時報のログ（直近200行） |
+| `alexa_rate.php` | 中継の回数（レート制限） |
+
+- どれも**先頭に `<?php exit; ?>` を付けて保存**するので、ブラウザから開いても中身は返らない（読み書きは `alexa_read`／`alexa_write`）。
+- v2.0 は `alexa_plan.json`／`alexa_tick.log`／`alexa_rate.json` として**公開フォルダにそのまま置いていた**（URLを知っていれば読めた）。
+  v2.1 は最初に動いたときにこれらを新しいファイルへ移し、**元のファイルを消す**。
+- ログの時刻は `Asia/Tokyo`。
 
 ### 10-5. クライアント側
 - **いますぐ叩く**：`health.html` の `alexaCall(hook,done)`。設定→🔊 Alexa連携 の「中継サーバ経由」がONのときに使う。
 - **予約を預ける**：`alexaSyncPlan(force,done)`（起動2.5秒後・1分ごとの見回り・予定や定期ルーティンの保存直後）。
   中身が前と同じなら送らない（12時間たてば送り直す）。「⏰ 時刻で鳴らす」をOFFにすると空配列を送る。
+  返事の `ticked`／`now` を `state.alexaPlan.srv` に持ち、**時報が15分以上動いていない・一度も動いていない**ときは予約の欄に警告を出す（`alexaCronHealth`）。
+  `error:"URL"`／`"HOST"` が返ったら「サーバーの alexa.php が古い版」と表示する。
+- **状態を確認**：`alexaServerStatus`（`action:"status"`）→ `alexaSrvBox`。版・預かっている件数と次の予約・時報の状態・最後に鳴らした時刻・
+  最近の記録（2xx＝届いた）を出し、時報が止まっていれば 10-3 の A／B のコマンドをコピーできる形で出す。
 
 どちらも送るのは `{url, auth, 時刻, 表示名}` だけで、**体調などの記録は一切送らない**。

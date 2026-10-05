@@ -224,7 +224,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.06"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.07"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -865,7 +865,7 @@ const state = {
   alexaOn:false, alexaHooks:{}, alexaLast:null,   // 🔊 Alexa連携（モードに入ったらURLを叩く）
   alexaRelay:true, alexaRelayUrl:"", alexaTest:null,  // 中継サーバ（独自ヘッダーが要るスキル向け）＋最後のテスト結果
   alexaTriggers:[], alexaModes:{}, alexaSleep:{},     // 名前付きトリガー／モード割り当て／就寝・寝支度
-  alexaPlanOn:true, alexaPlan:null,                   // ⏰ 時刻で鳴らす（サーバに預ける）
+  alexaPlanOn:true, alexaPlan:null, alexaSrv:null,                   // ⏰ 時刻で鳴らす（サーバに預ける）
   trainHistDays:30, trainHistMetric:"vol", trainHistEx:null, trainHistMore:false, // 分析→トレーニング履歴
   storageAlert:false, storageExportYear:null,
   weather:[], weatherCity:null, weatherLoading:false, weatherError:null,
@@ -9015,14 +9015,77 @@ function alexaSyncPlan(force,done){
     .then(r=>r.json().then(j=>({r,j})).catch(()=>({r,j:null})))
     .then(({r,j})=>{
       const ok=r.ok&&j&&j.ok;
+      // v2.0 より前の alexa.php は action:"plan" を知らず、URL が無いと言って断る
+      const old=!ok&&j&&(j.error==="URL"||j.error==="HOST");
       state.alexaPlan={hash:ok?hash:(prev.hash||""), sent:ok?Date.now():(prev.sent||0), n:list.length,
-        err:ok?"":((j&&(j.message||j.error))||`エラー（${r.status}）`)};
+        srv:ok?{ticked:+j.ticked||0, now:+j.now||0, version:j.version||null, at:Date.now()}:(prev.srv||null),
+        err:ok?"":(old?"サーバーの alexa.php が古い版のため、予約を受け付けていません。新しい alexa.php に置き換えてください":((j&&(j.message||j.error))||`エラー（${r.status}）`))};
       saveAlexa();
       done&&done({ok:!!ok,n:list.length,msg:ok?`${list.length}件の予約をサーバに預けました`:state.alexaPlan.err});
     })
     .catch(()=>{ state.alexaPlan={...prev,err:"中継サーバに届きませんでした",n:list.length}; saveAlexa();
       done&&done({ok:false,msg:"中継サーバに届きませんでした"}); });
   return true;
+}
+// 🩺 サーバーの状態（預かっている予約・最後に時報が動いた時刻・最近の記録）。URL や認証は返ってこない
+function alexaServerStatus(done){
+  if(!alexaUsingRelay()){ done&&done(); return; }
+  state.alexaSrv={loading:true}; render();
+  fetch(alexaRelayUrl(),{method:"POST",headers:{"Content-Type":"application/json","X-Secret-Key":AI_SECRET},body:JSON.stringify({action:"status"})})
+    .then(r=>r.json().then(j=>({r,j})).catch(()=>({r,j:null})))
+    .then(({r,j})=>{
+      if(r.ok&&j&&j.ok&&j.version) state.alexaSrv={...j,checked:Date.now()};
+      else if(j&&(j.error==="URL"||j.error==="HOST")) state.alexaSrv={err:"サーバーの alexa.php が古い版です（状態の確認と予約に対応していません）。新しい alexa.php に置き換えてください",old:true,checked:Date.now()};
+      else state.alexaSrv={err:(j&&(j.message||j.error))||`エラー（${r.status}）`,checked:Date.now()};
+      done&&done(); render(); })
+    .catch(()=>{ state.alexaSrv={err:"中継サーバに届きませんでした",checked:Date.now()}; done&&done(); render(); });
+}
+// 時報（cron）が動いているか。サーバーの時計どうしで比べる（端末の時計のずれに左右されない）
+const ALEXA_CRON_STALE=15*60;
+function alexaCronHealth(ticked,now){
+  if(!now) return null;
+  if(!ticked) return {lv:"never",text:"時報（cron）がまだ一度も動いていません。cron の設定を確認してください"};
+  const ago=Math.max(0,now-ticked), m=Math.round(ago/60);
+  const agoTxt=m<1?"1分以内":m<90?`${m}分前`:m<60*48?`${Math.round(m/60)}時間前`:`${Math.round(m/1440)}日前`;
+  if(ago>ALEXA_CRON_STALE) return {lv:"stale",text:`時報（cron）が最後に動いたのは${agoTxt}です。止まっている可能性があります`};
+  return {lv:"ok",text:`時報（cron）は${agoTxt}に動いています`};
+}
+const ALEXA_CRON_CMDS=[
+  ["A) URLで（おすすめ）",`curl -s "${ALEXA_RELAY_DEFAULT}?tick=1" > /dev/null`],
+  ["B) PHPで","/usr/bin/php /home/<アカウント名>/public_html/nuts024.com/health/alexa.php tick"],
+];
+function alexaSrvBox(){
+  const S=state.alexaSrv; if(!S) return null;
+  const box=div({style:{padding:"8px 10px",borderRadius:"8px",background:"#0b1220",border:"1px solid #1e293b",marginBottom:"7px"}});
+  box.id="alexa-srv-status";
+  if(S.loading){ box.appendChild(div({style:{fontSize:"11px",color:"#94a3b8"}},"サーバーに問い合わせています…")); return box; }
+  const ln=(t,c)=>div({style:{fontSize:"11px",color:c||"#cbd5e1",lineHeight:1.7}},t);
+  if(S.err){ box.appendChild(ln(`⚠ ${S.err}`,"#fb923c")); return box; }
+  box.appendChild(ln(`🩺 サーバー：alexa.php v${S.version}　預かっている予約 ${S.n}件`));
+  (S.next||[]).slice(0,3).forEach(x=>{ const d=new Date(x.at*1000); box.appendChild(div({style:{fontSize:"10px",color:"#94a3b8",marginLeft:"10px"}},`${mdLabel(fmtDS(d))} ${hhmm(d.getHours(),d.getMinutes())}　${x.label||""}`)); });
+  const H=alexaCronHealth(S.ticked,S.now);
+  if(H) box.appendChild(ln(`${H.lv==="ok"?"✓":"⚠"} ${H.text}`,H.lv==="ok"?"#4ade80":"#fb923c"));
+  if(S.lastFired) { const d=new Date(S.lastFired*1000); box.appendChild(ln(`🔊 最後に鳴らした：${mdLabel(fmtDS(d))} ${hhmm(d.getHours(),d.getMinutes())}`,"#94a3b8")); }
+  const logs=(S.log||[]).slice(-5).reverse();
+  if(logs.length){
+    box.appendChild(div({style:{fontSize:"10px",color:"#64748b",margin:"5px 0 2px"}},"最近の記録（新しい順）"));
+    logs.forEach(l=>{ const [t,label,res]=String(l).split("\t"); const ok=/^2\d\d$/.test(res||"");
+      box.appendChild(div({style:{fontSize:"10px",color:ok?"#94a3b8":"#fb923c",lineHeight:1.5,wordBreak:"break-word"}},
+        `${ok?"✓":"⚠"} ${(t||"").slice(5,16)}　${label||""}　${ok?`届きました（${res}）`:(res||"")}`)); });
+  }
+  if(H&&H.lv!=="ok"){
+    box.appendChild(div({style:{fontSize:"10px",color:"#94a3b8",margin:"7px 0 4px",lineHeight:1.6}},
+      "ConoHa WING の「ジョブスケジューラー」に、次のどちらかを1分〜5分ごとで登録してください（A がおすすめ：PHPの種類やフォルダの場所に左右されません）。"));
+    ALEXA_CRON_CMDS.forEach(([lab,cmd])=>{
+      const row=div({style:{display:"flex",alignItems:"center",gap:"6px",marginBottom:"4px"}});
+      row.appendChild(div({style:{flex:1,minWidth:0}},[div({style:{fontSize:"10px",color:"#64748b"}},lab),
+        div({style:{fontSize:"10px",color:"#e2e8f0",fontFamily:"monospace",wordBreak:"break-all",background:"#0f172a",padding:"4px 6px",borderRadius:"5px"}},cmd)]));
+      const cb=btn({style:{flexShrink:0,padding:"4px 8px",fontSize:"10px",borderRadius:"6px",border:"1px solid #334155",background:"transparent",color:"#94a3b8",cursor:"pointer",fontFamily:"inherit"}},"📋");
+      cb.addEventListener('click',()=>copyText(cmd)); row.appendChild(cb); box.appendChild(row);
+    });
+    box.appendChild(div({style:{fontSize:"9px",color:"#475569",lineHeight:1.6}},"B の「<アカウント名>」と「nuts024.com」は、コントロールパネルのファイルマネージャーで alexa.php の場所を見て合わせてください。"));
+  }
+  return box;
 }
 // 起動後と1分ごとの見回りから呼ぶ（変わっていなければ何も送らない）
 function alexaMaybeSyncPlan(){ if(!_appReady||!state.alexaOn||!state.alexaPlanOn) return; alexaSyncPlan(false); }
@@ -9251,11 +9314,20 @@ function renderAlexaPanel(){
         st.appendChild(div({style:{fontSize:"10px",color:"#cbd5e1",marginTop:"3px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},
           `${mdLabel(fmtDS(d))} ${hhmm(d.getHours(),d.getMinutes())}　${x.label}　→ ${x.name}`)); });
       if(list.length>3) st.appendChild(div({style:{fontSize:"10px",color:"#475569",marginTop:"3px"}},`ほか${list.length-3}件`));
+      // 最後に預けたときにサーバーが教えてくれた「時報が最後に動いた時刻」
+      { const sv=pl.srv, H=sv&&alexaCronHealth(sv.ticked,sv.now);
+        if(H&&H.lv!=="ok") st.appendChild(div({style:{fontSize:"10px",color:"#fb923c",marginTop:"5px",lineHeight:1.6}},`⚠ ${H.text}（「🩺 サーバーの状態を確認」で詳しく見られます）`)); }
       card.appendChild(st);
       const sb=btn({style:{width:"100%",padding:"8px",marginBottom:"7px",borderRadius:"8px",cursor:"pointer",fontSize:"11px",fontWeight:600,fontFamily:"inherit",
         border:"1px solid #334155",background:"transparent",color:"#94a3b8"}},"🔄 いま送り直す");
       sb.addEventListener('click',()=>{ alexaSyncPlan(true,r=>{ showToast(r.ok?`⏰ ${r.msg}`:`⚠️ ${r.msg}`, r.ok?"#22c55e":"#f97316"); render(); }); });
-      card.appendChild(sb);
+      sb.style.marginBottom="0"; sb.style.flex="1";
+      const ck=btn({style:{flex:1,padding:"8px",borderRadius:"8px",cursor:"pointer",fontSize:"11px",fontWeight:600,fontFamily:"inherit",
+        border:"1px solid #0ea5e9",background:"#0ea5e918",color:"#38bdf8"}},"🩺 サーバーの状態を確認");
+      ck.setAttribute('data-alexasrv','1');
+      ck.addEventListener('click',()=>alexaServerStatus());
+      card.appendChild(div({style:{display:"flex",gap:"6px",marginBottom:"7px"}},[sb,ck]));
+      { const sbx=alexaSrvBox(); if(sbx) card.appendChild(sbx); }
       // 就寝・寝支度
       const sl=getAlexaSleep();
       [["bed","🌙 就寝の目標時刻"],["wind","🛏 寝支度の目標時刻"]].forEach(([k,l])=>{
