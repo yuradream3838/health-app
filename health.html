@@ -224,7 +224,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.10"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.11"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -7743,12 +7743,14 @@ function renderPlanCustomTodoModal(){
           onClick:()=>{ if(confirm("この計測を取り消しますか？（ここまでの時間は残りません）")){ cancelCustomTodoTimer(vd,ctI); showToast("計測を取り消しました"); render(); } }},"✕ 計測を取り消す"); b.setAttribute('data-ctact','cancel'); return b; };
       if(doneT){
         if(recI.startTime&&recI.endTime){ try{ m.appendChild(div({style:{fontSize:"12px",color:"#4ade80",fontWeight:700,marginBottom:"6px"}},`⏱ 所要 ${fmtDur(ctElapsedMs(recI))}${(recI.segs||[]).length>1?`（${recI.segs.length}回に分けて）`:""}`)); }catch{} }
+        m.appendChild(ctSegListBox(recI));
         m.appendChild(btn({style:{width:"100%",padding:"11px",border:"none",borderRadius:"8px",color:"#fff",cursor:"pointer",fontSize:"13px",fontWeight:700,marginBottom:"14px",background:"#334155"},
           onClick:()=>{ const cur={...((state.todos[vd]||{})[pc.uid]||{})}; ["startTime","endTime","time","segs","durMs","paused"].forEach(k=>delete cur[k]); setTodo(vd,pc.uid,{...cur,checked:false}); showToast("未完了に戻しました"); render(); }},"↩ 未完了に戻す"));
       } else if(running||pausedT){
         if(running){ const d0=new Date(recI.startTime);
           m.appendChild(div({style:{fontSize:"11px",color:"#f97316",fontWeight:700,marginBottom:"6px"}},`⏱ 計測中（開始 ${hhmm(d0.getHours(),d0.getMinutes())}・経過 ${fmtDur(ctElapsedMs(recI))}）`)); }
         else m.appendChild(div({style:{fontSize:"11px",color:"#eab308",fontWeight:700,marginBottom:"6px"}},`⏸ 中断中（ここまで ${fmtDur(ctElapsedMs(recI))}・${recI.segs.length}回目まで）`));
+        m.appendChild(ctSegListBox(recI));
         m.appendChild(div({style:{display:"flex",gap:"8px",marginBottom:"8px"}},[
           running?bigBtn("⏸ 中断する",{border:"1px solid #eab308",color:"#eab308",background:"#eab30822"},()=>{ pauseCustomTodoTimer(vd,ctI); showToast(`⏸ ${lblI}を中断しました`,"#eab308"); },"pause")
                  :bigBtn("▶ 再開する",{border:"none",color:"#fff",background:"linear-gradient(135deg,#0ea5e9,#6366f1)"},()=>{ startCustomTodoTimer(vd,ctI); showToast(`▶ ${lblI} 再開`); },"resume"),
@@ -7842,34 +7844,51 @@ function renderPlanCustomTodoModal(){
   if(hasAnyOv) m.appendChild(btn({style:{width:"100%",padding:"8px",marginBottom:"12px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#94a3b8",cursor:"pointer",fontSize:"12px"},
     onClick:()=>{ const cur={...((state.todos[vd]||{})[pc.uid]||{})}; delete cur.labelOverride; delete cur.noteOverride; delete cur.timeOverride; setTodo(vd,pc.uid,cur); state.modal=null; showToast("この日の変更を元に戻しました"); render(); }},"↩ この日の変更をすべて元に戻す"));
   m.appendChild(div({style:{borderTop:"1px solid #1e293b",margin:"4px 0 10px"}}));
-  // 時間計測式：開始・終了時刻を編集（実績は開始時刻から反映される）
-  if(ct && ct.mode==='timer' && (rec.startTime||rec.endTime)){
-    const sD=rec.startTime?new Date(rec.startTime):new Date();
-    const eD=rec.endTime?new Date(rec.endTime):null;
-    if(pc.tsH===undefined){ pc.tsH=sD.getHours(); pc.tsM=sD.getMinutes(); pc.hasEnd=!!eD; pc.teH=eD?eD.getHours():sD.getHours(); pc.teM=eD?eD.getMinutes():((sD.getMinutes()+30)%60); }
-    m.appendChild(div({style:{fontSize:"11px",color:"#38bdf8",margin:"0 0 5px",fontWeight:600}},"⏱ 計測時刻を編集"));
-    const df=(getH,getM,set,col)=>{const i=document.createElement('input');i.type='time';i.value=`${String(getH()).padStart(2,'0')}:${String(getM()).padStart(2,'0')}`;i.style.cssText=`flex:1;min-width:0;padding:8px;background:#0f172a;border:1px solid ${col};border-radius:8px;color:#e2e8f0;font-size:15px;color-scheme:dark;font-family:inherit`;i.addEventListener('change',e=>{const q=(e.target.value||'').split(':');const H=Number(q[0]),M=Number(q[1]);if(!isNaN(H)&&!isNaN(M))set(H,M);});return i;};
-    const trow2=div({style:{display:"flex",gap:"8px",alignItems:"center",marginBottom:"8px"}});
-    trow2.appendChild(span({style:{fontSize:"11px",color:"#64748b",flexShrink:0}},"開始"));
-    trow2.appendChild(df(()=>pc.tsH,()=>pc.tsM,(H,M)=>{pc.tsH=H;pc.tsM=M;},"#38bdf855"));
-    trow2.appendChild(span({style:{fontSize:"11px",color:"#64748b",flexShrink:0}},"終了"));
-    if(pc.hasEnd) trow2.appendChild(df(()=>pc.teH,()=>pc.teM,(H,M)=>{pc.teH=H;pc.teM=M;},"#22c55e55"));
-    else trow2.appendChild(span({style:{flex:1,fontSize:"11px",color:"#f97316"}},"計測中"));
-    m.appendChild(trow2);
-    // 翌日トグル（0時をまたぐ計測）
-    { const ndt=(label,on,onClick)=>{const b=btn({style:{flex:1,padding:"7px",borderRadius:"7px",cursor:"pointer",fontSize:"11px",fontWeight:600,border:`1px solid ${on?"#38bdf8":"#334155"}`,background:on?"#0ea5e922":"transparent",color:on?"#38bdf8":"#64748b"}},`${label} ${on?"🌙翌日":"当日"}`);b.addEventListener('click',onClick);return b;};
-      m.appendChild(div({style:{display:"flex",gap:"6px",marginBottom:"8px"}},[
-        ndt("開始",!!pc.tsNextDay,()=>{pc.tsNextDay=!pc.tsNextDay;render();}),
-        pc.hasEnd?ndt("終了",!!pc.teNextDay,()=>{pc.teNextDay=!pc.teNextDay;render();}):null
-      ])); }
+  // 時間計測式：計測の区間と、そのあいだの⏸ 中断を編集する（中断しなかった回は区間1つ）
+  if(ct && ct.mode==='timer' && (rec.startTime||rec.endTime||(rec.segs||[]).length)){
+    const tst=ctTimerState(rec);
+    // 下書き：[{s:"HH:MM", e:"HH:MM"|null}]（e が null＝計測中の最後の区間）
+    if(!pc.segDraft){ pc.segDraft=ctSegDraftOf(rec,vd); pc.tsNextDay=!!(pc.segDraft[0]&&pc.segDraft[0].nd); }
+    const D=pc.segDraft;
+    m.appendChild(div({style:{fontSize:"11px",color:"#38bdf8",margin:"0 0 5px",fontWeight:600}},"⏱ 計測と中断の時刻を編集"));
+    const tIn=(val,set,col,attr)=>{ const i=document.createElement('input'); i.type='time'; i.value=val||""; if(attr) i.setAttribute('data-segin',attr);
+      i.style.cssText=`flex:1;min-width:0;padding:7px;background:#0f172a;border:1px solid ${col};border-radius:8px;color:#e2e8f0;font-size:14px;color-scheme:dark;font-family:inherit`;
+      i.addEventListener('change',e=>{ if(e.target.value){ set(e.target.value); render(); } }); return i; };
+    const mini=(t,col,fn,attr)=>{ const b=btn({style:{flexShrink:0,padding:"4px 7px",fontSize:"10px",borderRadius:"6px",cursor:"pointer",fontFamily:"inherit",border:`1px solid ${col}55`,background:"transparent",color:col}},t); if(attr) b.setAttribute('data-segact',attr); b.addEventListener('click',fn); return b; };
+    D.forEach((g,i)=>{
+      const r=div({style:{display:"flex",gap:"6px",alignItems:"center",marginBottom:"5px"}});
+      r.appendChild(span({style:{fontSize:"10px",color:"#94a3b8",width:"38px",flexShrink:0}},D.length>1?`計測${i+1}`:"計測"));
+      r.appendChild(tIn(g.s,v=>{ D[i].s=v; },"#38bdf855",`s${i}`));
+      r.appendChild(span({style:{fontSize:"11px",color:"#475569",flexShrink:0}},"〜"));
+      if(g.e!=null) r.appendChild(tIn(g.e,v=>{ D[i].e=v; },"#22c55e55",`e${i}`));
+      else r.appendChild(span({style:{flex:1,fontSize:"11px",color:"#f97316"}},"計測中"));
+      if(g.e!=null) r.appendChild(mini("⏸＋",'#eab308',()=>{ ctSegSplit(D,i); render(); },`split${i}`));
+      if(D.length>1) r.appendChild(mini("🗑",'#f87171',()=>{ D.splice(i,1); render(); },`del${i}`));
+      m.appendChild(r);
+      // 区間と区間のあいだ＝中断（前の区間の終わり〜次の区間の始まり）
+      if(i<D.length-1){
+        const pr=div({style:{display:"flex",gap:"6px",alignItems:"center",marginBottom:"5px",padding:"4px 6px",borderRadius:"8px",background:"#eab30810",border:"1px dashed #eab30855"}});
+        pr.setAttribute('data-segpause',String(i));
+        pr.appendChild(span({style:{fontSize:"10px",color:"#eab308",width:"32px",flexShrink:0}},"⏸ 中断"));
+        pr.appendChild(tIn(g.e,v=>{ D[i].e=v; },"#eab30855",`pe${i}`));
+        pr.appendChild(span({style:{fontSize:"11px",color:"#475569",flexShrink:0}},"〜"));
+        pr.appendChild(tIn(D[i+1].s,v=>{ D[i+1].s=v; },"#eab30855",`ps${i}`));
+        const pm=ctHmDiff(g.e,D[i+1].s); pr.appendChild(span({style:{fontSize:"10px",color:"#eab308",flexShrink:0,minWidth:"34px"}},pm!=null?fmtDur(pm*60000):""));
+        pr.appendChild(mini("つなぐ",'#94a3b8',()=>{ D[i]={...D[i],e:D[i+1].e}; D.splice(i+1,1); render(); },`merge${i}`));
+        m.appendChild(pr);
+      }
+    });
+    if(tst==='paused'){ const last=D[D.length-1]; m.appendChild(div({style:{fontSize:"10px",color:"#eab308",margin:"0 0 6px 4px"}},`⏸ ${last&&last.e?last.e:""}〜 いま中断中`)); }
+    // 開始の日（0時をまたいで始めた回）
+    { const on=!!pc.tsNextDay; const b=btn({style:{width:"100%",padding:"6px",borderRadius:"7px",cursor:"pointer",fontSize:"11px",fontWeight:600,marginBottom:"8px",border:`1px solid ${on?"#38bdf8":"#334155"}`,background:on?"#0ea5e922":"transparent",color:on?"#38bdf8":"#64748b"}},`最初の開始 ${on?"🌙翌日":"当日"}（あとの時刻は順に並べ、前より早ければ翌日として扱います）`);
+      b.addEventListener('click',()=>{ pc.tsNextDay=!on; render(); }); m.appendChild(b); }
+    const tot=ctDraftTotals(D);
+    if(tot) m.appendChild(div({style:{fontSize:"11px",color:"#cbd5e1",margin:"0 0 8px"}},`計測 ${fmtDur(tot.work*60000)}${tot.pause?`　⏸ 中断 ${fmtDur(tot.pause*60000)}（${tot.n}回）`:""}`));
     m.appendChild(btn({style:{width:"100%",padding:"9px",marginBottom:"6px",background:"#0ea5e918",border:"1px solid #0ea5e9",borderRadius:"8px",color:"#38bdf8",fontSize:"13px",fontWeight:600,cursor:"pointer"},
-      onClick:()=>{ const p=(vd||"").split('-'); const st=new Date(+p[0],+p[1]-1,+p[2],pc.tsH,pc.tsM,0,0); if(pc.tsNextDay)st.setDate(st.getDate()+1); const cur2={...((state.todos[vd]||{})[pc.uid]||{})}; cur2.startTime=st.toISOString();
-        if(pc.hasEnd){ let et=new Date(+p[0],+p[1]-1,+p[2],pc.teH,pc.teM,0,0); if(pc.teNextDay)et.setDate(et.getDate()+1); if(et.getTime()<=st.getTime())et=new Date(et.getTime()+86400000); cur2.endTime=et.toISOString(); cur2.checked=true; cur2.time=et.toISOString(); }
-        // 時刻を手で直したら、中断の区間は使わない（開始〜終了をそのまま所要時間にする）
-        ["segs","durMs","paused"].forEach(k=>delete cur2[k]);
-        setTodo(vd,pc.uid,cur2); state.modal=null; showToast("計測時刻を保存しました","#38bdf8"); render(); }},"✅ 計測時刻を保存"));
-    if(!pc.hasEnd) m.appendChild(btn({style:{width:"100%",padding:"8px",marginBottom:"6px",background:"#22c55e18",border:"1px solid #22c55e",borderRadius:"8px",color:"#4ade80",fontSize:"12px",fontWeight:600,cursor:"pointer"},
-      onClick:()=>{ pc.hasEnd=true; render(); }},"⏹ 終了時刻を入れて完了にする"));
+      onClick:()=>{ const err=ctSaveSegDraft(vd,ct,D,{nextDay:!!pc.tsNextDay}); if(err){ showToast(`⚠️ ${err}`,"#f97316"); return; }
+        state.modal=null; showToast("計測と中断の時刻を保存しました","#38bdf8"); render(); }},"✅ 時刻を保存"));
+    if(tst==='running'&&D.length&&D[D.length-1].e==null) m.appendChild(btn({style:{width:"100%",padding:"8px",marginBottom:"6px",background:"#22c55e18",border:"1px solid #22c55e",borderRadius:"8px",color:"#4ade80",fontSize:"12px",fontWeight:600,cursor:"pointer"},
+      onClick:()=>{ const n=new Date(); D[D.length-1].e=hhmm(n.getHours(),n.getMinutes()); pc.finishNow=true; render(); }},"⏹ 終了時刻を入れて完了にする"));
     m.appendChild(btn({style:{width:"100%",padding:"8px",marginBottom:"12px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#94a3b8",cursor:"pointer",fontSize:"12px"},
       onClick:()=>{ const cur2={...((state.todos[vd]||{})[pc.uid]||{})}; ["startTime","endTime","time","segs","durMs","paused"].forEach(k=>delete cur2[k]); setTodo(vd,pc.uid,{...cur2,checked:false}); state.modal=null; showToast("計測をリセットしました"); render(); }},"↩ 計測をリセット"));
     m.appendChild(div({style:{borderTop:"1px solid #1e293b",margin:"0 0 10px"}}));
@@ -11321,6 +11340,68 @@ function ctTimerStatus(rec,prefix){ const st=ctTimerState(rec), p=prefix||"";
   if(st==='paused') return `⏸ ${p}中断中（ここまで ${fmtDur(ctElapsedMs(rec))}）`;
   return null; }
 function ctTimerColor(rec){ const st=ctTimerState(rec); return st==='running'?"#f97316":st==='paused'?"#eab308":null; }
+// ── ⏸ 中断の記録と編集 ──
+// 中断＝区間と区間のあいだ（前の区間の終わり〜次の区間の始まり）。別に保存はせず、区間から出す。
+function ctRecSegs(rec){ rec=rec||{}; const segs=[...(rec.segs||[])].map(x=>({s:x.s,e:x.e}));
+  if(rec.startTime&&!rec.endTime) segs.push({s:rec.startTime,e:null});                 // 計測中の区間
+  else if(!segs.length&&rec.startTime) segs.push({s:rec.startTime,e:rec.endTime||null}); // 中断しなかった回
+  return segs; }
+function ctPauses(rec){ const g=ctRecSegs(rec), out=[]; for(let i=0;i<g.length-1;i++){ if(g[i].e&&g[i+1].s) out.push({s:g[i].e,e:g[i+1].s,ms:Math.max(0,Date.parse(g[i+1].s)-Date.parse(g[i].e))}); }
+  if(ctTimerState(rec)==='paused'&&g.length&&g[g.length-1].e) out.push({s:g[g.length-1].e,e:null,ms:Math.max(0,Date.now()-Date.parse(g[g.length-1].e))});
+  return out; }
+// 編集用の下書き。最初の開始が vd の翌日なら nd（翌日）を付ける
+function ctSegDraftOf(rec,vd){ const g=ctRecSegs(rec), t=x=>{ const d=new Date(x); return hhmm(d.getHours(),d.getMinutes()); };
+  return g.map((x,i)=>({s:t(x.s),e:x.e?t(x.e):null,...(i===0&&vd&&fmtDS(new Date(x.s))>vd?{nd:true}:{})})); }
+function ctHm(v){ const p=String(v||"").split(":"); if(p.length<2) return null; const h=+p[0], m=+p[1]; return (isNaN(h)||isNaN(m))?null:h*60+m; }
+function ctHmDiff(a,b){ const x=ctHm(a), y=ctHm(b); if(x==null||y==null) return null; let d=y-x; if(d<0) d+=1440; return d; }
+function ctSegSplit(D,i){ const g=D[i], s=ctHm(g.s), e=ctHm(g.e); if(s==null||e==null) return; let len=e-s; if(len<0) len+=1440; if(len<2) return;
+  const a=(s+Math.floor(len/3))%1440, b=(s+Math.floor(len*2/3))%1440; const f=x=>hhmm(Math.floor(x/60),x%60);
+  D.splice(i,1,{s:g.s,e:f(a)},{s:f(b),e:g.e}); }
+function ctDraftTotals(D){ let work=0,pause=0,n=0;
+  D.forEach((g,i)=>{ if(g.e!=null){ const d=ctHmDiff(g.s,g.e); if(d!=null) work+=d; } if(i<D.length-1&&g.e!=null){ const p=ctHmDiff(g.e,D[i+1].s); if(p!=null){ pause+=p; n++; } } });
+  return {work,pause,n}; }
+// 下書きを保存する：時刻を順に並べ（前より早ければ翌日）、区間・中断・完了の状態を組み直す。エラーなら文を返す
+function ctSaveSegDraft(vd,ct,D,opt){
+  if(!D.length) return "区間がありません";
+  const base=parseDS(vd); let day=(opt&&opt.nextDay)?1:0, prev=null;
+  const at=hm=>{ const x=ctHm(hm); if(x==null) return null; let d=new Date(base.getFullYear(),base.getMonth(),base.getDate()+day,Math.floor(x/60),x%60);
+    while(prev&&d.getTime()<prev.getTime()){ day++; d=new Date(base.getFullYear(),base.getMonth(),base.getDate()+day,Math.floor(x/60),x%60); } prev=d; return d; };
+  const segs=[];
+  for(let i=0;i<D.length;i++){
+    const s=at(D[i].s); if(!s) return `計測${i+1}の開始を入れてください`;
+    if(D[i].e==null){ if(i!==D.length-1) return "計測中の区間は最後だけです"; segs.push({s:s.toISOString(),e:null}); break; }
+    const e=at(D[i].e); if(!e) return `計測${i+1}の終了を入れてください`;
+    if(e.getTime()<=s.getTime()) return `計測${i+1}が0分です`;
+    if(e.getTime()-s.getTime()>24*3600000) return `計測${i+1}が24時間を超えています`;
+    segs.push({s:s.toISOString(),e:e.toISOString()});
+  }
+  const cur={...((state.todos[vd]||{})[ct.uid]||{})}; ["segs","durMs","paused","startTime","endTime"].forEach(k=>delete cur[k]);
+  const last=segs[segs.length-1], st=ctTimerState((state.todos[vd]||{})[ct.uid]);
+  if(last.e==null){                                                     // 計測中のまま
+    const done=segs.slice(0,-1);
+    setTodo(vd,ct.uid,{...cur,startTime:last.s,endTime:null,checked:false,paused:false,...(done.length?{segs:done}:{})});
+  } else if(st==='paused'){                                             // 中断中のまま
+    setTodo(vd,ct.uid,{...cur,segs,paused:true,checked:false});
+  } else {                                                              // 完了（または完了にする）
+    const split=segs.length>1;
+    setTodo(vd,ct.uid,{...cur,startTime:segs[0].s,endTime:last.e,checked:true,time:last.e,...(split?{segs,durMs:ctSegsMs(segs)}:{})});
+  }
+  return "";
+}
+// 計測と中断の並び（詳細画面の表示用）。中断が無ければ何も出さない
+function ctSegListBox(rec){
+  const g=ctRecSegs(rec), ps=ctPauses(rec);
+  if(!ps.length) return div({});
+  const t=x=>{ const d=new Date(x); return hhmm(d.getHours(),d.getMinutes()); };
+  const box=div({style:{padding:"6px 9px",borderRadius:"8px",background:"#0f172a",border:"1px solid #1e293b",marginBottom:"8px"}}); box.setAttribute('data-seglist','1');
+  g.forEach((x,i)=>{
+    box.appendChild(div({style:{fontSize:"11px",color:"#cbd5e1",lineHeight:1.7}},`⏱ ${t(x.s)}〜${x.e?t(x.e):"計測中"}${x.e?`（${fmtDur(Date.parse(x.e)-Date.parse(x.s))}）`:""}`));
+    const p=ps[i]; if(p) box.appendChild(div({style:{fontSize:"11px",color:"#eab308",lineHeight:1.7,paddingLeft:"10px"}},`⏸ 中断 ${t(p.s)}〜${p.e?t(p.e):"いま"}（${fmtDur(p.ms)}）`));
+  });
+  const pt=ps.reduce((a,p)=>a+p.ms,0);
+  box.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginTop:"2px"}},`中断 ${ps.length}回・計${fmtDur(pt)}　（✏️ 編集で時刻を直せます）`));
+  return box;
+}
 // ▶ 開始／⏸ 中断＋⏹ 終了／▶ 再開＋⏹ 終了 のボタン（定期ルーティンタブ・モード画面・ウィジェット・詳細で共用）
 function ctTimerControls(vd,ct,opts){
   opts=opts||{}; const rec=(state.todos[vd]||{})[ct.uid]||{}, st=ctTimerState(rec), lbl=opts.label||rec.labelOverride||ct.label, accent=opts.accent||"#38bdf8", c=!!opts.compact;
@@ -13521,7 +13602,7 @@ function renderOccasional(vd){
     lab.appendChild(div({style:{fontSize:"9px",color:_runT?ctTimerColor(_recT):(_snToday?"#a78bfa":(overdue?"#f97316":"#64748b"))}},`${customTodoIntervalLabel(ct)}${_timeStr}　${statusStr}`));
     if(isTimer){
       const rec=(state.todos[vd]||{})[ct.uid]||{};
-      if(rec.startTime && rec.endTime){ lab.appendChild(div({style:{fontSize:"10px",color:"#4ade80",fontWeight:700,marginTop:"1px"}},`⏱ 所要 ${fmtDur(ctElapsedMs(rec))}${(rec.segs||[]).length>1?`（${rec.segs.length}回に分けて）`:""}`)); }
+      if(rec.startTime && rec.endTime){ lab.appendChild(div({style:{fontSize:"10px",color:"#4ade80",fontWeight:700,marginTop:"1px"}},`⏱ 所要 ${fmtDur(ctElapsedMs(rec))}${(()=>{ const ps=ctPauses(rec); return ps.length?`（⏸ 中断${ps.length}回・${fmtDur(ps.reduce((x,p)=>x+p.ms,0))}）`:""; })()}`)); }
       else if(ctTimerState(rec)==='paused'){ lab.appendChild(div({style:{fontSize:"10px",color:"#eab308",fontWeight:700,marginTop:"1px"}},`⏸ 中断中（ここまで ${fmtDur(ctElapsedMs(rec))}）`)); }
       else if(rec.startTime){ const d0=new Date(rec.startTime); lab.appendChild(div({style:{fontSize:"10px",color:"#f97316",fontWeight:700,marginTop:"1px"}},`⏱ 計測中（開始 ${d0.getHours()}:${String(d0.getMinutes()).padStart(2,'0')}・経過 ${fmtDur(ctElapsedMs(rec))}）`)); }
     }
