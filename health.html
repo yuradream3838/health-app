@@ -224,7 +224,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.16"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.17"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -9198,6 +9198,12 @@ const ALEXA_SRV_OLD_TXT=`サーバーの alexa.php を v${ALEXA_SRV_MIN} に更�
 const ALEXA_CRON_STALE=15*60;
 const ALEXA_CRON_SLOW=10*60;   // これより間隔が長い時報は「遅い」（予約が遅れて鳴る）
 function alexaFmtMin(sec){ const m=Math.round(sec/60); return m<1?"1分以内":m<90?`${m}分`:m<60*48?`${Math.round(m/60)}時間`:`${Math.round(m/1440)}日`; }
+// 最近の時報の間隔（直近3回の差の真ん中）。サーバーの interval は直近12回の真ん中なので、cron を直してもしばらく古い間隔のまま
+function alexaRecentInterval(ticks){
+  const t=(ticks||[]).map(Number).filter(x=>x>0).sort((a,b)=>a-b), d=[];
+  for(let i=1;i<t.length;i++) if(t[i]>t[i-1]) d.push(t[i]-t[i-1]);
+  const r=d.slice(-3).sort((a,b)=>a-b); return r.length?r[Math.floor(r.length/2)]:0;
+}
 function alexaCronHealth(ticked,now,interval){
   if(!now) return null;
   if(!ticked) return {lv:"never",text:"時報（cron）がまだ一度も動いていません。cron の設定を確認してください"};
@@ -9223,8 +9229,13 @@ function alexaSrvBox(){
   box.appendChild(ln(`🩺 サーバー：alexa.php v${S.version}　預かっている予約 ${S.n}件`));
   if(alexaSrvOutdated(S.version)) box.appendChild(ln(`⚠ ${ALEXA_SRV_OLD_TXT}`,"#fb923c"));
   (S.next||[]).slice(0,3).forEach(x=>{ const d=new Date(x.at*1000); box.appendChild(div({style:{fontSize:"10px",color:"#94a3b8",marginLeft:"10px"}},`${mdLabel(fmtDS(d))} ${hhmm(d.getHours(),d.getMinutes())}　${x.label||""}`)); });
-  const H=alexaCronHealth(S.ticked,S.now,S.interval);
+  const H=alexaCronHealth(S.ticked,S.now,alexaRecentInterval(S.ticks)||S.interval);
   if(H) box.appendChild(ln(`${H.lv==="ok"?"✓":"⚠"} ${H.text}`,H.lv==="ok"?"#4ade80":"#fb923c"));
+  // 時報が実際に動いた時刻（cron の設定が「毎時◯分」になっていないか、ここで分かる）
+  { const tk=(S.ticks||[]).map(Number).filter(x=>x>0).sort((a,b)=>a-b).slice(-6);
+    if(tk.length){ const f=x=>{ const d=new Date(x*1000); return hhmm(d.getHours(),d.getMinutes()); };
+      const d0=new Date(tk[0]*1000);
+      box.appendChild(div({style:{fontSize:"10px",color:"#94a3b8",lineHeight:1.6}},`🕐 最近の時報（古い順・${mdLabel(fmtDS(d0))}〜）：${tk.map(f).join("・")}`)); } }
   if(S.lastFired) { const d=new Date(S.lastFired*1000); box.appendChild(ln(`🔊 最後に鳴らした：${mdLabel(fmtDS(d))} ${hhmm(d.getHours(),d.getMinutes())}`,"#94a3b8")); }
   const logs=(S.log||[]).slice(-5).reverse();
   if(logs.length){
@@ -9244,7 +9255,7 @@ function alexaSrvBox(){
       cb.addEventListener('click',()=>copyText(cmd)); row.appendChild(cb); box.appendChild(row);
     });
     box.appendChild(div({style:{fontSize:"10px",color:"#94a3b8",margin:"6px 0 4px",lineHeight:1.6}},
-      "1時間より細かい間隔を選べないときは、同じものを「0分・5分・10分…55分」のように分をずらして複数登録するか、外部の無料のcronサービス（例：cron-job.org）に次のURLを1分ごとで登録してください："));
+      "⚠ 設定画面の「分」の欄は「何分ごと」ではなく「毎時その分に1回」の意味のことがあります（「5」と入れると毎時5分に1回だけ）。上の「最近の時報」が1時間おきなら、この状態です。1時間より細かい間隔を選べないときは、同じものを「0分・5分・10分…55分」のように分をずらして複数登録するか、外部の無料のcronサービス（例：cron-job.org）に次のURLを1分ごとで登録してください："));
     { const u=`${ALEXA_RELAY_DEFAULT}?tick=1`, row=div({style:{display:"flex",alignItems:"center",gap:"6px",marginBottom:"6px"}});
       row.appendChild(div({style:{flex:1,minWidth:0,fontSize:"10px",color:"#e2e8f0",fontFamily:"monospace",wordBreak:"break-all",background:"#0f172a",padding:"4px 6px",borderRadius:"5px"}},u));
       const cb=btn({style:{flexShrink:0,padding:"4px 8px",fontSize:"10px",borderRadius:"6px",border:"1px solid #334155",background:"transparent",color:"#94a3b8",cursor:"pointer",fontFamily:"inherit"}},"📋");
