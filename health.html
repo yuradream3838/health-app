@@ -224,7 +224,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.13"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.14"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -4189,6 +4189,9 @@ function renderSelfMode(){
   }
   else if(key==="lonely"){
     inner.appendChild(div({style:{fontSize:"13px",color:"#e6dccb",lineHeight:1.7,textAlign:"center",marginBottom:"12px",whiteSpace:"pre-line"}},"さみしさは、つながりたいというサイン。\n小さく一歩だけ、外に向けてみよう。"));
+    // 🫂 つながり習慣（今週の回数・タップで記録。記録は 達成→つながり と同じ）
+    { const cc=connectHabitCard(vd,false,{peek,onOpen:()=>{ exitSelfMode(true); state.tab="達成"; state.achieveSubTab="つながり"; state.widget=false; render(); }});
+      cc.setAttribute('data-lonelyconnect','1'); inner.appendChild(cc); }
     if(state.selfBreathing) inner.appendChild(breathingGuide(M.accent));
     inner.appendChild(selfActionBtn("🫂 誰かに連絡する",M.accent,()=>{ exitSelfMode(true); state.tab="達成"; state.achieveSubTab="つながり"; state.widget=false; render(); }));
     inner.appendChild(selfActionBtn(state.selfBreathing?"🫁 呼吸をやめる":"🫁 深呼吸する（4-7-8）",M.accent,()=>{state.selfBreathing=!state.selfBreathing;render();}));
@@ -12494,7 +12497,9 @@ function nightRitualCard(vd, full){
   return c;
 }
 // ── カード③：つながり習慣＋週次ふりかえり（孤独＝外飲みの根っこ、を人とのつながりで満たす）──
-function connectHabitCard(vd, full){
+// opts.onOpen：「週次ふりかえりを開く」を押したときの移り方（モード画面から開くときは画面を閉じてから）／opts.peek：プレビュー中は記録のボタンを押せない
+function connectHabitCard(vd, full, opts){
+  opts=opts||{};
   const g=getConnectGoal();
   const wk=connectCountThisWeek(), target=g.weeklyTarget, streak=connectWeeklyStreak();
   const done=wk>=target;
@@ -12526,7 +12531,8 @@ function connectHabitCard(vd, full){
     tags.forEach(tag=>{
       const b=btn({style:{padding:"7px 10px",borderRadius:"14px",border:"1px solid #f472b655",background:"#f472b614",color:"#f9a8d4",fontSize:"12px",cursor:"pointer",fontFamily:"inherit"}},tag);
       b.addEventListener('click',()=>{ logInvest(vd,{label:tag,cat:"🫂 つながり",amount:0,note:state.connectNote||""}); state.connectNote=""; showToast(`🫂 ${tag}`); render(); });
-      row.appendChild(b);
+      b.setAttribute('data-connecttag',tag);
+      row.appendChild(opts.peek?peekDisabled(b):b);
     });
     c.appendChild(row);
     // タグの編集（追加・変更・削除・並び替え）
@@ -12558,7 +12564,7 @@ function connectHabitCard(vd, full){
   }
   if(!full){
     const open=btn({style:{width:"100%",padding:"7px",background:"transparent",border:"1px solid #334155",borderRadius:"7px",color:"#64748b",cursor:"pointer",fontSize:"11px",fontFamily:"inherit"}},"週次ふりかえりを開く →");
-    open.addEventListener('click',()=>{ exitWidget&&exitWidget(); state.tab="達成"; state.achieveSubTab="つながり"; render(); });
+    open.addEventListener('click',()=>{ if(opts.onOpen){ opts.onOpen(); return; } exitWidget&&exitWidget(); state.tab="達成"; state.achieveSubTab="つながり"; render(); });
     c.appendChild(open);
     return c;
   }
