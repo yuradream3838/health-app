@@ -224,7 +224,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.14"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.15"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -3879,18 +3879,92 @@ function selfCondHour(){ return new Date().getHours(); }
 // 基準日 activeDay() は深夜に前日を指すことがあり、それを使うと 0時すぎの記録が
 // 「前日の同じ時刻」（＝24時間前）に入ってしまうため、ここでは必ず実際の日付を使う。
 function selfCondDay(){ return todayStr(); }
+// ── 💓 脈拍（任意）：数字を入れるか、15秒のタイマーで測る ──
+// 「⏱ 15秒で測る」→ 3・2・1 のカウントダウン → 15秒（拍に合わせてタップすると数えられる）→ 15秒の拍数を確かめて ×4＝1分あたり。
+// タイマーの状態は state.pulseTimer＝{key, t0(カウントダウン開始), taps, phase:'count'|'run'|'enter', n}。数字は200msごとに書き換え、段階が変わったら描き直す。
+const PULSE_COUNTDOWN=3, PULSE_SECS=15;
+let _pulseTick=null;
+function pulsePhaseAt(pt,now){ const e=(now-pt.t0)/1000; return e<PULSE_COUNTDOWN?'count':e<PULSE_COUNTDOWN+PULSE_SECS?'run':'enter'; }
+function pulseStart(key){ state.pulseTimer={key,t0:Date.now(),taps:0,phase:'count',n:null}; pulseEnsureTick(); render(); }
+function pulseStop(){ state.pulseTimer=null; if(_pulseTick){ clearInterval(_pulseTick); _pulseTick=null; } }
+function pulseEnsureTick(){
+  if(_pulseTick) return;
+  _pulseTick=setInterval(()=>{
+    const pt=state.pulseTimer; if(!pt||pt.phase==='enter'){ clearInterval(_pulseTick); _pulseTick=null; return; }
+    const now=Date.now(), ph=pulsePhaseAt(pt,now);
+    if(ph!==pt.phase){ pt.phase=ph; if(ph==='run'){ try{ navigator.vibrate&&navigator.vibrate(150); }catch(_){} }
+      if(ph==='enter'){ pt.n=pt.taps||null; try{ navigator.vibrate&&navigator.vibrate([120,80,120]); }catch(_){} }
+      render(); return; }
+    const el=document.getElementById('pulse-timer-num'); if(!el) return;
+    const e=(now-pt.t0)/1000; el.textContent=String(ph==='count'?Math.ceil(PULSE_COUNTDOWN-e):Math.ceil(PULSE_COUNTDOWN+PULSE_SECS-e));
+  },200);
+}
+function pulseValid(v){ const n=parseInt(v); return (n>=20&&n<=250)?n:null; }
+// cur＝いまの値（回/分 or null）、onSet(v)＝値を入れる、key＝どの入力欄か、pal＝色
+function pulseField(cur,onSet,key,pal){
+  const P=pal||{dim:"#94a3b8",text:"#e2e8f0",field:"#0f172a",fieldBorder:"#334155",accent:"#f472b6"};
+  const w=div({style:{marginBottom:"10px"}}); w.setAttribute('data-pulse',key);
+  const pt=state.pulseTimer&&state.pulseTimer.key===key?state.pulseTimer:null;
+  const row=div({style:{display:"flex",alignItems:"center",gap:"6px"}});
+  row.appendChild(span({style:{fontSize:"11px",color:P.dim,flexShrink:0}},"💓 脈拍（任意）"));
+  const i=document.createElement('input'); i.type='number'; i.min='20'; i.max='250'; i.inputMode='numeric'; i.placeholder='—'; i.value=cur!=null?String(cur):'';
+  i.setAttribute('data-pulseinput','1');
+  i.style.cssText=`width:64px;flex-shrink:0;padding:6px 8px;background:${P.field};border:1px solid ${P.fieldBorder};border-radius:7px;color:${P.text};font-size:14px;font-family:inherit;text-align:center`;
+  i.addEventListener('change',e=>{ const v=e.target.value===''?null:pulseValid(e.target.value); if(e.target.value!==''&&v==null){ showToast("⚠️ 脈拍は20〜250で入れてください","#f97316"); e.target.value=cur!=null?String(cur):''; return; } onSet(v); render(); });
+  row.appendChild(i);
+  row.appendChild(span({style:{fontSize:"11px",color:P.dim,flexShrink:0}},"回/分"));
+  if(cur!=null){ const x=btn({style:{flexShrink:0,background:"transparent",border:"none",color:P.dim,cursor:"pointer",fontSize:"14px",padding:"0 2px"}},"×"); x.addEventListener('click',()=>{ onSet(null); render(); }); row.appendChild(x); }
+  row.appendChild(div({style:{flex:1}}));
+  if(!pt){ const t=btn({style:{flexShrink:0,padding:"5px 10px",borderRadius:"7px",border:`1px solid ${P.accent}`,background:P.accent+"22",color:P.accent,fontSize:"11px",fontWeight:700,cursor:"pointer",fontFamily:"inherit"}},"⏱ 15秒で測る");
+    t.setAttribute('data-pulsestart','1'); t.addEventListener('click',()=>pulseStart(key)); row.appendChild(t); }
+  w.appendChild(row);
+  if(pt){
+    pulseEnsureTick();
+    const box=div({style:{marginTop:"8px",padding:"12px",borderRadius:"10px",background:"#00000033",border:`1px solid ${P.accent}55`,textAlign:"center"}}); box.setAttribute('data-pulsetimer',pt.phase);
+    const e=(Date.now()-pt.t0)/1000;
+    const cancel=()=>{ const b=btn({style:{marginTop:"8px",padding:"5px 12px",borderRadius:"7px",border:"1px solid #ffffff22",background:"transparent",color:P.dim,fontSize:"11px",cursor:"pointer",fontFamily:"inherit"}},"やめる"); b.setAttribute('data-pulsecancel','1'); b.addEventListener('click',()=>{ pulseStop(); render(); }); return b; };
+    if(pt.phase==='count'){
+      box.appendChild(div({style:{fontSize:"11px",color:P.dim}},"手首か首に指を当てて… まもなく始まります"));
+      box.appendChild(div({id:"pulse-timer-num",style:{fontSize:"42px",fontWeight:800,color:P.text,lineHeight:1.2}},String(Math.max(1,Math.ceil(PULSE_COUNTDOWN-e)))));
+      box.appendChild(cancel());
+    } else if(pt.phase==='run'){
+      box.appendChild(div({style:{fontSize:"11px",color:P.dim}},"拍を数えてください（拍に合わせてタップすると数えます・タップしなくてもOK）"));
+      box.appendChild(div({id:"pulse-timer-num",style:{fontSize:"42px",fontWeight:800,color:P.accent,lineHeight:1.2}},String(Math.max(1,Math.ceil(PULSE_COUNTDOWN+PULSE_SECS-e)))));
+      const tap=btn({style:{width:"100%",padding:"16px",marginTop:"6px",borderRadius:"12px",border:`1px solid ${P.accent}`,background:P.accent+"22",color:P.text,fontSize:"16px",fontWeight:800,cursor:"pointer",fontFamily:"inherit",touchAction:"manipulation"}},`💓 タップ（${pt.taps}）`);
+      tap.setAttribute('data-pulsetap','1');
+      tap.addEventListener('click',()=>{ pt.taps++; tap.textContent=`💓 タップ（${pt.taps}）`; });
+      box.appendChild(tap); box.appendChild(cancel());
+    } else {
+      box.appendChild(div({style:{fontSize:"12px",color:P.text,marginBottom:"6px"}},"15秒で何回でしたか？"));
+      const r2=div({style:{display:"flex",alignItems:"center",justifyContent:"center",gap:"6px"}});
+      const ni=document.createElement('input'); ni.type='number'; ni.min='5'; ni.max='60'; ni.inputMode='numeric'; ni.value=pt.n!=null?String(pt.n):''; ni.placeholder='拍数'; ni.setAttribute('data-pulsecount','1');
+      ni.style.cssText=`width:70px;padding:7px;background:${P.field};border:1px solid ${P.fieldBorder};border-radius:7px;color:${P.text};font-size:16px;text-align:center;font-family:inherit`;
+      const bpm=span({style:{fontSize:"13px",color:P.accent,fontWeight:700}},pt.n?`× 4 ＝ ${pt.n*4} 回/分`:"× 4 ＝ — 回/分");
+      ni.addEventListener('input',e=>{ const n=parseInt(e.target.value); pt.n=n>0?n:null; bpm.textContent=pt.n?`× 4 ＝ ${pt.n*4} 回/分`:"× 4 ＝ — 回/分"; });
+      r2.appendChild(ni); r2.appendChild(span({style:{fontSize:"12px",color:P.dim}},"回")); r2.appendChild(bpm); box.appendChild(r2);
+      const ok=btn({style:{marginTop:"8px",padding:"7px 14px",borderRadius:"8px",border:"none",background:P.accent,color:"#0b1120",fontSize:"12px",fontWeight:800,cursor:"pointer",fontFamily:"inherit"}},"この値を入れる");
+      ok.setAttribute('data-pulseok','1');
+      ok.addEventListener('click',()=>{ const v=pulseValid((pt.n||0)*4); if(v==null){ showToast("⚠️ 15秒の拍数を入れてください（5〜60）","#f97316"); return; } onSet(v); pulseStop(); showToast(`💓 脈拍 ${v}回/分`,"#f472b6"); render(); });
+      const again=btn({style:{marginTop:"8px",marginLeft:"6px",padding:"7px 12px",borderRadius:"8px",border:"1px solid #ffffff22",background:"transparent",color:P.dim,fontSize:"12px",cursor:"pointer",fontFamily:"inherit"}},"↻ やり直す");
+      again.setAttribute('data-pulseagain','1'); again.addEventListener('click',()=>pulseStart(key));
+      box.appendChild(ok); box.appendChild(again); box.appendChild(div({},[cancel()]));
+    }
+    w.appendChild(box);
+  }
+  return w;
+}
 // その時間に体調の記録があるか（体調記録タブで入れた分も含む）
 function selfCondRecorded(ds,hour){
   const ex=getLog(ds,hour)||{};
   const cr=((getDaily(ds).cravings||{})[hour]);
-  return ex.score!=null||ex.mental!=null||(ex.symptoms||[]).length>0||((ex.note||"").trim()!=="")||cr!=null;
+  return ex.score!=null||ex.mental!=null||ex.pulse!=null||(ex.symptoms||[]).length>0||((ex.note||"").trim()!=="")||cr!=null;
 }
 // 入力中の下書き（日付＋時刻が変わったら既存の記録から作り直す）
 function selfCondBuf(ds,hour){
   const k=ds+"#"+hour;
   if(!state.selfCond||state.selfCond._k!==k){
     const ex=getLog(ds,hour)||{};
-    state.selfCond={_k:k,score:ex.score!=null?ex.score:null,mental:ex.mental!=null?ex.mental:null,
+    state.selfCond={_k:k,score:ex.score!=null?ex.score:null,mental:ex.mental!=null?ex.mental:null,pulse:ex.pulse!=null?ex.pulse:null,
       craving:((getDaily(ds).cravings||{})[hour])||null,symptoms:[...(ex.symptoms||[])],note:ex.note||""};
   }
   return state.selfCond;
@@ -3914,6 +3988,7 @@ function selfCondDoneRow(accent,opts){
   const parts=[];
   if(ex.score!=null)parts.push(`体調${ex.score}`);
   if(ex.mental!=null)parts.push(`心${ex.mental}`);
+  if(ex.pulse!=null)parts.push(`💓${ex.pulse}`);
   if(cr!=null)parts.push(`欲求${cr}`);
   if((ex.symptoms||[]).length)parts.push(ex.symptoms.join("・"));
   const row=div({style:{display:"flex",alignItems:"center",gap:"9px",background:P.bg,border:`1px solid ${P.border}`,borderRadius:"12px",padding:"9px 12px",marginBottom:"10px"}});
@@ -3952,6 +4027,7 @@ function selfConditionCard(accent,opts){
   };
   box.appendChild(bar("💪 体の調子（体調スコア）",b.score,v=>{ b.score=v; render(); }));
   box.appendChild(bar("🧠 心の調子（メンタル）",b.mental,v=>{ b.mental=v; render(); }));
+  box.appendChild(pulseField(b.pulse,v=>{ b.pulse=v; },"mode",{dim:P.dim,text:P.text,field:P.field,fieldBorder:P.fieldBorder,accent}));
   // 🍺 飲酒欲求（体調記録モーダルと同じ・日次の cravings[時刻]）
   box.appendChild(div({style:{fontSize:"11px",color:P.dim,marginBottom:"4px"}},"🍺 飲酒欲求（任意）"));
   { const r=div({style:{display:"flex",gap:"2px",marginBottom:"10px"}});
@@ -3980,14 +4056,15 @@ function selfConditionCard(accent,opts){
   ta.addEventListener("change",e=>{ b.note=e.target.value; });
   box.appendChild(ta);
   // 記録する
-  const canSave=b.score!=null||b.mental!=null||b.craving!=null||b.symptoms.length>0||(b.note||"").trim()!=="";
+  const canSave=b.score!=null||b.mental!=null||b.pulse!=null||b.craving!=null||b.symptoms.length>0||(b.note||"").trim()!=="";
   const save=btn({style:{width:"100%",padding:"11px",borderRadius:"11px",border:"none",fontSize:"13px",fontWeight:800,fontFamily:"inherit",
     cursor:canSave?"pointer":"not-allowed",background:canSave?accent:P.off,color:canSave?P.ink:P.offText}},"🩺 体調を記録する");
   save.addEventListener("click",()=>{
     if(!canSave)return;
     const note=(ta.value!=null?ta.value:b.note)||""; b.note=note;
     const cur=getLog(ds,hour)||{};
-    setLog(ds,hour,{...cur,score:b.score,mental:b.mental,symptoms:b.symptoms,note:note});
+    const _lg={...cur,score:b.score,mental:b.mental,symptoms:b.symptoms,note:note}; if(b.pulse!=null)_lg.pulse=b.pulse; else delete _lg.pulse;
+    setLog(ds,hour,_lg); if(state.pulseTimer&&state.pulseTimer.key==="mode") pulseStop();
     const c={...(getDaily(ds).cravings||{})}; if(b.craving)c[hour]=b.craving; else delete c[hour]; setDaily(ds,{cravings:c});
     if(b.mental!=null){ if(state.selfMoodBefore==null)state.selfMoodBefore=b.mental; state.selfMoodCur=b.mental; }
     state.selfCondEdit=false;
@@ -6391,11 +6468,12 @@ function renderKondo(vd,ds,curH,isToday){
           ])
         ]):div({style:{fontSize:"11px",color:"#334155"}},"— hPa")
       ]),
-      (()=>{ const cv=(getDaily(vd).cravings||{})[hour]; if(log?.score==null && log?.mental==null && !cv)return null; return div({style:{textAlign:"center",minWidth:"42px"}},[
+      (()=>{ const cv=(getDaily(vd).cravings||{})[hour]; if(log?.score==null && log?.mental==null && log?.pulse==null && !cv)return null; return div({style:{textAlign:"center",minWidth:"42px"}},[
         (log?.score!=null||log?.mental!=null)?div({style:{display:"flex",gap:"5px",justifyContent:"center",alignItems:"flex-end"}},[
           log?.score!=null?div({},[div({style:{fontSize:"16px",fontWeight:800,color:scoreColor(log.score),lineHeight:1}},String(log.score)),div({style:{fontSize:"7px",color:"#475569"}},"💪体")]):null,
           log?.mental!=null?div({},[div({style:{fontSize:"16px",fontWeight:800,color:scoreColor(log.mental),lineHeight:1}},String(log.mental)),div({style:{fontSize:"7px",color:"#475569"}},"🧠心")]):null
         ]):null,
+        log?.pulse!=null?div({style:{fontSize:"10px",fontWeight:700,color:"#f472b6",marginTop:"2px"}},`💓${log.pulse}`):null,
         cv?div({style:{fontSize:"11px",fontWeight:700,color:cv>=8?"#ef4444":cv>=5?"#f97316":"#eab308",marginTop:(log?.score!=null||log?.mental!=null)?"2px":"0"}},`🍺${cv}`):null
       ]); })(),
       btn({style:{background:"transparent",border:"1px solid #334155",borderRadius:"7px",padding:"3px 8px",color:"#94a3b8",cursor:"pointer",fontSize:"10px",whiteSpace:"nowrap"},
@@ -6498,7 +6576,8 @@ async function doFetchWeather(city){
 function openScoreModal(dateStr,hour){
   const ex=getLog(dateStr,hour);
   state.editDate=dateStr;state.editHour=hour;
-  state.editScore=ex?.score||null;state.editMental=ex?.mental||null;state.editSymptoms=[...(ex?.symptoms||[])];state.editNote=ex?.note||"";
+  state.editScore=ex?.score||null;state.editMental=ex?.mental||null;state.editPulse=ex?.pulse??null;state.editSymptoms=[...(ex?.symptoms||[])];state.editNote=ex?.note||"";
+  if(state.pulseTimer&&state.pulseTimer.key==="hour") pulseStop();
   state.editCraving=(getDaily(dateStr).cravings||{})[hour]||null; // その時間の飲酒欲求
   render();
 }
@@ -6531,6 +6610,7 @@ function renderScoreModal(){
   ]);
   m.appendChild(scoreBar("💪 体の調子（体調スコア）","editScore",state.editScore));
   m.appendChild(scoreBar("🧠 心の調子（メンタル）","editMental",state.editMental));
+  m.appendChild(pulseField(state.editPulse,v=>{ state.editPulse=v; },"hour"));
   // 🍺 飲酒欲求（任意）：体調スコアの直下に配置。グラフはアルコールタブで確認できる
   m.appendChild(h('p',{style:{margin:"0 0 5px",fontSize:"11px",color:"#64748b"}},"🍺 飲酒欲求（任意・1〜10）"));
   m.appendChild(div({style:{display:"flex",gap:"3px",marginBottom:"4px"}},[1,2,3,4,5,6,7,8,9,10].map(n=>{
@@ -6554,18 +6634,19 @@ function renderScoreModal(){
   ta.style.cssText="width:100%;min-height:56px;background:#0a1120;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:12px;padding:8px;resize:none;box-sizing:border-box;font-family:inherit";
   ta.addEventListener('input',e=>{state.editNote=e.target.value;});
   m.appendChild(ta);
-  const canSave=!!state.editScore||!!state.editMental||!!state.editCraving;
+  const canSave=!!state.editScore||!!state.editMental||state.editPulse!=null||!!state.editCraving;
   m.appendChild(div({style:{display:"flex",gap:"8px",marginTop:"12px"}},[
     btn({className:"btn-ghost",style:{flex:1},onClick:()=>{state.editHour=null;render();}},"キャンセル"),
     btn({style:{flex:2,padding:"10px",borderRadius:"8px",border:"none",fontSize:"13px",fontWeight:600,cursor:canSave?"pointer":"not-allowed",background:canSave?"linear-gradient(135deg,#0ea5e9,#6366f1)":"#334155",color:canSave?"#fff":"#475569"},
       onClick:()=>{
         if(!canSave)return;
         const date=state.editDate||todayStr(), hour=state.editHour;
-        if(state.editScore||state.editMental){
+        if(state.editScore||state.editMental||state.editPulse!=null){
           const fc=state.forecast.find(f=>f.hour===hour);
           const baseline=state.forecast[0]?.pressure||1013;
-          setLog(date,hour,{score:state.editScore,mental:state.editMental,symptoms:state.editSymptoms,note:state.editNote,pressure:fc?.pressure||null,pressureDiff:fc?fc.pressure-baseline:null});
+          setLog(date,hour,{score:state.editScore,mental:state.editMental,symptoms:state.editSymptoms,note:state.editNote,pressure:fc?.pressure||null,pressureDiff:fc?fc.pressure-baseline:null,...(state.editPulse!=null?{pulse:state.editPulse}:{})});
         }
+        if(state.pulseTimer&&state.pulseTimer.key==="hour") pulseStop();
         // 飲酒欲求を保存（未選択なら削除）
         const nd={...getDaily(date)}; nd.cravings={...(nd.cravings||{})};
         if(state.editCraving) nd.cravings[hour]=state.editCraving; else delete nd.cravings[hour];
@@ -17120,7 +17201,7 @@ function buildAnalysisContext(){
     const acts=getActualActivities(d.dateStr).map(a=>a.title.replace(/^[✓]/,'')).slice(0,10).join(',');
     return `${d.dateStr}(${shift}): 睡眠${sh??'?'}h 水分${d.water??'?'}L 純アルコール${g.toFixed(0)}g 食べたもの[${(d.foods||[]).join(',')}] 実際の行動[${acts||'記録なし'}]`;
   }).join('\n');
-  const hs=scored.slice(-100).map(l=>`${l.dateStr} ${l.hour}時: 体調${l.score}/10 体調状態[${(l.symptoms||[]).join(',')}]${l.note?` メモ:${l.note}`:''}`).join('\n');
+  const hs=scored.slice(-100).map(l=>`${l.dateStr} ${l.hour}時: 体調${l.score}/10${l.pulse!=null?` 脈拍${l.pulse}/分`:''} 体調状態[${(l.symptoms||[]).join(',')}]${l.note?` メモ:${l.note}`:''}`).join('\n');
   const upcoming=(()=>{
     const lines=[];
     for(let i=0;i<7;i++){
@@ -17248,7 +17329,7 @@ function qaRecords(){
     const d=getDaily(ds);
     // 実績（実績のメモ・ルーティンや定期ルーティンの実施・予定外の行動を含む）
     try{ getActualActivities(ds).forEach(a=>{ const t=(a.title||"").replace(/^[✓]/,""); if(t) push(ds,"act",`${a.isPoint?"":`${fmtHM(a.startMin)}〜${fmtHM(a.endMin)} `}${t}`); }); }catch(_){}
-    (state.logs||[]).filter(l=>l.dateStr===ds&&(l.note||(l.symptoms||[]).length)).forEach(l=>push(ds,"cond",`${l.hour}時 体調${l.score??"?"}/10${(l.symptoms||[]).length?` [${l.symptoms.join("・")}]`:""}${l.note?` 「${l.note}」`:""}`));
+    (state.logs||[]).filter(l=>l.dateStr===ds&&(l.note||(l.symptoms||[]).length||l.pulse!=null)).forEach(l=>push(ds,"cond",`${l.hour}時 体調${l.score??"?"}/10${l.pulse!=null?` 脈拍${l.pulse}/分`:""}${(l.symptoms||[]).length?` [${l.symptoms.join("・")}]`:""}${l.note?` 「${l.note}」`:""}`));
     const sl=[d.sleepNote?`メモ:${d.sleepNote}`:"",d.dream?`夢:${d.dream}`:""].filter(Boolean).join(" ");
     if(sl) push(ds,"sleep",sl);
     (d.drinks||[]).forEach(dr=>{ const dt=resolveDT(dr), t=dr.tasting||{};
