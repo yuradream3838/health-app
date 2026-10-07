@@ -224,7 +224,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.12"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.13"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -2250,6 +2250,7 @@ function renderSleepMode(){
     render();
   });
   inner.appendChild(peek?peekDisabled(bedBtn):bedBtn);
+  appendModeInvest(inner,'sleepprep','#a78bfa',activeDay(),peek);   // 💰 睡眠前モードに選んだ分類の未来投資
 
   // 補助アクション
   const sub=div({style:{display:"flex",gap:"10px",marginTop:"12px"}});
@@ -11514,12 +11515,12 @@ function appendModeInvest(inner,key,color,vd,peek){
   const box=div({style:{background:'#ffffff0d',border:'1px solid #ffffff14',borderRadius:'12px',padding:'10px 12px',marginBottom:'10px'}});
   box.setAttribute('data-modeinvest',key);
   const n=investCountOn(vd), amt=investAmountOn(vd);
-  const gear=btn({style:{flexShrink:0,padding:'4px 9px',borderRadius:'7px',border:'1px solid #ffffff22',background:editing?'#ffffff14':'transparent',color:'#cbd5e1',fontSize:'11px',cursor:'pointer',fontFamily:'inherit'}},editing?'✓ 決定':(sel.length?'⚙':'⚙ 分類を選ぶ'));
+  const gear=btn({style:{flexShrink:0,padding:'4px 9px',borderRadius:'7px',border:'1px solid #ffffff22',background:editing?'#ffffff14':'transparent',color:'#cbd5e1',fontSize:'11px',cursor:'pointer',fontFamily:'inherit'}},editing?'✓ 決定':(sel.length?'⚙ 分類を変える':'⚙ 分類を選ぶ'));
   gear.setAttribute('data-modeinvestgear','1');
   gear.addEventListener('click',()=>{ state.modeInvestEdit=editing?null:key; render(); });
   box.appendChild(div({style:{display:'flex',alignItems:'center',gap:'8px',marginBottom:(sel.length||editing)?'8px':'0'}},[
     span({style:{flex:1,fontSize:'12px',fontWeight:700,color:'#e2e8f0'}},[txt('💰 未来投資'),n?span({style:{fontSize:'10px',color:'#4ade80',fontWeight:600,marginLeft:'6px'}},`今日 ${n}回${amt?`・¥${amt.toLocaleString()}`:''}`):null]),
-    peek?null:gear]));
+    gear]));   // 分類を選ぶのは設定なので、プレビュー中でもできる（記録のボタンだけ押せない）
   if(editing){
     box.appendChild(div({style:{fontSize:'10px',color:'#94a3b8',marginBottom:'6px'}},'このモードの画面に出す分類を選んでください（行動は 達成→未来投資 で追加・編集できます）'));
     const row=div({style:{display:'flex',flexWrap:'wrap',gap:'6px'}});
@@ -14566,6 +14567,29 @@ function renderInvestPanel(vd){
     state.investActEdit?"✕ 行動の編集を閉じる":"⚙️ 行動を追加・編集");
   editToggle.addEventListener('click',()=>{state.investActEdit=!state.investActEdit;render();});
   chipCard.appendChild(editToggle);
+  // 🔀 モードごとに出す分類（モード画面のカードと同じ設定。ここからいつでも全モードをまとめて変えられる）
+  { const mt=btn({style:{marginTop:"10px",marginLeft:"6px",padding:"6px 10px",borderRadius:"8px",border:"1px solid #334155",background:"transparent",color:"#64748b",fontSize:"11px",cursor:"pointer",fontFamily:"inherit"}},
+      state.investModeEdit?"✕ モードの設定を閉じる":"🔀 モード画面に出す分類");
+    mt.setAttribute('data-investmodeedit','1');
+    mt.addEventListener('click',()=>{ state.investModeEdit=!state.investModeEdit; render(); });
+    chipCard.appendChild(mt);
+    if(state.investModeEdit){
+      const box=div({style:{marginTop:"8px",paddingTop:"8px",borderTop:"1px solid #1e293b"}}); box.setAttribute('data-investmodes','1');
+      box.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"6px",lineHeight:1.6}},"モードごとに、その画面の「💰 未来投資」に出す分類を選べます（タップで切り替え・何度でも変えられます）。"));
+      const cats=investCatList();
+      (state.lifeModes||[]).forEach(md=>{
+        const sel=modeInvestCatsOf(md.key);
+        const r=div({style:{display:"flex",alignItems:"flex-start",gap:"6px",padding:"5px 0",borderBottom:"1px solid #1e293b55"}}); r.setAttribute('data-investmoderow',md.key);
+        r.appendChild(div({style:{width:"74px",flexShrink:0,fontSize:"11px",color:sel.length?"#e2e8f0":"#64748b",paddingTop:"4px"}},`${md.icon||""} ${md.label||md.key}`));
+        const chips=div({style:{flex:1,display:"flex",flexWrap:"wrap",gap:"4px"}});
+        cats.forEach(c=>{ const on=sel.includes(c);
+          const b=btn({style:{padding:"3px 8px",borderRadius:"12px",fontSize:"10px",cursor:"pointer",fontFamily:"inherit",border:`1px solid ${on?(md.color||"#22c55e"):"#334155"}`,background:on?(md.color||"#22c55e")+"33":"transparent",color:on?"#f1f5f9":"#64748b",fontWeight:on?700:400}},c);
+          b.setAttribute('data-investmodecat',c); b.addEventListener('click',()=>{ toggleModeInvestCat(md.key,c); render(); }); chips.appendChild(b); });
+        r.appendChild(chips); box.appendChild(r);
+      });
+      chipCard.appendChild(box);
+    }
+  }
   if(state.investActEdit){
     const eb=div({style:{marginTop:"8px",paddingTop:"8px",borderTop:"1px solid #1e293b"}});
     eb.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"6px"}},"↕ ボタンで並び替え・チップの表示順が変わります"));
