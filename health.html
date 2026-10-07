@@ -224,7 +224,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.11"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.12"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -272,6 +272,7 @@ const SAVE_TARGETS=[
   ["saveWidgetSections","widgetSections","🧩 ウィジェットの表示"],
   ["saveFoodCats",["foodCats","foodEmoji"],"🍽 食べたものの一覧"],
   ["saveAnaChanges","anaChanges","🔬 変えたことの記録"],
+  ["saveModeInvestCats","modeInvestCats","💰 モードの未来投資"],
   ["saveWidgetOrder","widgetSecOrder","🧩 ウィジェットの並び"],
   ["saveNudgeCfg",["nudgesOff","notifyOn","moodCheckH","moodCheckM","dayCutoffH","nudgeRules","notifyQuiet","notifyRepeat"],"🔔 通知の設定"],
   ["saveBacProfile",["bacWeight","bacSex"],"🍺 BACプロファイル"],
@@ -873,6 +874,7 @@ const state = {
   modal:null, // "food"|"addDrink"|"editEnd"
   foodOpenCat:null, foodSelected:[],
   foodCats:null, foodEmoji:{}, foodEdit:false, foodAddCat:null,
+  modeInvestCats:{}, modeInvestEdit:null,   // 💰 モード画面に出す未来投資の分類 {モードkey:[分類]}
   anaChanges:[], anaOpen:null, anaChgLabel:"", anaChgDate:null, anaWhyAI:{},   // 📊 分析（🔬 変えたことの記録・ランキングで開いている要因）   // 🍽 食べたものの一覧（null＝初期の一覧）
   newDrink:{typeId:"beer",ml:350,hour:new Date().getHours(),min:new Date().getMinutes(),pct:5},
   editEndUid:null, editEndH:0, editEndM:0,
@@ -1020,6 +1022,8 @@ function loadStorage(){
       if(o.mute&&typeof o.mute==="object")state.alexaMute={days:Array.isArray(o.mute.days)?o.mute.days:[],items:Array.isArray(o.mute.items)?o.mute.items:[]};
       if(o.plan&&typeof o.plan==="object")state.alexaPlan=o.plan; }}catch{}}
     try{ migrateAlexaHooks(); }catch(_){}
+    const mic=localStorage.getItem(STORAGE_KEY+"_modeinvest");
+    if(mic){try{const o=JSON.parse(mic); if(o&&typeof o==="object")state.modeInvestCats=o;}catch{}}
     const ach=localStorage.getItem(STORAGE_KEY+"_anachanges");
     if(ach){try{const a=JSON.parse(ach); if(Array.isArray(a))state.anaChanges=a;}catch{}}
     const fct=localStorage.getItem(STORAGE_KEY+"_foodcats");
@@ -3740,6 +3744,7 @@ function renderLifeScreen(){
     inner.appendChild(div({style:{textAlign:'center',fontSize:'13px',color:'#cbd5e1',lineHeight:1.7,marginBottom:'14px',whiteSpace:'pre-line'}}, key==='work'?'仕事に集中。スマホは置いてOK。\n戻ってきたら切替を。':'集中して取り組もう。\n時間はここで記録されます。'));
     addAssigned();
   }
+  appendModeInvest(inner,key,def.color,vd,peek);   // 💰 このモードに選んだ分類の未来投資
   { const sw=btn({style:{width:'100%',padding:'13px',borderRadius:'12px',border:'none',background:def.color,color:'#0b1120',fontSize:'14px',fontWeight:800,cursor:'pointer',fontFamily:'inherit',marginTop:'8px'}},'🔀 別のモードに切替');
     sw.addEventListener('click',()=>{ state.modeSwitcher=true; render(); });
     inner.appendChild(peek?peekDisabled(sw):sw); }
@@ -4210,6 +4215,7 @@ function renderSelfMode(){
     inner.appendChild(div({style:{fontSize:"12px",color:"#a89e8c",textAlign:"center",marginBottom:"10px"}},`☀️ 今日の目標 ${goalN}件${goalN?"。まず一番簡単なひとつから。":""}`));
     { const _e=bigExitBtn("✅ 一日を始める（記録して終了）",M.accent); inner.appendChild(peek?peekDisabled(_e):_e); }
   }
+  appendModeInvest(inner,key,M.accent,vd,peek);   // 💰 このモードに選んだ分類の未来投資
   // 補助リンク
   const sub=div({style:{display:"flex",gap:"10px",marginTop:"10px"}});
   const b2=btn({style:{flex:1,padding:"10px",borderRadius:"10px",border:"1px solid #ffffff22",background:"transparent",color:"#cdc3b2",fontSize:"12px",cursor:"pointer",fontFamily:"inherit"}},"閉じる");
@@ -4401,9 +4407,8 @@ function renderWidgetView(vd,ds){
 
   // ── 🎁 ご褒美（連続日数・定期ルーティン・目標でアンロック・ヴィジェットでは閲覧のみ）──
   if(wSecOn('rewards') && (state.rewards||[]).length){
-    const streak=currentOverallStreak().streak;
     const c=div({className:"card",style:{padding:"12px 14px",marginBottom:"10px"}});
-    c.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#f472b6",marginBottom:"6px"}},`🎁 ご褒美（連続${streak}日）`));
+    c.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#f472b6",marginBottom:"6px"}},"🎁 ご褒美"));
     (state.rewards||[]).forEach(r=>{
       const st=rewardStatus(r);
       const row=div({style:{display:"flex",alignItems:"center",gap:"9px",padding:"6px 0",borderBottom:"1px solid #1e3a5f55"}});
@@ -5846,10 +5851,21 @@ function renderGoalTreeModal(){
         }},"📅 この目標を予定に追加"));
     }
   }
+  // 🎁 達成したときのご褒美（この目標の達成でアンロック。達成→ご褒美 にも並ぶ）
+  { if(m0.reward===undefined) m0.reward=(m0.mode==="edit"&&goalRewardOf(m0.id)||{}).text||"";
+    const rw=div({style:{marginBottom:"12px"}}); rw.setAttribute('data-goalreward','1');
+    rw.appendChild(div({style:{fontSize:"11px",color:"#f472b6",fontWeight:600,marginBottom:"5px"}},"🎁 達成したときのご褒美（任意）"));
+    const ri=document.createElement('input'); ri.type='text'; ri.value=m0.reward; ri.placeholder="例：好きな物を食べる・欲しかった本を買う";
+    ri.style.cssText="width:100%;box-sizing:border-box;padding:8px 10px;background:#0f172a;border:1px solid #f472b655;border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit";
+    ri.addEventListener('input',e=>{ m0.reward=e.target.value; });
+    rw.appendChild(ri);
+    if(m0.mode==="edit"){ const cur=goalRewardOf(m0.id), st=cur&&rewardStatus(cur);
+      if(st) rw.appendChild(div({style:{fontSize:"10px",color:st.unlocked?"#4ade80":"#64748b",marginTop:"4px"}},st.unlocked?"🎉 達成済み（達成→ご褒美 から予定に追加できます）":"この目標を達成するとアンロックされます")); }
+    m.appendChild(rw); }
   const btns=[];
   if(m0.mode==="edit"){
     btns.push(btn({style:{padding:"9px 12px",background:"transparent",border:"1px solid #ef444455",borderRadius:"8px",color:"#f87171",cursor:"pointer",fontSize:"12px",fontWeight:600},
-      onClick:()=>{ const f=gtFind(m0.id); const kids=f&&f.node.children&&f.node.children.length; if(confirm(kids?"下位目標も含めて削除しますか？":"この目標を削除しますか？")){ gtDelete(m0.id); state.goalTreeModal=null; render(); } }},"🗑 削除"));
+      onClick:()=>{ const f=gtFind(m0.id); const kids=f&&f.node.children&&f.node.children.length; if(confirm(kids?"下位目標も含めて削除しますか？":"この目標を削除しますか？")){ removeGoalRewards(gtSubtreeIds(m0.id)); gtDelete(m0.id); state.goalTreeModal=null; render(); } }},"🗑 削除"));
   }
   btns.push(btn({className:"btn-ghost",style:{flex:1},onClick:()=>{state.goalTreeModal=null;render();}},"キャンセル"));
   btns.push(btn({style:{flex:1,padding:"10px",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:600,cursor:"pointer"},
@@ -5866,13 +5882,15 @@ function renderGoalTreeModal(){
       if(m0.mode==="add"){
         gtAddChild(m0.parentId==null?null:m0.parentId, text);
         const list=m0.parentId==null?state.goalTree:(gtFind(m0.parentId)?.node.children||[]); const created=list[list.length-1];
-        if(created){ if(pt){created.periodType=pt;created.periodKey=pk;} if(dailyEnd)created.dailyEnd=dailyEnd; if(note)created.note=note; if(linked.length)created.linkedRoutines=linked; saveGoalTree(); }
+        if(created){ if(pt){created.periodType=pt;created.periodKey=pk;} if(dailyEnd)created.dailyEnd=dailyEnd; if(note)created.note=note; if(linked.length)created.linkedRoutines=linked; saveGoalTree();
+          if((m0.reward||"").trim()) setGoalReward(created.id,m0.reward); }
         // 下位目標を作るときに選んだ「上位目標の達成判定」を親に保存する
         if(m0.parentId!=null && m0.parentRule){ gtUpdate(m0.parentId, m0.parentRule==="all"?{doneRule:null}:{doneRule:{mode:"manual"}}); }
       } else {
         // 期間を変えたら、この目標から作った予定も同じ日数だけずらす（連動）
         const _pf=gtFind(m0.id), _oldT=_pf&&_pf.node.periodType, _oldK=_pf&&_pf.node.periodKey;
         gtUpdate(m0.id,{text, periodType:pt, periodKey:pk, note, linkedRoutines:linked, dailyEnd:dailyEnd||null});
+        setGoalReward(m0.id,m0.reward||"");
         if(pt && _oldT===pt && _oldK && _oldK!==pk){
           const moved=syncEventsFromGoal(m0.id,_oldT,_oldK);
           if(moved) showToast(`📅 予定も${moved>1?`${moved}件`:""}動かしました`,"#38bdf8");
@@ -11481,6 +11499,48 @@ const INVEST_ACTIONS_DEFAULT=[
 ];
 function getInvestActions(){ if(!Array.isArray(state.investActions)||!state.investActions.length) state.investActions=INVEST_ACTIONS_DEFAULT.map(a=>({...a})); return state.investActions; }
 function saveInvestActions(){ try{localStorage.setItem(STORAGE_KEY+"_investactions",JSON.stringify(state.investActions||[]));}catch{} }
+// ── 💰 モード画面の未来投資 ──
+// モードごとに「どの分類の行動を出すか」を選び、その画面から1タップで記録する（記録先は達成→未来投資と同じ）
+function getModeInvestCats(){ if(!state.modeInvestCats||typeof state.modeInvestCats!=="object") state.modeInvestCats={}; return state.modeInvestCats; }
+function saveModeInvestCats(){ safeSet(STORAGE_KEY+"_modeinvest",JSON.stringify(getModeInvestCats())); }
+function investCatList(){ const cats=[]; getInvestActions().forEach(a=>{ if(a.cat&&!cats.includes(a.cat)) cats.push(a.cat); }); return cats; }
+function modeInvestCatsOf(key){ const all=investCatList(); return (getModeInvestCats()[key]||[]).filter(c=>all.includes(c)); }
+function toggleModeInvestCat(key,cat){ const m=getModeInvestCats(), cur=m[key]||[]; m[key]=cur.includes(cat)?cur.filter(c=>c!==cat):[...cur,cat]; if(!m[key].length) delete m[key]; saveModeInvestCats(); }
+// 分類の名前を変えたら、モードの選択も新しい名前に付け替える（その名前の行動がもう残っていなければ）
+function renameModeInvestCat(oldCat,newCat){ if(!oldCat||oldCat===newCat) return; if(getInvestActions().some(a=>a.cat===oldCat)) return;
+  const m=getModeInvestCats(); let ch=false; Object.keys(m).forEach(k=>{ if(m[k].includes(oldCat)){ m[k]=[...new Set(m[k].map(c=>c===oldCat?newCat:c))]; ch=true; } }); if(ch) saveModeInvestCats(); }
+function appendModeInvest(inner,key,color,vd,peek){
+  const sel=modeInvestCatsOf(key), editing=state.modeInvestEdit===key, cats=investCatList();
+  const box=div({style:{background:'#ffffff0d',border:'1px solid #ffffff14',borderRadius:'12px',padding:'10px 12px',marginBottom:'10px'}});
+  box.setAttribute('data-modeinvest',key);
+  const n=investCountOn(vd), amt=investAmountOn(vd);
+  const gear=btn({style:{flexShrink:0,padding:'4px 9px',borderRadius:'7px',border:'1px solid #ffffff22',background:editing?'#ffffff14':'transparent',color:'#cbd5e1',fontSize:'11px',cursor:'pointer',fontFamily:'inherit'}},editing?'✓ 決定':(sel.length?'⚙':'⚙ 分類を選ぶ'));
+  gear.setAttribute('data-modeinvestgear','1');
+  gear.addEventListener('click',()=>{ state.modeInvestEdit=editing?null:key; render(); });
+  box.appendChild(div({style:{display:'flex',alignItems:'center',gap:'8px',marginBottom:(sel.length||editing)?'8px':'0'}},[
+    span({style:{flex:1,fontSize:'12px',fontWeight:700,color:'#e2e8f0'}},[txt('💰 未来投資'),n?span({style:{fontSize:'10px',color:'#4ade80',fontWeight:600,marginLeft:'6px'}},`今日 ${n}回${amt?`・¥${amt.toLocaleString()}`:''}`):null]),
+    peek?null:gear]));
+  if(editing){
+    box.appendChild(div({style:{fontSize:'10px',color:'#94a3b8',marginBottom:'6px'}},'このモードの画面に出す分類を選んでください（行動は 達成→未来投資 で追加・編集できます）'));
+    const row=div({style:{display:'flex',flexWrap:'wrap',gap:'6px'}});
+    cats.forEach(c=>{ const on=sel.includes(c); const b=btn({style:{padding:'6px 10px',borderRadius:'14px',fontSize:'12px',cursor:'pointer',fontFamily:'inherit',border:`1px solid ${on?color:'#ffffff22'}`,background:on?color+'33':'transparent',color:on?'#f1f5f9':'#94a3b8',fontWeight:on?700:400}},`${on?'✓ ':''}${c}`);
+      b.setAttribute('data-modeinvestcat',c); b.addEventListener('click',()=>{ toggleModeInvestCat(key,c); render(); }); row.appendChild(b); });
+    box.appendChild(row);
+  } else if(sel.length){
+    sel.forEach(c=>{
+      box.appendChild(div({style:{fontSize:'10px',color:'#94a3b8',margin:'4px 0 4px'}},c));
+      const row=div({style:{display:'flex',flexWrap:'wrap',gap:'6px'}});
+      getInvestActions().filter(a=>a.cat===c).forEach(a=>{
+        const b=btn({style:{padding:'7px 11px',borderRadius:'14px',border:`1px solid ${color}55`,background:'#00000026',color:'#f1f5f9',fontSize:'12px',cursor:'pointer',fontFamily:'inherit'}},a.amount>0?`${a.label} +¥${a.amount}`:a.label);
+        b.setAttribute('data-modeinvestact',a.label);
+        b.addEventListener('click',()=>{ logInvest(vd,a); showToast(`💰 ${a.label}${a.amount>0?` +¥${a.amount}`:''}`,'#22c55e'); render(); });
+        row.appendChild(peek?peekDisabled(b):b);
+      });
+      box.appendChild(row);
+    });
+  }
+  inner.appendChild(box);
+}
 function logInvest(vd, act){ const d=getDaily(vd); const rec={t:new Date().toISOString(), label:(act&&act.label)||"", cat:(act&&act.cat)||"", amount:Math.max(0,(act&&act.amount)||0)}; const note=act&&act.note&&String(act.note).trim(); if(note)rec.note=note; const investments=[...(d.investments||[]), rec]; setDaily(vd,{investments}); }
 // 未来投資/つながりエントリの内容を更新（日付＋タイムスタンプで特定）
 // 記録の日付/時刻を修正（別の日への移動にも対応）。oldT で対象を特定し、newDsへ移す。
@@ -12680,6 +12740,17 @@ function goalPeriodAchievedCount(periodType){
   return cnt;
 }
 const GOAL_PERIOD_LABELS2={daily:"今日の目標",weekly:"週間目標",monthly:"月次目標",quarterly:"四半期目標",yearly:"年間目標"};
+// 🎁 目標に付けたご褒美（trigger {type:'goal', id}）。目標の設定画面から付け外しする
+function goalRewardOf(id){ return (state.rewards||[]).find(r=>r&&r.trigger&&r.trigger.type==='goal'&&String(r.trigger.id)===String(id))||null; }
+function setGoalReward(id,text){
+  const t=(text||"").trim(), cur=goalRewardOf(id);
+  if(!t){ if(cur){ state.rewards=state.rewards.filter(r=>r!==cur); saveRewards(); } return; }
+  if(cur){ if(cur.text!==t){ cur.text=t; saveRewards(); } return; }
+  state.rewards=[...(state.rewards||[]),{id:Date.now(),text:t,trigger:{type:'goal',id}}]; saveRewards();
+}
+function removeGoalRewards(ids){ const set=new Set(ids.map(String)); const before=(state.rewards||[]).length;
+  state.rewards=(state.rewards||[]).filter(r=>!(r&&r.trigger&&r.trigger.type==='goal'&&set.has(String(r.trigger.id)))); if(state.rewards.length!==before) saveRewards(); }
+function gtSubtreeIds(id){ const f=gtFind(id); const out=[]; const walk=n=>{ out.push(n.id); (n.children||[]).forEach(walk); }; if(f) walk(f.node); return out; }
 // ご褒美のアンロック状況。trigger: {type:'streak',days} | {type:'routine',uid,count} | {type:'goal',id}
 // 旧データ（trigger無し・daysのみ）は連続日数として扱う。
 function rewardStatus(r){
@@ -12708,7 +12779,7 @@ function rewardStatus(r){
   }
   if(tr.type==='goal'){ // 旧：特定の目標ノード（互換）
     const f=gtFind(tr.id); const node=f&&f.node; const done=node?goalAchieved(node):false;
-    return {unlocked:done, badge:"🎯", progress:done?"🎉達成":"未達成", name:node?(node.text||"(無題)"):"(削除済み)"};
+    return {unlocked:done, badge:"🎯", progress:done?"🎉達成":"未達成", name:node?`目標「${node.text||"(無題)"}」`:"(削除済み)"};
   }
   const need=tr.days||7, streak=currentOverallStreak().streak;
   return {unlocked:streak>=need, badge:`${need}日`, progress:streak>=need?"🎉達成":`あと${need-streak}日`, name:null};
@@ -14511,7 +14582,7 @@ function renderInvestPanel(vd){
       const li=document.createElement('input');li.type='text';li.value=a.label;li.style.cssText="flex:1;min-width:0;padding:6px 8px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#e2e8f0;font-size:12px;font-family:inherit";
       li.addEventListener('change',e=>{a.label=e.target.value;saveInvestActions();});
       const ci=document.createElement('input');ci.type='text';ci.value=a.cat;ci.style.cssText="width:74px;flex-shrink:0;padding:6px 8px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#e2e8f0;font-size:12px;font-family:inherit";
-      ci.addEventListener('change',e=>{a.cat=e.target.value;saveInvestActions();render();});
+      ci.addEventListener('change',e=>{const old=a.cat; a.cat=e.target.value;saveInvestActions(); renameModeInvestCat(old,a.cat); render();});
       const ai=document.createElement('input');ai.type='number';ai.min="0";ai.value=String(a.amount||0);ai.style.cssText="width:58px;flex-shrink:0;padding:6px 8px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#e2e8f0;font-size:12px;font-family:inherit";
       ai.addEventListener('change',e=>{a.amount=Math.max(0,parseInt(e.target.value)||0);saveInvestActions();});
       const del=btn({style:{padding:"6px 8px",background:"transparent",border:"1px solid #7f1d1d",borderRadius:"6px",color:"#f87171",fontSize:"12px",cursor:"pointer",flexShrink:0}},"🗑");
@@ -14752,7 +14823,7 @@ function renderAchievement(vd){
   {
     const rc=div({className:"card",style:{marginTop:"10px"}});
     rc.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#f472b6",marginBottom:"3px"}},"🎁 ご褒美"));
-    rc.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"8px"}},"連続達成◯日・定期ルーティン◯回・目標の達成でアンロックできます"));
+    rc.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"8px"}},"目標の達成・休肝日・未来投資でアンロックできます。特定の目標のご褒美は、その目標の設定画面（🎁 達成したときのご褒美）から付けられます"));
     (state.rewards||[]).forEach(r=>{
       const st=rewardStatus(r);
       const row=div({style:{display:"flex",alignItems:"center",gap:"8px",padding:"7px 0",borderBottom:"1px solid #1e3a5f33"}});
@@ -14784,9 +14855,10 @@ function renderAchievement(vd){
       row.appendChild(del); rc.appendChild(row);
     });
     // ── 追加フォーム（条件タイプを選べる）──
-    if(!state.newRewardType)state.newRewardType='streak';
+    // 「連続日数」「定期ルーティン」の条件は作れないようにした（以前に作ったものはそのまま動く）。特定の目標のご褒美は目標の設定画面から
+    if(!['goalperiod','sober','invest'].includes(state.newRewardType))state.newRewardType='goalperiod';
     const typeRow=div({style:{display:"flex",flexWrap:"wrap",gap:"6px",marginTop:"8px",marginBottom:"6px"}});
-    [['streak','連続日数'],['routine','定期ルーティン'],['goalperiod','目標達成'],['sober','休肝日'],['invest','未来投資']].forEach(([k,l])=>{
+    [['goalperiod','目標達成'],['sober','休肝日'],['invest','未来投資']].forEach(([k,l])=>{
       const on=state.newRewardType===k;
       const b=btn({style:{flex:"1 1 22%",minWidth:"70px",padding:"6px 0",borderRadius:"7px",cursor:"pointer",fontSize:"11px",fontWeight:600,border:`1px solid ${on?"#f472b6":"#334155"}`,background:on?"#f472b622":"transparent",color:on?"#f472b6":"#64748b"}},l);
       b.addEventListener('click',()=>{state.newRewardType=k;render();});
@@ -14794,23 +14866,7 @@ function renderAchievement(vd){
     });
     rc.appendChild(typeRow);
     const paramRow=div({style:{display:"flex",flexWrap:"wrap",gap:"6px",marginBottom:"6px",alignItems:"center"}});
-    if(state.newRewardType==='streak'){
-      const dsel=document.createElement('select');dsel.className='sel';dsel.style.cssText="flex:1;min-width:0";
-      STREAK_MILESTONES.forEach(mm=>{const o=document.createElement('option');o.value=mm;o.textContent=`連続${mm}日`;if(mm===(state.newRewardDays||7))o.selected=true;dsel.appendChild(o);});
-      dsel.addEventListener('change',e=>{state.newRewardDays=parseInt(e.target.value);});
-      paramRow.appendChild(dsel);
-    } else if(state.newRewardType==='routine'){
-      if(state.newRewardRoutineUid==null && (state.customTodos||[]).length) state.newRewardRoutineUid=state.customTodos[0].uid;
-      const rsel=document.createElement('select');rsel.className='sel';rsel.style.cssText="flex:1;min-width:0";
-      (state.customTodos||[]).forEach(ct=>{const o=document.createElement('option');o.value=ct.uid;o.textContent=ct.label||"(無題)";if(String(ct.uid)===String(state.newRewardRoutineUid))o.selected=true;rsel.appendChild(o);});
-      if(!(state.customTodos||[]).length){const o=document.createElement('option');o.textContent="(定期ルーティンなし)";rsel.appendChild(o);}
-      rsel.addEventListener('change',e=>{state.newRewardRoutineUid=e.target.value;});
-      paramRow.appendChild(rsel);
-      const cnt=document.createElement('input');cnt.type='number';cnt.min="1";cnt.value=String(state.newRewardRoutineCount||10);cnt.style.cssText="width:60px;flex-shrink:0;padding:8px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit";
-      cnt.addEventListener('input',e=>{state.newRewardRoutineCount=Math.max(1,parseInt(e.target.value)||1);});
-      paramRow.appendChild(cnt);
-      paramRow.appendChild(span({style:{fontSize:"11px",color:"#64748b",flexShrink:0}},"回"));
-    } else if(state.newRewardType==='sober'){ // 休肝日（連続◯日）
+    if(state.newRewardType==='sober'){ // 休肝日（連続◯日）
       paramRow.appendChild(span({style:{fontSize:"12px",color:"#94a3b8",flexShrink:0}},"🚱 休肝日を連続"));
       const cnt=document.createElement('input');cnt.type='number';cnt.min="1";cnt.value=String(state.newRewardSoberCount||7);cnt.style.cssText="width:64px;flex-shrink:0;padding:8px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit";
       cnt.addEventListener('input',e=>{state.newRewardSoberCount=Math.max(1,parseInt(e.target.value)||1);});
@@ -14860,12 +14916,11 @@ function renderAchievement(vd){
     add.addEventListener('click',()=>{
       const t=(state.newRewardText||"").trim();if(!t){showToast("ご褒美の内容を入力してください");return;}
       let trigger;
-      if(state.newRewardType==='routine'){ if(!state.newRewardRoutineUid){showToast("定期ルーティンを選んでください");return;} trigger={type:'routine',uid:state.newRewardRoutineUid,count:state.newRewardRoutineCount||10}; }
-      else if(state.newRewardType==='goalperiod'){ trigger={type:'goalperiod',period:state.newRewardGoalPeriod||'daily',count:state.newRewardGoalCount||(state.newRewardGoalPeriod==='daily'?7:1)}; }
+      if(state.newRewardType==='goalperiod'){ trigger={type:'goalperiod',period:state.newRewardGoalPeriod||'daily',count:state.newRewardGoalCount||(state.newRewardGoalPeriod==='daily'?7:1)}; }
       else if(state.newRewardType==='sober'){ trigger={type:'sober',count:state.newRewardSoberCount||7}; }
       else if(state.newRewardType==='invest'){ trigger=(state.newRewardInvestMetric==='amount')?{type:'invest',metric:'amount',amount:state.newRewardInvestAmount||5000}:{type:'invest',count:state.newRewardInvestCount||10}; }
-      else { trigger={type:'streak',days:state.newRewardDays||7}; }
-      state.rewards=[...(state.rewards||[]),{id:Date.now(),text:t,trigger,days:trigger.type==='streak'?trigger.days:undefined}];
+      else return;
+      state.rewards=[...(state.rewards||[]),{id:Date.now(),text:t,trigger}];
       state.newRewardText="";saveRewards();render();
     });
     form.appendChild(rin);form.appendChild(add);
@@ -17438,6 +17493,7 @@ function exportData(){
     nextDrink:state.nextDrink,
     foodCats:(Array.isArray(state.foodCats)&&state.foodCats.length)?{cats:state.foodCats,emoji:state.foodEmoji||{}}:null,
     anaChanges:state.anaChanges||[],
+    modeInvestCats:state.modeInvestCats||{},
     sleepGoal:state.sleepGoal,
     bodyComps:state.bodyComps,
     todoItems:state.todoItems,
@@ -17503,6 +17559,7 @@ function importData(e){
       if(p.shiftColors&&typeof p.shiftColors==="object"){try{localStorage.setItem(STORAGE_KEY+"_shiftcolors",JSON.stringify(p.shiftColors));}catch{} Object.keys(p.shiftColors).forEach(k=>{ if(SHIFT_TYPES[k]&&p.shiftColors[k])SHIFT_TYPES[k].color=p.shiftColors[k]; });}
       if(p.ejacColor){try{localStorage.setItem(STORAGE_KEY+"_ejaccolor",p.ejacColor);}catch{}}
       if(Array.isArray(p.anaChanges)){ state.anaChanges=p.anaChanges; saveAnaChanges(); }
+      if(p.modeInvestCats&&typeof p.modeInvestCats==="object"){ state.modeInvestCats=p.modeInvestCats; saveModeInvestCats(); }
       if(p.foodCats&&Array.isArray(p.foodCats.cats)&&p.foodCats.cats.length){ state.foodCats=p.foodCats.cats; state.foodEmoji=(p.foodCats.emoji&&typeof p.foodCats.emoji==="object")?p.foodCats.emoji:{}; saveFoodCats(); }
       if(p.colorLabels&&typeof p.colorLabels==="object"){try{localStorage.setItem(STORAGE_KEY+"_colorlabels",JSON.stringify(p.colorLabels));}catch{}}
       if(p.sleepColor){try{localStorage.setItem(STORAGE_KEY+"_sleepcolor",p.sleepColor);}catch{}}
