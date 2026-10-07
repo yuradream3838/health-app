@@ -224,7 +224,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.09"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.10"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -3543,12 +3543,11 @@ function modeCustomTodoRow(vd,ct,tt,accent,carry){
       : `🔴 繰越${carry.daysAgo?`${carry.daysAgo}日前`:""}・未実施`;
     const row=div({style:{display:'flex',alignItems:'center',gap:'9px',padding:'7px 0',borderBottom:'1px solid #ffffff10'}});
     const _recC=(state.todos[vd]||{})[ct.uid]||{};
-    const _runC=ct.mode==='timer' && _recC.startTime && !_recC.endTime;
+    const _stC=ct.mode==='timer'?ctTimerStatus(_recC,carry.daysAgo?`${carry.daysAgo}日前の分を`:''):null;
     let cb;
     if(ct.mode==='timer'){
-      // 繰り越しでも時間計測式は計測して実施する（今日ぶんとして記録される）
-      cb=btn({style:{padding:'5px 11px',borderRadius:'8px',flexShrink:0,border:`1px solid ${_runC?'#f97316':accent}`,background:(_runC?'#f97316':accent)+'22',color:_runC?'#f97316':accent,cursor:'pointer',fontSize:'12px',fontWeight:700,fontFamily:'inherit'}},_runC?'⏹ 停止':'▶ 開始');
-      cb.addEventListener('click',(()=>{const c2={...ct},label=lbl,run=_runC;return()=>{ if(run){ stopCustomTodoTimer(vd,c2); showToast(`✅ ${label}`); } else { startCustomTodoTimer(vd,c2); } };})());
+      // 繰り越しでも時間計測式は計測して実施する（今日ぶんとして記録される）。⏸ 中断・▶ 再開もできる
+      cb=ctTimerControls(vd,ct,{label:lbl,accent,compact:true});
     } else {
       cb=btn({style:{width:'24px',height:'24px',borderRadius:'6px',flexShrink:0,border:'2px solid #ffffff3d',background:'transparent',cursor:'pointer'}},'');
       cb.addEventListener('click',(()=>{const c2={...ct},label=lbl;return()=>{ completeCustomTodoCarry(c2,vd); showToast(`✅ ${label}`); };})());
@@ -3556,22 +3555,20 @@ function modeCustomTodoRow(vd,ct,tt,accent,carry){
     row.appendChild(cb);
     const lw=div({style:{flex:1,minWidth:0,cursor:'pointer'}});
     lw.appendChild(div({style:{fontSize:'14px',color:'#e2e8f0',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}},lbl));
-    lw.appendChild(div({style:{fontSize:'10px',color:_runC?'#f97316':(carry.snToday?'#94a3b8':'#f87171')}},
-      _runC?`⏱ ${carry.daysAgo?`${carry.daysAgo}日前の分を`:''}計測中（経過 ${fmtDur(Date.now()-Date.parse(_recC.startTime))}）`:sub));
+    lw.appendChild(div({style:{fontSize:'10px',color:_stC?ctTimerColor(_recC):(carry.snToday?'#94a3b8':'#f87171')}},_stC||sub));
     lw.addEventListener('click',(()=>{const uid=ct.uid,l=lbl,dd=carry.dueDate;return()=>{ state.planCustomTodo={uid,label:l,vd:dd,editMode:true}; state.modal='planCustomTodo'; render(); };})());
     row.appendChild(lw);
     return row;
   }
   const rec=(state.todos[vd]||{})[ct.uid]||{}, done=!!rec.checked;
   const isTimer=ct.mode==='timer';
-  const running=isTimer && rec.startTime && !rec.endTime;
+  const running=isTimer && ctTimerState(rec)!=='idle' && !done;   // 計測中・中断中
   const lbl=rec.labelOverride||ct.label;
   const timeStr=tt?`${tt.sn?"翌":""}${String(tt.h).padStart(2,'0')}:${String(tt.m||0).padStart(2,'0')}`:"";
   const row=div({style:{display:'flex',alignItems:'center',gap:'9px',padding:'7px 0',borderBottom:'1px solid #ffffff10'}});
   let cb;
   if(isTimer && !done){
-    cb=btn({style:{padding:'5px 11px',borderRadius:'8px',flexShrink:0,border:`1px solid ${running?'#f97316':accent}`,background:(running?'#f97316':accent)+'22',color:running?'#f97316':accent,cursor:'pointer',fontSize:'12px',fontWeight:700,fontFamily:'inherit'}},running?'⏹ 停止':'▶ 開始');
-    cb.addEventListener('click',(()=>{const c2={...ct},label=lbl,run=running;return()=>{ if(run){ stopCustomTodoTimer(vd,c2); showToast(`✅ ${label}`); } else { startCustomTodoTimer(vd,c2); } };})());
+    cb=ctTimerControls(vd,ct,{label:lbl,accent,compact:true});
   } else {
     cb=btn({style:{width:'24px',height:'24px',borderRadius:'6px',flexShrink:0,border:`2px solid ${done?accent:'#ffffff3d'}`,background:done?accent:'transparent',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',fontSize:'14px',color:'#1a1408'}},done?'✓':'');
     cb.addEventListener('click',(()=>{const id=ct.uid,c2={...ct},label=lbl,wasDone=done,r=rec;return()=>{
@@ -3584,7 +3581,7 @@ function modeCustomTodoRow(vd,ct,tt,accent,carry){
   if(timeStr) row.appendChild(span({style:{flexShrink:0,fontSize:'11px',fontWeight:600,color:done?'#8a8172':'#94a3b8',minWidth:'42px'}},timeStr));
   const lw=div({style:{flex:1,minWidth:0,cursor:'pointer'}});
   lw.appendChild(div({style:{fontSize:'14px',color:done?'#94a3b8':'#e2e8f0',textDecoration:done?'line-through':'none',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}},`${lbl}${rec.noteOverride?' 📝':''}`));
-  if(running) lw.appendChild(div({style:{fontSize:'10px',color:'#f97316'}},`⏱ 計測中（経過 ${fmtDur(Date.now()-Date.parse(rec.startTime))}）`));
+  if(running) lw.appendChild(div({style:{fontSize:'10px',color:ctTimerColor(rec)}},ctTimerStatus(rec)));
   lw.addEventListener('click',(()=>{const uid=ct.uid,l=lbl;return()=>{ state.planCustomTodo={uid,label:l,vd}; state.modal='planCustomTodo'; render(); };})());
   row.appendChild(lw);
   return row;
@@ -4475,18 +4472,15 @@ function renderWidgetView(vd,ds){
         ? `🌙 開始翌日${_snt?`（${String(_snt.h).padStart(2,'0')}:${String(_snt.m||0).padStart(2,'0')}）`:""}`
         : `🔴 繰越${occ.daysAgo?`${occ.daysAgo}日前`:""}・未実施`;
       const _recW=(state.todos[vd]||{})[ct.uid]||{};
-      const _runW=ct.mode==='timer' && _recW.startTime && !_recW.endTime;
+      const _stW=ct.mode==='timer'?ctTimerStatus(_recW,occ.daysAgo?`${occ.daysAgo}日前の分を`:""):null;
       let rrow;
       if(ct.mode==='timer'){
-        // 繰り越しでも時間計測式は計測して実施する
-        const _sub=_runW?`⏱ ${occ.daysAgo?`${occ.daysAgo}日前の分を`:""}計測中（経過 ${fmtDur(Date.now()-Date.parse(_recW.startTime))}）`:sub;
+        // 繰り越しでも時間計測式は計測して実施する（⏸ 中断・▶ 再開もできる）
         rrow=div({style:{display:"flex",alignItems:"center",gap:"10px",padding:"7px 0",borderBottom:"1px solid #1e3a5f55"}});
-        const tb=btn({style:{padding:"4px 10px",flexShrink:0,borderRadius:"6px",fontSize:"12px",fontWeight:700,cursor:"pointer",border:`1px solid ${_runW?"#f97316":"#0ea5e9"}`,background:(_runW?"#f97316":"#0ea5e9")+"22",color:_runW?"#f97316":"#38bdf8"}},_runW?"⏹":"▶");
-        tb.addEventListener('click',(()=>{const c2={...ct},l=lbl,run=_runW;return()=>{ if(run){ stopCustomTodoTimer(vd,c2); showToast(`✅ ${l}`); } else { startCustomTodoTimer(vd,c2); } };})());
-        rrow.appendChild(tb);
+        rrow.appendChild(ctTimerControls(vd,ct,{label:lbl,compact:true}));
         rrow.appendChild(div({style:{flex:1,minWidth:0}},[
           div({style:{fontSize:"13px",color:"#e2e8f0",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},`🔁 ${lbl}`),
-          div({style:{fontSize:"10px",color:_runW?"#f97316":"#f87171"}},_sub)]));
+          div({style:{fontSize:"10px",color:_stW?ctTimerColor(_recW):"#f87171"}},_stW||sub)]));
       } else {
         rrow=checkRow(false,`🔁 ${lbl}`,sub,()=>{ completeCustomTodoCarry(ct,vd); showToast(`✅ ${lbl}`); });
       }
@@ -4502,15 +4496,13 @@ function renderWidgetView(vd,ds){
       let sub=`${tt?`${hhmm(tt.h,tt.m)}${tt.eh!=null?`〜${hhmm(tt.eh,tt.em)}`:""}`:""}${rec.noteOverride?`　📝${rec.noteOverride}`:""}`;
       let rrow;
       if(ct.mode==='timer'){
-        const running=rec.startTime && !rec.endTime;
-        if(running){ const d0=new Date(rec.startTime); sub=`⏱ 計測中（経過 ${fmtDur(Date.now()-Date.parse(rec.startTime))}）`; }
+        const _st=ctTimerStatus(rec), running=!!_st;
+        if(_st) sub=_st;
         rrow=div({style:{display:"flex",alignItems:"center",gap:"10px",padding:"7px 0",borderBottom:"1px solid #1e3a5f55"}});
-        const tb=btn({style:{padding:"4px 10px",flexShrink:0,borderRadius:"6px",fontSize:"12px",fontWeight:700,cursor:"pointer",border:`1px solid ${running?"#f97316":"#0ea5e9"}`,background:(running?"#f97316":"#0ea5e9")+"22",color:running?"#f97316":"#38bdf8"}},running?"⏹":"▶");
-        tb.addEventListener('click',(()=>{const c2={...ct},l=lbl,run=running;return()=>{ if(run){ stopCustomTodoTimer(vd,c2); showToast(`✅ ${l}`); } else { startCustomTodoTimer(vd,c2); } };})());
-        rrow.appendChild(tb);
+        rrow.appendChild(ctTimerControls(vd,ct,{label:lbl,compact:true}));
         rrow.appendChild(div({style:{flex:1,minWidth:0}},[
           div({style:{fontSize:"13px",color:"#e2e8f0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},lbl),
-          sub?div({style:{fontSize:"10px",color:running?"#f97316":"#64748b"}},sub):null
+          sub?div({style:{fontSize:"10px",color:running?ctTimerColor(rec):"#64748b"}},sub):null
         ]));
       } else {
         rrow=checkRow(false,lbl,sub,()=>{ completeCustomTodo(ct,vd); showToast(`✅ ${lbl}`); });
@@ -7178,7 +7170,16 @@ function getActualActivities(vd){
       const ctLbl=(rec&&rec.labelOverride)||cE.label; // その日だけ名前変更を実績にも反映
       const ctNote=(rec&&rec.noteOverride)?`：${rec.noteOverride}`:"";
       // 時間計測式：開始時刻から実績へ反映（終了があれば開始〜終了、計測中は開始〜現在）
-      if(rec&&cE.mode==='timer'&&rec.startTime&&onVd(rec.startTime)){
+      // 中断をはさんだ回・中断中は、区間ごとに帯にする（休んでいた時間は塗らない）
+      if(rec&&cE.mode==='timer'&&(rec.segs||[]).length){
+        const segs=[...rec.segs]; if(rec.startTime&&!rec.endTime) segs.push({s:rec.startTime,e:null});
+        const st=ctTimerState(rec);
+        segs.forEach((g,i)=>{ if(!onVd(g.s)) return; const s2=new Date(g.s), sMin=s2.getHours()*60+s2.getMinutes();
+          let eMin; if(g.e){ const e2=new Date(g.e); eMin=fmtDS(e2)===fmtDS(s2)?e2.getHours()*60+e2.getMinutes():1440; } else { const now=new Date(); eMin=(fmtDS(now)===fmtDS(s2))?(now.getHours()*60+now.getMinutes()):1440; }
+          if(eMin<=sMin) eMin=sMin+1;
+          const tag=!g.e?"（計測中）":(st==='paused'&&i===segs.length-1?"（中断中）":"");
+          acts.push({title:"✓"+ctLbl+ctNote+(segs.length>1?`（${i+1}/${segs.length}）`:"")+tag,startMin:sMin,endMin:Math.min(1440,Math.max(sMin+12,eMin)),color:cE.color||"#22c55e",ctUid:ct.uid,ownDay:DD}); });
+      } else if(rec&&cE.mode==='timer'&&rec.startTime&&onVd(rec.startTime)){
         const s2=new Date(rec.startTime);
         const sMin=s2.getHours()*60+s2.getMinutes();
         let eMin, running=!rec.endTime;
@@ -7735,17 +7736,24 @@ function renderPlanCustomTodoModal(){
     ]));
     // 完了トグル（情報画面の上部）。時間計測式は▶開始／⏹終了
     if(ctI && ctI.mode==='timer'){
-      const running=recI.startTime && !recI.endTime && !recI.checked;
+      const tst=ctTimerState(recI), running=tst==='running', pausedT=tst==='paused';
       const doneT=!!(recI.checked || recI.endTime);
+      const bigBtn=(label,st,fn,act)=>{ const b=btn({style:{flex:1,padding:"11px",borderRadius:"8px",cursor:"pointer",fontSize:"13px",fontWeight:700,...st},onClick:()=>{ fn(); render(); }},label); b.setAttribute('data-ctact',act); return b; };
+      const cancelBtn=()=>{ const b=btn({style:{width:"100%",padding:"7px",marginBottom:"14px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#64748b",cursor:"pointer",fontSize:"11px"},
+          onClick:()=>{ if(confirm("この計測を取り消しますか？（ここまでの時間は残りません）")){ cancelCustomTodoTimer(vd,ctI); showToast("計測を取り消しました"); render(); } }},"✕ 計測を取り消す"); b.setAttribute('data-ctact','cancel'); return b; };
       if(doneT){
-        if(recI.startTime&&recI.endTime){ try{ m.appendChild(div({style:{fontSize:"12px",color:"#4ade80",fontWeight:700,marginBottom:"6px"}},`⏱ 所要 ${fmtDur(Date.parse(recI.endTime)-Date.parse(recI.startTime))}`)); }catch{} }
+        if(recI.startTime&&recI.endTime){ try{ m.appendChild(div({style:{fontSize:"12px",color:"#4ade80",fontWeight:700,marginBottom:"6px"}},`⏱ 所要 ${fmtDur(ctElapsedMs(recI))}${(recI.segs||[]).length>1?`（${recI.segs.length}回に分けて）`:""}`)); }catch{} }
         m.appendChild(btn({style:{width:"100%",padding:"11px",border:"none",borderRadius:"8px",color:"#fff",cursor:"pointer",fontSize:"13px",fontWeight:700,marginBottom:"14px",background:"#334155"},
-          onClick:()=>{ const cur={...((state.todos[vd]||{})[pc.uid]||{})}; delete cur.startTime; delete cur.endTime; delete cur.time; setTodo(vd,pc.uid,{...cur,checked:false}); showToast("未完了に戻しました"); render(); }},"↩ 未完了に戻す"));
-      } else if(running){
-        const d0=new Date(recI.startTime);
-        m.appendChild(div({style:{fontSize:"11px",color:"#f97316",fontWeight:700,marginBottom:"6px"}},`⏱ 計測中（開始 ${hhmm(d0.getHours(),d0.getMinutes())}・経過 ${fmtDur(Date.now()-Date.parse(recI.startTime))}）`));
-        m.appendChild(btn({style:{width:"100%",padding:"11px",border:"1px solid #f97316",borderRadius:"8px",color:"#f97316",cursor:"pointer",fontSize:"13px",fontWeight:700,marginBottom:"14px",background:"#f9731622"},
-          onClick:()=>{ stopCustomTodoTimer(vd,ctI); showToast(`✅ ${lblI}`); render(); }},"⏹ 終了する"));
+          onClick:()=>{ const cur={...((state.todos[vd]||{})[pc.uid]||{})}; ["startTime","endTime","time","segs","durMs","paused"].forEach(k=>delete cur[k]); setTodo(vd,pc.uid,{...cur,checked:false}); showToast("未完了に戻しました"); render(); }},"↩ 未完了に戻す"));
+      } else if(running||pausedT){
+        if(running){ const d0=new Date(recI.startTime);
+          m.appendChild(div({style:{fontSize:"11px",color:"#f97316",fontWeight:700,marginBottom:"6px"}},`⏱ 計測中（開始 ${hhmm(d0.getHours(),d0.getMinutes())}・経過 ${fmtDur(ctElapsedMs(recI))}）`)); }
+        else m.appendChild(div({style:{fontSize:"11px",color:"#eab308",fontWeight:700,marginBottom:"6px"}},`⏸ 中断中（ここまで ${fmtDur(ctElapsedMs(recI))}・${recI.segs.length}回目まで）`));
+        m.appendChild(div({style:{display:"flex",gap:"8px",marginBottom:"8px"}},[
+          running?bigBtn("⏸ 中断する",{border:"1px solid #eab308",color:"#eab308",background:"#eab30822"},()=>{ pauseCustomTodoTimer(vd,ctI); showToast(`⏸ ${lblI}を中断しました`,"#eab308"); },"pause")
+                 :bigBtn("▶ 再開する",{border:"none",color:"#fff",background:"linear-gradient(135deg,#0ea5e9,#6366f1)"},()=>{ startCustomTodoTimer(vd,ctI); showToast(`▶ ${lblI} 再開`); },"resume"),
+          bigBtn("⏹ 終了する",{border:"1px solid #f97316",color:"#f97316",background:"#f9731622"},()=>{ stopCustomTodoTimer(vd,ctI); showToast(`✅ ${lblI}`); },"stop")]));
+        m.appendChild(cancelBtn());
       } else {
         m.appendChild(btn({style:{width:"100%",padding:"11px",border:"none",borderRadius:"8px",color:"#fff",cursor:"pointer",fontSize:"13px",fontWeight:700,marginBottom:"14px",background:"linear-gradient(135deg,#0ea5e9,#6366f1)"},
           onClick:()=>{ startCustomTodoTimer(vd,ctI); showToast(`▶ ${lblI} 計測開始`); render(); }},"▶ 開始する"));
@@ -7857,11 +7865,13 @@ function renderPlanCustomTodoModal(){
     m.appendChild(btn({style:{width:"100%",padding:"9px",marginBottom:"6px",background:"#0ea5e918",border:"1px solid #0ea5e9",borderRadius:"8px",color:"#38bdf8",fontSize:"13px",fontWeight:600,cursor:"pointer"},
       onClick:()=>{ const p=(vd||"").split('-'); const st=new Date(+p[0],+p[1]-1,+p[2],pc.tsH,pc.tsM,0,0); if(pc.tsNextDay)st.setDate(st.getDate()+1); const cur2={...((state.todos[vd]||{})[pc.uid]||{})}; cur2.startTime=st.toISOString();
         if(pc.hasEnd){ let et=new Date(+p[0],+p[1]-1,+p[2],pc.teH,pc.teM,0,0); if(pc.teNextDay)et.setDate(et.getDate()+1); if(et.getTime()<=st.getTime())et=new Date(et.getTime()+86400000); cur2.endTime=et.toISOString(); cur2.checked=true; cur2.time=et.toISOString(); }
+        // 時刻を手で直したら、中断の区間は使わない（開始〜終了をそのまま所要時間にする）
+        ["segs","durMs","paused"].forEach(k=>delete cur2[k]);
         setTodo(vd,pc.uid,cur2); state.modal=null; showToast("計測時刻を保存しました","#38bdf8"); render(); }},"✅ 計測時刻を保存"));
     if(!pc.hasEnd) m.appendChild(btn({style:{width:"100%",padding:"8px",marginBottom:"6px",background:"#22c55e18",border:"1px solid #22c55e",borderRadius:"8px",color:"#4ade80",fontSize:"12px",fontWeight:600,cursor:"pointer"},
       onClick:()=>{ pc.hasEnd=true; render(); }},"⏹ 終了時刻を入れて完了にする"));
     m.appendChild(btn({style:{width:"100%",padding:"8px",marginBottom:"12px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#94a3b8",cursor:"pointer",fontSize:"12px"},
-      onClick:()=>{ const cur2={...((state.todos[vd]||{})[pc.uid]||{})}; delete cur2.startTime; delete cur2.endTime; delete cur2.time; setTodo(vd,pc.uid,{...cur2,checked:false}); state.modal=null; showToast("計測をリセットしました"); render(); }},"↩ 計測をリセット"));
+      onClick:()=>{ const cur2={...((state.todos[vd]||{})[pc.uid]||{})}; ["startTime","endTime","time","segs","durMs","paused"].forEach(k=>delete cur2[k]); setTodo(vd,pc.uid,{...cur2,checked:false}); state.modal=null; showToast("計測をリセットしました"); render(); }},"↩ 計測をリセット"));
     m.appendChild(div({style:{borderTop:"1px solid #1e293b",margin:"0 0 10px"}}));
   }
   // 完了時刻（チェック済みのとき・チェック式）
@@ -11280,9 +11290,53 @@ function customTodoDoneCount(uid){ let n=0; for(const d in state.todos){ const r
 // 所要時間の表示（ミリ秒 → 「1時間5分」等）
 function fmtDur(ms){ if(!(ms>0))return "0分"; const mins=Math.round(ms/60000); if(mins<60)return `${mins}分`; const h=Math.floor(mins/60),m=mins%60; return m?`${h}時間${m}分`:`${h}時間`; }
 // 定期ルーティン（時間計測式）の記録を開始/終了。dはチェックを記録する日付
-function startCustomTodoTimer(vd,ct){ const cur=(state.todos[vd]||{})[ct.uid]||{}; setTodo(vd,ct.uid,{...cur,startTime:new Date().toISOString(),endTime:null,checked:false}); }
+// ⏸ 中断：計測を止めて、ここまでの区間を segs（[{s,e}]）に残す。完了にはしない。▶ 再開で続きを測り、⏹ 終了で区間の合計を所要時間にする。
+//   計測中＝startTime あり・endTime なし／中断中＝paused:true（startTime なし・segs あり）／完了＝checked（segs があれば durMs に合計）
+function ctTimerState(rec){ rec=rec||{}; if(rec.checked) return 'done'; if(rec.startTime&&!rec.endTime) return 'running'; if(rec.paused&&(rec.segs||[]).length) return 'paused'; return 'idle'; }
+function ctSegsMs(segs){ return (segs||[]).reduce((a,x)=>a+Math.max(0,Date.parse(x.e)-Date.parse(x.s)),0); }
+function ctElapsedMs(rec){
+  rec=rec||{};
+  if(rec.durMs!=null&&rec.endTime) return rec.durMs;                       // 完了（中断をはさんだ回は区間の合計）
+  let ms=ctSegsMs(rec.segs);
+  if(rec.startTime) ms+=Math.max(0,(rec.endTime?Date.parse(rec.endTime):Date.now())-Date.parse(rec.startTime));
+  return ms;
+}
+function startCustomTodoTimer(vd,ct){ const cur=(state.todos[vd]||{})[ct.uid]||{};
+  // 中断中なら続きから（区間を残す）。そうでなければ新しく測る
+  const keep=cur.paused?{segs:cur.segs||[]}:{segs:undefined,durMs:undefined};
+  setTodo(vd,ct.uid,{...cur,...keep,startTime:new Date().toISOString(),endTime:null,checked:false,paused:false}); }
+function pauseCustomTodoTimer(vd,ct){ const cur=(state.todos[vd]||{})[ct.uid]||{}; if(!cur.startTime||cur.endTime) return;
+  const now=new Date().toISOString();
+  setTodo(vd,ct.uid,{...cur,segs:[...(cur.segs||[]),{s:cur.startTime,e:now}],startTime:null,endTime:null,paused:true,checked:false}); }
 function stopCustomTodoTimer(vd,ct){ const cur=(state.todos[vd]||{})[ct.uid]||{}; const skipped=dismissPastUnchecked(ct,vd); const now=new Date().toISOString();
-  completeCustomTodo(ct,vd,{startTime:cur.startTime||now,endTime:now,time:now,skipped:skipped.length?skipped:undefined}); }
+  const segs=[...(cur.segs||[])]; if(cur.startTime&&!cur.endTime) segs.push({s:cur.startTime,e:now});
+  const split=(cur.segs||[]).length>0;                                     // 中断をはさんだ回
+  completeCustomTodo(ct,vd,{startTime:split?segs[0].s:(cur.startTime||now),endTime:split?segs[segs.length-1].e:now,time:now,
+    segs:split?segs:undefined,durMs:split?ctSegsMs(segs):undefined,paused:false,skipped:skipped.length?skipped:undefined}); }
+// 計測をなかったことにする（中断中・計測中から）
+function cancelCustomTodoTimer(vd,ct){ const cur={...((state.todos[vd]||{})[ct.uid]||{})}; ["startTime","endTime","segs","durMs","paused","time"].forEach(k=>delete cur[k]); setTodo(vd,ct.uid,{...cur,checked:false}); }
+// 計測中・中断中の1行（経過・ここまで）。それ以外は null
+function ctTimerStatus(rec,prefix){ const st=ctTimerState(rec), p=prefix||"";
+  if(st==='running') return `⏱ ${p}計測中（経過 ${fmtDur(ctElapsedMs(rec))}）`;
+  if(st==='paused') return `⏸ ${p}中断中（ここまで ${fmtDur(ctElapsedMs(rec))}）`;
+  return null; }
+function ctTimerColor(rec){ const st=ctTimerState(rec); return st==='running'?"#f97316":st==='paused'?"#eab308":null; }
+// ▶ 開始／⏸ 中断＋⏹ 終了／▶ 再開＋⏹ 終了 のボタン（定期ルーティンタブ・モード画面・ウィジェット・詳細で共用）
+function ctTimerControls(vd,ct,opts){
+  opts=opts||{}; const rec=(state.todos[vd]||{})[ct.uid]||{}, st=ctTimerState(rec), lbl=opts.label||rec.labelOverride||ct.label, accent=opts.accent||"#38bdf8", c=!!opts.compact;
+  const wrap=div({style:{display:"flex",gap:"5px",flexShrink:0}}); wrap.setAttribute('data-cttimer',String(ct.uid));
+  const mk=(t,col,fn,act)=>{ const b=btn({style:{padding:c?"4px 9px":"5px 10px",borderRadius:"7px",flexShrink:0,border:`1px solid ${col}`,background:col+"22",color:col,cursor:"pointer",fontSize:"12px",fontWeight:700,fontFamily:"inherit"}},t);
+    b.setAttribute('data-ctact',act); b.addEventListener('click',e=>{ e.stopPropagation(); fn(); if(opts.after) opts.after(); }); return b; };
+  const stop=()=>{ stopCustomTodoTimer(vd,ct); showToast(`✅ ${lbl}`); };
+  if(st==='running'){
+    wrap.appendChild(mk(c?"⏸":"⏸ 中断","#eab308",()=>{ pauseCustomTodoTimer(vd,ct); showToast(`⏸ ${lbl}を中断しました（ここまで ${fmtDur(ctElapsedMs((state.todos[vd]||{})[ct.uid]))}）`,"#eab308"); },"pause"));
+    wrap.appendChild(mk(c?"⏹":"⏹ 終了","#f97316",stop,"stop"));
+  } else if(st==='paused'){
+    wrap.appendChild(mk(c?"▶":"▶ 再開",accent,()=>startCustomTodoTimer(vd,ct),"resume"));
+    wrap.appendChild(mk(c?"⏹":"⏹ 終了","#f97316",stop,"stop"));
+  } else wrap.appendChild(mk(c?"▶":"▶ 開始",accent,()=>startCustomTodoTimer(vd,ct),"start"));
+  return wrap;
+}
 // その日にアルコールを摂取したか（翌日開始の飲酒は翌日側にカウント）
 function dayHasAlcohol(ds){
   const onDay=(getDaily(ds).drinks||[]).some(dr=>!dr.startNextDay);
@@ -12936,7 +12990,7 @@ function uncheckCustomTodo(ct, vd){
   const cur={...((state.todos[vd]||{})[ct.uid]||{})};
   const back=restorePastSkipped(ct.uid,cur.skipped);
   delete cur.skipped;
-  if(ct.mode==='timer'){ delete cur.startTime; delete cur.endTime; }
+  if(ct.mode==='timer'){ ["startTime","endTime","segs","durMs","paused"].forEach(k=>delete cur[k]); }
   unanchorCustomTodo(ct,vd);
   setTodo(vd,ct.uid,{...cur,checked:false,time:null});
   if(back) showToast(`↩️ 未実施だった${back}回分も戻しました`);
@@ -13428,19 +13482,13 @@ function renderOccasional(vd){
     if(active && isTimer){
       // 時間計測式：▶開始 / ⏹終了
       const rec=(state.todos[vd]||{})[ct.uid]||{};
-      const running=rec.startTime && !rec.endTime && !done;
+      const running=ctTimerState(rec)!=='idle' && !done;   // 計測中・中断中
       if(done){
         const ub=btn({style:{width:"22px",height:"22px",borderRadius:"6px",flexShrink:0,border:"2px solid #22c55e",background:"#22c55e",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"13px",color:"#fff",cursor:"pointer",padding:"0"},title:"完了を取り消す"},"✓");
         ub.addEventListener('click',(()=>{const c2={...ct};return()=>{ uncheckCustomTodo(c2,vd); };})());
         row.appendChild(ub);
-      } else if(running){
-        const b=btn({style:{padding:"5px 11px",flexShrink:0,borderRadius:"7px",border:"1px solid #f97316",background:"#f9731622",color:"#f97316",fontSize:"12px",fontWeight:700,cursor:"pointer"}},"⏹ 終了");
-        b.addEventListener('click',(()=>{const c2={...ct},label=ct.label;return()=>{ stopCustomTodoTimer(vd,c2); showToast(`✅ ${label}`); };})());
-        row.appendChild(b);
       } else {
-        const b=btn({style:{padding:"5px 11px",flexShrink:0,borderRadius:"7px",border:"1px solid #0ea5e9",background:"#0ea5e922",color:"#38bdf8",fontSize:"12px",fontWeight:700,cursor:"pointer"}},"▶ 開始");
-        b.addEventListener('click',(()=>{const c2={...ct};return()=>{ startCustomTodoTimer(vd,c2); };})());
-        row.appendChild(b);
+        row.appendChild(ctTimerControls(vd,ct));        // ▶ 開始／⏸ 中断＋⏹ 終了／▶ 再開＋⏹ 終了
       }
     } else if(active){
       const cb=btn({style:{width:"22px",height:"22px",borderRadius:"6px",flexShrink:0,border:`2px solid ${done?"#22c55e":(occ&&occ.snToday)?"#a78bfa":overdue?"#f97316":"#334155"}`,background:done?"#22c55e":"transparent",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"13px",color:"#fff"}},done?"✓":"");
@@ -13462,19 +13510,20 @@ function renderOccasional(vd){
     const _timeStr=_tt?` ・ ${_tt.h}:${String(_tt.m||0).padStart(2,'0')}${_hasWd?"(曜日別)":""}`:(_hasWd?" ・ 曜日別":"");
     let statusStr; const _snToday=occ&&occ.snToday;
     const _recT=(state.todos[vd]||{})[ct.uid]||{};
-    const _runT=isTimer && _recT.startTime && !_recT.endTime && !done;
-    if(_runT) statusStr=overdue?`⏱ ${occ.daysAgo}日前(${mdc(occ.dueDate)})の分を実施中`:"⏱ 実施中";
+    const _tsT=isTimer&&!done?ctTimerState(_recT):'idle', _runT=_tsT==='running'||_tsT==='paused';
+    if(_runT) statusStr=`${_tsT==='paused'?"⏸":"⏱"} ${overdue?`${occ.daysAgo}日前(${mdc(occ.dueDate)})の分を`:""}${_tsT==='paused'?"中断中":"実施中"}`;
     else if(_snToday){ const st=customTodoTimeFor(ct,occ.dueDate); statusStr=`🌙 開始翌日・今日${st?`（${String(st.h).padStart(2,'0')}:${String(st.m||0).padStart(2,'0')}）`:""}`; }
     else if(overdue) statusStr=`🔴 ${occ.daysAgo}日前(${mdc(occ.dueDate)})から未実施`;
     else if(paused&&!occ) statusStr=`⏸ 休止中（${mdc(paused.from)}から）`;
     else if(excludedToday) statusStr="除外中";
     else if(occ) statusStr="今日";
     else statusStr="次:"+mdc(nextCustomTodoDate(ct));
-    lab.appendChild(div({style:{fontSize:"9px",color:_runT?"#f97316":(_snToday?"#a78bfa":(overdue?"#f97316":"#64748b"))}},`${customTodoIntervalLabel(ct)}${_timeStr}　${statusStr}`));
+    lab.appendChild(div({style:{fontSize:"9px",color:_runT?ctTimerColor(_recT):(_snToday?"#a78bfa":(overdue?"#f97316":"#64748b"))}},`${customTodoIntervalLabel(ct)}${_timeStr}　${statusStr}`));
     if(isTimer){
       const rec=(state.todos[vd]||{})[ct.uid]||{};
-      if(rec.startTime && rec.endTime){ lab.appendChild(div({style:{fontSize:"10px",color:"#4ade80",fontWeight:700,marginTop:"1px"}},`⏱ 所要 ${fmtDur(Date.parse(rec.endTime)-Date.parse(rec.startTime))}`)); }
-      else if(rec.startTime){ const d0=new Date(rec.startTime); lab.appendChild(div({style:{fontSize:"10px",color:"#f97316",fontWeight:700,marginTop:"1px"}},`⏱ 計測中（開始 ${d0.getHours()}:${String(d0.getMinutes()).padStart(2,'0')}・経過 ${fmtDur(Date.now()-Date.parse(rec.startTime))}）`)); }
+      if(rec.startTime && rec.endTime){ lab.appendChild(div({style:{fontSize:"10px",color:"#4ade80",fontWeight:700,marginTop:"1px"}},`⏱ 所要 ${fmtDur(ctElapsedMs(rec))}${(rec.segs||[]).length>1?`（${rec.segs.length}回に分けて）`:""}`)); }
+      else if(ctTimerState(rec)==='paused'){ lab.appendChild(div({style:{fontSize:"10px",color:"#eab308",fontWeight:700,marginTop:"1px"}},`⏸ 中断中（ここまで ${fmtDur(ctElapsedMs(rec))}）`)); }
+      else if(rec.startTime){ const d0=new Date(rec.startTime); lab.appendChild(div({style:{fontSize:"10px",color:"#f97316",fontWeight:700,marginTop:"1px"}},`⏱ 計測中（開始 ${d0.getHours()}:${String(d0.getMinutes()).padStart(2,'0')}・経過 ${fmtDur(ctElapsedMs(rec))}）`)); }
     }
     row.appendChild(lab);
     // 完了時刻（タップで編集：planCustomTodo の「完了時刻を編集」を開く）
