@@ -224,7 +224,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.18"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.19"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -2287,11 +2287,11 @@ const SELF_MODES={
 //   仕事/副業/自己投資/趣味/食事/休息/睡眠。切替でタイムラインを作る。
 //   ケアモード（睡眠前/飲み/落ち込み/たかぶり/朝）は上に重ねる一時ツール。
 // ════════════════════════════════════════════════════
-// 並び順は切替画面の並び（2列）と同じ。先頭の🏠生活は1行使って一番上に出す。
+// 並び順は切替画面の並び（2列）と同じ。1行目は🏠生活と🛒買物。
 const DEFAULT_LIFE_MODES=[
   {key:'life',     label:'生活',    icon:'🏠', color:'#38bdf8', content:'time'}, // いつもの生活（既定モード）
-  {key:'meal',     label:'食事',    icon:'🍚', color:'#f59e0b', content:'meal'},
   {key:'shop',     label:'買物',    icon:'🛒', color:'#84cc16', content:'shop'}, // 買物リストを見ながら買う
+  {key:'meal',     label:'食事',    icon:'🍚', color:'#f59e0b', content:'meal'},
   {key:'rest',     label:'休息',    icon:'🛋️', color:'#14b8a6', content:'rest'},
   {key:'invest',   label:'自己投資',icon:'📚', color:'#22c55e', content:'invest'},
   {key:'train',    label:'トレーニング',icon:'🏋️', color:'#f43f5e', content:'train'},
@@ -2317,7 +2317,7 @@ function getLifeModes(){ if(!Array.isArray(state.lifeModes)||!state.lifeModes.le
 // 記録を失わないよう、モード時間ログ・既定モード・ルーティンの割り当て・目標時間の参照もすべて付け替える。
 // 保存済みのモード一覧を既定の並び（DEFAULT_LIFE_MODES の順）に揃える。
 // 並べ替えのUIは無いので1回だけ実行する（_modeorder に実行済みの版を記録）。
-const MODE_ORDER_VER='2';   // 2＝🛒買物モードを食事の隣に入れた
+const MODE_ORDER_VER='3';   // 2＝🛒買物モードを追加／3＝🏠生活の隣（1行目）へ
 function migrateModeOrder(){
   if(!Array.isArray(state.lifeModes)||!state.lifeModes.length) return;
   let done=null; try{ done=localStorage.getItem(STORAGE_KEY+'_modeorder'); }catch(_){}
@@ -3302,7 +3302,7 @@ function renderModeSwitcher(){
   const grid=div({style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'9px',marginBottom:'18px'}});
   nonCareModes().forEach((m,mi)=>{ const on=curKey===m.key;
     const b=btn({style:{padding:'16px 10px',borderRadius:'13px',border:`2px solid ${on?m.color:'#1e293b'}`,background:on?m.color+'22':'#111827',cursor:'pointer',fontFamily:'inherit',textAlign:'center',
-      ...(mi===0?{gridColumn:'1 / -1'}:{})}},[
+    }},[
       div({style:{fontSize:'26px'}},m.icon),
       div({style:{fontSize:'13px',fontWeight:700,color:on?m.color:'#e2e8f0',marginTop:'3px'}},m.label),
       on?div({style:{fontSize:'9px',color:m.color,marginTop:'2px'}},'● 進行中'):null
