@@ -224,7 +224,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.15"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.16"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -9196,6 +9196,7 @@ function alexaSrvOutdated(v){ return !!v && parseFloat(v)<parseFloat(ALEXA_SRV_M
 const ALEXA_SRV_OLD_TXT=`サーバーの alexa.php を v${ALEXA_SRV_MIN} に更新してください（アプリを開いている間、鳴る直前の予約が消えてしまう不具合を直した版です）`;
 // 間隔（interval＝サーバーが数えた時報の間隔の中央値・秒）が分かれば、その2.5倍＋2分まで待つ。分からなければ15分。
 const ALEXA_CRON_STALE=15*60;
+const ALEXA_CRON_SLOW=10*60;   // これより間隔が長い時報は「遅い」（予約が遅れて鳴る）
 function alexaFmtMin(sec){ const m=Math.round(sec/60); return m<1?"1分以内":m<90?`${m}分`:m<60*48?`${Math.round(m/60)}時間`:`${Math.round(m/1440)}日`; }
 function alexaCronHealth(ticked,now,interval){
   if(!now) return null;
@@ -9204,6 +9205,8 @@ function alexaCronHealth(ticked,now,interval){
   const limit=iv?Math.max(ALEXA_CRON_STALE,iv*2.5+120):ALEXA_CRON_STALE;
   const agoTxt=ago<60?"1分以内":`${alexaFmtMin(ago)}前`, ivTxt=iv?`（ふだんは約${alexaFmtMin(iv)}ごと）`:"";
   if(ago>limit) return {lv:"stale",text:`時報（cron）が最後に動いたのは${agoTxt}です${ivTxt}。止まっている可能性があります`};
+  // 動いていても間隔が長いと、予約はその間隔ぶん遅れて鳴る（1時間を超えて遅れたものはサーバが鳴らさずに捨てる）
+  if(iv>ALEXA_CRON_SLOW) return {lv:"slow",text:`時報（cron）は${agoTxt}に動いていますが、間隔が約${alexaFmtMin(iv)}ごとです。予約の時刻になっても次の時報まで鳴らず、最大で約${alexaFmtMin(iv)}遅れます（1時間を超えて遅れた予約は鳴らさずに捨てます）。1分〜5分ごとにしてください`};
   return {lv:"ok",text:`時報（cron）は${agoTxt}に動いています${ivTxt}`};
 }
 const ALEXA_CRON_CMDS=[
@@ -9240,6 +9243,12 @@ function alexaSrvBox(){
       const cb=btn({style:{flexShrink:0,padding:"4px 8px",fontSize:"10px",borderRadius:"6px",border:"1px solid #334155",background:"transparent",color:"#94a3b8",cursor:"pointer",fontFamily:"inherit"}},"📋");
       cb.addEventListener('click',()=>copyText(cmd)); row.appendChild(cb); box.appendChild(row);
     });
+    box.appendChild(div({style:{fontSize:"10px",color:"#94a3b8",margin:"6px 0 4px",lineHeight:1.6}},
+      "1時間より細かい間隔を選べないときは、同じものを「0分・5分・10分…55分」のように分をずらして複数登録するか、外部の無料のcronサービス（例：cron-job.org）に次のURLを1分ごとで登録してください："));
+    { const u=`${ALEXA_RELAY_DEFAULT}?tick=1`, row=div({style:{display:"flex",alignItems:"center",gap:"6px",marginBottom:"6px"}});
+      row.appendChild(div({style:{flex:1,minWidth:0,fontSize:"10px",color:"#e2e8f0",fontFamily:"monospace",wordBreak:"break-all",background:"#0f172a",padding:"4px 6px",borderRadius:"5px"}},u));
+      const cb=btn({style:{flexShrink:0,padding:"4px 8px",fontSize:"10px",borderRadius:"6px",border:"1px solid #334155",background:"transparent",color:"#94a3b8",cursor:"pointer",fontFamily:"inherit"}},"📋");
+      cb.addEventListener('click',()=>copyText(u)); row.appendChild(cb); box.appendChild(row); }
     box.appendChild(div({style:{fontSize:"9px",color:"#475569",lineHeight:1.6}},"B の「<アカウント名>」と「nuts024.com」は、コントロールパネルのファイルマネージャーで alexa.php の場所を見て合わせてください。"));
   }
   return box;

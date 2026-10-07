@@ -3,7 +3,7 @@
 > AIが参照しやすいよう、`api.php`（Geminiプロキシ）と、それを呼ぶクライアント関数の
 > **正確な契約**をまとめた常設リファレンス。実装は `health.html`（クライアント）と
 > サーバー上の `api.php` / `alexa.php`（どちらもリポジトリ管理外）。
-> 最終更新: アプリ v15.09 / api.php v4.1 / alexa.php v2.3。
+> 最終更新: アプリ v15.16 / api.php v4.1 / alexa.php v2.3。
 
 ---
 
@@ -299,7 +299,7 @@ curl -s "https://nuts024.com/health/alexa.php?tick=1" > /dev/null
 - **いますぐ叩く**：`health.html` の `alexaCall(hook,done)`。設定→🔊 Alexa連携 の「中継サーバ経由」がONのときに使う。
 - **予約を預ける**：`alexaSyncPlan(force,done)`（起動2.5秒後・1分ごとの見回り・予定や定期ルーティンの保存直後）。
   中身が前と同じなら送らない（12時間たてば送り直す）。「⏰ 時刻で鳴らす」をOFFにすると空配列を送る。
-  返事の `ticked`／`now` を `state.alexaPlan.srv` に持ち、**時報が15分以上動いていない・一度も動いていない**ときは予約の欄に警告を出す（`alexaCronHealth`）。
+  返事の `ticked`／`now` を `state.alexaPlan.srv` に持ち、**時報が15分以上動いていない・一度も動いていない・間隔が10分より長い**ときは予約の欄に警告を出す（`alexaCronHealth`）。
   `error:"URL"`／`"HOST"` が返ったら「サーバーの alexa.php が古い版」と表示する。
   一覧は**時刻が過ぎるまで**入れる（v15.08 までは30秒前に外していた）。OFFのときは `clear:true`。
   返事の `version` が **2.3 より古い**と、予約の欄と状態の確認に「v2.3 に更新してください」と出す（`alexaSrvOutdated`）。
