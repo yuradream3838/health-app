@@ -224,7 +224,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.28"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.29"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -439,7 +439,8 @@ const TODO_ITEMS = [
 // まとめ→既定モード（既存データの項目モードを補完するときの参照元）
 const GROUP_DEFAULT_MODE={morning:"morning",breakfast:"meal",lunch:"meal",dinner:"meal",shower:"rest",night:"sleepprep",input:"invest",output:"invest",gohome:"work"};
 // ルーティン項目はユーザーが編集可能（追加・改名・種類変更・削除）。既定はTODO_ITEMS。
-function getTodoItems(){ if(!Array.isArray(state.todoItems)||!state.todoItems.length){ state.todoItems=JSON.parse(JSON.stringify(TODO_ITEMS)); } return state.todoItems; }
+// 既定の項目（TODO_ITEMS）は「まだ一度も保存していないとき」だけ使う。自分の一覧が常に優先で、全部消しても初期の項目は戻さない
+function getTodoItems(){ if(!Array.isArray(state.todoItems)){ state.todoItems=JSON.parse(JSON.stringify(TODO_ITEMS)); } return state.todoItems; }
 // 保存済みの一覧を読み込む前に保存すると、既定の項目で上書きして自作の項目が消える（v15.24 で起きた）。読み込み前の保存は止める
 let _todoItemsLoaded=false;
 function saveTodoItems(){ if(!_todoItemsLoaded){ console.warn("saveTodoItems: 読み込み前の保存は行いません"); return; } try{localStorage.setItem(STORAGE_KEY+"_todoitems",JSON.stringify(getTodoItems()));}catch{} }
@@ -488,7 +489,9 @@ function migrateRoutineModes(){
 // v15.24 は起動時、保存してあるルーティン項目を読む前に既定の項目を保存してしまい、アプリで追加した項目（id が "ti…"）が消えた。
 // 名前は残っていないが、まとめ（routines）・並び順（_todo_order）・直近の実施記録には id が残っているので、
 // 仮の名前で項目を作り直す（記録・まとめ・並びはそのままつながる）。バックアップがあれば名前ごと戻せる（restoreTodoItemsFromBackup）。
+// 1回だけ行う（毎回やると、自分で消した項目まで「消えたルーティン」として戻してしまうため）
 function recoverLostTodoItems(){
+  try{ if(localStorage.getItem(STORAGE_KEY+"_lostrecovered")) return 0; localStorage.setItem(STORAGE_KEY+"_lostrecovered","1"); }catch(_){ return 0; }
   const have=new Set(getTodoItems().map(it=>it.id)), ids=[];
   const add=id=>{ if(typeof id==="string"&&/^ti\d+/.test(id)&&!have.has(id)&&!ids.includes(id)) ids.push(id); };
   (state.routines||[]).forEach(g=>(g.ids||[]).forEach(add));
@@ -1038,7 +1041,7 @@ function loadStorage(){
     const bcp=localStorage.getItem(STORAGE_KEY+"_bodycomp");
     if(bcp){try{const a=JSON.parse(bcp); if(Array.isArray(a))state.bodyComps=a;}catch{}}
     const tdi=localStorage.getItem(STORAGE_KEY+"_todoitems");
-    if(tdi){try{const a=JSON.parse(tdi); if(Array.isArray(a)&&a.length)state.todoItems=a;}catch{}}
+    if(tdi){try{const a=JSON.parse(tdi); if(Array.isArray(a))state.todoItems=a;}catch{}}
     _todoItemsLoaded=true;
     // ⚠ ルーティン項目（_todoitems）を読み込んだ「後」に行うこと。読む前に getTodoItems() を保存すると既定の項目で上書きしてしまう（v15.24の不具合）
     migrateRoutineModes(); // まとめの「表示するモード」を補完
@@ -1077,7 +1080,7 @@ function loadStorage(){
     const ach=localStorage.getItem(STORAGE_KEY+"_anachanges");
     if(ach){try{const a=JSON.parse(ach); if(Array.isArray(a))state.anaChanges=a;}catch{}}
     const fct=localStorage.getItem(STORAGE_KEY+"_foodcats");
-    if(fct){try{const o=JSON.parse(fct); if(o&&Array.isArray(o.cats)&&o.cats.length)state.foodCats=o.cats; if(o&&o.emoji&&typeof o.emoji==="object")state.foodEmoji=o.emoji;}catch{}}
+    if(fct){try{const o=JSON.parse(fct); if(o&&Array.isArray(o.cats))state.foodCats=o.cats; if(o&&o.emoji&&typeof o.emoji==="object")state.foodEmoji=o.emoji;}catch{}}
     const mlg=localStorage.getItem(STORAGE_KEY+"_modelog");
     if(mlg){try{const a=JSON.parse(mlg); if(Array.isArray(a))state.modeLog=a;}catch{}}
     // 記録どうしが重なっていると1日の合計が24時間を超える。読み込んだ時点で**点検だけ**する（直すかどうかは本人が決める）
@@ -3705,9 +3708,7 @@ function modeTagPicker(key,accent){
     const add=btn({style:{flex:1,padding:'8px',borderRadius:'8px',border:`1px dashed ${accent}66`,background:'transparent',color:accent,fontSize:'12px',cursor:'pointer',fontFamily:'inherit'}},'＋ タグを追加');
     add.addEventListener('click',(()=>{const k=key;return()=>{ getModeTags(k).push(''); saveModeTags(); render(); };})());
     bar.appendChild(add);
-    const rst=btn({style:{padding:'8px 10px',borderRadius:'8px',border:'1px solid #ffffff22',background:'transparent',color:'#a89e8c',fontSize:'12px',cursor:'pointer',fontFamily:'inherit'}},'初期化');
-    rst.addEventListener('click',(()=>{const k=key;return()=>{ if(confirm('タグを初期設定に戻しますか？')){ state.modeTags[k]=[...(MODE_TAG_DEFAULTS[k]||[])]; saveModeTags(); render(); } };})());
-    bar.appendChild(rst); box.appendChild(bar);
+    box.appendChild(bar);
     return box;
   }
   const chips=div({style:{display:'flex',flexWrap:'wrap',gap:'6px'}});
@@ -3890,9 +3891,7 @@ function selfChecklistCard(modeKey,accent){
     const add=btn({style:{flex:1,padding:"8px",borderRadius:"8px",border:`1px dashed ${accent}66`,background:"transparent",color:accent,fontSize:"12px",cursor:"pointer",fontFamily:"inherit"}},"＋ 項目を追加");
     add.addEventListener('click',(()=>{const k=modeKey;return()=>{ getSelfChecksCfg()[k].push(""); saveSelfChecksCfg(); render(); };})());
     bar.appendChild(add);
-    const rst=btn({style:{padding:"8px 10px",borderRadius:"8px",border:"1px solid #ffffff22",background:"transparent",color:"#a89e8c",fontSize:"12px",cursor:"pointer",fontFamily:"inherit"}},"初期化");
-    rst.addEventListener('click',(()=>{const k=modeKey;return()=>{ if(confirm("この項目を初期設定に戻しますか？")){ getSelfChecksCfg()[k]=[...SELF_CHECK_DEFAULTS[k]]; saveSelfChecksCfg(); render(); } };})());
-    bar.appendChild(rst); cc.appendChild(bar);
+    cc.appendChild(bar);
   } else {
     if(!items.length) cc.appendChild(div({style:{fontSize:"11px",color:"#a89e8c",lineHeight:1.5}},"項目がありません。「✏️ 編集」から追加できます。"));
     items.forEach((label,idx)=>{ const on=!!done["c"+idx]; const row=div({style:{display:"flex",alignItems:"center",gap:"10px",padding:"7px 0",cursor:"pointer",borderBottom:"1px solid #ffffff10"}});
@@ -6758,7 +6757,8 @@ function renderScoreModal(){
 // 初期の一覧は FOOD_CATS。一度でも編集したら _foodcats（{cats, emoji}）に丸ごと持つ。
 // 記録（daily.foods）は品目の「名前」の配列なので、一覧から消しても過去の記録はそのまま残る。
 function defaultFoodCats(){ return FOOD_CATS.map(c=>({id:c.id,label:c.label,emoji:c.emoji,items:[...c.items]})); }
-function getFoodCats(){ if(!Array.isArray(state.foodCats)||!state.foodCats.length) state.foodCats=defaultFoodCats(); return state.foodCats; }
+// 既定の一覧は「まだ一度も保存していないとき」だけ使う。自分で変えた一覧が常に優先で、空にしても初期の内容は戻さない
+function getFoodCats(){ if(!Array.isArray(state.foodCats)) state.foodCats=defaultFoodCats(); return state.foodCats; }
 function saveFoodCats(){ safeSet(STORAGE_KEY+"_foodcats",JSON.stringify({cats:getFoodCats(),emoji:state.foodEmoji||{}})); }
 function foodCatOf(name){ return getFoodCats().find(c=>c.items.includes(name))||null; }
 function foodDaysWith(name){ return state.dailies.filter(d=>Array.isArray(d.foods)&&d.foods.includes(name)).length; }
@@ -6810,7 +6810,6 @@ function moveFoodCat(id,delta){
   const a=getFoodCats(), i=a.findIndex(x=>x.id===id), j=i+delta;
   if(i<0||j<0||j>=a.length) return; [a[i],a[j]]=[a[j],a[i]]; saveFoodCats();
 }
-function resetFoodCats(){ state.foodCats=defaultFoodCats(); state.foodEmoji={}; saveFoodCats(); }
 
 // ── 食材選択モーダル ──────────────────────────────
 function foodInput(val,ph,width,onCommit){
@@ -6940,8 +6939,6 @@ function renderFoodModal(vd){
     add.appendChild(em); add.appendChild(lb);
     add.appendChild(btn({style:{flexShrink:0,padding:"6px 12px",borderRadius:"7px",border:"1px solid #0ea5e9",background:"#0ea5e918",color:"#38bdf8",fontSize:"12px",fontWeight:600,cursor:"pointer",fontFamily:"inherit"},onClick:go},"＋ カテゴリ"));
     list.appendChild(add);
-    list.appendChild(btn({style:{width:"100%",marginTop:"14px",padding:"8px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#64748b",fontSize:"11px",cursor:"pointer",fontFamily:"inherit"},
-      onClick:()=>{ if(confirm("食べたものの一覧を初期の状態に戻しますか？\n（自分で足した品目・名前の変更・絵文字は消えます。過去の記録は残ります）")){ resetFoodCats(); state.foodOpenCat=null; render(); } }},"↺ 初期の一覧に戻す"));
   }
   m.appendChild(list);
   bg.appendChild(m);return bg;
@@ -8628,7 +8625,9 @@ function renderRoutinePanel(){
     r1.appendChild(li);
     // 削除
     const del=btn({style:{padding:"6px 8px",background:"transparent",border:"1px solid #7f1d1d",borderRadius:"6px",color:"#f87171",fontSize:"12px",cursor:"pointer",flexShrink:0}},"🗑");
-    del.addEventListener('click',(()=>{const id=item.id,l=item.label;return()=>{ if(confirm(`「${l}」を削除しますか？（過去の記録は残ります）`)){ state.todoItems=getTodoItems().filter(x=>x.id!==id); saveTodoItems(); state.routines=(state.routines||[]).map(r=>({...r,ids:(r.ids||[]).filter(x=>x!==id)})); saveRoutines(); render(); } };})());
+    del.addEventListener('click',(()=>{const id=item.id,l=item.label;return()=>{ if(confirm(`「${l}」を削除しますか？（過去の記録は残ります）`)){ state.todoItems=getTodoItems().filter(x=>x.id!==id); saveTodoItems(); state.routines=(state.routines||[]).map(r=>({...r,ids:(r.ids||[]).filter(x=>x!==id)})); saveRoutines();
+          try{ const o=JSON.parse(localStorage.getItem(STORAGE_KEY+"_todo_order")||"null"); if(Array.isArray(o)) localStorage.setItem(STORAGE_KEY+"_todo_order",JSON.stringify(o.filter(x=>x!==id))); }catch(_){}   // 並び順からも外す
+          render(); } };})());
     r1.appendChild(del);
     box.appendChild(r1);
     // 種類・グループ
@@ -8673,7 +8672,7 @@ function renderRoutinePanel(){
     if(state.itemColorEdit===item.id){
       const cp=div({style:{marginTop:"6px",paddingLeft:"28px",display:"flex",flexWrap:"wrap",gap:"6px",alignItems:"center"}});
       cp.appendChild(colorPickerRow(item.color,(()=>{const id=item.id;return c=>{ getTodoItems().forEach(x=>{if(x.id===id)x.color=c;}); saveTodoItems(); render(); };})()));
-      const clr=btn({style:{padding:"5px 9px",borderRadius:"6px",border:"1px solid #334155",background:"transparent",color:"#64748b",fontSize:"11px",cursor:"pointer"}},"既定に戻す");
+      const clr=btn({style:{padding:"5px 9px",borderRadius:"6px",border:"1px solid #334155",background:"transparent",color:"#64748b",fontSize:"11px",cursor:"pointer"}},"色を外す");
       clr.addEventListener('click',(()=>{const id=item.id;return()=>{ getTodoItems().forEach(x=>{if(x.id===id)delete x.color;}); saveTodoItems(); render(); };})());
       cp.appendChild(clr);
       box.appendChild(cp);
@@ -8704,9 +8703,6 @@ function renderRoutinePanel(){
       card.appendChild(row);
     });
   }
-  card.appendChild(btn({className:"btn-ghost",style:{width:"100%",marginTop:"14px"},onClick:()=>{
-    if(confirm("ルーティン項目とグループを初期設定に戻しますか？（追加した項目は消えます・過去の記録は残ります）")){ state.todoItems=JSON.parse(JSON.stringify(TODO_ITEMS)); saveTodoItems(); state.routines=cloneRoutines(); saveRoutines(); try{localStorage.removeItem(STORAGE_KEY+"_todo_order");}catch{} render(); }
-  }},"初期設定に戻す"));
   return card;
 }
 
