@@ -224,7 +224,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.19"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.20"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -3719,7 +3719,7 @@ function renderLifeScreen(){
     inner.appendChild(div({style:{textAlign:'center',fontSize:'13px',color:'#cbd5e1',lineHeight:1.7,marginBottom:'14px',whiteSpace:'pre-line'}},'リストにあるものを買おう。\nついで買いはひと呼吸おいてから。'));
     addAssigned();
     // タスク→買物リストをまるごと表示（同じ関数・同じデータ。買ったらチェック）
-    { const sl=renderTaskList("shopping","🛒 買物リスト","買ったらチェック。タスクの買物リストと同じです");
+    { const sl=renderTaskList("shopping","🛒 買物リスト","選んだ分類のものだけ表示。買ったらチェック（タスクの買物リストと同じ）",{onlyCat:true});
       sl.setAttribute('data-shopmodelist','1'); inner.appendChild(sl); }
   } else if(c==='social'){
     inner.appendChild(div({style:{textAlign:'center',fontSize:'13px',color:'#cbd5e1',lineHeight:1.7,marginBottom:'14px'}},'人とのつながりを大切に。'));
@@ -10850,7 +10850,9 @@ function todoItemBox(item){
 const SHOP_CATS=[{k:'food',l:'🍎 食品'},{k:'daily',l:'🧴 消耗品'},{k:'want',l:'✨ 欲しい物'}];
 function shopCatOf(item){ const c=item&&item.cat; return SHOP_CATS.some(s=>s.k===c)?c:'food'; }
 function shopCatLabel(k){ const s=SHOP_CATS.find(x=>x.k===k); return s?s.l:k; }
-function renderTaskList(key,title,subtitle){
+// opts.onlyCat＝選んでいる分類（上のタブ）のものだけ並べる（🛒買物モード）。タブには未購入の数を出す
+function renderTaskList(key,title,subtitle,opts){
+  const onlyCat=!!(opts&&opts.onlyCat);
   const wrap=div({});
   const list=state.tasks[key]||[];
   const card=div({className:"card"});
@@ -10861,6 +10863,7 @@ function renderTaskList(key,title,subtitle){
   const catRow=div({style:{display:"flex",gap:"6px",marginBottom:"6px"}});
   SHOP_CATS.forEach(s=>{ const on=state.shopAddCat===s.k;
     const b=btn({style:{flex:1,padding:"6px 0",borderRadius:"7px",cursor:"pointer",fontSize:"12px",fontWeight:on?700:500,border:`1px solid ${on?"#0ea5e9":"#334155"}`,background:on?"#0ea5e922":"transparent",color:on?"#38bdf8":"#64748b"}},s.l);
+    if(onlyCat){ const n=list.filter(x=>shopCatOf(x)===s.k&&!x.done).length; b.textContent=`${s.l}${n?` ${n}`:""}`; b.setAttribute('data-shopcattab',s.k); }
     b.addEventListener('click',()=>{state.shopAddCat=s.k;render();}); catRow.appendChild(b);
   });
   card.appendChild(catRow);
@@ -10879,11 +10882,11 @@ function renderTaskList(key,title,subtitle){
   addBtn.addEventListener('click',addFn);
   inputRow.appendChild(inp);inputRow.appendChild(addBtn);
   card.appendChild(inputRow);
-  if(list.length===0){
-    card.appendChild(div({style:{textAlign:"center",fontSize:"11px",color:"#475569",padding:"12px 0"}},"まだありません"));
+  if(onlyCat?!list.some(x=>shopCatOf(x)===state.shopAddCat):list.length===0){
+    card.appendChild(div({style:{textAlign:"center",fontSize:"11px",color:"#475569",padding:"12px 0"}},onlyCat?`${shopCatLabel(state.shopAddCat)}はまだありません`:"まだありません"));
   }
   // タグごとにグループ表示
-  SHOP_CATS.forEach(cat=>{
+  SHOP_CATS.filter(cat=>!onlyCat||cat.k===state.shopAddCat).forEach(cat=>{
     const items=list.filter(x=>shopCatOf(x)===cat.k).sort((a,b)=>(a.done?1:0)-(b.done?1:0));
     if(!items.length)return;
     card.appendChild(div({style:{fontSize:"11px",fontWeight:700,color:"#94a3b8",margin:"8px 0 5px"}},`${cat.l}（${items.length}）`));
