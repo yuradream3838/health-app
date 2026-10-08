@@ -224,7 +224,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.29"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.30"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -9252,7 +9252,9 @@ function alexaReservations(){ return alexaReservationsAll().filter(x=>!alexaItem
 function alexaReservationsAll(){
   const out=[], now=Date.now(), today=todayStr();
   if(!state.alexaOn||!state.alexaPlanOn) return out;
-  for(let i=0;i<ALEXA_PLAN_DAYS;i++){
+  // 前日の分から作る：深夜0時をまわると「今日」が変わり、前日の夜の就寝目標（翌1:30など）や翌日開始の定期ルーティンが
+  // 一覧から抜けてしまう。抜けた一覧をサーバに送り直すと、まだ鳴らしていない予約が消えていた（v15.30 で修正）
+  for(let i=-1;i<ALEXA_PLAN_DAYS;i++){
     const ds=addDays(today,i);
     // ① 予定（単発・繰り返し。終日は時刻がないので対象外）
     try{ getEventsForDate(ds).forEach(ev=>{
