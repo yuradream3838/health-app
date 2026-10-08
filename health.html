@@ -224,7 +224,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.22"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.23"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -3747,7 +3747,9 @@ function renderLifeScreen(){
     inner.appendChild(lifeActionBtn('💧 水を1杯 飲んだ（+0.2L）',def.color,()=>{ const d=getDaily(vd); setDaily(vd,{water:Math.round(((d.water||0)+0.2)*10)/10}); showToast('💧 水 +0.2L'); render(); }));
   } else if(c==='eatout'){
     inner.appendChild(div({style:{textAlign:'center',fontSize:'13px',color:'#cbd5e1',lineHeight:1.7,marginBottom:'14px',whiteSpace:'pre-line'}},'外でのごはん。\nゆっくり味わって、食べたものを残そう。'));
-    addAssigned();
+    // 🍚食事モードのルーティン（朝食・昼食・夕食など）をそのまま出す。▶開始/⏹停止で時間を記録（食事モードと同じ記録）
+    appendModeRoutines(inner,'meal',def.color,vd,true);
+    if(routineModeSections(key).length) addAssigned();   // 外食に割り当てた項目があればそれも
     const foodN=(getDaily(vd).foods||[]).length;
     inner.appendChild(lifeActionBtn(`🍽 食べたものを記録${foodN?`（${foodN}品）`:''}`,def.color,()=>{ state.viewDate=activeDay(); state.foodSelected=[...(getDaily(activeDay()).foods||[])]; state.foodOpenCat=null; state.foodEdit=false; state.modal='food'; render(); }));
     inner.appendChild(lifeActionBtn('💧 水を1杯 飲んだ（+0.2L）',def.color,()=>{ const d=getDaily(vd); setDaily(vd,{water:Math.round(((d.water||0)+0.2)*10)/10}); showToast('💧 水 +0.2L'); render(); }));
