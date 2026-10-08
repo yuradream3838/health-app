@@ -224,7 +224,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.23"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.24"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -476,6 +476,10 @@ function migrateRoutineModes(){
   getTodoItems().forEach(it=>{
     if(it.mode===undefined){ const d=TODO_ITEMS.find(x=>x.id===it.id); it.mode = modeOfItem[it.id] || (d?(d.mode||""):""); changed=true; }
   });
+  // v15.24：複数選べるようにしたので、🍚食事モードの項目は🍽️外食モードにも出す（1回だけ。外食モードは食事と同じ仕様）
+  try{ if(!localStorage.getItem(STORAGE_KEY+"_routinemodes2")){
+    getTodoItems().forEach(it=>{ const ms=itemModes(it); if(ms.includes('meal')&&!ms.includes('eatout')){ setItemModes(it,[...ms,'eatout']); changed=true; } else if(!Array.isArray(it.modes)){ setItemModes(it,ms); changed=true; } });
+    localStorage.setItem(STORAGE_KEY+"_routinemodes2","1"); } }catch(_){}
   if(changed) saveTodoItems();
 }
 function saveRoutines(){ safeSet(STORAGE_KEY+"_routines",JSON.stringify(state.routines)); }
@@ -1028,7 +1032,8 @@ function loadStorage(){
     try{ if(!localStorage.getItem(STORAGE_KEY+"_shopmodeinit")){ const m=getModeInvestCats(); if(m.shop===undefined){ m.shop=["🛒 買い物"]; saveModeInvestCats(); } localStorage.setItem(STORAGE_KEY+"_shopmodeinit","1"); } }catch(_){}
     // 🍽️外食・🍻外飲も同じく最初だけ（モードごとに1回）
     try{ const done=JSON.parse(localStorage.getItem(STORAGE_KEY+"_modeinvestseed")||"[]"), m=getModeInvestCats(); let ch=false;
-      [["eatout",["🍔 食事"]],["drinkout",["🍺 飲酒"]]].forEach(([k,c])=>{ if(done.includes(k)) return; if(m[k]===undefined){ m[k]=c; ch=true; } done.push(k); });
+      const outCat=investCatList().find(c=>/外出/.test(c));   // 外食は「外出」の分類（ある場合）
+      [["eatout",outCat?[outCat]:[]],["drinkout",["🍺 飲酒"]]].forEach(([k,c])=>{ if(done.includes(k)) return; if(m[k]===undefined&&c.length){ m[k]=c; ch=true; } done.push(k); });
       if(ch) saveModeInvestCats(); localStorage.setItem(STORAGE_KEY+"_modeinvestseed",JSON.stringify(done)); }catch(_){}
     const ach=localStorage.getItem(STORAGE_KEY+"_anachanges");
     if(ach){try{const a=JSON.parse(ach); if(Array.isArray(a))state.anaChanges=a;}catch{}}
@@ -2085,9 +2090,12 @@ function routineGroupItems(key){
   return getOrderedTodoItems().filter(it=>gids.has(it.id));
 }
 // そのモードに割り当てられたルーティン項目（ルーティン設定で項目ごとに「表示するモード」を選択）
+// 表示するモードは複数選べる（modes:[…]）。mode は先頭のモード（旧版との互換のため一緒に持つ）
+function itemModes(it){ if(!it) return []; if(Array.isArray(it.modes)) return it.modes.filter(Boolean); return it.mode?[it.mode]:[]; }
+function setItemModes(it,arr){ const a=[...new Set((arr||[]).filter(Boolean))]; it.modes=a; it.mode=a[0]||""; }
 function routineItemsForMode(modeKey){
   if(!modeKey) return [];
-  return getOrderedTodoItems().filter(it=>(it.mode||"")===modeKey);
+  return getOrderedTodoItems().filter(it=>itemModes(it).includes(modeKey));
 }
 // モードに割り当てられた項目を、所属するまとめ（グループ）ごとにまとめて返す。
 // 未所属の項目は最後に「その他」としてまとめる。 -> [{key,title,color,items}]
@@ -2364,7 +2372,7 @@ function migrateSeikatsuMode(){
   (state.modeLog||[]).forEach(x=>{ if(x.key===oldKey) x.key='life'; });
   if(state.defaultMode===oldKey){ state.defaultMode='life'; try{ localStorage.setItem(STORAGE_KEY+'_defaultmode','life'); }catch(_){} }
   if(state.autoLastKey===oldKey){ state.autoLastKey='life'; try{ localStorage.setItem(STORAGE_KEY+'_automode',JSON.stringify({on:state.autoModeOn!==false,lastKey:'life'})); }catch(_){} }
-  try{ getTodoItems().forEach(it=>{ if(it.mode===oldKey) it.mode='life'; }); saveTodoItems(); }catch(_){}
+  try{ getTodoItems().forEach(it=>{ const ms=itemModes(it); if(ms.includes(oldKey)) setItemModes(it,ms.map(k=>k===oldKey?'life':k)); }); saveTodoItems(); }catch(_){}
   try{ const g=getModeGoals(); if(g[oldKey]!=null){ g['life']=g[oldKey]; delete g[oldKey]; saveModeGoals(); } }catch(_){}
   saveLifeModes(); saveModeLog();
 }
@@ -3675,11 +3683,12 @@ function modeTagPicker(key,accent){
   box.appendChild(div({style:{fontSize:'10px',color:'#64748b',marginTop:'7px',lineHeight:1.5}},'タグはこのモードの時間に記録され、分析の「🕒 モード別の時間」でタグ別に集計されます。別のタグに変えると、そこで区切って新しく計測します。'));
   return box;
 }
+// 背景のグラデーションは上が半透明なので、下に #0b1120 を敷いて後ろのアプリ画面が透けないようにする
 function renderLifeScreen(){
   const key=state.lifeScreen, def=lifeModeDef(key)||{icon:'🕒',label:'モード',color:'#64748b',content:'time'};
   const peek=state.peekMode===key;
   const s=peek?null:currentModeSession(), vd=activeDay();
-  const wrap=div({style:{position:'fixed',inset:'0',zIndex:'9996',overflowY:'auto',background:`radial-gradient(120% 80% at 50% -10%, ${def.color}22 0%, #0b1120 55%, #070b14 100%)`,color:'#e2e8f0',WebkitTapHighlightColor:'transparent',padding:'calc(env(safe-area-inset-top,0px) + 24px) 18px calc(env(safe-area-inset-bottom,0px) + 36px)'}});
+  const wrap=div({style:{position:'fixed',inset:'0',zIndex:'9996',overflowY:'auto',background:`radial-gradient(120% 80% at 50% -10%, ${def.color}22 0%, #0b1120 55%, #070b14 100%), #0b1120`,color:'#e2e8f0',WebkitTapHighlightColor:'transparent',padding:'calc(env(safe-area-inset-top,0px) + 24px) 18px calc(env(safe-area-inset-bottom,0px) + 36px)'}});
   const inner=div({style:{maxWidth:'440px',margin:'0 auto'}});
   const top=div({style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'14px'}});
   top.appendChild(div({},[div({style:{fontSize:'15px',fontWeight:800,color:def.color}},`${def.icon} ${def.label}モード`),div({style:{fontSize:'11px',color:'#94a3b8'}},peek?'👁 プレビュー':'進行中')]));
@@ -3704,7 +3713,7 @@ function renderLifeScreen(){
   appendModeCondition(inner,def.color,SELF_COND_PAL_LIFE);
   const c=def.content;
   // ルーティン設定で「表示するモード」にこのモードを指定した項目を描画（食事モードは計測扱い）
-  const addAssigned=()=>{ appendModeRoutines(inner,key,def.color,vd,c==='meal'); };
+  const addAssigned=()=>{ appendModeRoutines(inner,key,def.color,vd,c==='meal'||c==='eatout'); };   // 食事・外食は計測扱い
   if(c==='invest'){
     inner.appendChild(div({style:{fontSize:'11px',color:'#94a3b8',textAlign:'center',marginBottom:'8px'}},'ルーティンと連動（タイマー式は時間を記録）'));
     addAssigned();
@@ -3747,9 +3756,7 @@ function renderLifeScreen(){
     inner.appendChild(lifeActionBtn('💧 水を1杯 飲んだ（+0.2L）',def.color,()=>{ const d=getDaily(vd); setDaily(vd,{water:Math.round(((d.water||0)+0.2)*10)/10}); showToast('💧 水 +0.2L'); render(); }));
   } else if(c==='eatout'){
     inner.appendChild(div({style:{textAlign:'center',fontSize:'13px',color:'#cbd5e1',lineHeight:1.7,marginBottom:'14px',whiteSpace:'pre-line'}},'外でのごはん。\nゆっくり味わって、食べたものを残そう。'));
-    // 🍚食事モードのルーティン（朝食・昼食・夕食など）をそのまま出す。▶開始/⏹停止で時間を記録（食事モードと同じ記録）
-    appendModeRoutines(inner,'meal',def.color,vd,true);
-    if(routineModeSections(key).length) addAssigned();   // 外食に割り当てた項目があればそれも
+    addAssigned();   // ルーティン設定で🍽️外食を選んだ項目（食事モードと同じく▶開始/⏹停止で時間を記録）
     const foodN=(getDaily(vd).foods||[]).length;
     inner.appendChild(lifeActionBtn(`🍽 食べたものを記録${foodN?`（${foodN}品）`:''}`,def.color,()=>{ state.viewDate=activeDay(); state.foodSelected=[...(getDaily(activeDay()).foods||[])]; state.foodOpenCat=null; state.foodEdit=false; state.modal='food'; render(); }));
     inner.appendChild(lifeActionBtn('💧 水を1杯 飲んだ（+0.2L）',def.color,()=>{ const d=getDaily(vd); setDaily(vd,{water:Math.round(((d.water||0)+0.2)*10)/10}); showToast('💧 水 +0.2L'); render(); }));
@@ -8583,12 +8590,26 @@ function renderRoutinePanel(){
     r2.appendChild(swatch);
     box.appendChild(r2);
     // 表示するモード（このルーティンをどのモードの画面に出すか）
-    { const r3=div({style:{display:"flex",alignItems:"center",gap:"6px",marginTop:"5px",paddingLeft:"28px"}});
-      const msel=document.createElement('select');msel.className='sel';msel.style.cssText="flex:1;min-width:0";
-      const mo0=document.createElement('option');mo0.value="";mo0.textContent="表示するモード：なし";if(!item.mode)mo0.selected=true;msel.appendChild(mo0);
-      getLifeModes().forEach(m=>{const o=document.createElement('option');o.value=m.key;o.textContent=`表示するモード：${m.icon} ${m.label}`;if(item.mode===m.key)o.selected=true;msel.appendChild(o);});
-      msel.addEventListener('change',(()=>{const id=item.id;return e=>{ const v=e.target.value; getTodoItems().forEach(x=>{if(x.id===id)x.mode=v;}); saveTodoItems(); render(); };})());
-      r3.appendChild(msel); box.appendChild(r3);
+    // 複数選べる：ボタンで開いて、モードをタップで付け外し
+    { const cur=itemModes(item), open=state.itemModeEdit===item.id;
+      const r3=div({style:{marginTop:"5px",paddingLeft:"28px"}}); r3.setAttribute('data-itemmodes',item.id);
+      const names=cur.map(k=>{ const d=lifeModeDef(k); return d?`${d.icon}${d.label}`:k; });
+      const tb=btn({style:{width:"100%",textAlign:"left",padding:"6px 9px",borderRadius:"7px",border:`1px solid ${open?"#38bdf8":"#334155"}`,background:open?"#0ea5e914":"#0f172a",color:cur.length?"#cbd5e1":"#64748b",fontSize:"11px",cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},
+        `表示するモード：${names.length?names.join("・"):"なし"}　${open?"✓ 閉じる":"✏️"}`);
+      tb.setAttribute('data-itemmodetoggle',item.id);
+      tb.addEventListener('click',(()=>{const id=item.id;return()=>{ state.itemModeEdit=state.itemModeEdit===id?null:id; render(); };})());
+      r3.appendChild(tb);
+      if(open){
+        const chips=div({style:{display:"flex",flexWrap:"wrap",gap:"5px",marginTop:"6px"}});
+        getLifeModes().forEach(m=>{ const on=cur.includes(m.key);
+          const c=btn({style:{padding:"4px 9px",borderRadius:"999px",border:`1px solid ${on?m.color:"#334155"}`,background:on?m.color+"26":"transparent",color:on?m.color:"#94a3b8",fontSize:"11px",fontWeight:on?700:500,cursor:"pointer",fontFamily:"inherit"}},`${on?"✓ ":""}${m.icon} ${m.label}`);
+          c.setAttribute('data-itemmode',m.key);
+          c.addEventListener('click',(()=>{const id=item.id,k=m.key;return()=>{ getTodoItems().forEach(x=>{ if(x.id===id){ const ms=itemModes(x); setItemModes(x,ms.includes(k)?ms.filter(y=>y!==k):[...ms,k]); } }); saveTodoItems(); render(); };})());
+          chips.appendChild(c); });
+        r3.appendChild(chips);
+        r3.appendChild(div({style:{fontSize:"9px",color:"#64748b",marginTop:"4px"}},"いくつでも選べます。選んだモードの画面すべてに出ます（記録は同じ1つ）"));
+      }
+      box.appendChild(r3);
     }
     if(state.itemColorEdit===item.id){
       const cp=div({style:{marginTop:"6px",paddingLeft:"28px",display:"flex",flexWrap:"wrap",gap:"6px",alignItems:"center"}});
