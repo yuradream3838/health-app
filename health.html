@@ -224,7 +224,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.25"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.26"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -8597,15 +8597,19 @@ function renderRoutinePanel(){
       w.appendChild(div({style:{fontSize:"12px",fontWeight:700,color:"#fb923c",marginBottom:"4px"}},`⚠ 消えたルーティンを ${lost.length}件 戻しました`));
       w.appendChild(div({style:{fontSize:"11px",color:"#cbd5e1",lineHeight:1.7,marginBottom:"8px"}},
         "前の版（v15.24）の不具合で、アプリで追加したルーティンが消えていました。記録・まとめ・並び順は残っていたので、仮の名前で戻しています。下の「消えたルーティン…」の名前を入れ直してください（種類・表示するモードも確認してください）。バックアップファイル（health_backup_….json）があれば、名前ごと戻せます。"));
-      const fi=document.createElement('input'); fi.type='file'; fi.accept='.json,application/json'; fi.style.display='none';
+      // スマホ（特にホーム画面のアプリ）は、隠した入力欄をボタンから click() しても開かないことがあるので、
+      // 「データを読込」と同じく label で包んで、タップがそのまま入力欄に届くようにする
+      const fi=document.createElement('input'); fi.type='file'; fi.accept='.json'; fi.style.display='none'; fi.setAttribute('data-lostfile','1');
       fi.addEventListener('change',e=>{ const f=e.target.files&&e.target.files[0]; if(!f) return; const rd=new FileReader();
         rd.onload=()=>{ try{ const r=restoreTodoItemsFromBackup(JSON.parse(rd.result)); if(r.err){ showToast(`⚠️ ${r.err}`,"#f97316"); return; }
             showToast(`✅ バックアップから ${r.replaced}件の名前を戻しました${r.added?`（ほかに ${r.added}件 追加）`:""}`,"#22c55e"); render(); }
           catch(_){ showToast("⚠️ バックアップファイルを読めませんでした","#f97316"); } };
-        rd.readAsText(f); });
-      const bb=btn({style:{width:"100%",padding:"9px",borderRadius:"8px",border:"1px solid #38bdf8",background:"#0ea5e918",color:"#38bdf8",fontSize:"12px",fontWeight:700,cursor:"pointer",fontFamily:"inherit"}},"📂 バックアップファイルから名前ごと戻す");
-      bb.setAttribute('data-lostrestore','1'); bb.addEventListener('click',()=>fi.click());
-      w.appendChild(bb); w.appendChild(fi);
+        rd.readAsText(f); e.target.value=""; });
+      const bb=document.createElement('label');
+      bb.style.cssText="display:block;width:100%;box-sizing:border-box;padding:10px;border-radius:8px;border:1px solid #38bdf8;background:#0ea5e918;color:#38bdf8;font-size:12px;font-weight:700;cursor:pointer;text-align:center";
+      bb.setAttribute('data-lostrestore','1');
+      bb.appendChild(fi); bb.appendChild(document.createTextNode("📂 バックアップファイルから名前ごと戻す"));
+      w.appendChild(bb);
       card.appendChild(w);
     } }
   const groupOf=id=>{const g=(state.routines||[]).find(r=>(r.ids||[]).includes(id));return g?g.key:"";};
