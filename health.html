@@ -224,7 +224,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.20"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.21"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -1438,12 +1438,13 @@ function render(){
   if(!window._autoTick) window._autoTick=setInterval(()=>{ const changed=autoModeTick(); nudgeNotifyTick(); try{alexaMaybeSyncPlan();}catch(_){} if(changed) render(); },60000);
 
   // 🌙 睡眠前モード：起動中は全画面で専用画面に切り替える（他は描画しない）
-  if(state.sleepMode){ content.appendChild(renderSleepMode()); tintSurfaces(content); return; }
+  if(state.sleepMode){ content.appendChild(renderSleepMode()); appendModeOverlayModals(content); tintSurfaces(content); return; }
   if(state.selfMode){ content.appendChild(renderSelfMode());
     // 飲みモードから「飲み物を追加」＝アルコールタブと同じモーダルをセルフモードの上に重ねる
     if(state.modal==="addDrink"){ const mo=renderAddDrinkModal(activeDay()); mo.style.zIndex="10000"; content.appendChild(mo); }
     // エロモードから「射精を記録」＝生活記録と同じモーダルをセルフモードの上に重ねる
     if(state.modal==="addEjac"){ const mo=renderAddEjacModal(activeDay()); mo.style.zIndex="10000"; content.appendChild(mo); }
+    appendModeOverlayModals(content);
     tintSurfaces(content); return; }
   if(state.modeSwitcher){ content.appendChild(renderModeSwitcher()); tintSurfaces(content); return; }
   if(state.lifeScreen){ content.appendChild(renderLifeScreen());
@@ -1454,6 +1455,7 @@ function render(){
     // 「◯:◯◯ 開始」をタップ＝モードの時間を直す（切り替え忘れの修正）
     if(state.modal==="modeTime"){ const mo=renderModeTimeModal(); mo.style.zIndex="10000"; content.appendChild(mo); }
     if(state.modal==="modeInsert"){ const mo=renderModeInsertModal(); mo.style.zIndex="10000"; content.appendChild(mo); }
+    appendModeOverlayModals(content);
     tintSurfaces(content); return; }
 
   const ds=todayStr(), vd=state.viewDate, curH=new Date().getHours();
@@ -1474,6 +1476,7 @@ function render(){
   if(state.modal==="editTimer")content.appendChild(renderEditTimerModal(vd));
   if(state.modal==="editCheckTime")content.appendChild(renderEditCheckTimeModal(vd));
   if(state.modal==="modeTime") content.appendChild(renderModeTimeModal());
+  if(state.modal==="ctStart") content.appendChild(renderCtStartModal());
   if(state.modal==="modeInsert") content.appendChild(renderModeInsertModal());
   if(state.modal==="modeCheck") content.appendChild(renderModeCheckModal());
   if(state.customTodoModal)content.appendChild(renderCustomTodoModal());
@@ -3563,7 +3566,10 @@ function modeCustomTodoRow(vd,ct,tt,accent,carry){
     row.appendChild(cb);
     const lw=div({style:{flex:1,minWidth:0,cursor:'pointer'}});
     lw.appendChild(div({style:{fontSize:'14px',color:'#e2e8f0',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}},lbl));
-    lw.appendChild(div({style:{fontSize:'10px',color:_stC?ctTimerColor(_recC):(carry.snToday?'#94a3b8':'#f87171')}},_stC||sub));
+    { const sl=div({style:{display:'flex',alignItems:'center',gap:'6px',flexWrap:'wrap'}});
+      sl.appendChild(span({style:{fontSize:'10px',color:_stC?ctTimerColor(_recC):(carry.snToday?'#94a3b8':'#f87171')}},_stC||sub));
+      if(ct.mode==='timer'){ const chip=ctStartChip(vd,ct,_recC); if(chip) sl.appendChild(chip); }
+      lw.appendChild(sl); }
     lw.addEventListener('click',(()=>{const uid=ct.uid,l=lbl,dd=carry.dueDate;return()=>{ state.planCustomTodo={uid,label:l,vd:dd,editMode:true}; state.modal='planCustomTodo'; render(); };})());
     row.appendChild(lw);
     return row;
@@ -3589,7 +3595,10 @@ function modeCustomTodoRow(vd,ct,tt,accent,carry){
   if(timeStr) row.appendChild(span({style:{flexShrink:0,fontSize:'11px',fontWeight:600,color:done?'#8a8172':'#94a3b8',minWidth:'42px'}},timeStr));
   const lw=div({style:{flex:1,minWidth:0,cursor:'pointer'}});
   lw.appendChild(div({style:{fontSize:'14px',color:done?'#94a3b8':'#e2e8f0',textDecoration:done?'line-through':'none',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}},`${lbl}${rec.noteOverride?' 📝':''}`));
-  if(running) lw.appendChild(div({style:{fontSize:'10px',color:ctTimerColor(rec)}},ctTimerStatus(rec)));
+  if(running){ const sl=div({style:{display:'flex',alignItems:'center',gap:'6px',flexWrap:'wrap'}});
+    sl.appendChild(span({style:{fontSize:'10px',color:ctTimerColor(rec)}},ctTimerStatus(rec)));
+    const chip=ctStartChip(vd,ct,rec); if(chip) sl.appendChild(chip);
+    lw.appendChild(sl); }
   lw.addEventListener('click',(()=>{const uid=ct.uid,l=lbl;return()=>{ state.planCustomTodo={uid,label:l,vd}; state.modal='planCustomTodo'; render(); };})());
   row.appendChild(lw);
   return row;
@@ -4575,7 +4584,7 @@ function renderWidgetView(vd,ds){
         rrow.appendChild(ctTimerControls(vd,ct,{label:lbl,compact:true}));
         rrow.appendChild(div({style:{flex:1,minWidth:0}},[
           div({style:{fontSize:"13px",color:"#e2e8f0",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},`🔁 ${lbl}`),
-          div({style:{fontSize:"10px",color:_stW?ctTimerColor(_recW):"#f87171"}},_stW||sub)]));
+          div({style:{display:"flex",alignItems:"center",gap:"6px",flexWrap:"wrap"}},[span({style:{fontSize:"10px",color:_stW?ctTimerColor(_recW):"#f87171"}},_stW||sub),ctStartChip(vd,ct,_recW)])]));
       } else {
         rrow=checkRow(false,`🔁 ${lbl}`,sub,()=>{ completeCustomTodoCarry(ct,vd); showToast(`✅ ${lbl}`); });
       }
@@ -4597,7 +4606,7 @@ function renderWidgetView(vd,ds){
         rrow.appendChild(ctTimerControls(vd,ct,{label:lbl,compact:true}));
         rrow.appendChild(div({style:{flex:1,minWidth:0}},[
           div({style:{fontSize:"13px",color:"#e2e8f0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},lbl),
-          sub?div({style:{fontSize:"10px",color:running?ctTimerColor(rec):"#64748b"}},sub):null
+          sub?div({style:{display:"flex",alignItems:"center",gap:"6px",flexWrap:"wrap"}},[span({style:{fontSize:"10px",color:running?ctTimerColor(rec):"#64748b"}},sub),ctStartChip(vd,ct,rec)]):null
         ]));
       } else {
         rrow=checkRow(false,lbl,sub,()=>{ completeCustomTodo(ct,vd); showToast(`✅ ${lbl}`); });
@@ -7860,7 +7869,9 @@ function renderPlanCustomTodoModal(){
           onClick:()=>{ const cur={...((state.todos[vd]||{})[pc.uid]||{})}; ["startTime","endTime","time","segs","durMs","paused"].forEach(k=>delete cur[k]); setTodo(vd,pc.uid,{...cur,checked:false}); showToast("未完了に戻しました"); render(); }},"↩ 未完了に戻す"));
       } else if(running||pausedT){
         if(running){ const d0=new Date(recI.startTime);
-          m.appendChild(div({style:{fontSize:"11px",color:"#f97316",fontWeight:700,marginBottom:"6px"}},`⏱ 計測中（開始 ${hhmm(d0.getHours(),d0.getMinutes())}・経過 ${fmtDur(ctElapsedMs(recI))}）`)); }
+          m.appendChild(div({style:{display:"flex",alignItems:"center",gap:"8px",marginBottom:"6px",flexWrap:"wrap"}},[
+            span({style:{fontSize:"11px",color:"#f97316",fontWeight:700}},`⏱ 計測中（${(recI.segs||[]).length?"再開":"開始"} ${hhmm(d0.getHours(),d0.getMinutes())}・経過 ${fmtDur(ctElapsedMs(recI))}）`),
+            ctStartChip(vd,ctI,recI)])); }
         else m.appendChild(div({style:{fontSize:"11px",color:"#eab308",fontWeight:700,marginBottom:"6px"}},`⏸ 中断中（ここまで ${fmtDur(ctElapsedMs(recI))}・${recI.segs.length}回目まで）`));
         m.appendChild(ctSegListBox(recI));
         m.appendChild(div({style:{display:"flex",gap:"8px",marginBottom:"8px"}},[
@@ -11537,6 +11548,68 @@ function ctSegListBox(rec){
   box.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginTop:"2px"}},`中断 ${ps.length}回・計${fmtDur(pt)}　（✏️ 編集で時刻を直せます）`));
   return box;
 }
+// ── ✏️ 計測中のまま開始時刻を直す（始め忘れ・押し遅れ）──
+// 直すのは「いま測っている区間」の開始（中断をはさんだ回は再開の時刻）。前の区間の終わりより前・いまより後・24時間より前にはできない。
+// hm＝"HH:MM"。いまより後になる時刻は前日とみなす。エラーなら文を返す
+function ctAdjustStart(vd,ct,hm){
+  const cur=(state.todos[vd]||{})[ct.uid]||{}; if(ctTimerState(cur)!=='running') return "計測中ではありません";
+  const x=ctHm(hm); if(x==null) return "時刻を入れてください";
+  const now=Date.now(), b=new Date(now);
+  let d=new Date(b.getFullYear(),b.getMonth(),b.getDate(),Math.floor(x/60),x%60);
+  if(d.getTime()>now) d=new Date(d.getFullYear(),d.getMonth(),d.getDate()-1,Math.floor(x/60),x%60);
+  if(now-d.getTime()>24*3600000) return "24時間より前にはできません";
+  const segs=cur.segs||[], pe=segs.length?Date.parse(segs[segs.length-1].e):null;
+  if(pe!=null&&d.getTime()<pe){ const q=new Date(pe); return `中断の前（${hhmm(q.getHours(),q.getMinutes())}）より前にはできません`; }
+  setTodo(vd,ct.uid,{...cur,startTime:d.toISOString()});
+  return "";
+}
+function openCtStartEdit(vd,ct){ const rec=(state.todos[vd]||{})[ct.uid]||{}; if(ctTimerState(rec)!=='running') return;
+  const d=new Date(rec.startTime); state.ctStartEdit={vd,uid:ct.uid,val:hhmm(d.getHours(),d.getMinutes())}; state.modal="ctStart"; render(); }
+// 計測中の行に出す「HH:MM 開始 ✏️」。計測中でなければ null
+function ctStartChip(vd,ct,rec,col){
+  if(ctTimerState(rec)!=='running') return null;
+  const d=new Date(rec.startTime), resumed=(rec.segs||[]).length>0;
+  const b=btn({style:{flexShrink:0,padding:"2px 8px",borderRadius:"7px",border:`1px solid ${(col||"#f97316")}66`,background:"transparent",color:col||"#f97316",fontSize:"10px",cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}},
+    `${hhmm(d.getHours(),d.getMinutes())} ${resumed?"再開":"開始"} ✏️`);
+  b.setAttribute('data-ctstartedit',String(ct.uid));
+  b.addEventListener('click',e=>{ e.stopPropagation(); openCtStartEdit(vd,ct); });
+  return b;
+}
+// モード画面（生活モード・セルフモード・睡眠前）の上に重ねるモーダル。定期ルーティンの行をタップしたときの詳細・編集と、開始時刻の修正
+function appendModeOverlayModals(content){
+  const add=mo=>{ mo.style.zIndex="10000"; content.appendChild(mo); };
+  if(state.modal==="planCustomTodo") add(renderPlanCustomTodoModal());
+  if(state.modal==="ctStart") add(renderCtStartModal());
+}
+function renderCtStartModal(){
+  const E=state.ctStartEdit||{}, ct=(state.customTodos||[]).find(c=>c.uid===E.uid), rec=ct?((state.todos[E.vd]||{})[E.uid]||{}):{};
+  const close=()=>{ state.modal=null; state.ctStartEdit=null; render(); };
+  const bg=div({className:"modal-center"}); bg.addEventListener('click',close);
+  const m=div({className:"modal-box",style:{maxHeight:"85vh",overflowY:"auto"}}); m.addEventListener('click',e=>e.stopPropagation()); m.setAttribute('data-ctstartmodal','1');
+  if(!ct||ctTimerState(rec)!=='running'){ m.appendChild(div({style:{fontSize:"13px",color:"#94a3b8",marginBottom:"10px"}},"この計測はもう終わっています")); m.appendChild(btn({className:"btn-ghost",style:{width:"100%"},onClick:close},"閉じる")); bg.appendChild(m); return bg; }
+  const lbl=rec.labelOverride||ct.label, resumed=(rec.segs||[]).length>0, d0=new Date(rec.startTime);
+  m.appendChild(div({style:{fontSize:"15px",fontWeight:700,color:"#e2e8f0",marginBottom:"2px"}},`⏱ ${resumed?"再開":"開始"}時刻を直す`));
+  m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"12px"}},`${lbl}・いま ${hhmm(d0.getHours(),d0.getMinutes())} から計測中（計測は続きます）`));
+  const i=document.createElement('input'); i.type='time'; i.value=E.val||""; i.setAttribute('data-ctstartin','1');
+  i.style.cssText="width:100%;box-sizing:border-box;padding:10px;background:#0f172a;border:1px solid #f9731688;border-radius:8px;color:#e2e8f0;font-size:18px;color-scheme:dark;font-family:inherit;text-align:center;margin-bottom:8px";
+  i.addEventListener('change',e=>{ if(e.target.value){ E.val=e.target.value; render(); } });
+  m.appendChild(i);
+  // よく使う「◯分前に始めていた」
+  const row=div({style:{display:"flex",gap:"6px",marginBottom:"10px"}});
+  [5,10,15,30].forEach(n=>{ const b=btn({style:{flex:1,padding:"7px 0",borderRadius:"7px",border:"1px solid #334155",background:"transparent",color:"#cbd5e1",fontSize:"12px",cursor:"pointer",fontFamily:"inherit"}},`−${n}分`);
+    b.setAttribute('data-ctstartminus',String(n));
+    b.addEventListener('click',()=>{ const x=ctHm(E.val); if(x==null) return; const y=((x-n)%1440+1440)%1440; E.val=hhmm(Math.floor(y/60),y%60); render(); }); row.appendChild(b); });
+  m.appendChild(row);
+  // 直したあとの経過（いま測っている区間＋前の区間）
+  { const x=ctHm(E.val); if(x!=null){ const now=new Date(); let d=new Date(now.getFullYear(),now.getMonth(),now.getDate(),Math.floor(x/60),x%60); if(d>now) d.setDate(d.getDate()-1);
+      const ms=ctSegsMs(rec.segs)+Math.max(0,now-d); m.appendChild(div({style:{fontSize:"12px",color:"#f97316",marginBottom:"10px"}},`→ 経過 ${fmtDur(ms)}${resumed?"（中断の前の分を含む）":""}`)); } }
+  const ok=btn({style:{width:"100%",padding:"11px",border:"none",borderRadius:"8px",color:"#fff",cursor:"pointer",fontSize:"13px",fontWeight:700,marginBottom:"8px",background:"linear-gradient(135deg,#f97316,#ef4444)"}},"✅ この時刻にする");
+  ok.setAttribute('data-ctstartok','1');
+  ok.addEventListener('click',()=>{ const err=ctAdjustStart(E.vd,ct,E.val); if(err){ showToast(`⚠️ ${err}`,"#f97316"); return; } state.modal=null; state.ctStartEdit=null; showToast(`⏱ ${lbl}の${resumed?"再開":"開始"}を ${E.val} にしました`,"#f97316"); render(); });
+  m.appendChild(ok);
+  m.appendChild(btn({className:"btn-ghost",style:{width:"100%"},onClick:close},"閉じる"));
+  bg.appendChild(m); return bg;
+}
 // ▶ 開始／⏸ 中断＋⏹ 終了／▶ 再開＋⏹ 終了 のボタン（定期ルーティンタブ・モード画面・ウィジェット・詳細で共用）
 function ctTimerControls(vd,ct,opts){
   opts=opts||{}; const rec=(state.todos[vd]||{})[ct.uid]||{}, st=ctTimerState(rec), lbl=opts.label||rec.labelOverride||ct.label, accent=opts.accent||"#38bdf8", c=!!opts.compact;
@@ -13795,7 +13868,8 @@ function renderOccasional(vd){
       const rec=(state.todos[vd]||{})[ct.uid]||{};
       if(rec.startTime && rec.endTime){ lab.appendChild(div({style:{fontSize:"10px",color:"#4ade80",fontWeight:700,marginTop:"1px"}},`⏱ 所要 ${fmtDur(ctElapsedMs(rec))}${(()=>{ const ps=ctPauses(rec); return ps.length?`（⏸ 中断${ps.length}回・${fmtDur(ps.reduce((x,p)=>x+p.ms,0))}）`:""; })()}`)); }
       else if(ctTimerState(rec)==='paused'){ lab.appendChild(div({style:{fontSize:"10px",color:"#eab308",fontWeight:700,marginTop:"1px"}},`⏸ 中断中（ここまで ${fmtDur(ctElapsedMs(rec))}）`)); }
-      else if(rec.startTime){ const d0=new Date(rec.startTime); lab.appendChild(div({style:{fontSize:"10px",color:"#f97316",fontWeight:700,marginTop:"1px"}},`⏱ 計測中（開始 ${d0.getHours()}:${String(d0.getMinutes()).padStart(2,'0')}・経過 ${fmtDur(ctElapsedMs(rec))}）`)); }
+      else if(rec.startTime){ lab.appendChild(div({style:{display:"flex",alignItems:"center",gap:"6px",flexWrap:"wrap",marginTop:"1px"}},[
+        span({style:{fontSize:"10px",color:"#f97316",fontWeight:700}},`⏱ 計測中（経過 ${fmtDur(ctElapsedMs(rec))}）`), ctStartChip(vd,ct,rec)])); }
     }
     row.appendChild(lab);
     // 完了時刻（タップで編集：planCustomTodo の「完了時刻を編集」を開く）
