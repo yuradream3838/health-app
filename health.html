@@ -224,7 +224,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.26"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.27"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -17779,7 +17779,12 @@ function renderAIChat(chat, loading, inputKey, onSend, placeholder){
 // ═══════════════════════════════════════════════════
 // エクスポート・インポート（全データ対応）
 // ═══════════════════════════════════════════════════
+// 出力で何か失敗しても黙って止まらないよう、理由を出す（v15.27。それまで v14.93 以降は出力が無反応だった）
 function exportData(){
+  try{ exportDataInner(); }
+  catch(e){ console.error(e); showToast(`⚠️ バックアップを出力できませんでした（${(e&&e.message)||e}）`,"#f97316"); }
+}
+function exportDataInner(){
   let weather={}, city=null, todoOrder=null, shiftColors=null, ejacColor=null;
   try{const w=localStorage.getItem(STORAGE_KEY+"_weather");if(w)weather=JSON.parse(w);}catch{}
   try{const c=localStorage.getItem(STORAGE_KEY+"_city");if(c)city=JSON.parse(c);}catch{}
@@ -17833,7 +17838,12 @@ function exportData(){
     lifeModes:state.lifeModes,
     modeLog:state.modeLog,
     modeTags:state.modeTags,
-    alexa:{on:!!state.alexaOn, hooks:getAlexaHooks()},
+    modeGoals:state.modeGoals||null,                 // 🕒 モードごとの目標時間
+    defaultMode:state.defaultMode||null,             // いつもの生活モード
+    widgetSections:state.widgetSections||null, widgetSecOrder:state.widgetSecOrder||null,   // 🧩 ウィジェットの表示・並び
+    // 🔊 Alexa連携（保存している形そのまま。v14.93 で getAlexaHooks を無くしたのに残っていて、出力が止まっていた）
+    alexa:{on:!!state.alexaOn, relay:!!state.alexaRelay, relayUrl:(state.alexaRelayUrl||""), triggers:getAlexaTriggers(), modes:getAlexaModes(), sleep:getAlexaSleep(),
+      planOn:!!state.alexaPlanOn, mute:getAlexaMute(), hooks:state.alexaHooks||{}},
     wakeGoal:state.wakeGoal,
     notifyCfg:nudgeCfgPayload(),
     decisBalance:state.decisBalance,
@@ -17844,7 +17854,10 @@ function exportData(){
   };
   const blob=new Blob([JSON.stringify(payload,null,2)],{type:"application/json"});
   const url=URL.createObjectURL(blob);const a=document.createElement("a");
-  a.href=url;a.download=`health_backup_${todayStr()}.json`;a.click();URL.revokeObjectURL(url);
+  // iPhone の Safari は、押した直後に URL を消すと保存されないことがあるので、少し待ってから消す
+  a.href=url;a.download=`health_backup_${todayStr()}.json`;a.style.display='none';document.body.appendChild(a);a.click();
+  setTimeout(()=>{ try{ URL.revokeObjectURL(url); a.remove(); }catch(_){} },5000);
+  showToast("💾 バックアップを出力しました","#22c55e");
   // バックアップ日時を記録（バックアップ促進リマインダー用）
   try{localStorage.setItem(STORAGE_KEY+"_lastbackup",String(Date.now()));}catch{}
 }
@@ -17923,10 +17936,19 @@ function importData(e){
       if(p.selfChecksCfg&&typeof p.selfChecksCfg==="object"){state.selfChecksCfg=p.selfChecksCfg;saveSelfChecksCfg();}
       if(Array.isArray(p.lifeModes)&&p.lifeModes.length){state.lifeModes=p.lifeModes;saveLifeModes();}
       if(Array.isArray(p.modeLog)){state.modeLog=p.modeLog;saveModeLog();}
-      if(p.alexa&&typeof p.alexa==="object"){ state.alexaOn=!!p.alexa.on; state.alexaHooks=(p.alexa.hooks&&typeof p.alexa.hooks==="object")?p.alexa.hooks:{}; saveAlexa(); }
+      if(p.alexa&&typeof p.alexa==="object"){ const o=p.alexa; state.alexaOn=!!o.on; state.alexaHooks=(o.hooks&&typeof o.hooks==="object")?o.hooks:{};
+        if("relay" in o)state.alexaRelay=!!o.relay; if(typeof o.relayUrl==="string")state.alexaRelayUrl=o.relayUrl;
+        if(Array.isArray(o.triggers))state.alexaTriggers=o.triggers; if(o.modes&&typeof o.modes==="object")state.alexaModes=o.modes;
+        if(o.sleep&&typeof o.sleep==="object")state.alexaSleep=o.sleep; if("planOn" in o)state.alexaPlanOn=!!o.planOn;
+        if(o.mute&&typeof o.mute==="object")state.alexaMute={days:Array.isArray(o.mute.days)?o.mute.days:[],items:Array.isArray(o.mute.items)?o.mute.items:[]};
+        try{ migrateAlexaHooks(); }catch(_){} saveAlexa(); }
       if(p.modeTags&&typeof p.modeTags==="object"){state.modeTags=p.modeTags;saveModeTags();}
       if(p.wakeGoal&&typeof p.wakeGoal==="object"){state.wakeGoal=p.wakeGoal;saveWakeGoal();}
       if(p.notifyCfg&&typeof p.notifyCfg==="object"){applyNudgeCfg(p.notifyCfg);saveNudgeCfg();}
+      if(p.modeGoals&&typeof p.modeGoals==="object"){state.modeGoals=p.modeGoals;saveModeGoals();}
+      if(typeof p.defaultMode==="string"&&p.defaultMode) setDefaultMode(p.defaultMode);
+      if(p.widgetSections&&typeof p.widgetSections==="object"){state.widgetSections=p.widgetSections;saveWidgetSections();}
+      if(Array.isArray(p.widgetSecOrder)){state.widgetSecOrder=p.widgetSecOrder;saveWidgetOrder();}
       if(p.decisBalance&&typeof p.decisBalance==="object"){state.decisBalance=p.decisBalance;saveDecisBalance();}
       if(p.miValues&&typeof p.miValues==="object"){state.miValues=p.miValues;saveMIValues();}
       if(p.changePlan&&typeof p.changePlan==="object"){state.changePlan=p.changePlan;saveChangePlan();}
