@@ -224,7 +224,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.27"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.28"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -440,7 +440,9 @@ const TODO_ITEMS = [
 const GROUP_DEFAULT_MODE={morning:"morning",breakfast:"meal",lunch:"meal",dinner:"meal",shower:"rest",night:"sleepprep",input:"invest",output:"invest",gohome:"work"};
 // ルーティン項目はユーザーが編集可能（追加・改名・種類変更・削除）。既定はTODO_ITEMS。
 function getTodoItems(){ if(!Array.isArray(state.todoItems)||!state.todoItems.length){ state.todoItems=JSON.parse(JSON.stringify(TODO_ITEMS)); } return state.todoItems; }
-function saveTodoItems(){ try{localStorage.setItem(STORAGE_KEY+"_todoitems",JSON.stringify(getTodoItems()));}catch{} }
+// 保存済みの一覧を読み込む前に保存すると、既定の項目で上書きして自作の項目が消える（v15.24 で起きた）。読み込み前の保存は止める
+let _todoItemsLoaded=false;
+function saveTodoItems(){ if(!_todoItemsLoaded){ console.warn("saveTodoItems: 読み込み前の保存は行いません"); return; } try{localStorage.setItem(STORAGE_KEY+"_todoitems",JSON.stringify(getTodoItems()));}catch{} }
 
 // 予定タブ「実際」列で1つにまとめて表示するルーティン群（アプリ内で編集可能・初期値）
 const DEFAULT_ROUTINES = [
@@ -1037,6 +1039,7 @@ function loadStorage(){
     if(bcp){try{const a=JSON.parse(bcp); if(Array.isArray(a))state.bodyComps=a;}catch{}}
     const tdi=localStorage.getItem(STORAGE_KEY+"_todoitems");
     if(tdi){try{const a=JSON.parse(tdi); if(Array.isArray(a)&&a.length)state.todoItems=a;}catch{}}
+    _todoItemsLoaded=true;
     // ⚠ ルーティン項目（_todoitems）を読み込んだ「後」に行うこと。読む前に getTodoItems() を保存すると既定の項目で上書きしてしまう（v15.24の不具合）
     migrateRoutineModes(); // まとめの「表示するモード」を補完
     try{ recoverLostTodoItems(); }catch(_){}
@@ -2447,7 +2450,6 @@ function getAlexaTriggers(){ if(!Array.isArray(state.alexaTriggers))state.alexaT
 function getAlexaModes(){ if(!state.alexaModes||typeof state.alexaModes!=="object")state.alexaModes={}; return state.alexaModes; }
 function getAlexaSleep(){ if(!state.alexaSleep||typeof state.alexaSleep!=="object")state.alexaSleep={}; return state.alexaSleep; }
 function alexaTrigger(id){ return getAlexaTriggers().find(t=>t&&t.id===id)||null; }
-function alexaTriggerName(id){ const t=alexaTrigger(id); return t?(t.name||"(名前なし)"):""; }
 function alexaTriggerReady(t){ return !!(t&&/^https:\/\//i.test((t.url||"").trim())); }
 function newAlexaTriggerId(){ return "at"+Date.now().toString(36)+Math.random().toString(36).slice(2,6); }
 function addAlexaTrigger(){ const t={id:newAlexaTriggerId(),name:"",url:"",auth:"",method:"GET"}; getAlexaTriggers().push(t); saveAlexa(); return t; }
@@ -2611,14 +2613,12 @@ function modeGoalOf(key){
 }
 function modeGoalMin(key){ return modeGoalOf(key).min; }
 function modeGoalMax(key){ return modeGoalOf(key).max; }
-function hasModeGoal(key){ const g=modeGoalOf(key); return g.min>0||g.max>0; }
 function setModeGoal(key,min,max){
   const g=getModeGoals(), lo=Math.max(0,min|0), hi=Math.max(0,max|0);
   if(lo>0||hi>0) g[key]={...(lo>0?{min:lo}:{}),...(hi>0?{max:hi}:{})};
   else delete g[key];
   saveModeGoals();
 }
-function setModeGoalMin(key,min){ setModeGoal(key,min,modeGoalMax(key)); }
 // 目標に対していまどうか。以上／以下のどちらを外しているかまで返す
 function modeGoalStatus(perDayMs,goal){
   const lo=(goal.min||0)*60000, hi=(goal.max||0)*60000;
@@ -2885,8 +2885,6 @@ function applyModeLogFixes(choices){
   saveModeLog();
   return {n, changed:true};
 }
-// おすすめ（既定の直し方）でまとめて直す
-function repairModeLog(){ return applyModeLogFixes(null); }
 // 1分未満で終わっている記録（一覧で「0分」に見えるもの）をまとめて消す
 function zeroModeSessions(){ return getModeLog().filter(s=>s.end!=null && (s.end-s.start)<MODE_MIN_MS); }
 function cleanupZeroModes(){
@@ -3145,7 +3143,6 @@ function nudgeR(id){ const ns=getNudgeState(); if(!ns.rules[id])ns.rules[id]={sn
 function nudgeActive(id,now){ const r=nudgeR(id); return !r.dismissed && now>=(r.snoozeUntil||0); }
 function snoozeNudge(id,mins){ nudgeR(id).snoozeUntil=Date.now()+(mins||30)*60000; saveNudges(); }
 function dismissNudge(id){ nudgeR(id).dismissed=true; saveNudges(); }
-function lastDrinkMin(vd,now){ const drs=(getDaily(vd).drinks||[]); if(!drs.length)return null; let mx=-1; drs.forEach(d=>{ const m=(d.hour||0)*60+(d.min||0); if(m>mx)mx=m; }); const nd=new Date(now); return (nd.getHours()*60+nd.getMinutes())-mx; }
 // 予定タブに入れた食事の予定（イベント/パターン/定期ルーティン）を朝食/昼食/夕食に対応づける。
 const MEAL_LABEL={breakfast:'朝食',lunch:'昼食',dinner:'夕食'};
 function mealKeyFromTitle(t){ if(!t)return null;
@@ -3263,8 +3260,6 @@ function modeSegmentsForDay(ds){
   });
   return out.sort((a,b)=>a.startMin-b.startMin);
 }
-// 指定した時刻(ミリ秒)に選択していたモードのキーを返す（モードバンド用）
-function modeKeyAt(ts){ const l=getModeLog(); for(let i=l.length-1;i>=0;i--){ const s=l[i]; if(s.start<=ts && (s.end==null||ts<s.end)) return s.key; } return null; }
 // ルーティン項目の当日の計測秒（タイマー式：セッション/開始終了の合計。実行中は現在まで加算）
 function routineItemSec(vd,item){ const t=(state.todos[vd]||{})[item.id]||{}; let sec=0; const nowISO=new Date().toISOString(); const add=(a,b)=>{ if(a&&b)sec+=Math.max(0,(Date.parse(b)-Date.parse(a))/1000); }; if(item.multi){ (t.sessions||[]).forEach(s=>{ if(s.startTime) add(s.startTime,s.endTime||nowISO); }); } else if(t.startTime){ add(t.startTime,t.endTime||nowISO); } return Math.round(sec); }
 // ルーティン項目1件の行（チェック式＝✓トグル／タイマー式＝▶開始・⏹停止＋経過表示）。既存のルーティン記録(setTodo)に連動
@@ -3558,6 +3553,12 @@ function renderNudgeConfig(inSettings){
   return box;
 }
 // フルスクリーン：各生活モードの画面
+// 💧 水を1杯（0.2L）足す。モード画面のボタンはどれもこれを使う
+function addWaterGlass(vd){ const d=getDaily(vd); setDaily(vd,{water:Math.round(((d.water||0)+0.2)*10)/10}); showToast('💧 水 +0.2L'); render(); }
+// 🍺 飲み物の追加画面を開く（アルコールタブと同じ）。nextDay＝翌日扱いで記録する（深夜0時すぎの基準日ずれ）
+function openAddDrink(nextDay){ const now=new Date(); state.modal="addDrink"; state.newDrink={typeId:"beer",ml:350,hour:now.getHours(),min:now.getMinutes(),pct:5,startNextDay:!!nextDay,tasting:{}}; state.drinkNoteOpen=undefined; render(); }
+// 🍽 食べたものの記録画面を開く（基準日の分）
+function openFoodRecord(){ state.viewDate=activeDay(); state.foodSelected=[...(getDaily(activeDay()).foods||[])]; state.foodOpenCat=null; state.foodEdit=false; state.modal='food'; render(); }
 function lifeActionBtn(label,color,onClick){ const b=btn({style:{width:'100%',padding:'12px',borderRadius:'11px',border:`1px solid ${color}66`,background:color+'1a',color:'#e2e8f0',fontSize:'14px',fontWeight:700,cursor:'pointer',fontFamily:'inherit',marginBottom:'7px',textAlign:'left'}},label); b.addEventListener('click',onClick); return b; }
 // 指定した項目リストを1枚のチェックリストカードとして描画（見出し・達成数・合計時間つき）
 function lifeRoutineChecklist(title,items,color,vd,forceTimer){
@@ -3757,12 +3758,12 @@ function renderLifeScreen(){
     inner.appendChild(div({style:{fontSize:'11px',color:'#94a3b8',textAlign:'center',marginBottom:'8px'}},'食事のルーティンを▶開始/⏹停止で時間記録（既存ルーティンに連携）'));
     addAssigned();
     const foodN=(getDaily(vd).foods||[]).length;
-    inner.appendChild(lifeActionBtn(`🍽 食べたものを記録${foodN?`（${foodN}品）`:''}`,def.color,()=>{ state.viewDate=activeDay(); state.foodSelected=[...(getDaily(activeDay()).foods||[])]; state.foodOpenCat=null; state.foodEdit=false; state.modal='food'; render(); }));
-    inner.appendChild(lifeActionBtn('💧 水を1杯 飲んだ（+0.2L）',def.color,()=>{ const d=getDaily(vd); setDaily(vd,{water:Math.round(((d.water||0)+0.2)*10)/10}); showToast('💧 水 +0.2L'); render(); }));
+    inner.appendChild(lifeActionBtn(`🍽 食べたものを記録${foodN?`（${foodN}品）`:''}`,def.color,openFoodRecord));
+    inner.appendChild(lifeActionBtn('💧 水を1杯 飲んだ（+0.2L）',def.color,()=>addWaterGlass(vd)));
   } else if(c==='rest'){
     if(state.lifeBreathing) inner.appendChild(breathingGuide(def.color));
     inner.appendChild(lifeActionBtn(state.lifeBreathing?'🫁 呼吸をやめる':'🫁 深呼吸する（4-7-8）',def.color,()=>{ state.lifeBreathing=!state.lifeBreathing; render(); }));
-    inner.appendChild(lifeActionBtn('💧 水を1杯 飲んだ（+0.2L）',def.color,()=>{ const d=getDaily(vd); setDaily(vd,{water:Math.round(((d.water||0)+0.2)*10)/10}); showToast('💧 水 +0.2L'); render(); }));
+    inner.appendChild(lifeActionBtn('💧 水を1杯 飲んだ（+0.2L）',def.color,()=>addWaterGlass(vd)));
     inner.appendChild(div({style:{textAlign:'center',fontSize:'12px',color:'#94a3b8',lineHeight:1.6,margin:'6px 0 10px'}},'ゆっくり休もう。お酒以外の回復を大切に。'));
     addAssigned();
   } else if(c==='hobby'){
@@ -3789,13 +3790,13 @@ function renderLifeScreen(){
     if(state.lifeBreathing) inner.appendChild(breathingGuide(def.color));
     inner.appendChild(lifeActionBtn(state.lifeBreathing?'🫁 呼吸をやめる':'🫁 深呼吸する（4-7-8）',def.color,()=>{ state.lifeBreathing=!state.lifeBreathing; render(); }));
     inner.appendChild(lifeActionBtn('⚖️ 体重・体組成を記録',def.color,()=>{ openBodyCompForm(); }));
-    inner.appendChild(lifeActionBtn('💧 水を1杯 飲んだ（+0.2L）',def.color,()=>{ const d=getDaily(vd); setDaily(vd,{water:Math.round(((d.water||0)+0.2)*10)/10}); showToast('💧 水 +0.2L'); render(); }));
+    inner.appendChild(lifeActionBtn('💧 水を1杯 飲んだ（+0.2L）',def.color,()=>addWaterGlass(vd)));
   } else if(c==='eatout'){
     inner.appendChild(div({style:{textAlign:'center',fontSize:'13px',color:'#cbd5e1',lineHeight:1.7,marginBottom:'14px',whiteSpace:'pre-line'}},'外でのごはん。\nゆっくり味わって、食べたものを残そう。'));
     addAssigned();   // ルーティン設定で🍽️外食を選んだ項目（食事モードと同じく▶開始/⏹停止で時間を記録）
     const foodN=(getDaily(vd).foods||[]).length;
-    inner.appendChild(lifeActionBtn(`🍽 食べたものを記録${foodN?`（${foodN}品）`:''}`,def.color,()=>{ state.viewDate=activeDay(); state.foodSelected=[...(getDaily(activeDay()).foods||[])]; state.foodOpenCat=null; state.foodEdit=false; state.modal='food'; render(); }));
-    inner.appendChild(lifeActionBtn('💧 水を1杯 飲んだ（+0.2L）',def.color,()=>{ const d=getDaily(vd); setDaily(vd,{water:Math.round(((d.water||0)+0.2)*10)/10}); showToast('💧 水 +0.2L'); render(); }));
+    inner.appendChild(lifeActionBtn(`🍽 食べたものを記録${foodN?`（${foodN}品）`:''}`,def.color,openFoodRecord));
+    inner.appendChild(lifeActionBtn('💧 水を1杯 飲んだ（+0.2L）',def.color,()=>addWaterGlass(vd)));
   } else if(c==='drinkout'){
     const g=Math.round(pureAlcoholG(vd)), lim=alcLimitDay(), dN=(getDaily(vd).drinks||[]).length, water=getDaily(vd).water||0;
     inner.appendChild(div({style:{textAlign:'center',fontSize:'13px',color:'#cbd5e1',lineHeight:1.7,marginBottom:'10px',whiteSpace:'pre-line'}},'外で飲む時間。\n水をはさんで、帰る時間を決めておこう。'));
@@ -3803,9 +3804,9 @@ function renderLifeScreen(){
       box.appendChild(div({style:{fontSize:'22px',fontWeight:800,color:g>=lim?'#f87171':def.color}},`${g}g`));
       box.appendChild(div({style:{fontSize:'11px',color:'#94a3b8'}},`今日の純アルコール（${dN}杯・上限 ${lim}g）・💧水 ${water}L`));
       inner.appendChild(box); }
-    { const ab=lifeActionBtn('🍺 飲み物を追加（種類・量・度数・時刻）',def.color,()=>{ const now=new Date(); state.modal="addDrink"; state.newDrink={typeId:"beer",ml:350,hour:now.getHours(),min:now.getMinutes(),pct:5,startNextDay:(todayStr()!==activeDay()),tasting:{}}; state.drinkNoteOpen=undefined; render(); });
+    { const ab=lifeActionBtn('🍺 飲み物を追加（種類・量・度数・時刻）',def.color,()=>openAddDrink(todayStr()!==activeDay()));
       inner.appendChild(peek?peekDisabled(ab):ab); }
-    inner.appendChild(lifeActionBtn('💧 水を1杯 飲んだ（+0.2L）',def.color,()=>{ const d=getDaily(vd); setDaily(vd,{water:Math.round(((d.water||0)+0.2)*10)/10}); showToast('💧 水 +0.2L'); render(); }));
+    inner.appendChild(lifeActionBtn('💧 水を1杯 飲んだ（+0.2L）',def.color,()=>addWaterGlass(vd)));
     addAssigned();
   } else if(c==='social'){
     inner.appendChild(div({style:{textAlign:'center',fontSize:'13px',color:'#cbd5e1',lineHeight:1.7,marginBottom:'14px'}},'人とのつながりを大切に。'));
@@ -4265,7 +4266,7 @@ function renderSelfMode(){
     const recWrap=div({style:{background:"#ffffff0d",border:"1px solid #ffffff14",borderRadius:"11px",padding:"9px 10px",marginBottom:"10px"}});
     recWrap.appendChild(div({style:{fontSize:"11px",color:"#a89e8c",marginBottom:"6px"}},"🍺 飲んだものを記録"));
     const addBtn=btn({style:{width:"100%",padding:"11px",borderRadius:"10px",border:`1px solid ${M.accent}66`,background:M.accent+"1a",color:"#f0e9dd",fontSize:"14px",fontWeight:700,cursor:"pointer",fontFamily:"inherit"}},"＋ 飲み物を追加（種類・量・度数・時刻）");
-    addBtn.addEventListener('click',()=>{ const now=new Date(); state.modal="addDrink"; state.newDrink={typeId:"beer",ml:350,hour:now.getHours(),min:now.getMinutes(),pct:5,startNextDay:(todayStr()!==activeDay()),tasting:{}}; state.drinkNoteOpen=undefined; render(); });
+    addBtn.addEventListener('click',()=>openAddDrink(todayStr()!==activeDay()));
     recWrap.appendChild(addBtn);
     // 記録済みの一覧（種類・度数・時刻）＋各行の削除
     const drinkList=(getDaily(vd).drinks||[]).map(dr=>({...dr,drinkType:resolveDT(dr)}));
@@ -4296,7 +4297,7 @@ function renderSelfMode(){
     } else {
       inner.appendChild(selfActionBtn("⏳ 次の1杯まで20分あける",M.accent,()=>{ state.selfDelayUntil=Date.now()+20*60000; render(); }));
     }
-    inner.appendChild(selfActionBtn(`💧 水を1杯 飲んだ（+0.2L・今 ${water}L）`,M.accent,()=>{ const d=getDaily(vd); setDaily(vd,{water:Math.round(((d.water||0)+0.2)*10)/10}); showToast("💧 水 +0.2L"); render(); }));
+    inner.appendChild(selfActionBtn(`💧 水を1杯 飲んだ（+0.2L・今 ${water}L）`,M.accent,()=>addWaterGlass(vd)));
     // 減らしたい理由
     if(hasLifeVision()){ const v=getLifeVision(); const rc=div({style:{background:"#ffffff0d",border:"1px solid #ffffff14",borderRadius:"11px",padding:"10px 12px",marginBottom:"10px"}}); rc.appendChild(div({style:{fontSize:"10px",color:"#a89e8c",marginBottom:"4px"}},"💜 減らしたい理由")); (v.reasons.length?v.reasons:[v.vision]).filter(Boolean).slice(0,3).forEach(r=>rc.appendChild(div({style:{fontSize:"13px",color:"#f0e9dd",lineHeight:1.5}},`・${r}`))); inner.appendChild(rc); }
     else inner.appendChild(div({style:{fontSize:"12px",color:"#a89e8c",textAlign:"center",lineHeight:1.6,marginBottom:"10px"}},"ゆっくりいこう。水を挟むと翌朝がぐっと楽になる。"));
@@ -4512,7 +4513,7 @@ function renderWidgetView(vd,ds){
     const grid=div({style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"8px"}});
     const qbtn=(label,border,bg,color,onClick)=>{const b=btn({style:{padding:"11px",borderRadius:"8px",cursor:"pointer",fontSize:"13px",fontWeight:600,border:`1px solid ${border}`,background:bg,color}},label);b.addEventListener('click',onClick);return b;};
     grid.appendChild(qbtn(`💗 体調（今）${nowScore!=null?`：${nowScore}`:""}`,"#f43f5e","#f43f5e18","#fb7185",()=>{ openScoreModal(vd,curH); }));
-    grid.appendChild(qbtn(`🍺 アルコール${drN?`（${drN}）`:""}`,"#f59e0b","#f59e0b18","#fbbf24",()=>{ const now=new Date(); state.modal="addDrink"; state.newDrink={typeId:"beer",ml:350,hour:now.getHours(),min:now.getMinutes(),pct:5,startNextDay:false,tasting:{}}; state.drinkNoteOpen=undefined; render(); }));
+    grid.appendChild(qbtn(`🍺 アルコール${drN?`（${drN}）`:""}`,"#f59e0b","#f59e0b18","#fbbf24",()=>openAddDrink(false)));
     grid.appendChild(qbtn(`🍽️ 食べたもの${foodN?`（${foodN}）`:""}`,"#0ea5e9","#0ea5e918","#38bdf8",()=>{ state.modal="food"; state.foodSelected=[...(d.foods||[])]; state.foodOpenCat=null; state.foodEdit=false; render(); }));
     grid.appendChild(qbtn(`💧 射精${ejN?`（${ejN}）`:""}`,"#6366f1","#6366f118","#a5b4fc",()=>openEjacModal(null)));
     c.appendChild(grid);
@@ -9472,74 +9473,6 @@ function alexaRefPicker(cur,onChange,opts){
   }
   return wrap;
 }
-// よくある貼り間違い：Alexaアプリの「共有リンク」はルーティンを起動しない（QRコードのページが出るだけ）
-function alexaShareLinkWarn(url){
-  let host=""; try{ host=new URL((url||"").trim()).host.toLowerCase(); }catch(_){ return ""; }
-  if(/(^|\.)alexa\.amazon\./.test(host) || /(^|\.)amazon\.(co\.jp|com|[a-z.]+)$/.test(host))
-    return "これは定型アクションの「共有リンク」のようです。開いてもQRコードのページが出るだけで、ルーティンは起動しません。トリガーのスキル（仮想トリガーボタン等）が発行するURLを貼ってください。";
-  return "";
-}
-// 宛先が返した番号から、次に見るところの見当をつける
-function alexaStatusHint(st){
-  const n=Number(st)||0;
-  if(n===401||n===403) return "認証が通っていません。①ヘッダー欄は空になっていないか ②値の前に「Bearer 」が要るか／不要か ③ヘッダーの名前が合っているか（Authorization ではなく X-API-Key など。その場合は「X-API-Key: 値」と見出しごと書く） ④キーの写し間違い（前後の空白・途中で切れている）を順に確かめてください。";
-  if(n===404) return "その宛先が見つかりません。URLの写し間違い（トリガーのIDの部分）か、トリガーが消えている可能性があります。";
-  if(n===405) return "送信方法が違います。GET と POST を切り替えて試してください。";
-  if(n===429) return "呼びすぎです。少し待ってからもう一度お試しください。";
-  if(n>=500) return "宛先のサーバ側でエラーが起きています。少し待ってからもう一度お試しください。";
-  return "";
-}
-function alexaShareLinkBody(body){
-  const b=(body||"");
-  return /Scan this QR code|You've received an Alexa Routine|routines-static-page/.test(b)
-    ? "返事の中身は「定型アクションの共有ページ」です。届いてはいますが、これではルーティンは起動しません。トリガー用のURLに貼り替えてください。" : "";
-}
-// テストの結果。返事が長いので消えるトーストではなく、画面に残して全部読めるようにする
-function alexaTestResultBox(){
-  const t=state.alexaTest||{};
-  const col=t.sending?"#38bdf8":(t.ok?(t.blind?"#38bdf8":"#22c55e"):"#f97316");
-  const box=div({style:{marginTop:"6px",padding:"9px 10px",borderRadius:"9px",background:"#0b1220",border:`1px solid ${col}55`}});
-  box.id="alexa-test-result";
-  const head=div({style:{display:"flex",alignItems:"center",gap:"7px",marginBottom:t.sending?"0":"5px"}});
-  head.appendChild(span({style:{flex:1,minWidth:0,fontSize:"11px",fontWeight:700,color:col}},
-    t.sending?`🔊 ${t.label} を送っています…`:`${t.ok?"✅":"⚠️"} ${t.label}：${t.msg}`));
-  if(!t.sending){ const x=btn({style:{flexShrink:0,fontSize:"10px",padding:"2px 8px",borderRadius:"6px",cursor:"pointer",fontFamily:"inherit",
-      border:"1px solid #334155",background:"transparent",color:"#64748b"}},"閉じる");
-    x.addEventListener('click',()=>{ state.alexaTest=null; render(); }); head.appendChild(x); }
-  box.appendChild(head);
-  if(t.sending) return box;
-  if(t.body){
-    box.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"3px"}},"宛先からの返事"));
-    box.appendChild(div({style:{maxHeight:"180px",overflowY:"auto",padding:"7px 9px",borderRadius:"7px",background:"#0f172a",border:"1px solid #1e293b",
-      fontSize:"11px",color:"#cbd5e1",lineHeight:1.6,whiteSpace:"pre-wrap",wordBreak:"break-all",userSelect:"text",WebkitUserSelect:"text"}},t.body));
-    const cp=btn({style:{marginTop:"5px",fontSize:"10px",padding:"4px 10px",borderRadius:"6px",cursor:"pointer",fontFamily:"inherit",
-      border:"1px solid #334155",background:"transparent",color:"#94a3b8"}},"📋 返事をコピー");
-    cp.addEventListener('click',()=>{ copyText(t.body); });
-    box.appendChild(cp);
-  } else if(t.ok && t.blind){
-    box.appendChild(div({style:{fontSize:"10px",color:"#64748b",lineHeight:1.6}},"「そのまま叩く」では返事を読めません。中継サーバ経由にすると結果が分かります。"));
-  } else if(t.ok){
-    box.appendChild(div({style:{fontSize:"10px",color:"#64748b",lineHeight:1.6}},
-      `返事の本文はありません（${t.status||204} は「受け付けました」の返事です）。ここまでは成功しています。あとはAlexa側で定型アクションが動くか確かめてください。`));
-  } else {
-    box.appendChild(div({style:{fontSize:"10px",color:"#64748b",lineHeight:1.6}},"返事の本文はありませんでした。"));
-  }
-  { const w=alexaShareLinkBody(t.body) || (t.ok?"":alexaStatusHint(t.status));
-    if(w) box.appendChild(div({style:{fontSize:"10px",color:"#fb923c",marginTop:"6px",padding:"7px 9px",borderRadius:"7px",
-      background:"#f973160d",border:"1px solid #f9731655",lineHeight:1.7}},"⚠ "+w)); }
-  box.appendChild(div({style:{fontSize:"9px",color:"#475569",marginTop:"5px",lineHeight:1.6}},
-    "※ 200でも本文にエラーが書かれていることがあります。ここが空か「ok」系なら、あとはAlexa側（定型アクションの実行条件）の設定を確かめてください。"));
-  return box;
-}
-// 文字列をコピー（クリップボードが使えないときは選択してもらう）
-function copyText(txt){
-  try{
-    if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(txt).then(()=>showToast("📋 コピーしました"),()=>showToast("コピーできませんでした。長押しで選べます")); return; }
-  }catch(_){}
-  try{ const ta=document.createElement('textarea'); ta.value=txt; ta.style.cssText="position:fixed;left:-9999px";
-    document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); showToast("📋 コピーしました"); }
-  catch(__){ showToast("コピーできませんでした。長押しで選べます"); }
-}
 // 🔊 Alexa連携の設定。トリガーを作り、モード・予定・就寝目標などから選ぶ
 function renderAlexaPanel(){
   const card=div({className:"card"});
@@ -12664,84 +12597,6 @@ function changePlanCard(){
   }
   return c;
 }
-// ── カード①：なりたい自分・減酒する理由（full=編集＋マイルストーン、compactは閲覧のみ）──
-// ※現在は未使用（「私の宣言」「定期ルーティン」と重複するためUIから外している）。
-//   データ層・バックアップは維持しており、再表示したくなった時のために意図的に残す。
-function visionCard(full){
-  const v=getLifeVision();
-  const set=hasLifeVision();
-  const c=div({className:"card",style:{marginBottom:"10px",border:"1px solid #a78bfa44",background:"#a78bfa0d"}});
-  const head=div({style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"8px"}});
-  head.appendChild(div({style:{fontSize:"13px",fontWeight:800,color:"#c4b5fd"}},"🌟 なりたい自分・減酒する理由"));
-  if(full){
-    const ed=btn({style:{padding:"4px 10px",borderRadius:"7px",border:"1px solid #a78bfa55",background:"transparent",color:"#c4b5fd",fontSize:"11px",cursor:"pointer",fontFamily:"inherit"}},state.visionEdit?"✕ 閉じる":"✏️ 編集");
-    ed.addEventListener('click',()=>{state.visionEdit=!state.visionEdit;render();});
-    head.appendChild(ed);
-  }
-  c.appendChild(head);
-  if(full && state.visionEdit){
-    c.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"4px"}},"どんな自分になりたい？"));
-    const ta=document.createElement('textarea');
-    ta.value=v.vision;ta.placeholder="例：朝すっきり起きて、休日は人と出かける自分";ta.rows=2;
-    ta.style.cssText="width:100%;box-sizing:border-box;padding:8px 10px;background:#0b1220;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit;resize:vertical;margin-bottom:10px";
-    ta.addEventListener('change',e=>{ getLifeVision().vision=e.target.value; saveLifeVision(); });
-    c.appendChild(ta);
-    c.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"4px"}},"減酒したい理由（いくつでも）"));
-    v.reasons.forEach((r,i)=>{
-      const row=div({style:{display:"flex",gap:"6px",alignItems:"center",marginBottom:"5px"}});
-      const inp=document.createElement('input');inp.type='text';inp.value=r;inp.style.cssText="flex:1;min-width:0;padding:7px 9px;background:#0b1220;border:1px solid #334155;border-radius:7px;color:#e2e8f0;font-size:12px;font-family:inherit";
-      inp.addEventListener('change',e=>{ getLifeVision().reasons[i]=e.target.value; saveLifeVision(); });
-      const del=btn({style:{padding:"6px 9px",background:"transparent",border:"1px solid #7f1d1d",borderRadius:"6px",color:"#f87171",fontSize:"12px",cursor:"pointer",flexShrink:0}},"🗑");
-      del.addEventListener('click',()=>{ getLifeVision().reasons.splice(i,1); saveLifeVision(); render(); });
-      row.appendChild(inp);row.appendChild(del); c.appendChild(row);
-    });
-    const nr=div({style:{display:"flex",gap:"6px",alignItems:"center",marginTop:"4px"}});
-    const ni=document.createElement('input');ni.type='text';ni.placeholder="例：お金を貯めたい／体調を良くしたい";ni.value=state.newReason||"";ni.style.cssText="flex:1;min-width:0;padding:7px 9px;background:#0b1220;border:1px solid #334155;border-radius:7px;color:#e2e8f0;font-size:12px;font-family:inherit";
-    ni.addEventListener('input',e=>{state.newReason=e.target.value;});
-    const add=btn({style:{padding:"6px 12px",background:"#a78bfa18",border:"1px solid #a78bfa",borderRadius:"7px",color:"#c4b5fd",fontSize:"13px",fontWeight:700,cursor:"pointer",flexShrink:0}},"＋");
-    add.addEventListener('click',()=>{ const t=(state.newReason||"").trim(); if(!t)return; getLifeVision().reasons.push(t); saveLifeVision(); state.newReason=""; render(); });
-    nr.appendChild(ni);nr.appendChild(add); c.appendChild(nr);
-    return c;
-  }
-  if(!set){
-    c.appendChild(div({style:{fontSize:"12px",color:"#94a3b8",lineHeight:1.6,marginBottom:full?"0":"8px"}},"「どんな自分になりたいか」「なぜ減酒したいか」を書いておくと、飲みたくなった時に思い出せる支えになります。"));
-    if(!full){
-      const b=btn({style:{width:"100%",padding:"9px",borderRadius:"8px",border:"1px dashed #a78bfa",background:"#a78bfa0d",color:"#c4b5fd",fontSize:"12px",fontWeight:600,cursor:"pointer",fontFamily:"inherit"}},"＋ なりたい自分を書く");
-      b.addEventListener('click',()=>{ exitWidget&&exitWidget(); state.modal=null; state.tab="達成"; state.achieveSubTab="未来投資"; state.visionEdit=true; render(); });
-      c.appendChild(b);
-    }
-    return c;
-  }
-  if(v.vision.trim()) c.appendChild(div({style:{fontSize:"15px",fontWeight:700,color:"#f5f3ff",lineHeight:1.5,marginBottom:v.reasons.length?"9px":"0"}},v.vision));
-  if(v.reasons.length){
-    c.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"4px"}},"減酒したい理由"));
-    v.reasons.forEach(r=>{
-      c.appendChild(div({style:{display:"flex",gap:"7px",alignItems:"flex-start",padding:"3px 0"}},[
-        span({style:{color:"#a78bfa",flexShrink:0}},"💜"),
-        span({style:{fontSize:"13px",color:"#e2e8f0",lineHeight:1.5}},r)
-      ]));
-    });
-  }
-  // マイルストーン（休肝日連続に応じて自動達成）— fullのみ
-  if(full){
-    const streak=(typeof alcoholFreeStreak==="function")?alcoholFreeStreak():0;
-    const c2=div({style:{marginTop:"12px",paddingTop:"10px",borderTop:"1px solid #1e293b"}});
-    const next=SOBER_MILESTONES.find(m=>m.days>streak);
-    c2.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"6px"}},`🚱 休肝日マイルストーン（連続${streak}日）`));
-    const row=div({style:{display:"flex",gap:"5px"}});
-    SOBER_MILESTONES.forEach(mi=>{
-      const done=streak>=mi.days, isNext=next&&next.days===mi.days;
-      row.appendChild(div({style:{flex:1,textAlign:"center",padding:"7px 2px",borderRadius:"8px",border:`1px solid ${done?"#22c55e66":isNext?"#a78bfa66":"#1e293b"}`,background:done?"#22c55e14":isNext?"#a78bfa10":"transparent",opacity:done||isNext?1:0.55}},[
-        div({style:{fontSize:"16px"}},mi.icon),
-        div({style:{fontSize:"9px",fontWeight:700,color:done?"#22c55e":isNext?"#c4b5fd":"#64748b",marginTop:"1px"}},mi.label)
-      ]));
-    });
-    c2.appendChild(row);
-    if(next) c2.appendChild(div({style:{fontSize:"10px",color:"#94a3b8",marginTop:"6px",lineHeight:1.5,textAlign:"center"}},`次は ${next.icon} ${next.label}（あと${next.days-streak}日）… ${next.msg}`));
-    c.appendChild(c2);
-  }
-  return c;
-}
 // ── カード②：飲まない夜のルーティン（毎晩チェック。飲酒という夜の習慣を別の流れに置き換える）──
 function nightRitualCard(vd, full){
   const r=getNightRitual();
@@ -13258,11 +13113,6 @@ function customTodoCfgFor(ct, ds){
 // 期間で持つので、再開しても休止前の記録や間隔の数え方（開始日からの周期）は変わらない。
 function ctPauseOn(ct, ds){ return (ct&&Array.isArray(ct.pauses))?(ct.pauses.find(p=>p&&p.from<=ds&&(p.to==null||ds<=p.to))||null):null; }
 function ctPausedNow(ct){ return (ct&&Array.isArray(ct.pauses))?(ct.pauses.find(p=>p&&p.to==null)||null):null; }
-function pauseCustomTodo(uid){
-  const ct=(state.customTodos||[]).find(x=>x.uid===uid); if(!ct||ctPausedNow(ct)) return;
-  ct.pauses=[...(ct.pauses||[]),{from:todayStr(),to:null}];
-  saveCustomTodos(); try{ alexaSyncPlan(true); }catch(_){}
-}
 // まとめて休止・再開（休止の選択→確定から）。保存とAlexaの予約の送り直しは1回だけ
 function applyCustomTodoPauses(pauseIds,resumeIds){
   const t=todayStr(), y=addDays(t,-1); let np=0, nr=0;
@@ -13273,13 +13123,6 @@ function applyCustomTodoPauses(pauseIds,resumeIds){
   });
   if(np||nr){ saveCustomTodos(); try{ alexaSyncPlan(true); }catch(_){} }
   return {np,nr};
-}
-function resumeCustomTodo(uid){
-  const ct=(state.customTodos||[]).find(x=>x.uid===uid); const p=ct&&ctPausedNow(ct); if(!p) return;
-  const to=addDays(todayStr(),-1);
-  // 休止したその日のうちに再開したら、休止はなかったことにする
-  ct.pauses=ct.pauses.map(x=>x===p?{...x,to}:x).filter(x=>!(x.to!=null&&x.to<x.from));
-  saveCustomTodos(); try{ alexaSyncPlan(true); }catch(_){}
 }
 function customTodoDue(ct, ds){
   if(!ct||!ct.startDate)return false;
@@ -14296,7 +14139,7 @@ function renderAlcohol(vd,isToday){
         totalG>0?div({style:{fontSize:"11px",marginTop:"2px",color:totalG>20?"#f97316":"#64748b"}},`純アルコール計: ${totalG.toFixed(1)}g（適量目安 20g）`):null
       ]),
       btn({style:{padding:"6px 12px",background:"#0ea5e918",border:"1px solid #0ea5e9",borderRadius:"8px",color:"#38bdf8",fontSize:"12px",cursor:"pointer",fontWeight:600},
-        onClick:()=>{const now=new Date();state.modal="addDrink";state.newDrink={typeId:"beer",ml:350,hour:now.getHours(),min:now.getMinutes(),pct:5,startNextDay:false,tasting:{}};state.drinkNoteOpen=undefined;render();}},"+ 追加")
+        onClick:()=>openAddDrink(false)},"+ 追加")
     ])
   ]);
   if(drinks.length===0){

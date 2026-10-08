@@ -21,7 +21,7 @@
 1. **⚠ 仕様を変えたら SPEC.md / API.md を必ず同じコミットで更新する**（下記「ドキュメント同期ルール」）。
 2. **`api.php` はリポジトリにコミットしない**（Gemini APIキーを含む。サーバ側にのみ置く）。
 3. リリース時は `health.html` 先頭の **`const APP_VERSION` を1つ上げる**（表示・SWキャッシュ更新に使用）。
-4. 変更後は必ず **テストを実行**：`node test/syntax-check.js` と `node test/smoke.js`（`npm test`）。
+4. 変更後は必ず **テストを実行**：`node test/syntax-check.js`・`node test/undefined-call-check.js`（定義の無い関数の呼び出し）・`node test/smoke.js`（まとめて `npm test`）。
 5. AIプロキシのキー/URLは health.html の **`AI_ENDPOINT` / `AI_SECRET`** の1箇所で管理。
    エラーコード `__DAILY_LIMIT__` / `__GEMINI_RATE__` は名称固定（クライアントが特別扱い）。
 6. クライアントの `X-Secret-Key` は公開露出前提。**実防御は api.php の Origin制限＋レート制限**。

@@ -6,7 +6,8 @@
   "scripts": {
     "test:syntax": "node test/syntax-check.js",
     "test:smoke": "node test/smoke.js",
-    "test": "npm run test:syntax && npm run test:smoke"
+    "test": "npm run test:syntax && npm run test:calls && npm run test:smoke",
+    "test:calls": "node test/undefined-call-check.js"
   },
   "devDependencies": {
     "playwright-core": "^1.40.0"
