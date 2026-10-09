@@ -224,7 +224,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.30"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.31"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -1427,6 +1427,22 @@ function renderBACChart(drinks, showCurrent, nowMinPassed){
 // ═══════════════════════════════════════════════════
 let headerMounted = false;
 
+// 描き直しの前に、content の中でスクロールしている箱の位置を覚え、描き直した後（同じ画面のとき）に戻す。
+// 箱は「content からの位置（子の番号の並び）」で見分ける。別の画面に移ったときは戻さない（一番上から）
+function innerScrollViewKey(){ return [state.widget?'w':'',state.tab,state.sleepMode?'sleep':'',state.selfMode||'',state.modeSwitcher?'sw':'',state.lifeScreen||'',state.peekMode||'',state.modal||'',state.customTodoModal?'ctm':'',state.editHour!=null?'h'+state.editHour:'',state.goalTreeModal?'gt':''].join('|'); }
+function keepInnerScroll(content){
+  const key=innerScrollViewKey(), saved=[];
+  if(key===keepInnerScroll._key){
+    content.querySelectorAll('[style*="overflow"],.modal,.modal-box,.modal-bg,.modal-center').forEach(el=>{
+      if(el.scrollTop>0){ const path=[]; let e=el; while(e&&e!==content){ const par=e.parentElement; if(!par) return; path.unshift(Array.prototype.indexOf.call(par.children,e)); e=par; } saved.push([path,el.scrollTop]); }
+    });
+  }
+  keepInnerScroll._key=key;
+  if(!saved.length) return;
+  const restore=()=>{ if(innerScrollViewKey()!==key) return; saved.forEach(([path,top])=>{ let e=content; for(const i of path){ e=e&&e.children[i]; } if(e&&Math.abs(e.scrollTop-top)>1) e.scrollTop=top; }); };
+  Promise.resolve().then(restore);          // 描き終わった直後（画面に出る前）
+  requestAnimationFrame(restore);           // 念のため次の描画でも
+}
 function render(){
   const root = document.getElementById('root');
 
@@ -1452,6 +1468,9 @@ function render(){
     content.id = 'main-content';
     root.appendChild(content);
   }
+  // 全画面（モード画面・セルフモード・睡眠前・モード切替）やポップアップの中のスクロールも、同じ画面の描き直しなら保つ。
+  // （入力を保存するたびに描き直すため、これが無いと一番上に戻っていた）
+  keepInnerScroll(content);
   content.innerHTML = '';
 
   // 🕒 ライフモードの自動切替（勤務境界をまたいだら反映）。この render 内で状態を更新して描画に反映
@@ -8400,7 +8419,7 @@ function renderTrainingPanel(vd,ds,isToday){
     const running=cardioRunning(vd);
     const dlId="ca-names";
     const dl=document.createElement('datalist'); dl.id=dlId; cardioNames().forEach(n=>{const o=document.createElement('option');o.value=n;dl.appendChild(o);}); c.appendChild(dl);
-    const numF=(ph,val,set,step)=>{const i=document.createElement('input');i.type='number';i.placeholder=ph;i.step=step||"0.01";i.min="0";i.value=val!==""&&val!=null?String(val):"";i.style.cssText="width:100%;box-sizing:border-box;padding:8px 6px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:14px;font-family:inherit;text-align:center";i.addEventListener('input',e=>{set(e.target.value);render();});return i;};
+    const numF=(ph,val,set,step)=>{const i=document.createElement('input');i.type='number';i.placeholder=ph;i.step=step||"0.01";i.min="0";i.value=val!==""&&val!=null?String(val):"";i.style.cssText="width:100%;box-sizing:border-box;padding:8px 6px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:14px;font-family:inherit;text-align:center";i.addEventListener('input',e=>{set(e.target.value);});i.addEventListener('change',()=>render());return i;};
     const lbl=(t,el)=>div({},[div({style:{fontSize:"9px",color:"#64748b",marginBottom:"2px",textAlign:"center"}},t),el]);
     if(running){
       // ── 計測中パネル ──
