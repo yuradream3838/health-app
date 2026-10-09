@@ -127,41 +127,60 @@ function checkStorageAndAlert(){
   if(pct>=90){state.storageAlert=true;render();}
 }
 
-// アーカイブ対象の年リストを取得
+// ── 年ごとの書き出し（保存容量を空ける）──
+// 去年以前の年を1つ選び、①ファイルに書き出す → ②保存できたのを確かめてから、アプリから消す（2段階）。
+// 書き出すもの＝体調記録・日次記録・ルーティンの実施記録・天気・モードの記録・ケアモードの記録（その年の分）。
+// 書き出したファイルを「📂 データを読込」で選ぶと、その年の分を今のデータに足して戻す（置き換えない＝mergeArchive）。
+const yearOfMs=ms=>new Date(ms).getFullYear();
 function getArchiveYears(){
-  const thisYear=new Date().getFullYear();
-  const years=new Set();
-  state.logs.forEach(l=>{const y=parseInt(l.dateStr.slice(0,4));if(y<thisYear)years.add(y);});
-  state.dailies.forEach(d=>{const y=parseInt(d.dateStr.slice(0,4));if(y<thisYear)years.add(y);});
+  const thisYear=new Date().getFullYear(), years=new Set();
+  const add=y=>{ if(y&&y<thisYear) years.add(y); };
+  state.logs.forEach(l=>add(parseInt(l.dateStr.slice(0,4))));
+  state.dailies.forEach(d=>add(parseInt(d.dateStr.slice(0,4))));
+  Object.keys(state.todos||{}).forEach(k=>add(parseInt(k.slice(0,4))));
+  getModeLog().forEach(x=>{ if(x.end!=null) add(yearOfMs(x.start)); });
   return [...years].sort().reverse();
 }
-
-function exportAndDeleteYear(year){
-  const yStr=String(year);
-  // 対象データを抽出
-  const logs=state.logs.filter(l=>l.dateStr.startsWith(yStr));
-  const dailies=state.dailies.filter(d=>d.dateStr.startsWith(yStr));
-  const todos={};
-  Object.keys(state.todos).forEach(k=>{if(k.startsWith(yStr))todos[k]=state.todos[k];});
-  let weather={};
-  try{const s=localStorage.getItem(STORAGE_KEY+"_weather");if(s){const w=JSON.parse(s);Object.keys(w).forEach(k=>{if(k.startsWith(yStr))weather[k]=w[k];});}}catch{}
-
-  // エクスポート
-  const archive={year,logs,dailies,todos,weather,exportedAt:new Date().toISOString()};
-  const blob=new Blob([JSON.stringify(archive,null,2)],{type:"application/json"});
-  const url=URL.createObjectURL(blob);const a=document.createElement("a");
-  a.href=url;a.download=`health_archive_${year}.json`;a.click();URL.revokeObjectURL(url);
-
-  // 削除
-  state.logs=state.logs.filter(l=>!l.dateStr.startsWith(yStr));
-  state.dailies=state.dailies.filter(d=>!d.dateStr.startsWith(yStr));
-  Object.keys(state.todos).forEach(k=>{if(k.startsWith(yStr))delete state.todos[k];});
-  try{
-    const s=localStorage.getItem(STORAGE_KEY+"_weather");
-    if(s){const w=JSON.parse(s);Object.keys(w).forEach(k=>{if(k.startsWith(yStr))delete w[k];});localStorage.setItem(STORAGE_KEY+"_weather",JSON.stringify(w));}
-  }catch{}
-  saveStorage();
-  state.storageAlert=false;render();
+function archiveYearData(year){
+  const y=String(year), todos={}, weather={};
+  Object.keys(state.todos||{}).forEach(k=>{ if(k.startsWith(y)) todos[k]=state.todos[k]; });
+  try{ const w=JSON.parse(localStorage.getItem(STORAGE_KEY+"_weather")||"{}"); Object.keys(w).forEach(k=>{ if(k.startsWith(y)) weather[k]=w[k]; }); }catch(_){}
+  return { kind:"archive", year, exportedAt:new Date().toISOString(),
+    logs:state.logs.filter(l=>l.dateStr.startsWith(y)), dailies:state.dailies.filter(d=>d.dateStr.startsWith(y)), todos, weather,
+    modeLog:getModeLog().filter(x=>x.end!=null&&yearOfMs(x.start)===year),
+    selfModeLog:getSelfModeLog().filter(x=>x.t&&String(x.t).startsWith(y)) };
+}
+// ① 書き出す（まだ消さない）
+function exportArchiveYear(year){ downloadJSON(archiveYearData(year),`health_archive_${year}.json`); state.archiveSaved={year,at:Date.now()}; render(); }
+// ② 保存できたのを確かめてから消す
+function deleteArchivedYear(year){
+  const y=String(year);
+  state.logs=state.logs.filter(l=>!l.dateStr.startsWith(y));
+  state.dailies=state.dailies.filter(d=>!d.dateStr.startsWith(y));
+  Object.keys(state.todos).forEach(k=>{ if(k.startsWith(y)) delete state.todos[k]; }); safeSet(STORAGE_KEY+"_todo",JSON.stringify(state.todos));
+  try{ const w=JSON.parse(localStorage.getItem(STORAGE_KEY+"_weather")||"{}"); Object.keys(w).forEach(k=>{ if(k.startsWith(y)) delete w[k]; }); safeSet(STORAGE_KEY+"_weather",JSON.stringify(w)); }catch(_){}
+  state.modeLog=getModeLog().filter(x=>!(x.end!=null&&yearOfMs(x.start)===year)); saveModeLog();
+  state.selfModeLog=getSelfModeLog().filter(x=>!(x.t&&String(x.t).startsWith(y))); saveSelfModeLog();
+  saveStorage(); flushStorage();
+  state.archiveSaved=null; state.storageExportYear=null; state.storageAlert=false;
+  showToast(`🗑 ${year}年の記録をアプリから消しました（書き出したファイルから戻せます）`,"#22c55e"); render();
+}
+// 書き出したファイル（kind:"archive"）を読み込む：その年の分を今のデータに足す。同じ日・同じ時間がすでにあれば今のデータを残す
+function isArchiveFile(p){ return !!p && (p.kind==="archive" || (p.year!=null && !p.version)); }
+function mergeArchive(p){
+  const n={logs:0,dailies:0,todos:0,modes:0};
+  const haveLog=new Set(state.logs.map(l=>l.dateStr+"|"+l.hour));
+  (p.logs||[]).forEach(l=>{ if(l&&l.dateStr&&!haveLog.has(l.dateStr+"|"+l.hour)){ state.logs.push(l); n.logs++; } });
+  const haveDay=new Set(state.dailies.map(d=>d.dateStr));
+  (p.dailies||[]).forEach(d=>{ if(d&&d.dateStr&&!haveDay.has(d.dateStr)){ state.dailies.push(d); n.dailies++; } });
+  Object.keys(p.todos||{}).forEach(k=>{ if(!state.todos[k]){ state.todos[k]=p.todos[k]; n.todos++; } }); safeSet(STORAGE_KEY+"_todo",JSON.stringify(state.todos));
+  try{ const w=JSON.parse(localStorage.getItem(STORAGE_KEY+"_weather")||"{}"); Object.keys(p.weather||{}).forEach(k=>{ if(!w[k]) w[k]=p.weather[k]; }); safeSet(STORAGE_KEY+"_weather",JSON.stringify(w)); }catch(_){}
+  const ml=getModeLog(), haveMode=new Set(ml.map(x=>x.start+"|"+x.key));
+  (p.modeLog||[]).forEach(x=>{ if(x&&!haveMode.has(x.start+"|"+x.key)){ ml.push(x); n.modes++; } }); ml.sort((a,b)=>a.start-b.start); saveModeLog();
+  const sl=getSelfModeLog(), haveSelf=new Set(sl.map(x=>x.t+"|"+x.mode));
+  (p.selfModeLog||[]).forEach(x=>{ if(x&&!haveSelf.has(x.t+"|"+x.mode)) sl.push(x); }); sl.sort((a,b)=>String(a.t).localeCompare(String(b.t))); saveSelfModeLog();
+  saveStorage(); flushStorage();
+  return n;
 }
 
 function renderStorageAlertModal(){
@@ -191,13 +210,13 @@ function renderStorageAlertModal(){
     ])
   ]));
 
-  m.appendChild(div({style:{fontSize:"12px",color:"#94a3b8",marginBottom:"12px",lineHeight:1.6}},"過去のデータをアーカイブしてストレージを解放してください。エクスポートしたファイルはバックアップとして保存できます。"));
+  m.appendChild(div({style:{fontSize:"12px",color:"#94a3b8",marginBottom:"12px",lineHeight:1.6}},"去年以前の記録を年ごとにファイルへ書き出して、アプリから消すと空きます（体調・日次・ルーティンの実施・天気・モードの記録）。書き出したファイルは、そのまま保管しておいてください。"));
 
   if(years.length===0){
     m.appendChild(div({style:{fontSize:"12px",color:"#475569",textAlign:"center",padding:"12px 0"}},"アーカイブできるデータがありません（今年のデータのみ）"));
   } else {
     // 年選択
-    m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"6px"}},"エクスポートする年"));
+    m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"6px"}},"書き出す年"));
     const sel=document.createElement('select');
     sel.style.cssText="width:100%;padding:9px 12px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:14px;font-family:inherit;margin-bottom:8px";
     years.forEach(y=>{
@@ -207,16 +226,20 @@ function renderStorageAlertModal(){
       if(y===state.storageExportYear)o.selected=true;
       sel.appendChild(o);
     });
-    sel.addEventListener('change',e=>{state.storageExportYear=parseInt(e.target.value);});
+    sel.addEventListener('change',e=>{state.storageExportYear=parseInt(e.target.value); render();});
     m.appendChild(sel);
 
-    // エクスポート＋削除ボタン
-    m.appendChild(btn({style:{width:"100%",padding:"10px",background:"linear-gradient(135deg,#f97316,#ef4444)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:600,cursor:"pointer",marginBottom:"8px"},
-      onClick:()=>{
-        if(!state.storageExportYear)return;
-        if(!confirm(`${state.storageExportYear}年のデータをエクスポートして削除しますか？\nエクスポートしたファイルは必ず保存してください。`))return;
-        exportAndDeleteYear(state.storageExportYear);
-      }},`📦 ${state.storageExportYear}年をエクスポートして削除`));
+    // ① 書き出す → ② 保存できたのを確かめてから消す
+    const Y=state.storageExportYear, saved=state.archiveSaved&&state.archiveSaved.year===Y;
+    m.appendChild(btn({style:{width:"100%",padding:"10px",background:saved?"transparent":"linear-gradient(135deg,#0ea5e9,#6366f1)",border:saved?"1px solid #334155":"none",borderRadius:"8px",color:saved?"#94a3b8":"#fff",fontSize:"13px",fontWeight:600,cursor:"pointer",marginBottom:"8px"},
+      onClick:()=>{ if(Y) exportArchiveYear(Y); }},saved?`↻ ${Y}年をもう一度書き出す`:`📦 ① ${Y}年をファイルに書き出す`));
+    if(saved){
+      m.appendChild(div({style:{fontSize:"11px",color:"#fbbf24",lineHeight:1.7,margin:"2px 0 8px",padding:"8px 10px",borderRadius:"8px",background:"#f59e0b14",border:"1px solid #f59e0b55"}},
+        `health_archive_${Y}.json が保存されたか確かめてください（iPhoneは「ファイル」アプリの「ダウンロード」など）。保存できていたら②へ。消したあとも、このファイルを「📂 データを読込」で選べば${Y}年の分を戻せます。`));
+      const del=btn({style:{width:"100%",padding:"10px",background:"linear-gradient(135deg,#f97316,#ef4444)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:600,cursor:"pointer",marginBottom:"8px"},
+        onClick:()=>{ if(confirm(`${Y}年の記録をアプリから消します。\nhealth_archive_${Y}.json を保存できていますか？`)) deleteArchivedYear(Y); }},`🗑 ② 保存できたので ${Y}年をアプリから消す`);
+      del.setAttribute('data-archivedelete',String(Y)); m.appendChild(del);
+    } else m.appendChild(div({style:{fontSize:"10px",color:"#64748b",lineHeight:1.6,marginBottom:"8px"}},"書き出しただけでは消えません。保存できたのを確かめてから消します。"));
   }
 
   // 閉じる
@@ -224,7 +247,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.31"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.32"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -443,7 +466,7 @@ const GROUP_DEFAULT_MODE={morning:"morning",breakfast:"meal",lunch:"meal",dinner
 function getTodoItems(){ if(!Array.isArray(state.todoItems)){ state.todoItems=JSON.parse(JSON.stringify(TODO_ITEMS)); } return state.todoItems; }
 // 保存済みの一覧を読み込む前に保存すると、既定の項目で上書きして自作の項目が消える（v15.24 で起きた）。読み込み前の保存は止める
 let _todoItemsLoaded=false;
-function saveTodoItems(){ if(!_todoItemsLoaded){ console.warn("saveTodoItems: 読み込み前の保存は行いません"); return; } try{localStorage.setItem(STORAGE_KEY+"_todoitems",JSON.stringify(getTodoItems()));}catch{} }
+function saveTodoItems(){ if(!_todoItemsLoaded){ console.warn("saveTodoItems: 読み込み前の保存は行いません"); return; } safeSet(STORAGE_KEY+"_todoitems",JSON.stringify(getTodoItems())); }
 
 // 予定タブ「実際」列で1つにまとめて表示するルーティン群（アプリ内で編集可能・初期値）
 const DEFAULT_ROUTINES = [
@@ -543,7 +566,7 @@ function migrateToothbrush(){
       }
     }
   }catch{}
-  try{localStorage.setItem(STORAGE_KEY+"_toothbrushmig","1");}catch{}
+  safeSet(STORAGE_KEY+"_toothbrushmig","1");
 }
 
 // ── シフトパターン（勤務の週間繰り返し）──
@@ -559,15 +582,15 @@ const SHIFT_OPTS = [["s1","1直"],["s2","2直"],["off","休み1"],["off2","休�
 const OFF_KEYS = ["off","off2"];
 // 勤務の色はユーザーが変更可能（保存値をSHIFT_TYPESに反映。全参照箇所に自動適用される）
 try{ const _sc=JSON.parse(localStorage.getItem(STORAGE_KEY+"_shiftcolors")||"null"); if(_sc&&typeof _sc==="object"){ Object.keys(_sc).forEach(k=>{ if(SHIFT_TYPES[k]&&_sc[k])SHIFT_TYPES[k].color=_sc[k]; }); } }catch(_){}
-function saveShiftColors(){ try{ const m={}; Object.keys(SHIFT_TYPES).forEach(k=>m[k]=SHIFT_TYPES[k].color); localStorage.setItem(STORAGE_KEY+"_shiftcolors",JSON.stringify(m)); }catch(_){} }
+function saveShiftColors(){ try{ const m={}; Object.keys(SHIFT_TYPES).forEach(k=>m[k]=SHIFT_TYPES[k].color); safeSet(STORAGE_KEY+"_shiftcolors",JSON.stringify(m)); }catch(_){} }
 // 射精記録の表示色（変更可能）
 function getEjacColor(){ try{ return localStorage.getItem(STORAGE_KEY+"_ejaccolor")||"#ec4899"; }catch(_){ return "#ec4899"; } }
-function setEjacColor(c){ try{ localStorage.setItem(STORAGE_KEY+"_ejaccolor",c); }catch(_){} }
+function setEjacColor(c){ safeSet(STORAGE_KEY+"_ejaccolor",c); }
 // 睡眠・飲酒の実績表示色（変更可能）
 function getSleepColor(){ try{ return localStorage.getItem(STORAGE_KEY+"_sleepcolor")||"#60a5fa"; }catch(_){ return "#60a5fa"; } }
-function setSleepColor(c){ try{ localStorage.setItem(STORAGE_KEY+"_sleepcolor",c); }catch(_){} }
+function setSleepColor(c){ safeSet(STORAGE_KEY+"_sleepcolor",c); }
 function getAlcColor(){ try{ return localStorage.getItem(STORAGE_KEY+"_alccolor")||"#f59e0b"; }catch(_){ return "#f59e0b"; } }
-function setAlcColor(c){ try{ localStorage.setItem(STORAGE_KEY+"_alccolor",c); }catch(_){} }
+function setAlcColor(c){ safeSet(STORAGE_KEY+"_alccolor",c); }
 // 直近の月曜日(YYYY-MM-DD)
 function mondayStr(ds){
   const d=parseDS(ds); d.setDate(d.getDate()-((d.getDay()+6)%7));
@@ -868,7 +891,7 @@ function calcBAC(drinks, wKg, sex, nowMin){
 function bacWeightKg(){ const w=parseFloat(state.bacWeight); return (w&&w>0)?w:60; }
 function bacSexV(){ return state.bacSex==="f"?"f":"m"; }
 function userBAC(dd,t){ return calcBAC(dd, bacWeightKg(), bacSexV(), t); }
-function saveBacProfile(){ try{localStorage.setItem(STORAGE_KEY+"_bacprofile",JSON.stringify({weight:bacWeightKg(),sex:bacSexV()}));}catch{} }
+function saveBacProfile(){ safeSet(STORAGE_KEY+"_bacprofile",JSON.stringify({weight:bacWeightKg(),sex:bacSexV()})); }
 function bacLevel(b){
   if(b>=1.5)return{label:"危険⚠️",color:"#ef4444",bg:"#3f0000"};
   if(b>=0.8)return{label:"酩酊",  color:"#f97316",bg:"#2d1500"};
@@ -1021,7 +1044,7 @@ function loadStorage(){
     if(ift!=null){try{const a=JSON.parse(ift); if(Array.isArray(a))state.ifThenPlans=a;}catch{}}
     else { // 初回のみ例を1件だけ用意（削除しても再追加されない）
       state.ifThenPlans=[{id:Date.now(),cue:"帰宅後に飲みたくなったら",action:"まず炭酸水を1杯飲む",weekdays:[5],afterH:18,active:true}];
-      try{localStorage.setItem(STORAGE_KEY+"_ifthen",JSON.stringify(state.ifThenPlans));}catch{}
+      safeSet(STORAGE_KEY+"_ifthen",JSON.stringify(state.ifThenPlans));
     }
     // ── 根本解決の習慣機能：なりたい自分／夜のルーティン／つながり目標 ──
     const lv=localStorage.getItem(STORAGE_KEY+"_lifevision");
@@ -1139,9 +1162,9 @@ function migrateOldSchedule(){
   }
   if(migrated){
     try{
-      localStorage.setItem(STORAGE_KEY+"_schedule",JSON.stringify(state.schedule));
-      localStorage.setItem(STORAGE_KEY+"_repeat",JSON.stringify(state.repeatEvents));
-      localStorage.setItem(STORAGE_KEY+"_tasks",JSON.stringify(state.tasks));
+      safeSet(STORAGE_KEY+"_schedule",JSON.stringify(state.schedule));
+      safeSet(STORAGE_KEY+"_repeat",JSON.stringify(state.repeatEvents));
+      safeSet(STORAGE_KEY+"_tasks",JSON.stringify(state.tasks));
     }catch{}
   }
 }
@@ -1807,7 +1830,7 @@ const WIDGET_SECTIONS=[
 const WIDGET_DEFAULT_OFF=new Set(WIDGET_SECTIONS.filter(s=>s.defOff).map(s=>s.k));
 function getWidgetSections(){ if(!state.widgetSections||typeof state.widgetSections!=="object")state.widgetSections={}; return state.widgetSections; }
 function wSecOn(k){ const m=getWidgetSections(); if(m[k]!==undefined)return m[k]!==false; return !WIDGET_DEFAULT_OFF.has(k); } // 既定：多くは表示、一部は非表示
-function saveWidgetSections(){ try{localStorage.setItem(STORAGE_KEY+"_widgetsections",JSON.stringify(getWidgetSections()));}catch{} }
+function saveWidgetSections(){ safeSet(STORAGE_KEY+"_widgetsections",JSON.stringify(getWidgetSections())); }
 // 表示順（保存済みの順＋未登録の新項目は末尾）
 function widgetOrder(){
   const def=WIDGET_SECTIONS.map(s=>s.k);
@@ -1815,7 +1838,7 @@ function widgetOrder(){
   def.forEach(k=>{ if(!ord.includes(k))ord.push(k); });
   return ord;
 }
-function saveWidgetOrder(){ try{localStorage.setItem(STORAGE_KEY+"_widgetorder",JSON.stringify(widgetOrder()));}catch{} }
+function saveWidgetOrder(){ safeSet(STORAGE_KEY+"_widgetorder",JSON.stringify(widgetOrder())); }
 function moveWidgetSection(k,dir){ const ord=widgetOrder(); const i=ord.indexOf(k); const j=i+dir; if(i<0||j<0||j>=ord.length)return; const t=ord[i];ord[i]=ord[j];ord[j]=t; state.widgetSecOrder=ord; saveWidgetOrder(); }
 function widgetSectionLabel(k){ const s=WIDGET_SECTIONS.find(x=>x.k===k); return s?s.l:k; }
 // ═══════════════════════════════════════════════════
@@ -1823,7 +1846,7 @@ function widgetSectionLabel(k){ const s=WIDGET_SECTIONS.find(x=>x.k===k); return
 //   ①就寝/起床アンカー ②今夜のカウントダウン ③寝支度スイッチ ④ドリフト検知 ⑤就寝ストリーク
 // ═══════════════════════════════════════════════════
 function getSleepGoal(){ return (state.sleepGoal&&state.sleepGoal.bedH!=null)?state.sleepGoal:null; }
-function saveSleepGoal(){ try{ if(getSleepGoal())localStorage.setItem(STORAGE_KEY+"_sleepgoal",JSON.stringify(state.sleepGoal)); else localStorage.removeItem(STORAGE_KEY+"_sleepgoal"); }catch{} }
+function saveSleepGoal(){ try{ if(getSleepGoal())safeSet(STORAGE_KEY+"_sleepgoal",JSON.stringify(state.sleepGoal)); else localStorage.removeItem(STORAGE_KEY+"_sleepgoal"); }catch{} }
 function sleepTol(){ const g=getSleepGoal(); return (g&&g.tol>0)?g.tol:30; }
 function cdLeadMin(){ const g=getSleepGoal(); return ((g&&g.cdLeadH>0)?g.cdLeadH:3)*60; } // カウントダウン開始（目標の何時間前から）
 function windLeadMin(){ const g=getSleepGoal(); return (g&&g.windLeadMin>0)?g.windLeadMin:60; } // 寝支度は就寝の何分前
@@ -2407,7 +2430,7 @@ function migrateModeOrder(){
     .map((m,i)=>({m, k:(idx[m.key]!=null?idx[m.key]:N+i)})) // 既定にないモードは末尾へ（元の順のまま）
     .sort((a,b)=>a.k-b.k).map(x=>x.m);
   saveLifeModes();
-  try{ localStorage.setItem(STORAGE_KEY+'_modeorder',MODE_ORDER_VER); }catch(_){}
+  safeSet(STORAGE_KEY+'_modeorder',MODE_ORDER_VER);
 }
 function migrateSeikatsuMode(){
   const modes=state.lifeModes;
@@ -2431,19 +2454,20 @@ function migrateSeikatsuMode(){
   }
   // 参照の付け替え
   (state.modeLog||[]).forEach(x=>{ if(x.key===oldKey) x.key='life'; });
-  if(state.defaultMode===oldKey){ state.defaultMode='life'; try{ localStorage.setItem(STORAGE_KEY+'_defaultmode','life'); }catch(_){} }
-  if(state.autoLastKey===oldKey){ state.autoLastKey='life'; try{ localStorage.setItem(STORAGE_KEY+'_automode',JSON.stringify({on:state.autoModeOn!==false,lastKey:'life'})); }catch(_){} }
+  if(state.defaultMode===oldKey){ state.defaultMode='life'; safeSet(STORAGE_KEY+'_defaultmode','life'); }
+  if(state.autoLastKey===oldKey){ state.autoLastKey='life'; safeSet(STORAGE_KEY+'_automode',JSON.stringify({on:state.autoModeOn!==false,lastKey:'life'})); }
   try{ getTodoItems().forEach(it=>{ const ms=itemModes(it); if(ms.includes(oldKey)) setItemModes(it,ms.map(k=>k===oldKey?'life':k)); }); saveTodoItems(); }catch(_){}
   try{ const g=getModeGoals(); if(g[oldKey]!=null){ g['life']=g[oldKey]; delete g[oldKey]; saveModeGoals(); } }catch(_){}
   saveLifeModes(); saveModeLog();
 }
-function saveLifeModes(){ try{localStorage.setItem(STORAGE_KEY+'_lifemodes',JSON.stringify(getLifeModes()));}catch(_){} }
+function saveLifeModes(){ safeSet(STORAGE_KEY+'_lifemodes',JSON.stringify(getLifeModes())); }
 function lifeModeDef(key){ return getLifeModes().find(m=>m.key===key)||null; }
 // 既存の保存済みモード一覧に、新しい既定モード（朝/飲み/睡眠前など）を不足分だけ補完
 function migrateLifeModes(){ if(!Array.isArray(state.lifeModes)||!state.lifeModes.length) return; const have=new Set(state.lifeModes.map(m=>m.key)); let changed=false; DEFAULT_LIFE_MODES.forEach(d=>{ if(!have.has(d.key)){ state.lifeModes.push(JSON.parse(JSON.stringify(d))); changed=true; } }); if(changed) saveLifeModes(); }
 let _appReady=false;   // 起動が終わったか（起動直後の自動処理でAlexaを鳴らさないため）
 function getModeLog(){ if(!Array.isArray(state.modeLog))state.modeLog=[]; return state.modeLog; }
-function saveModeLog(){ try{localStorage.setItem(STORAGE_KEY+'_modelog',JSON.stringify(getModeLog().slice(-3000)));}catch(_){} }
+// 件数で切り捨てない（以前は最新3000件だけ残し、古い記録が黙って消えていた）。容量が足りなくなったら年ごとに書き出して消す
+function saveModeLog(){ safeSet(STORAGE_KEY+'_modelog',JSON.stringify(getModeLog())); }
 function currentModeSession(){ const l=getModeLog(); for(let i=l.length-1;i>=0;i--){ if(!l[i].end) return l[i]; } return null; }
 function currentLifeModeKey(){ const s=currentModeSession(); return s?s.key:null; }
 // 基準日（モードの記録先）。就寝(bedTime)を記録するまでは前日扱い＝深夜でも基準日を変えない。
@@ -2482,7 +2506,7 @@ function removeAlexaTrigger(id){
   const sl=getAlexaSleep(); ["bed","wind"].forEach(k=>{ if(sl[k]&&sl[k].t===id) delete sl[k]; });
   saveAlexa();
 }
-function saveAlexa(){ try{localStorage.setItem(STORAGE_KEY+"_alexa",JSON.stringify({
+function saveAlexa(){ try{safeSet(STORAGE_KEY+"_alexa",JSON.stringify({
   on:!!state.alexaOn, relay:!!state.alexaRelay, relayUrl:(state.alexaRelayUrl||""),
   triggers:getAlexaTriggers(), modes:getAlexaModes(), sleep:getAlexaSleep(),
   planOn:!!state.alexaPlanOn, plan:state.alexaPlan||null, mute:getAlexaMute(), hooks:state.alexaHooks||{}}));}catch(_){} }
@@ -2624,7 +2648,7 @@ function noteAwakeOnCareEnter(prevKey,key,now){
 // 常に1つの生活モードに属する：進行中セッションが無ければ既定モードを開始（モード未選択を無くす）
 // モード別の「1日の目標時間（分）」。0/未設定なら目標なし
 function getModeGoals(){ if(!state.modeGoals||typeof state.modeGoals!=='object')state.modeGoals={}; return state.modeGoals; }
-function saveModeGoals(){ try{localStorage.setItem(STORAGE_KEY+'_modegoals',JSON.stringify(getModeGoals()));}catch(_){} }
+function saveModeGoals(){ safeSet(STORAGE_KEY+'_modegoals',JSON.stringify(getModeGoals())); }
 // モードの1日の目標時間（分）。「これ以上」と「これ以下」の両方を持てる。
 //   古い形（数値ひとつ＝これ以上）もそのまま読めるようにしておく。
 function modeGoalOf(key){
@@ -2665,7 +2689,7 @@ function getModeTags(key){
   if(!Array.isArray(state.modeTags[key])) state.modeTags[key]=[...(MODE_TAG_DEFAULTS[key]||[])];
   return state.modeTags[key];
 }
-function saveModeTags(){ try{localStorage.setItem(STORAGE_KEY+'_modetags',JSON.stringify(state.modeTags||{}));}catch(_){} }
+function saveModeTags(){ safeSet(STORAGE_KEY+'_modetags',JSON.stringify(state.modeTags||{})); }
 function currentModeTag(){ const s=currentModeSession(); return s?(s.tag||null):null; }
 // タグを付ける。同じタグをもう一度押したら外す。別のタグに付け替えるときは、
 // そこまでの時間を前のタグのまま残すため、セッションをその場で区切って新しく始める。
@@ -2684,7 +2708,7 @@ function modeTagTotalsForDay(ds,key){
   return tot;
 }
 function modeTagTotalsForRange(dsList,key){ const tot={}; dsList.forEach(ds=>{ const t=modeTagTotalsForDay(ds,key); for(const k in t) tot[k]=(tot[k]||0)+t[k]; }); return tot; }
-function setDefaultMode(k){ state.defaultMode=k; try{localStorage.setItem(STORAGE_KEY+'_defaultmode',k);}catch(_){} }
+function setDefaultMode(k){ state.defaultMode=k; safeSet(STORAGE_KEY+'_defaultmode',k); }
 function ensureActiveMode(){ if(!currentModeSession()){ switchLifeMode(getDefaultMode(),true); return true; } return false; }
 // 帰宅ルーティン（gohomeグループ）が全て完了しているか。項目が無ければ完了扱い
 function gohomeComplete(vd){ const items=routineGroupItems('gohome'); if(!items.length) return true; return items.every(it=>isTodoDone(vd,it)); }
@@ -3045,7 +3069,7 @@ function autoModeKey(now){
   let m=mins; if(m<s && e>1440)m+=1440;
   return (m>=s && m<e)?'work':null;
 }
-function saveAutoState(){ try{localStorage.setItem(STORAGE_KEY+'_automode',JSON.stringify({on:state.autoModeOn!==false,lastKey:(state.autoLastKey===undefined?null:state.autoLastKey)}));}catch(_){} }
+function saveAutoState(){ safeSet(STORAGE_KEY+'_automode',JSON.stringify({on:state.autoModeOn!==false,lastKey:(state.autoLastKey===undefined?null:state.autoLastKey)})); }
 // 実行：勤務境界をまたいだら自動でモードを切替。true を返したら再描画が必要
 function autoModeTick(now){
   if(state.autoModeOn===false) return false;
@@ -3071,7 +3095,7 @@ function autoModeTick(now){
 // ══════════════════════════════════════════════════
 const DEFAULT_WAKE_GOAL={ s1:{h:6,m:30}, s2:{h:8,m:0}, off:{h:8,m:0}, off2:{h:8,m:0} }; // 目標起床時刻（シフト別）
 function getWakeGoal(){ if(!state.wakeGoal||typeof state.wakeGoal!=='object')state.wakeGoal={}; for(const k of Object.keys(DEFAULT_WAKE_GOAL)){ if(!state.wakeGoal[k]||state.wakeGoal[k].h==null)state.wakeGoal[k]={...DEFAULT_WAKE_GOAL[k]}; } return state.wakeGoal; }
-function saveWakeGoal(){ try{localStorage.setItem(STORAGE_KEY+'_wakegoal',JSON.stringify(getWakeGoal()));}catch(_){} }
+function saveWakeGoal(){ safeSet(STORAGE_KEY+'_wakegoal',JSON.stringify(getWakeGoal())); }
 function wakeGoalMinsFor(ds){ const k=getPlanShiftKey(ds); const g=getWakeGoal()[k]; return g&&g.h!=null?g.h*60+(g.m||0):null; }
 function moodCheckMin(){ return (state.moodCheckH!=null?state.moodCheckH:18)*60+(state.moodCheckM||0); }
 // ── 🔔 通知（切り替え提案）の項目と設定 ──────────────────────────
@@ -3131,7 +3155,7 @@ function inQuietHours(now){
 function notifyRepeatMin(){ return state.notifyRepeat>0?state.notifyRepeat:30; }
 function nudgeCfgPayload(){ return {off:!!state.nudgesOff,notify:!!state.notifyOn,moodH:(state.moodCheckH!=null?state.moodCheckH:18),moodM:state.moodCheckM||0,fallbackH:dayCutoffH(),rules:getNudgeRules(),quiet:state.notifyQuiet||null,repeat:notifyRepeatMin()}; }
 function applyNudgeCfg(o){ if(!o||typeof o!=='object')return; state.nudgesOff=!!o.off; state.notifyOn=!!o.notify; if(o.moodH!=null)state.moodCheckH=o.moodH; if(o.moodM!=null)state.moodCheckM=o.moodM; if(o.fallbackH!=null)state.dayCutoffH=o.fallbackH; if(o.rules&&typeof o.rules==='object')state.nudgeRules=o.rules; state.notifyQuiet=(o.quiet&&typeof o.quiet==='object')?o.quiet:null; if(o.repeat>0)state.notifyRepeat=o.repeat; getNudgeRules(); }
-function saveNudgeCfg(){ try{localStorage.setItem(STORAGE_KEY+'_nudgecfg',JSON.stringify(nudgeCfgPayload()));}catch(_){} }
+function saveNudgeCfg(){ safeSet(STORAGE_KEY+'_nudgecfg',JSON.stringify(nudgeCfgPayload())); }
 // 端末通知（ローカル通知）。サーバなしのためアプリ起動中/バックグラウンド中のみベストエフォート
 function canNotify(){ try{ return !!state.notifyOn && typeof Notification!=='undefined' && Notification.permission==='granted'; }catch(_){ return false; } }
 function requestNotify(){
@@ -3160,7 +3184,7 @@ function nudgeNotifyTick(now){
 }
 // 当日・トリガー別の snooze/dismiss/answered 状態
 function getNudgeState(){ const ds=todayStr(); if(!state.nudges||state.nudges.ds!==ds){ state.nudges={ds,rules:{}}; } return state.nudges; }
-function saveNudges(){ try{localStorage.setItem(STORAGE_KEY+'_nudges',JSON.stringify(getNudgeState()));}catch(_){} }
+function saveNudges(){ safeSet(STORAGE_KEY+'_nudges',JSON.stringify(getNudgeState())); }
 function nudgeR(id){ const ns=getNudgeState(); if(!ns.rules[id])ns.rules[id]={snoozeUntil:0,dismissed:false,answered:false}; return ns.rules[id]; }
 function nudgeActive(id,now){ const r=nudgeR(id); return !r.dismissed && now>=(r.snoozeUntil||0); }
 function snoozeNudge(id,mins){ nudgeR(id).snoozeUntil=Date.now()+(mins||30)*60000; saveNudges(); }
@@ -3882,7 +3906,7 @@ function getSelfChecksCfg(){
   for(const k of Object.keys(SELF_CHECK_DEFAULTS)){ if(!Array.isArray(state.selfChecksCfg[k])) state.selfChecksCfg[k]=[...SELF_CHECK_DEFAULTS[k]]; }
   return state.selfChecksCfg;
 }
-function saveSelfChecksCfg(){ try{localStorage.setItem(STORAGE_KEY+"_selfchecks",JSON.stringify(getSelfChecksCfg()));}catch(_){} }
+function saveSelfChecksCfg(){ safeSet(STORAGE_KEY+"_selfchecks",JSON.stringify(getSelfChecksCfg())); }
 // モードのチェックリスト（表示＋その場編集）。チェック状態は state.selfChecks に添字で保持（モード起動ごとにリセット）
 function selfChecklistCard(modeKey,accent){
   const items=getSelfChecksCfg()[modeKey]||[];
@@ -3922,7 +3946,7 @@ function selfChecklistCard(modeKey,accent){
   return cc;
 }
 function getSelfModeLog(){ if(!Array.isArray(state.selfModeLog))state.selfModeLog=[]; return state.selfModeLog; }
-function saveSelfModeLog(){ try{localStorage.setItem(STORAGE_KEY+"_selfmodelog",JSON.stringify(getSelfModeLog().slice(-300)));}catch(_){} }
+function saveSelfModeLog(){ safeSet(STORAGE_KEY+"_selfmodelog",JSON.stringify(getSelfModeLog())); }   // 件数で切り捨てない（以前は最新300件）
 // resume=true（既に進行中のモードを開き直した）のときは、経過時間・チェック・待ちタイマー・メモ・気分を引き継ぐ
 function enterSelfMode(key,resume){
   state.selfMode=key;
@@ -5789,7 +5813,7 @@ function migrateGoalsToTree(){
     existing.add(sig); n++;
   });
   if(n>0){ saveGoalTree(); state._goalsMigratedCount=n; }
-  try{ localStorage.setItem(STORAGE_KEY+"_goalsmigrated","1"); }catch{}
+  safeSet(STORAGE_KEY+"_goalsmigrated","1");
 }
 function gtAddChild(parentId, text){
   const node={id:gtNewId(), text:text.trim(), done:false, collapsed:false, children:[]};
@@ -6639,7 +6663,7 @@ async function doFetchWeather(city){
   try{
     state.weather=await fetchWeatherAPI(city.lat,city.lon);
     state.weatherCity=city;
-    try{localStorage.setItem(STORAGE_KEY+"_city",JSON.stringify(city));}catch{}
+    safeSet(STORAGE_KEY+"_city",JSON.stringify(city));
 
     // 天気データを日付キーで保存
     const td=todayStr();
@@ -6679,7 +6703,7 @@ async function doFetchWeather(city){
       if(weatherStore[dateKey].length===0) delete weatherStore[dateKey];
     });
 
-    try{localStorage.setItem(STORAGE_KEY+"_weather",JSON.stringify(weatherStore));}catch{}
+    safeSet(STORAGE_KEY+"_weather",JSON.stringify(weatherStore));
   }catch(e){
     state.weatherError=e.message;
   }
@@ -6978,14 +7002,14 @@ const EV_COLORS=["#ef4444","#f97316","#eab308","#84cc16","#22c55e","#14b8a6","#2
 let EV_DEFAULT="#0ea5e9"; // 既定色（変更可能。色未設定の予定などに使用）
 try{ const _dc=localStorage.getItem(STORAGE_KEY+"_defaultcolor"); if(_dc)EV_DEFAULT=_dc; }catch(_){}
 function getDefaultColor(){ return EV_DEFAULT; }
-function setDefaultColor(c){ EV_DEFAULT=c||"#0ea5e9"; try{localStorage.setItem(STORAGE_KEY+"_defaultcolor",EV_DEFAULT);}catch(_){} }
+function setDefaultColor(c){ EV_DEFAULT=c||"#0ea5e9"; safeSet(STORAGE_KEY+"_defaultcolor",EV_DEFAULT); }
 // 各色の名称（意味変更画面で色の下に表示）
 const COLOR_NAMES={"#ef4444":"レッド","#f97316":"オレンジ","#eab308":"イエロー","#84cc16":"ライム","#22c55e":"グリーン","#14b8a6":"ティール","#22d3ee":"シアン","#0ea5e9":"スカイ","#2563eb":"ブルー","#4f46e5":"インディゴ","#8b5cf6":"バイオレット","#c026d3":"パープル","#ec4899":"マゼンタ","#f43f5e":"ローズ","#000000":"ブラック","#9ca3af":"グレー","#ffffff":"ホワイト"};
 function colorNameOf(c){ return COLOR_NAMES[(c||"").toLowerCase()]||""; }
 // 共通カラーピッカー（色相順パレット）。current=現在色, onPick(c)=選択時
 // 色に付ける意味（例：食事・運動）。{ "#hex(小文字)": "ラベル" }
 function getColorLabels(){ try{ const o=JSON.parse(localStorage.getItem(STORAGE_KEY+"_colorlabels")||"{}"); return (o&&typeof o==="object")?o:{}; }catch(_){ return {}; } }
-function setColorLabel(c,label){ const m=getColorLabels(); const k=(c||"").toLowerCase(); const v=(label||"").trim(); if(v)m[k]=v; else delete m[k]; try{localStorage.setItem(STORAGE_KEY+"_colorlabels",JSON.stringify(m));}catch(_){} }
+function setColorLabel(c,label){ const m=getColorLabels(); const k=(c||"").toLowerCase(); const v=(label||"").trim(); if(v)m[k]=v; else delete m[k]; safeSet(STORAGE_KEY+"_colorlabels",JSON.stringify(m)); }
 function colorPickerRow(current, onPick){
   const labels=getColorLabels();
   const row=div({style:{display:"flex",flexWrap:"wrap",gap:"7px",alignItems:"flex-start"}});
@@ -7077,7 +7101,7 @@ function migrateFoods(){
       migrated=true;
     }
   });
-  if(migrated){ try{localStorage.setItem(STORAGE_KEY,JSON.stringify({logs:state.logs,dailies:state.dailies}));}catch{} }
+  if(migrated){ safeSet(STORAGE_KEY,JSON.stringify({logs:state.logs,dailies:state.dailies})); }
 }
 // 旧睡眠(sleepStart=就寝/sleepEnd=起床、同日)を新モデル(bedTime=当夜就寝/wakeTime=当朝起床)へ移行
 function migrateSleepModel(){
@@ -7094,7 +7118,7 @@ function migrateSleepModel(){
     }
     delete d.sleepStart; delete d.sleepEnd; migrated=true;
   });
-  if(migrated){ try{localStorage.setItem(STORAGE_KEY,JSON.stringify({logs:state.logs,dailies:state.dailies}));}catch{} }
+  if(migrated){ safeSet(STORAGE_KEY,JSON.stringify({logs:state.logs,dailies:state.dailies})); }
 }
 
 // 繰り返し予定が指定日にマッチするか
@@ -8168,7 +8192,7 @@ const BODYCOMP_FIELDS=[
   {k:'bpHigh',l:'最高血圧',unit:'mmHg'},{k:'bpLow',l:'最低血圧',unit:'mmHg'},{k:'pulse',l:'脈拍',unit:'拍/分'},
 ];
 function getBodyComps(){ if(!Array.isArray(state.bodyComps))state.bodyComps=[]; return state.bodyComps; }
-function saveBodyComps(){ try{localStorage.setItem(STORAGE_KEY+"_bodycomp",JSON.stringify(getBodyComps()));}catch{} }
+function saveBodyComps(){ safeSet(STORAGE_KEY+"_bodycomp",JSON.stringify(getBodyComps())); }
 function bodyCompsSorted(){ return getBodyComps().slice().sort((a,b)=>a.date<b.date?-1:a.date>b.date?1:0); }
 function latestBodyComp(){ const a=bodyCompsSorted(); return a.length?a[a.length-1]:null; }
 function prevBodyComp(){ const a=bodyCompsSorted(); return a.length>=2?a[a.length-2]:null; }
@@ -9005,7 +9029,7 @@ function renderPlanPatternPanel(){
 // インラインpx指定が多いため、アプリ全体を一律ズームして拡大する方式。
 function getFontScale(){ let v=1; try{const s=localStorage.getItem(STORAGE_KEY+"_fontscale"); if(s){const n=parseFloat(s); if(n>=0.8&&n<=1.6)v=n;}}catch{} return v; }
 function applyFontScale(){ try{ document.body.style.zoom=String(getFontScale()); }catch(_){}}
-function setFontScale(v){ try{localStorage.setItem(STORAGE_KEY+"_fontscale",String(v));}catch(_){} applyFontScale(); }
+function setFontScale(v){ safeSet(STORAGE_KEY+"_fontscale",String(v)); applyFontScale(); }
 // 🎨 色の意味（凡例）：各色に「食事」などの意味を付ける。カラーピッカーに表示される。
 function renderColorLegendPanel(){
   const card=div({className:"card"});
@@ -9156,7 +9180,7 @@ function getSettingsOpen(){
   }
   return state.setOpen;
 }
-function saveSettingsOpen(){ try{ localStorage.setItem(STORAGE_KEY+'_setopen',JSON.stringify(getSettingsOpen())); }catch(_){} }
+function saveSettingsOpen(){ safeSet(STORAGE_KEY+'_setopen',JSON.stringify(getSettingsOpen())); }
 function isSettingOpen(key){ return !!getSettingsOpen()[key]; }
 function openSetting(key,on){ getSettingsOpen()[key]=(on!==false); saveSettingsOpen(); }
 function collapsibleSetting(key,card){
@@ -10226,7 +10250,7 @@ function renderDaySchedule(vd,ds,isToday){
   // タイムライン（0〜24時）。1時間の高さは調整可能（既定56px・ピンチ/ボタンで変更）
   if(state.scheduleHourH==null){ let v=null; try{v=localStorage.getItem(STORAGE_KEY+"_hourh");}catch{} state.scheduleHourH=v?Math.max(30,Math.min(150,parseFloat(v)||56)):56; }
   const HOUR_H=state.scheduleHourH, START_H=0, END_H=24;
-  const setHourH=nh=>{ state.scheduleHourH=Math.max(30,Math.min(150,Math.round(nh))); try{localStorage.setItem(STORAGE_KEY+"_hourh",String(state.scheduleHourH));}catch{} render(); };
+  const setHourH=nh=>{ state.scheduleHourH=Math.max(30,Math.min(150,Math.round(nh))); safeSet(STORAGE_KEY+"_hourh",String(state.scheduleHourH)); render(); };
   const tlCard=div({className:"card",style:{padding:"10px"}});
   // ズーム操作＋操作ヒント
   const zoomRow=div({style:{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"6px"}});
@@ -10549,7 +10573,7 @@ function attachScheduleGestures(dayWrap, tl){
         const nh=Math.round(Math.max(30,Math.min(150,pStartH*pinchF)));
         if(nh!==state.scheduleHourH){
           state.scheduleHourH=nh;
-          try{localStorage.setItem(STORAGE_KEY+"_hourh",String(nh));}catch{}
+          safeSet(STORAGE_KEY+"_hourh",String(nh));
         }
         render();
       }
@@ -10705,7 +10729,7 @@ function getTodoSecOpen(){
   }
   return state.todoSecOpen;
 }
-function saveTodoSecOpen(){ try{ localStorage.setItem(STORAGE_KEY+'_todosec',JSON.stringify(getTodoSecOpen())); }catch(_){} }
+function saveTodoSecOpen(){ safeSet(STORAGE_KEY+'_todosec',JSON.stringify(getTodoSecOpen())); }
 function toggleTodoSec(kind){ const o=getTodoSecOpen(); o[kind]=!o[kind]; saveTodoSecOpen(); }
 // 追加欄の入力は「やること」「やりたいこと」で別々に持つ
 function todoDraft(kind){
@@ -11508,11 +11532,11 @@ async function runAICoach(kind){
     const text=await callAIText(sys, prompt);
     if(!state.aiCoach)state.aiCoach={};
     state.aiCoach[kind]={date:today, text};
-    try{localStorage.setItem(STORAGE_KEY+"_aicoach",JSON.stringify(state.aiCoach));}catch{}
+    safeSet(STORAGE_KEY+"_aicoach",JSON.stringify(state.aiCoach));
   }catch(e){ showToast("生成失敗: "+e.message,"#ef4444"); }
   state.aiCoachLoading=null; render();
 }
-function saveRewards(){ try{localStorage.setItem(STORAGE_KEY+"_rewards",JSON.stringify(state.rewards));}catch{} }
+function saveRewards(){ safeSet(STORAGE_KEY+"_rewards",JSON.stringify(state.rewards)); }
 // 定期ルーティンの累計達成回数（全日でチェックされた回数）
 function customTodoDoneCount(uid){ let n=0; for(const d in state.todos){ const r=state.todos[d]&&state.todos[d][uid]; if(r&&r.checked)n++; } return n; }
 // 所要時間の表示（ミリ秒 → 「1時間5分」等）
@@ -11752,7 +11776,7 @@ const INVEST_ACTIONS_DEFAULT=[
   {label:"運動した",           cat:"💪 その他", amount:0},
 ];
 function getInvestActions(){ if(!Array.isArray(state.investActions)||!state.investActions.length) state.investActions=INVEST_ACTIONS_DEFAULT.map(a=>({...a})); return state.investActions; }
-function saveInvestActions(){ try{localStorage.setItem(STORAGE_KEY+"_investactions",JSON.stringify(state.investActions||[]));}catch{} }
+function saveInvestActions(){ safeSet(STORAGE_KEY+"_investactions",JSON.stringify(state.investActions||[])); }
 // ── 💰 モード画面の未来投資 ──
 // モードごとに「どの分類の行動を出すか」を選び、その画面から1タップで記録する（記録先は達成→未来投資と同じ）
 function getModeInvestCats(){ if(!state.modeInvestCats||typeof state.modeInvestCats!=="object") state.modeInvestCats={}; return state.modeInvestCats; }
@@ -11830,7 +11854,7 @@ function removeInvestLog(ds, t){
 }
 // ── 未来投資の「貯金」：累計投資額 − ご褒美で使った額 ──
 function getInvestSpends(){ if(!Array.isArray(state.investSpends))state.investSpends=[]; return state.investSpends; }
-function saveInvestSpends(){ try{localStorage.setItem(STORAGE_KEY+"_investspends",JSON.stringify(state.investSpends||[]));}catch{} }
+function saveInvestSpends(){ safeSet(STORAGE_KEY+"_investspends",JSON.stringify(state.investSpends||[])); }
 function investSpentTotal(){ return getInvestSpends().reduce((a,s)=>a+(s.amount||0),0); }
 function investBalance(){ return investAmountTotal()-investSpentTotal(); } // 現在の貯金残高（マイナスもあり得る）
 function addInvestSpend(label, amount){ getInvestSpends().push({t:new Date().toISOString(), label:(label||"ご褒美").trim()||"ご褒美", amount:Math.max(0,amount||0)}); saveInvestSpends(); }
@@ -11846,11 +11870,11 @@ function migrateResistsToInvest(){
     }
   });
   if(changed) saveStorage();
-  try{localStorage.setItem(STORAGE_KEY+"_investmigrated","1");}catch{}
+  safeSet(STORAGE_KEY+"_investmigrated","1");
 }
 // ── if-thenプラン（実行意図：「〜のとき→〜する」）──
 function getIfThenPlans(){ if(!Array.isArray(state.ifThenPlans))state.ifThenPlans=[]; return state.ifThenPlans; }
-function saveIfThenPlans(){ try{localStorage.setItem(STORAGE_KEY+"_ifthen",JSON.stringify(state.ifThenPlans||[]));}catch{} }
+function saveIfThenPlans(){ safeSet(STORAGE_KEY+"_ifthen",JSON.stringify(state.ifThenPlans||[])); }
 function ifThenActiveNow(p){
   if(!p||p.active===false)return false;
   const now=new Date();
@@ -11978,7 +12002,7 @@ function alcGaugeMiniCard(vd){
 }
 // ── 次に飲みに行く予定（計画飲酒：次の飲酒日を先に決めて、それまでの目標にする）──
 function getNextDrinkPlan(){ return (state.nextDrink&&typeof state.nextDrink==="object"&&state.nextDrink.date)?state.nextDrink:null; }
-function saveNextDrinkPlan(){ try{ if(getNextDrinkPlan())localStorage.setItem(STORAGE_KEY+"_nextdrink",JSON.stringify(state.nextDrink)); else localStorage.removeItem(STORAGE_KEY+"_nextdrink"); }catch{} }
+function saveNextDrinkPlan(){ try{ if(getNextDrinkPlan())safeSet(STORAGE_KEY+"_nextdrink",JSON.stringify(state.nextDrink)); else localStorage.removeItem(STORAGE_KEY+"_nextdrink"); }catch{} }
 // ── 🍺 飲みに行く予定 ↔ 予定タブ ────────────────────────────────
 // 予定と結びつけるためのid（古いデータには使うときに補う）
 // 時刻だけだと同じミリ秒に作り直した予定が前の予定と同じidになってしまうので、乱数を足す
@@ -12199,10 +12223,10 @@ function urgeTriggerCard(){
 }
 function alcLimitDay(){ const v=parseFloat(state.alcLimitDay); return (v&&v>0)?v:20; }
 function alcLimitWeek(){ const v=parseFloat(state.alcLimitWeek); return (v&&v>0)?v:100; }
-function saveAlcLimit(){ try{localStorage.setItem(STORAGE_KEY+"_alclimit",JSON.stringify({day:alcLimitDay(),week:alcLimitWeek()}));}catch{} }
+function saveAlcLimit(){ safeSet(STORAGE_KEY+"_alclimit",JSON.stringify({day:alcLimitDay(),week:alcLimitWeek()})); }
 // ── クーリングオフ・タイマー（外飲みの衝動を◯分待つ）──
 function coolOffRemainMin(){ if(!state.coolOffUntil)return 0; return Math.max(0,Math.ceil((state.coolOffUntil-Date.now())/60000)); }
-function startCoolOff(mins){ state.coolOffUntil=Date.now()+mins*60000; try{localStorage.setItem(STORAGE_KEY+"_cooloff",String(state.coolOffUntil));}catch{} setTimeout(()=>{ if(state.coolOffUntil&&Date.now()>=state.coolOffUntil) render(); }, mins*60000+500); }
+function startCoolOff(mins){ state.coolOffUntil=Date.now()+mins*60000; safeSet(STORAGE_KEY+"_cooloff",String(state.coolOffUntil)); setTimeout(()=>{ if(state.coolOffUntil&&Date.now()>=state.coolOffUntil) render(); }, mins*60000+500); }
 function clearCoolOff(){ state.coolOffUntil=null; try{localStorage.removeItem(STORAGE_KEY+"_cooloff");}catch{} }
 // クーリングオフ状態カード（進行中／経過後）。飲酒タブ・ヴィジェットで使用
 function coolOffCard(){
@@ -12237,7 +12261,7 @@ function getLifeVision(){
   if(typeof state.lifeVision.vision!=="string")state.lifeVision.vision="";
   return state.lifeVision;
 }
-function saveLifeVision(){ try{localStorage.setItem(STORAGE_KEY+"_lifevision",JSON.stringify(getLifeVision()));}catch{} }
+function saveLifeVision(){ safeSet(STORAGE_KEY+"_lifevision",JSON.stringify(getLifeVision())); }
 function hasLifeVision(){ const v=getLifeVision(); return !!(v.vision.trim()||v.reasons.length); }
 // 減酒マイルストーン（休肝日連続に応じて自動達成）
 const SOBER_MILESTONES=[
@@ -12258,7 +12282,7 @@ function getNightRitual(){
   if(!state.nightRitual||!Array.isArray(state.nightRitual.steps)) state.nightRitual=JSON.parse(JSON.stringify(NIGHT_RITUAL_DEFAULT));
   return state.nightRitual;
 }
-function saveNightRitual(){ try{localStorage.setItem(STORAGE_KEY+"_nightritual",JSON.stringify(getNightRitual()));}catch{} }
+function saveNightRitual(){ safeSet(STORAGE_KEY+"_nightritual",JSON.stringify(getNightRitual())); }
 function ritualDoneOn(vd){ const d=getDaily(vd); return Array.isArray(d.ritualDone)?d.ritualDone:[]; }
 function toggleRitualStep(vd,id){ const done=ritualDoneOn(vd); const has=done.includes(id); setDaily(vd,{ritualDone: has?done.filter(x=>x!==id):[...done,id]}); }
 function ritualCompleteOn(vd){ const steps=getNightRitual().steps; if(!steps.length)return false; const done=ritualDoneOn(vd); return steps.every(s=>done.includes(s.id)); }
@@ -12274,7 +12298,7 @@ function getConnectGoal(){
   return state.connectGoal;
 }
 function getConnectTags(){ return getConnectGoal().tags; }
-function saveConnectGoal(){ try{localStorage.setItem(STORAGE_KEY+"_connectgoal",JSON.stringify(getConnectGoal()));}catch{} }
+function saveConnectGoal(){ safeSet(STORAGE_KEY+"_connectgoal",JSON.stringify(getConnectGoal())); }
 function isConnectInvest(r){ return !!(r&&typeof r.cat==="string"&&r.cat.indexOf("つながり")>=0); }
 // これからの予定（今日以降days日分）を一覧化。つながり予定の選択候補に使う
 // 日をまたぐ予定は最初の1回だけ（継続表示ぶんは重複させない）
@@ -12371,7 +12395,7 @@ const CHANGE_TALK_PROMPTS=[
   {type:"未来",   q:"10年後の自分から今の自分へ手紙を書くとしたら、何て言う？"},
 ];
 function getCTJournal(){ if(!Array.isArray(state.ctJournal))state.ctJournal=[]; return state.ctJournal; }
-function saveCTJournal(){ try{localStorage.setItem(STORAGE_KEY+"_ctjournal",JSON.stringify(getCTJournal()));}catch{} }
+function saveCTJournal(){ safeSet(STORAGE_KEY+"_ctjournal",JSON.stringify(getCTJournal())); }
 function addCTEntry(promptType, prompt, text){ getCTJournal().push({id:Date.now(), t:new Date().toISOString(), type:promptType||"", prompt:prompt||"", text:(text||"").trim()}); saveCTJournal(); }
 // ── カード：動機のものさし（重要度・自信度ルーラー）──
 function motivationRulerCard(vd){
@@ -12483,7 +12507,7 @@ function changeTalkJournalCard(){
 function recentChangeTalk(n){ const a=getCTJournal(); if(!a.length)return []; const arr=a.slice(-8); const out=[]; for(let i=arr.length-1;i>=0&&out.length<(n||2);i--)out.push(arr[i]); return out; }
 // ── ④ 心の天秤（両価性の整理：飲み続ける/減らす の 良い点・コスト）──
 function getDecisBalance(){ if(!state.decisBalance||typeof state.decisBalance!=="object")state.decisBalance={keepPros:[],keepCons:[],changePros:[],changeCons:[]}; ["keepPros","keepCons","changePros","changeCons"].forEach(k=>{ if(!Array.isArray(state.decisBalance[k]))state.decisBalance[k]=[]; }); return state.decisBalance; }
-function saveDecisBalance(){ try{localStorage.setItem(STORAGE_KEY+"_decisbalance",JSON.stringify(getDecisBalance()));}catch{} }
+function saveDecisBalance(){ safeSet(STORAGE_KEY+"_decisbalance",JSON.stringify(getDecisBalance())); }
 function decisBalanceCard(){
   const b=getDecisBalance();
   const c=div({className:"card",style:{marginBottom:"10px",border:"1px solid #f472b644",background:"#f472b60d"}});
@@ -12521,7 +12545,7 @@ function decisBalanceCard(){
 // ── ⑤ 大切にしたい価値（価値と現状のズレ＝MIの中核）──
 const MI_VALUES=["家族","健康","人とのつながり","仕事・成長","お金・自由","誠実でいること","自分らしさ","心の平穏","挑戦","楽しさ・遊び","信頼される","時間を大切に"];
 function getMIValues(){ if(!state.miValues||typeof state.miValues!=="object")state.miValues={selected:[],note:""}; if(!Array.isArray(state.miValues.selected))state.miValues.selected=[]; if(typeof state.miValues.note!=="string")state.miValues.note=""; return state.miValues; }
-function saveMIValues(){ try{localStorage.setItem(STORAGE_KEY+"_values",JSON.stringify(getMIValues()));}catch{} }
+function saveMIValues(){ safeSet(STORAGE_KEY+"_values",JSON.stringify(getMIValues())); }
 function valuesCard(){
   const v=getMIValues();
   const c=div({className:"card",style:{marginBottom:"10px",border:"1px solid #22c55e44",background:"#22c55e0d"}});
@@ -12556,7 +12580,7 @@ function valuesCard(){
 }
 // ── ⑥ 変化の計画書（Change Plan：準備が整ったら1枚に）──
 function getChangePlan(){ if(!state.changePlan||typeof state.changePlan!=="object")state.changePlan={want:"",why:"",firstStep:"",support:"",obstacle:"",cope:"",conf:null}; return state.changePlan; }
-function saveChangePlan(){ try{localStorage.setItem(STORAGE_KEY+"_changeplan",JSON.stringify(getChangePlan()));}catch{} }
+function saveChangePlan(){ safeSet(STORAGE_KEY+"_changeplan",JSON.stringify(getChangePlan())); }
 // 変化の計画書から「わたしの宣言」文を生成（未記入ならnull）
 function changePlanDeclaration(){ const p=getChangePlan(); if(!(p.want||"").trim()||!(p.why||"").trim())return null; return `私は「${p.want.trim()}」に取り組みます。なぜなら「${p.why.trim()}」から。まずは「${(p.firstStep||"").trim()||"小さな一歩"}」から始めます。`; }
 // 「わたしの宣言」カード（今日ヴィジェット用）。宣言があれば表示、なければ書くよう促す
@@ -13246,7 +13270,7 @@ function dismissPastUnchecked(ct, vd){
       if(!rec.excluded){ if(!state.todos[ds])state.todos[ds]={}; state.todos[ds][ct.uid]={...rec,excluded:true,autoSkip:true}; skipped.push(ds); }
     }
   }
-  if(skipped.length){ try{localStorage.setItem(STORAGE_KEY+"_todo",JSON.stringify(state.todos));}catch{} }
+  if(skipped.length){ safeSet(STORAGE_KEY+"_todo",JSON.stringify(state.todos)); }
   return skipped;
 }
 // 完了を取り消したとき：その完了でまとめて除外した過去回を元に戻す（自分で「除外」した回は触らない）
@@ -13257,7 +13281,7 @@ function restorePastSkipped(uid, skipped){
     const rec=(state.todos[ds]||{})[uid];
     if(rec&&rec.excluded&&rec.autoSkip){ const nx={...rec}; delete nx.excluded; delete nx.autoSkip; state.todos[ds][uid]=nx; n++; }
   });
-  if(n){ try{localStorage.setItem(STORAGE_KEY+"_todo",JSON.stringify(state.todos));}catch{} }
+  if(n){ safeSet(STORAGE_KEY+"_todo",JSON.stringify(state.todos)); }
   return n;
 }
 // 「やった日から数え直す」が使える間隔かどうか。
@@ -14626,9 +14650,9 @@ function maybeCelebrateStreak(){
   const cur=currentOverallStreak().streak;
   const last=state.lastStreakMilestone||0;
   const hit=STREAK_MILESTONES.filter(m=>m<=cur && m>last).pop();
-  if(hit){ state.lastStreakMilestone=hit; try{localStorage.setItem(STORAGE_KEY+"_streakms",String(hit));}catch{}
+  if(hit){ state.lastStreakMilestone=hit; safeSet(STORAGE_KEY+"_streakms",String(hit));
     if(typeof showConfetti==="function")showConfetti(); showToast(`🔥 ${hit}日連続達成！おめでとう！`,"#22c55e"); }
-  else if(cur<last){ const nl=STREAK_MILESTONES.filter(m=>m<=cur).pop()||0; if(nl!==last){ state.lastStreakMilestone=nl; try{localStorage.setItem(STORAGE_KEY+"_streakms",String(nl));}catch{} } }
+  else if(cur<last){ const nl=STREAK_MILESTONES.filter(m=>m<=cur).pop()||0; if(nl!==last){ state.lastStreakMilestone=nl; safeSet(STORAGE_KEY+"_streakms",String(nl)); } }
 }
 // 達成タブ（ヒートマップ／ストリーク等）
 // ── 達成ハブ（達成・未来投資）──
@@ -17640,6 +17664,14 @@ function renderAIChat(chat, loading, inputKey, onSend, placeholder){
 // エクスポート・インポート（全データ対応）
 // ═══════════════════════════════════════════════════
 // 出力で何か失敗しても黙って止まらないよう、理由を出す（v15.27。それまで v14.93 以降は出力が無反応だった）
+// JSON をファイルとして保存させる（バックアップ・年ごとの書き出しで共通）。
+// iPhone の Safari は、押した直後に URL を消すと保存されないことがあるので、少し待ってから消す
+function downloadJSON(obj,filename){
+  const blob=new Blob([JSON.stringify(obj,null,2)],{type:"application/json"});
+  const url=URL.createObjectURL(blob), a=document.createElement("a");
+  a.href=url; a.download=filename; a.style.display='none'; document.body.appendChild(a); a.click();
+  setTimeout(()=>{ try{ URL.revokeObjectURL(url); a.remove(); }catch(_){} },5000);
+}
 function exportData(){
   try{ exportDataInner(); }
   catch(e){ console.error(e); showToast(`⚠️ バックアップを出力できませんでした（${(e&&e.message)||e}）`,"#f97316"); }
@@ -17714,12 +17746,10 @@ function exportDataInner(){
   };
   const blob=new Blob([JSON.stringify(payload,null,2)],{type:"application/json"});
   const url=URL.createObjectURL(blob);const a=document.createElement("a");
-  // iPhone の Safari は、押した直後に URL を消すと保存されないことがあるので、少し待ってから消す
-  a.href=url;a.download=`health_backup_${todayStr()}.json`;a.style.display='none';document.body.appendChild(a);a.click();
-  setTimeout(()=>{ try{ URL.revokeObjectURL(url); a.remove(); }catch(_){} },5000);
+  downloadJSON(payload,`health_backup_${todayStr()}.json`);
   showToast("💾 バックアップを出力しました","#22c55e");
   // バックアップ日時を記録（バックアップ促進リマインダー用）
-  try{localStorage.setItem(STORAGE_KEY+"_lastbackup",String(Date.now()));}catch{}
+  safeSet(STORAGE_KEY+"_lastbackup",String(Date.now()));
 }
 // ── バックアップ促進リマインダー ──
 // localStorage はブラウザ側のみの保存で、キャッシュ削除等で消えるリスクがある。
@@ -17742,6 +17772,13 @@ function importData(e){
   reader.onload=ev=>{
     try{
       const p=JSON.parse(ev.target.result);
+      // 年ごとに書き出したファイルなら、今のデータに足して戻す（置き換えない）
+      if(isArchiveFile(p)){
+        if(!confirm(`${p.year}年に書き出した記録を、今のデータに足して戻しますか？\n今のデータはそのまま残ります（同じ日・時間がすでにあれば今の方を残します）。\n\n体調記録: ${(p.logs||[]).length}件\n日次記録: ${(p.dailies||[]).length}日分\nモードの記録: ${(p.modeLog||[]).length}件`)) return;
+        const n=mergeArchive(p);
+        showToast(`📂 ${p.year}年の記録を戻しました（体調${n.logs}件・日次${n.dailies}日・モード${n.modes}件）`,"#22c55e"); render();
+        e.target.value=""; return;
+      }
       if(!p.logs||!p.dailies)throw new Error("形式が違います");
       // 確認画面：内容のサマリーを表示して上書き確認
       const summary=[
@@ -17758,21 +17795,21 @@ function importData(e){
 
       state.logs=p.logs;
       state.dailies=p.dailies;
-      if(p.todos){state.todos=p.todos;try{localStorage.setItem(STORAGE_KEY+"_todo",JSON.stringify(p.todos));}catch{}}
-      if(p.todoOrder){try{localStorage.setItem(STORAGE_KEY+"_todo_order",JSON.stringify(p.todoOrder));}catch{}}
-      if(p.shiftColors&&typeof p.shiftColors==="object"){try{localStorage.setItem(STORAGE_KEY+"_shiftcolors",JSON.stringify(p.shiftColors));}catch{} Object.keys(p.shiftColors).forEach(k=>{ if(SHIFT_TYPES[k]&&p.shiftColors[k])SHIFT_TYPES[k].color=p.shiftColors[k]; });}
-      if(p.ejacColor){try{localStorage.setItem(STORAGE_KEY+"_ejaccolor",p.ejacColor);}catch{}}
+      if(p.todos){state.todos=p.todos;safeSet(STORAGE_KEY+"_todo",JSON.stringify(p.todos));}
+      if(p.todoOrder){safeSet(STORAGE_KEY+"_todo_order",JSON.stringify(p.todoOrder));}
+      if(p.shiftColors&&typeof p.shiftColors==="object"){safeSet(STORAGE_KEY+"_shiftcolors",JSON.stringify(p.shiftColors)); Object.keys(p.shiftColors).forEach(k=>{ if(SHIFT_TYPES[k]&&p.shiftColors[k])SHIFT_TYPES[k].color=p.shiftColors[k]; });}
+      if(p.ejacColor){safeSet(STORAGE_KEY+"_ejaccolor",p.ejacColor);}
       if(Array.isArray(p.anaChanges)){ state.anaChanges=p.anaChanges; saveAnaChanges(); }
       if(p.modeInvestCats&&typeof p.modeInvestCats==="object"){ state.modeInvestCats=p.modeInvestCats; saveModeInvestCats(); }
       if(p.foodCats&&Array.isArray(p.foodCats.cats)&&p.foodCats.cats.length){ state.foodCats=p.foodCats.cats; state.foodEmoji=(p.foodCats.emoji&&typeof p.foodCats.emoji==="object")?p.foodCats.emoji:{}; saveFoodCats(); }
-      if(p.colorLabels&&typeof p.colorLabels==="object"){try{localStorage.setItem(STORAGE_KEY+"_colorlabels",JSON.stringify(p.colorLabels));}catch{}}
-      if(p.sleepColor){try{localStorage.setItem(STORAGE_KEY+"_sleepcolor",p.sleepColor);}catch{}}
-      if(p.alcColor){try{localStorage.setItem(STORAGE_KEY+"_alccolor",p.alcColor);}catch{}}
-      if(p.defaultColor){try{localStorage.setItem(STORAGE_KEY+"_defaultcolor",p.defaultColor);}catch{} EV_DEFAULT=p.defaultColor;}
-      if(p.goals){state.goals=p.goals;try{localStorage.setItem(STORAGE_KEY+"_goals",JSON.stringify(p.goals));}catch{}}
-      if(p.schedule){state.schedule=p.schedule;try{localStorage.setItem(STORAGE_KEY+"_schedule",JSON.stringify(p.schedule));}catch{}}
-      if(p.repeatEvents){state.repeatEvents=p.repeatEvents;try{localStorage.setItem(STORAGE_KEY+"_repeat",JSON.stringify(p.repeatEvents));}catch{}}
-      if(p.tasks){state.tasks=p.tasks;try{localStorage.setItem(STORAGE_KEY+"_tasks",JSON.stringify(p.tasks));}catch{}}
+      if(p.colorLabels&&typeof p.colorLabels==="object"){safeSet(STORAGE_KEY+"_colorlabels",JSON.stringify(p.colorLabels));}
+      if(p.sleepColor){safeSet(STORAGE_KEY+"_sleepcolor",p.sleepColor);}
+      if(p.alcColor){safeSet(STORAGE_KEY+"_alccolor",p.alcColor);}
+      if(p.defaultColor){safeSet(STORAGE_KEY+"_defaultcolor",p.defaultColor); EV_DEFAULT=p.defaultColor;}
+      if(p.goals){state.goals=p.goals;safeSet(STORAGE_KEY+"_goals",JSON.stringify(p.goals));}
+      if(p.schedule){state.schedule=p.schedule;safeSet(STORAGE_KEY+"_schedule",JSON.stringify(p.schedule));}
+      if(p.repeatEvents){state.repeatEvents=p.repeatEvents;safeSet(STORAGE_KEY+"_repeat",JSON.stringify(p.repeatEvents));}
+      if(p.tasks){state.tasks=p.tasks;safeSet(STORAGE_KEY+"_tasks",JSON.stringify(p.tasks));}
       if(Array.isArray(p.routines)&&p.routines.length){state.routines=p.routines;saveRoutines();}
       if(p.shiftPattern&&Array.isArray(p.shiftPattern.grid)){state.shiftPattern={...defaultShiftPattern(),...p.shiftPattern};saveShiftPattern();}
       if(Array.isArray(p.planPatterns)){state.planPatterns=p.planPatterns;savePlanPatterns();}
@@ -17812,8 +17849,8 @@ function importData(e){
       if(p.decisBalance&&typeof p.decisBalance==="object"){state.decisBalance=p.decisBalance;saveDecisBalance();}
       if(p.miValues&&typeof p.miValues==="object"){state.miValues=p.miValues;saveMIValues();}
       if(p.changePlan&&typeof p.changePlan==="object"){state.changePlan=p.changePlan;saveChangePlan();}
-      if(p.weather){try{localStorage.setItem(STORAGE_KEY+"_weather",JSON.stringify(p.weather));}catch{}}
-      if(p.city){state.weatherCity=p.city;try{localStorage.setItem(STORAGE_KEY+"_city",JSON.stringify(p.city));}catch{}}
+      if(p.weather){safeSet(STORAGE_KEY+"_weather",JSON.stringify(p.weather));}
+      if(p.city){state.weatherCity=p.city;safeSet(STORAGE_KEY+"_city",JSON.stringify(p.city));}
       // 旧形式（v8.3）のバックアップは新モデルへ移行して取り込む
       if(!p.schedule && !p.tasks && (p.events||p.taskList||p.wishList||p.shopList)){
         state.events=p.events||{};
