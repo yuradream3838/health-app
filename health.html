@@ -247,7 +247,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.39"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.40"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -3593,6 +3593,64 @@ function addWaterGlass(vd){ const d=getDaily(vd); setDaily(vd,{water:Math.round(
 function openAddDrink(nextDay){ const now=new Date(); state.modal="addDrink"; state.newDrink={typeId:"beer",ml:350,hour:now.getHours(),min:now.getMinutes(),pct:5,startNextDay:!!nextDay,tasting:{}}; state.drinkNoteOpen=undefined; render(); }
 // 🍽 食べたものの記録画面を開く（基準日の分）
 function openFoodRecord(){ state.viewDate=activeDay(); state.foodSelected=[...(getDaily(activeDay()).foods||[])]; state.foodOpenCat=null; state.foodEdit=false; state.modal='food'; render(); }
+// ── 🧘 瞑想タイマー（🛋休息モード）──
+// 「▶ 5分」で始め、時間になったら振動で知らせる（navigator.vibrate。iPhone の Safari は振動に対応していないので、そのときは小さな音で知らせる）。
+// 画面が消えると止まってしまうので、計っているあいだは画面を消さない（Wake Lock。使えない端末では何もしない）。
+// 状態は state.medTimer＝{endAt, mins}。残りは1秒ごとに #med-remaining だけ書き換える。
+const MED_MINS=[3,5,10];
+let _medTick=null, _medWake=null, _medAudio=null;
+function medVibrate(pattern){ try{ if(navigator.vibrate) return navigator.vibrate(pattern); }catch(_){} return false; }
+function medChime(){
+  try{ const ac=_medAudio; if(!ac) return; const t=ac.currentTime;
+    [0,0.9,1.8].forEach(d=>{ const o=ac.createOscillator(), g=ac.createGain(); o.type='sine'; o.frequency.value=660;
+      g.gain.setValueAtTime(0.0001,t+d); g.gain.exponentialRampToValueAtTime(0.25,t+d+0.03); g.gain.exponentialRampToValueAtTime(0.0001,t+d+0.8);
+      o.connect(g); g.connect(ac.destination); o.start(t+d); o.stop(t+d+0.85); });
+  }catch(_){}
+}
+function medStart(mins){
+  // 音はタップした時に用意しておかないと、あとで鳴らせない（ブラウザの決まり）
+  try{ if(!_medAudio){ const AC=window.AudioContext||window.webkitAudioContext; if(AC) _medAudio=new AC(); } if(_medAudio&&_medAudio.state==='suspended') _medAudio.resume(); }catch(_){}
+  state.medTimer={endAt:Date.now()+mins*60000, mins};
+  medVibrate(80);
+  try{ if(navigator.wakeLock&&navigator.wakeLock.request) navigator.wakeLock.request('screen').then(w=>{ _medWake=w; }).catch(()=>{}); }catch(_){}
+  medEnsureTick(); render();
+}
+function medStop(){ state.medTimer=null; if(_medTick){ clearInterval(_medTick); _medTick=null; } try{ if(_medWake){ _medWake.release(); _medWake=null; } }catch(_){} }
+function medFinish(){
+  const m=state.medTimer&&state.medTimer.mins; medStop();
+  const vib=medVibrate([500,250,500,250,500]);
+  if(!vib) medChime();                                   // 振動できない端末（iPhone など）は音で
+  showToast(`🧘 ${m||""}分の瞑想おわり。ゆっくり目を開けよう`,"#14b8a6"); render();
+}
+function medEnsureTick(){
+  if(_medTick) return;
+  _medTick=setInterval(()=>{
+    const T=state.medTimer; if(!T){ clearInterval(_medTick); _medTick=null; return; }
+    const left=T.endAt-Date.now(); if(left<=0){ medFinish(); return; }
+    const el=document.getElementById('med-remaining'); if(el){ const s=Math.ceil(left/1000); el.textContent=`${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`; }
+  },250);
+}
+function meditationTimerCard(color,peek){
+  const T=state.medTimer;
+  const box=div({style:{background:'#ffffff0d',border:'1px solid #ffffff14',borderRadius:'12px',padding:'11px 13px',marginBottom:'10px',textAlign:'center'}}); box.setAttribute('data-medtimer',T?'run':'idle');
+  box.appendChild(div({style:{fontSize:'12px',color:'#cbd5e1',fontWeight:700,marginBottom:'6px',textAlign:'left'}},'🧘 瞑想タイマー'));
+  if(T){
+    medEnsureTick();
+    const s=Math.max(0,Math.ceil((T.endAt-Date.now())/1000));
+    box.appendChild(div({id:'med-remaining',style:{fontSize:'40px',fontWeight:800,color:'#f1f5f9',lineHeight:1.2}},`${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`));
+    box.appendChild(div({style:{fontSize:'11px',color:'#94a3b8',margin:'2px 0 8px'}},'目を閉じて、呼吸に意識を向けて。終わったら振動で知らせます'));
+    const st=btn({style:{padding:'8px 16px',borderRadius:'9px',border:'1px solid #ffffff2e',background:'transparent',color:'#cbd5e1',fontSize:'12px',cursor:'pointer',fontFamily:'inherit'}},'⏹ やめる');
+    st.setAttribute('data-medstop','1'); st.addEventListener('click',()=>{ medStop(); render(); }); box.appendChild(st);
+  } else {
+    const row=div({style:{display:'flex',gap:'7px'}});
+    MED_MINS.forEach(m=>{ const main=m===5;
+      const b=btn({style:{flex:main?2:1,padding:main?'12px':'12px 6px',borderRadius:'10px',border:`1px solid ${color}`,background:main?color+'33':'transparent',color:'#f1f5f9',fontSize:main?'15px':'13px',fontWeight:main?800:600,cursor:'pointer',fontFamily:'inherit'}},`▶ ${m}分`);
+      b.setAttribute('data-medstart',String(m)); b.addEventListener('click',()=>medStart(m)); row.appendChild(peek?peekDisabled(b):b); });
+    box.appendChild(row);
+    box.appendChild(div({style:{fontSize:'10px',color:'#64748b',marginTop:'6px',lineHeight:1.5}},'時間になったら振動で知らせます（振動できないiPhoneなどは小さな音）。計っているあいだは画面を消しません'));
+  }
+  return box;
+}
 function lifeActionBtn(label,color,onClick){ const b=btn({style:{width:'100%',padding:'12px',borderRadius:'11px',border:`1px solid ${color}66`,background:color+'1a',color:'#e2e8f0',fontSize:'14px',fontWeight:700,cursor:'pointer',fontFamily:'inherit',marginBottom:'7px',textAlign:'left'}},label); b.addEventListener('click',onClick); return b; }
 // 指定した項目リストを1枚のチェックリストカードとして描画（見出し・達成数・合計時間つき）
 function lifeRoutineChecklist(title,items,color,vd,forceTimer){
@@ -3795,6 +3853,7 @@ function renderLifeScreen(){
   } else if(c==='rest'){
     if(state.lifeBreathing) inner.appendChild(breathingGuide(def.color));
     inner.appendChild(lifeActionBtn(state.lifeBreathing?'🫁 呼吸をやめる':'🫁 深呼吸する（4-7-8）',def.color,()=>{ state.lifeBreathing=!state.lifeBreathing; render(); }));
+    inner.appendChild(meditationTimerCard(def.color,peek));
     inner.appendChild(lifeActionBtn('💧 水を1杯 飲んだ（+0.2L）',def.color,()=>addWaterGlass(vd)));
     inner.appendChild(div({style:{textAlign:'center',fontSize:'12px',color:'#94a3b8',lineHeight:1.6,margin:'6px 0 10px'}},'ゆっくり休もう。お酒以外の回復を大切に。'));
     addAssigned();
