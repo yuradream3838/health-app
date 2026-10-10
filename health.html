@@ -145,7 +145,7 @@ function archiveYearData(year){
   const y=String(year), todos={}, weather={};
   Object.keys(state.todos||{}).forEach(k=>{ if(k.startsWith(y)) todos[k]=state.todos[k]; });
   try{ const w=JSON.parse(localStorage.getItem(STORAGE_KEY+"_weather")||"{}"); Object.keys(w).forEach(k=>{ if(k.startsWith(y)) weather[k]=w[k]; }); }catch(_){}
-  return { kind:"archive", year, exportedAt:new Date().toISOString(),
+  return { kind:"archive", year, exportedAt:new Date().toISOString(), awakeOnNight:true,
     logs:state.logs.filter(l=>l.dateStr.startsWith(y)), dailies:state.dailies.filter(d=>d.dateStr.startsWith(y)), todos, weather,
     modeLog:getModeLog().filter(x=>x.end!=null&&yearOfMs(x.start)===year),
     selfModeLog:getSelfModeLog().filter(x=>x.t&&String(x.t).startsWith(y)) };
@@ -169,6 +169,7 @@ function deleteArchivedYear(year){
 function isArchiveFile(p){ return !!p && (p.kind==="archive" || (p.year!=null && !p.version)); }
 function mergeArchive(p){
   const n={logs:0,dailies:0,todos:0,modes:0};
+  if(!p.awakeOnNight) p={...p,dailies:shiftAwakeningsToNight(p.dailies||[])};   // 古い形のファイルは中途覚醒を前日へ
   const haveLog=new Set(state.logs.map(l=>l.dateStr+"|"+l.hour));
   (p.logs||[]).forEach(l=>{ if(l&&l.dateStr&&!haveLog.has(l.dateStr+"|"+l.hour)){ state.logs.push(l); n.logs++; } });
   const haveDay=new Set(state.dailies.map(d=>d.dateStr));
@@ -247,7 +248,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.33"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.34"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -990,6 +991,7 @@ function loadStorage(){
     const s=localStorage.getItem(STORAGE_KEY);
     if(s){const p=JSON.parse(s);state.logs=p.logs||[];state.dailies=p.dailies||[];}
     migrateSleepModel();
+    migrateAwakeningsToNight(); // 中途覚醒を「その夜の日」へ移す（1回だけ・v15.34）
     migrateFoods();
     const city=localStorage.getItem(STORAGE_KEY+"_city");
     if(city){const c=JSON.parse(city);state.weatherCity=c;}
@@ -2473,13 +2475,17 @@ function currentLifeModeKey(){ const s=currentModeSession(); return s?s.key:null
 // 基準日（モードの記録先）。就寝(bedTime)を記録するまでは前日扱い＝深夜でも基準日を変えない。
 // 就寝を記録し忘れた場合の安全弁として、フォールバック時刻（既定12:00＝正午）以降は当日にする。
 function dayCutoffH(){ return state.dayCutoffH!=null?state.dayCutoffH:12; }
+// 「睡眠が終わるまでが今日一日」：0時を過ぎても、起床を記録するまでは前日のまま（v15.34。以前は就寝を記録した時点で翌日にしていた）。
+// 起床を記録しないままでも、dayCutoffH（既定12時）を過ぎたら当日にする
 function activeDay(now){
   const d=now?new Date(now):new Date(), cal=fmtDS(d);
   if(d.getHours()>=dayCutoffH()) return cal;          // フォールバック時刻以降は確実に当日
-  const prev=addDays(cal,-1);
-  if(getDaily(prev).bedTime==null) return prev;        // 前夜の就寝が未記録＝まだ「その夜」の続き
-  return cal;                                          // 就寝記録済み＝翌日へ
+  if(getDaily(cal).wakeTime!=null) return cal;         // 今朝の起床を記録済み＝睡眠が終わった＝新しい一日
+  return addDays(cal,-1);                              // まだ起きていない（寝ている・夜ふかし中）＝前日の続き
 }
+// その時刻の「夜」の日（就寝・中途覚醒を持つ日）と「朝」の日（起床を持つ日）。正午より前は前の晩の続き
+function nightDayOf(d){ return d.getHours()<12?addDays(fmtDS(d),-1):fmtDS(d); }
+function wakeDayOf(d){ return d.getHours()<12?fmtDS(d):addDays(fmtDS(d),1); }
 // ── 🔊 Alexa連携 ───────────────────────────────────────────────
 // モードに入ったときに、そのモードに登録したURLを叩く（Alexa側のルーティンが起動する）。
 // アプリが叩くので**アプリを開いている間だけ**。時刻で鳴らすにはサーバ側の仕掛けが要る。
@@ -2568,8 +2574,18 @@ function switchLifeMode(key,auto){ const cur=currentModeSession(), now=Date.now(
   const s={key,start:now}; if(auto)s.auto=true; getModeLog().push(s); saveModeLog();
   // 中途覚醒の記録は新しいモードを積んでから（記録の保存で描き直しが走るので、
   // 「いまのモードが無い」瞬間に描くと既定モードが割り込んでしまう）
-  if(cur){ recordSleepAwakening(cur,key); noteAwakeOnCareEnter(cur.key,key,now); }
+  if(cur){ recordSleepAwakening(cur,key); noteAwakeOnCareEnter(cur.key,key,now); noteWakeOnLeaveSleep(cur,key,now); }
   alexaFireMode(key); }
+// 😴睡眠から☀️朝へ移った＝起きた。朝（正午前）で起床が未記録なら、その時刻を起床にする（＝新しい一日になる）。
+// 夜中に🏠生活などへ一時的に移っただけ（トイレ等）では起床にしない（そのあと睡眠へ戻ることがあるため）
+function noteWakeOnLeaveSleep(cur,key,now){
+  try{
+    if(cur.key!=='sleep'||key!=='morning') return;
+    const d=new Date(now); if(d.getHours()>=12) return;              // 昼寝などは対象外
+    const wd=wakeDayOf(d); if(getDaily(wd).wakeTime!=null) return;
+    setDaily(wd,{wakeTime:d.getHours()+d.getMinutes()/60});
+  }catch(_){}
+}
 // 😴睡眠 → 🩹ケア → 😴睡眠 と戻ったら、そのケアの時間を「中途覚醒」として記録する。
 // 夜中に目が覚めて落ち込み・さみしいモードを使った時間は、眠れていない時間だから。
 function recordSleepAwakening(careSess,nextKey){
@@ -2577,7 +2593,7 @@ function recordSleepAwakening(careSess,nextKey){
     if(!isCareMode(careSess.key)) return;         // ケアの時間だけ
     if(isCareMode(nextKey)) return;               // ケア→ケアはまだ起きている途中（記録中のまま）
     const s=new Date(careSess.start), e=new Date(careSess.end||Date.now());
-    // 中途覚醒は「その夜の朝の日」に持つ（0〜12時はその日、12時以降は翌日）
+    // 中途覚醒は「その夜の日」（就寝と同じ日）に持つ
     const day=awakeDayOf(s);
     const list=[...(getDaily(day).awakenings||[])];
     const op=list.find(x=>x&&x.open);
@@ -2588,12 +2604,12 @@ function recordSleepAwakening(careSess,nextKey){
     if(nextKey!=='sleep'){
       let j=i; while(j>0&&isCareMode(log[j-1].key)) j--;          // ケアが続いていれば最初のケアまでさかのぼる
       const fromSleepChain=j>0&&log[j-1].key==='sleep';
-      const wakeAt=op?new Date(parseDS(day).getTime()-(op.hour<12?0:86400000)+(op.hour*60+(op.min||0))*60000)
+      const wakeAt=op?new Date(parseDS(day).getTime()+(op.hour<12?86400000:0)+(op.hour*60+(op.min||0))*60000)
                    :(fromSleepChain?new Date(log[j].start):null);
       const upd={};
       if(op&&op.autoOpen) upd.awakenings=list.filter(x=>x!==op);
       if(wakeAt&&fromSleepChain){                                 // 睡眠から入ったケアのときだけ
-        const wd=awakeDayOf(wakeAt);
+        const wd=wakeDayOf(wakeAt);                               // 起床は朝の日
         if(getDaily(wd).wakeTime==null){
           if(op) upd.awakenings=list.filter(x=>x!==op);         // 起床に移したので記録中は片付ける
           if(wd===day){ upd.wakeTime=wakeAt.getHours()+wakeAt.getMinutes()/60; }
@@ -2630,7 +2646,8 @@ function recordSleepAwakening(careSess,nextKey){
       :`🌙 中途覚醒に記録（${fin.modeLabel||''} ${hhmm(fin.hour,fin.min)}〜${hhmm(fin.endHour,fin.endMin)}・${fin.mins}分）`,'#a5b4fc');
   }catch(_){}
 }
-function awakeDayOf(d){ return d.getHours()<12?fmtDS(d):addDays(fmtDS(d),1); }
+// 中途覚醒は「その夜の日」（就寝と同じ日）に持つ（v15.34。以前は目が覚めた朝の日）
+function awakeDayOf(d){ return nightDayOf(d); }
 // 😴睡眠から🩹ケアへ入った＝目が覚めた。その時刻を「目が覚めた」に入れておく（記録中）。
 // 手で先に押してあればそちらを使う。睡眠へ戻ると上で締め、朝などへ出たら起床なので消す。
 function noteAwakeOnCareEnter(prevKey,key,now){
@@ -3876,7 +3893,7 @@ function renderLifeScreen(){
     }
     // 起床＝睡眠モードを終えて☀️朝モードへ（朝の画面を開く）。プレビューでも存在だけは見せる
     { const _b=lifeActionBtn(`🌅 起床した（睡眠を終了 → ${nextModeLabel(key)}モードへ）`,def.color,()=>{
-        const n=new Date(); setDaily(vd,{wakeTime:n.getHours()+n.getMinutes()/60});
+        const n=new Date(); setDaily(wakeDayOf(n),{wakeTime:n.getHours()+n.getMinutes()/60});   // 起床は朝の日（いまの基準日はまだ前日）
         state.lifeScreen=null; openLifeMode('morning');
         showToast(`🌅 起床 ${hhmm(n.getHours(),n.getMinutes())} を記録 → ☀️朝モード`,'#a5b4fc');
       });
@@ -4421,10 +4438,10 @@ function renderSelfMode(){
   else { // morning
     // 起床時刻は通常😴睡眠モードの「起床した」で記録済み。記録があれば結果だけ表示し、
     // 睡眠モードを経由せずに入った等で未記録のときだけ記録ボタンを出す。
-    { const _w=getDaily(vd).wakeTime;
+    { const _wd=wakeDayOf(new Date()), _w=getDaily(_wd).wakeTime;
       if(_w!=null) inner.appendChild(div({style:{fontSize:"12px",color:M.accent,fontWeight:700,textAlign:"center",marginBottom:"6px"}},
         `🌅 起床 ${hhmm(Math.floor(_w),Math.round((_w%1)*60))}`));
-      else { const _b=selfActionBtn("🌅 起床を記録する（今の時刻）",M.accent,()=>{ const n=new Date(); setDaily(vd,{wakeTime:n.getHours()+n.getMinutes()/60}); showToast(`🌅 起床 ${hhmm(n.getHours(),n.getMinutes())} を記録`); render(); });
+      else { const _b=selfActionBtn("🌅 起床を記録する（今の時刻）",M.accent,()=>{ const n=new Date(); setDaily(wakeDayOf(n),{wakeTime:n.getHours()+n.getMinutes()/60}); showToast(`🌅 起床 ${hhmm(n.getHours(),n.getMinutes())} を記録`); render(); });
         inner.appendChild(peek?peekDisabled(_b):_b); }
     }
     inner.appendChild(div({style:{fontSize:"13px",color:"#e6dccb",lineHeight:1.7,textAlign:"center",margin:"4px 0 12px",whiteSpace:"pre-line"}},"あせらず、一つずつ。\n体を起こすスイッチを入れよう。"));
@@ -4849,6 +4866,19 @@ function renderToday(vd,ds,curH,isToday){
 // 目が覚めた時刻だけ入れると「記録中」（open:true・mins:0）として持ち、また寝た時刻を入れたら1件に確定する。
 // 記録中のあいだは mins=0 なので実睡眠からは何も引かれない。
 // 同じ日の中で重ならない uid（同じミリ秒に自動と手入力が重なっても取り違えないように）
+// v15.34：中途覚醒を「目が覚めた朝の日」から「その夜の日（前日）」へ移す。データ・バックアップ・年ごとのファイルに使う
+function shiftAwakeningsToNight(dailies){
+  const by={}; (dailies||[]).forEach(d=>{ if(d&&d.dateStr) by[d.dateStr]={...d}; });
+  const moves=[];                                   // 先に全部はずしてから前日へ足す（連続した日でも1日ずつだけ動く）
+  Object.keys(by).forEach(ds=>{ const a=by[ds].awakenings; if(Array.isArray(a)&&a.length) moves.push([addDays(ds,-1),a]); delete by[ds].awakenings; });
+  moves.forEach(([pd,a])=>{ const t=by[pd]||(by[pd]={dateStr:pd}); t.awakenings=[...(t.awakenings||[]),...a]; });
+  return Object.values(by);
+}
+function migrateAwakeningsToNight(){
+  try{ if(localStorage.getItem(STORAGE_KEY+"_awakeonnight")) return; }catch(_){ return; }
+  if((state.dailies||[]).some(d=>Array.isArray(d.awakenings)&&d.awakenings.length)){ state.dailies=shiftAwakeningsToNight(state.dailies); saveStorage(); flushStorage(); }
+  safeSet(STORAGE_KEY+"_awakeonnight","1");
+}
 function newAwakeUid(list){ return Math.max(Date.now(), ...(list||[]).map(x=>(x&&+x.uid)||0).map(u=>u+1)); }
 function openAwake(vd){ return (getDaily(vd).awakenings||[]).find(x=>x&&x.open)||null; }
 function awakeSpanMins(h,m,eh,em){ let s0=h*60+(m||0), e0=eh*60+(em||0); if(e0<s0) e0+=1440; return e0-s0; }
@@ -4973,7 +5003,7 @@ function buildSleepSections(vd){
       sec.setAttribute('data-awakesec','1');
       sec.appendChild(div({style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"6px"}},[
         span({style:{fontSize:"12px",color:"#94a3b8"}},[
-          txt("🌙 中途覚醒"),
+          txt("🌙 中途覚醒（今夜）"),
           awakes.length>0?span({style:{fontSize:"11px",color:"#64748b",marginLeft:"6px"}},`${awakes.length}回・計${total>=60?`${Math.floor(total/60)}h`:""}${total%60}m`):null
         ]),
         op?span({style:{fontSize:"10px",padding:"2px 8px",borderRadius:"10px",background:"#6366f122",color:"#a5b4fc",fontWeight:700}},"記録中"):null
@@ -5004,7 +5034,7 @@ function buildSleepSections(vd){
           list.appendChild(item);
         });
         sec.appendChild(list);
-        sec.appendChild(div({style:{fontSize:"10px",color:"#475569",marginTop:"4px"}},"前夜の睡眠中に目が覚めた分。実睡眠から差し引かれます。タップで編集"));
+        sec.appendChild(div({style:{fontSize:"10px",color:"#475569",marginTop:"4px"}},"この日の夜（就寝〜翌朝の起床）に目が覚めた分。睡眠が終わるまでがこの日です。翌朝の実睡眠から差し引かれます。タップで編集"));
       }
       return sec;
     })(),
@@ -5061,7 +5091,7 @@ function buildSleepSections(vd){
 }
 // ── 🛏 夜ごとの睡眠（分析→睡眠の履歴で使う）────────────────────
 // 1夜 = 「就寝する日 ds」の夜。就寝は ds の bedTime、起床は翌日の wakeTime、
-// 中途覚醒は「目が覚めた朝」＝翌日に記録される（予定タブの睡眠実績と同じ数え方）。
+// 中途覚醒も就寝と同じ ds に記録される（v15.34 から。以前は目が覚めた朝＝翌日）。
 // 帯の物差しは ds の 18:00 〜 翌 12:00（18時間）。
 const SLEEPLOG_FROM=18*60, SLEEPLOG_TO=36*60;
 function sleepLogNight(ds){
@@ -5069,7 +5099,7 @@ function sleepLogNight(ds){
   const dayB=getDaily(ds), dayW=getDaily(nd);
   const bed=dayB.bedTime, wake=dayW.wakeTime;
   const wind=dayB.windDownAt||null;
-  const awakes=[...(dayW.awakenings||[])].filter(x=>x&&!x.open).sort((a,b)=>(toNightMin(a.hour*60+(a.min||0)))-(toNightMin(b.hour*60+(b.min||0))));
+  const awakes=[...(dayB.awakenings||[])].filter(x=>x&&!x.open).sort((a,b)=>(toNightMin(a.hour*60+(a.min||0)))-(toNightMin(b.hour*60+(b.min||0))));
   const naps=dayW.naps||[];
   // ds 0:00 を起点にした分（就寝が正午前なら翌日の就寝）
   const bedAbs = bed!=null ? ((bed<12?1440:0)+Math.round(bed*60)) : null;
@@ -7051,7 +7081,8 @@ function addDays(ds,n){const x=parseDS(ds);x.setDate(x.getDate()+n);return fmtDS
 function mdLabel(ds){ if(!ds)return ""; const p=(""+ds).split('-'); return p.length>=3?`${parseInt(p[1])}/${parseInt(p[2])}`:""; } // "M/D"
 function hhmm(h,m){ return `${String(h).padStart(2,'0')}:${String(m||0).padStart(2,'0')}`; } // "HH:MM"
 // その夜の中途覚醒の合計（分）。覚醒はその朝(ds)の記録に付く
-function getNightAwakeMins(ds){ return (getDaily(ds).awakenings||[]).reduce((a,x)=>a+(x.mins||0),0); }
+// ds の朝までの夜（＝前日の夜）の中途覚醒の合計分。中途覚醒は夜の日（前日）に持つ
+function getNightAwakeMins(ds){ return (getDaily(addDays(ds,-1)).awakenings||[]).filter(x=>x&&!x.open).reduce((a,x)=>a+(x.mins||0),0); }
 // ── 🛌 眠りの質（主観・1〜5）とひとことメモ ───────────────────────
 // 中途覚醒や起床時刻と同じく「目が覚めた朝」の日付に記録する（＝その朝までの夜の評価）。
 // 体動センサーのような推定ではなく本人の実感。総合分析では他の記録と同じ材料として扱う。
@@ -7357,8 +7388,8 @@ function getActualActivities(vd){
       let wakeAbs= wake!=null ? ((off+1)*1440 + wake*60) : null;
       if(bedAbs==null) bedAbs=wakeAbs-480;   // 就寝未記録→8h仮定
       if(wakeAbs==null) wakeAbs=bedAbs+480;   // 起床未記録→8h仮定
-      // 中途覚醒（その朝の記録）を睡眠から差し引き、覚醒時間帯は睡眠実績を出さない
-      const awakes=getDaily(addDays(D,1)).awakenings||[];
+      // 中途覚醒（その夜＝就寝と同じ日の記録）を睡眠から差し引き、覚醒時間帯は睡眠実績を出さない
+      const awakes=getDaily(D).awakenings||[];
       let segs=[[bedAbs,wakeAbs]];
       awakes.forEach(aw=>{
         const awBase=(aw.hour<12?off+1:off);
@@ -17695,6 +17726,7 @@ function exportDataInner(){
   const payload={
     version:2,
     exportedAt:new Date().toISOString(),
+    awakeOnNight:true,               // 中途覚醒は「その夜の日」に持つ形（v15.34〜）
     logs:state.logs,
     dailies:state.dailies,
     todos:state.todos,
@@ -17800,7 +17832,7 @@ function importData(e){
       if(!confirm(`このバックアップをインポートしますか？\n現在のデータは上書きされます。\n\n${summary}`))return;
 
       state.logs=p.logs;
-      state.dailies=p.dailies;
+      state.dailies=p.awakeOnNight?p.dailies:shiftAwakeningsToNight(p.dailies);   // v15.33 以前のバックアップは中途覚醒が朝の日にあるので前日へ
       if(p.todos){state.todos=p.todos;safeSet(STORAGE_KEY+"_todo",JSON.stringify(p.todos));}
       if(p.todoOrder){safeSet(STORAGE_KEY+"_todo_order",JSON.stringify(p.todoOrder));}
       if(p.shiftColors&&typeof p.shiftColors==="object"){safeSet(STORAGE_KEY+"_shiftcolors",JSON.stringify(p.shiftColors)); Object.keys(p.shiftColors).forEach(k=>{ if(SHIFT_TYPES[k]&&p.shiftColors[k])SHIFT_TYPES[k].color=p.shiftColors[k]; });}
@@ -17887,7 +17919,7 @@ function viewBackupFile(e){
       state._liveSnapshot=snap;
       // バックアップを state に読み込み（保存はしない）
       state.logs=p.logs||[];
-      state.dailies=p.dailies||[];
+      state.dailies=p.awakeOnNight?(p.dailies||[]):shiftAwakeningsToNight(p.dailies||[]);   // 古いバックアップは中途覚醒を前日へ
       state.todos=p.todos||{};
       if(p.goals)state.goals=p.goals;
       state.schedule=p.schedule||{};
