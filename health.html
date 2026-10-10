@@ -247,7 +247,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.38"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.39"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -3858,6 +3858,7 @@ function renderLifeScreen(){
         span({style:{fontSize:'12px',fontWeight:700,color:sleepQualColor(q)}},qd?`${qd.icon} ${qd.label}`:'未記録')
       ]));
       box.appendChild(sleepQualPicker(md,false));
+      box.appendChild(sleepNoteField(md,{field:'#00000038',fieldBorder:'#ffffff22',text:'#e2e8f0'}));
       box.appendChild(div({style:{fontSize:'11px',color:'#94a3b8',margin:'9px 0 5px'}},'💭 夢'));
       box.appendChild(dreamField(md,{field:'#00000038',fieldBorder:'#ffffff22',text:'#e2e8f0'}));
       box.appendChild(div({style:{fontSize:'9px',color:'#64748b',marginTop:'5px',lineHeight:1.5}},'目が覚めたときの実感。日記→睡眠と同じ記録なので、あとから直せます'));
@@ -4941,11 +4942,7 @@ function buildSleepSections(vd){
         span({style:{fontSize:"12px",fontWeight:700,color:sleepQualColor(q)}},qd?`${qd.icon} ${qd.label}`:"—")
       ]));
       sec.appendChild(sleepQualPicker(vd,false));
-      const ta=document.createElement('input'); ta.type='text'; ta.value=sleepNoteOf(vd);
-      ta.placeholder="ひとことメモ（夢・寝つき・暑さなど）";
-      ta.style.cssText="width:100%;box-sizing:border-box;margin-top:7px;padding:8px 10px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit";
-      ta.addEventListener('change',(()=>{const k=vd;return e=>{ setSleepNote(k,e.target.value); render(); };})());
-      sec.appendChild(ta);
+      sec.appendChild(sleepNoteField(vd));
       sec.appendChild(div({style:{fontSize:"11px",color:"#94a3b8",margin:"9px 0 5px"}},"💭 夢"));
       sec.appendChild(dreamField(vd));
       sec.appendChild(div({style:{fontSize:"10px",color:"#475569",marginTop:"4px"}},"今朝までの眠りの実感。睡眠の履歴と総合分析（体調・飲酒との関係）に使われます。睡眠モードの画面からも記録できます"));
@@ -7057,6 +7054,15 @@ function setSleepNote(ds,t){ setDaily(ds,{sleepNote:(t||"").trim()||null}); }
 function dreamOf(ds){ return getDaily(ds).dream||""; }
 function setDream(ds,t){ setDaily(ds,{dream:(t||"").trim()||null}); }
 // 夢の入力欄（睡眠モードの画面と睡眠タブで同じものを使う）
+// 🛌 眠りの質の「ひとことメモ」（日記→睡眠と睡眠モードの画面で同じものを使う）
+function sleepNoteField(ds,pal){
+  const P=pal||{field:"#0f172a",fieldBorder:"#334155",text:"#e2e8f0"};
+  const ta=document.createElement('input'); ta.type='text'; ta.value=sleepNoteOf(ds);
+  ta.placeholder="ひとことメモ（夢・寝つき・暑さなど）"; ta.setAttribute('data-sleepnote','1');
+  ta.style.cssText=`width:100%;box-sizing:border-box;margin-top:7px;padding:8px 10px;background:${P.field};border:1px solid ${P.fieldBorder};border-radius:8px;color:${P.text};font-size:13px;font-family:inherit`;
+  ta.addEventListener('change',(()=>{const k=ds;return e=>{ setSleepNote(k,e.target.value); render(); };})());
+  return ta;
+}
 function dreamField(ds,pal){
   const P=pal||{field:"#0f172a",fieldBorder:"#334155",text:"#e2e8f0"};
   const ta=document.createElement('textarea');
