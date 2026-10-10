@@ -247,7 +247,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.37"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.38"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -7307,7 +7307,8 @@ function getActualActivities(vd){
           // まとめのタイトルに、そのブロックに含まれる項目のメモを続けて表示する
           const title=routineOverrideTitle(DD,g.key,g.title)
             +cl.notes.map(n=>`／${n.label?n.label+"：":""}${n.list.join("・")}`).join("");
-          acts.push({title, startMin:cl.s, endMin:Math.max(cl.e, cl.s+16), color:g.color, routineKey:g.key, routineBase:g.title, ownDay:DD});
+          // 実際の開始〜終了のまま渡す（短い・一瞬で終わったまとめは、表示のときに終了から上へ伸ばす。以前は開始から16分下へ伸ばしていて、終了が上に来ていた）
+          acts.push({title, startMin:cl.s, endMin:cl.e, color:g.color, routineKey:g.key, routineBase:g.title, ownDay:DD});
         });
       }
     });
@@ -10286,17 +10287,22 @@ function renderDaySchedule(vd,ds,isToday){
   //   タイマー式（開始〜終了がある）：開始を上端・終了を下端にした帯（span）。
   //   チェック式（点＝isPoint）：完了/チェック時刻を下端にして上へ一定量伸ばす。
   //   レーン割当（重なり検出）も描画も、この topPx/heightPx を使うので表示がずれない・かぶらない。
-  const blockGeom=(ev)=>{
+  // 実績（side==='actual'）は「終了時刻が下端」を優先：短くて最低の高さに足りない帯は、終了から上へ伸ばす（開始が上にずれる）。
+  // 予定は開始時刻を上端のまま。チェック式（点）はどちらも完了時刻を下端にして上へ伸ばす
+  const blockGeom=(ev,side)=>{
     const s=(ev.startMin!=null?ev.startMin:ev.startH*60+ev.startM);
     let e=(ev.endMin!=null?ev.endMin:ev.endH*60+ev.endM);
-    if(e<=s)e=s+(ev.isPoint?12:16);
-    const heightPx=ev.isPoint?14:Math.max(16,((e-s)/60)*HOUR_H-2);
-    const topPx=((s/60)-START_H)*HOUR_H - (ev.isPoint?heightPx:0);
+    const actualSpan=side==='actual'&&!ev.isPoint;
+    if(e<=s){ if(actualSpan) e=s; else e=s+(ev.isPoint?12:16); }   // 実績の帯は長さ0でも終了時刻を下端にする
+    const realPx=Math.max(0,((e-s)/60)*HOUR_H-2);
+    const heightPx=ev.isPoint?14:Math.max(16,realPx);
+    const endAnchor=actualSpan && realPx<heightPx;
+    const topPx=ev.isPoint?((s/60)-START_H)*HOUR_H-heightPx : endAnchor?((e/60)-START_H)*HOUR_H-2-heightPx : ((s/60)-START_H)*HOUR_H;
     return {s,e,topPx,heightPx,botPx:topPx+heightPx};
   };
-  const layoutLanes=(items)=>{
+  const layoutLanes=(items,side)=>{
     const arr=items.map(ev=>{
-      const g=blockGeom(ev);
+      const g=blockGeom(ev,side);
       return {ev,s:g.s,e:g.e,topPx:g.topPx,heightPx:g.heightPx,botPx:g.botPx,lane:0,lanes:1};
     }).sort((a,b)=>a.topPx-b.topPx||a.botPx-b.botPx);
     // 連続して重なるものをクラスタ化し、各クラスタ内でレーン割当（表示位置=px基準で重なり判定）
@@ -10320,7 +10326,7 @@ function renderDaySchedule(vd,ds,isToday){
     return arr;
   };
   const blockArea=(items,side,defaultColor,onTap,onMove)=>{
-    layoutLanes(items).forEach(({ev,s:sMin,e:eMin,lane,lanes,topPx,heightPx})=>{
+    layoutLanes(items,side).forEach(({ev,s:sMin,e:eMin,lane,lanes,topPx,heightPx})=>{
       // 帯の真ん中がいまより前か後かで、その列の幅を決める
       const f=splitAt((sMin+eMin)/2);
       const leftBase = side==='plan' ? '36px' : `${pct(f)} + 2px`;
