@@ -247,7 +247,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.32"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.33"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -3966,7 +3966,8 @@ function selfModeStartAt(){
   if(s && state.selfMode && s.key===state.selfMode) return s.start;
   return state.selfModeStart||Date.now();
 }
-function exitSelfMode(recordIt){
+// opts.keepMode＝モードの時間は終わらせない（このあと自分で次のモードを選ぶとき。選んだ時点で朝の時間が終わる）
+function exitSelfMode(recordIt,opts){
   if(state.peekMode) recordIt=false; // プレビュー中は記録も終了もしない
   if(recordIt && state.selfMode){
     const _st=selfModeStartAt();
@@ -3987,7 +3988,7 @@ function exitSelfMode(recordIt){
     }
     // 朝・飲みが生活モードとして進行中なら、「記録して終了」でそのモード時間も終了する。
     // 終了後に入るモードが決まっているもの（飲み→休息）は、そのモードへ自動で切り替える。
-    if(currentLifeModeKey()===state.selfMode) finishLifeMode(state.selfMode);
+    if(currentLifeModeKey()===state.selfMode && !(opts&&opts.keepMode)) finishLifeMode(state.selfMode);
   }
   state.selfMode=null; if(window._selfTick){clearInterval(window._selfTick);window._selfTick=null;}
 }
@@ -4432,7 +4433,7 @@ function renderSelfMode(){
     // 今日の予定・目標をひと目
     let goalN=0; try{ goalN=gtCollectDaily(vd).length; }catch(_){}
     inner.appendChild(div({style:{fontSize:"12px",color:"#a89e8c",textAlign:"center",marginBottom:"10px"}},`☀️ 今日の目標 ${goalN}件${goalN?"。まず一番簡単なひとつから。":""}`));
-    { const _e=bigExitBtn("✅ 一日を始める（記録して終了）",M.accent); inner.appendChild(peek?peekDisabled(_e):_e); }
+    { const _e=bigExitBtn("✅ 一日を始める（記録して終了）",M.accent,{pick:true}); inner.appendChild(peek?peekDisabled(_e):_e); }
   }
   appendModeInvest(inner,key,M.accent,vd,peek);   // 💰 このモードに選んだ分類の未来投資
   // 補助リンク
@@ -4445,7 +4446,12 @@ function renderSelfMode(){
   if(!window._selfTick) window._selfTick=setInterval(selfModeTick,1000);
   return wrap;
 }
-function bigExitBtn(label,accent){ const _nx=nextModeLabel(state.selfMode); if(_nx) label=`${label} → ${_nx}モードへ`; const b=btn({style:{width:"100%",padding:"15px",borderRadius:"13px",border:"none",color:"#1a1408",fontSize:"15px",fontWeight:800,cursor:"pointer",background:accent,marginTop:"4px"}},label); b.addEventListener('click',()=>{ const was=state.selfMode, care=isCareMode(was); exitSelfMode(true); const bd=care?lifeModeDef(currentLifeModeKey()):null;
+// opts.pick＝記録して終えたら、決まったモードへは移らず「モードを選ぶ」画面を開く（☀️朝モード）
+function bigExitBtn(label,accent,opts){
+  if(opts&&opts.pick){ const b=btn({style:{width:"100%",padding:"15px",borderRadius:"13px",border:"none",color:"#1a1408",fontSize:"15px",fontWeight:800,cursor:"pointer",background:accent,marginTop:"4px"}},`${label} → 🔀 次のモードを選ぶ`);
+    b.setAttribute('data-selfexitpick','1');
+    b.addEventListener('click',()=>{ exitSelfMode(true,{keepMode:true}); state.modeSwitcher=true; showToast("記録しました → 次のモードを選んでください","#a5b4fc"); render(); }); return b; }
+  const _nx=nextModeLabel(state.selfMode); if(_nx) label=`${label} → ${_nx}モードへ`; const b=btn({style:{width:"100%",padding:"15px",borderRadius:"13px",border:"none",color:"#1a1408",fontSize:"15px",fontWeight:800,cursor:"pointer",background:accent,marginTop:"4px"}},label); b.addEventListener('click',()=>{ const was=state.selfMode, care=isCareMode(was); exitSelfMode(true); const bd=care?lifeModeDef(currentLifeModeKey()):null;
   showToast(bd?`記録しました → ${bd.icon}${bd.label}へ戻りました`:"記録しました","#a5b4fc"); render(); }); return b; }
 // セルフモードのランチャー（ウィジェット等から）
 // ── ウィジェット（今日の予定＋ルーティンをまとめて素早く確認・チェック）──
