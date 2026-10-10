@@ -248,7 +248,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.34"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.35"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -532,6 +532,28 @@ function recoverLostTodoItems(){
   return ids.length;
 }
 // バックアップ（health_backup_*.json）からルーティン項目だけを戻す。仮の名前の項目は置き換え、今の一覧に無いものは足す。ほかの項目と記録はさわらない
+// ── v15.34 の不具合で消えたモードの記録を、バックアップから戻す ──
+// v15.34 を最初に開いたとき、モードの記録を読む前に描き直しが走り、それまでの記録を上書きしていた。
+// バックアップの記録のうち、今の記録の始まりより前に終わっているもの（重ならないもの）を足す。今の記録はそのまま。
+function restoreModeLogFromBackup(p){
+  const src=p&&Array.isArray(p.modeLog)?p.modeLog:null; if(!src||!src.length) return {err:"このファイルにはモードの記録が入っていません"};
+  const cur=getModeLog(), have=new Set(cur.map(x=>x.start+"|"+x.key));
+  const first=cur.length?Math.min(...cur.map(x=>x.start)):Infinity;
+  let added=0;
+  src.forEach(x=>{ if(!x||x.start==null||x.end==null||!x.key) return; if(have.has(x.start+"|"+x.key)) return; if(x.end>first) return;
+    cur.push({...x}); have.add(x.start+"|"+x.key); added++; });
+  cur.sort((a,b)=>a.start-b.start); saveModeLog();
+  if(added){ safeSet(STORAGE_KEY+"_modelogrestored","1"); state.modeLogLost=false; }
+  return {added};
+}
+// 消えた可能性があるか：今の記録が v15.34 の公開日（2026-10-10）以降からしか無いのに、それより前の日記などがある
+function checkModeLogLost(){
+  try{ if(localStorage.getItem(STORAGE_KEY+"_modelogrestored")) return false; }catch(_){ return false; }
+  const L=getModeLog(); if(!L.length) return false;
+  const first=Math.min(...L.map(x=>x.start)), cut=new Date('2026-10-10T00:00:00+09:00').getTime();
+  if(first<cut) return false;
+  return (state.dailies||[]).some(d=>d.dateStr<'2026-10-09')||(state.logs||[]).some(l=>l.dateStr<'2026-10-09');
+}
 function restoreTodoItemsFromBackup(p){
   const src=p&&Array.isArray(p.todoItems)?p.todoItems:null; if(!src||!src.length) return {err:"このファイルにはルーティン項目が入っていません"};
   const items=getTodoItems(); let replaced=0, added=0;
@@ -991,7 +1013,6 @@ function loadStorage(){
     const s=localStorage.getItem(STORAGE_KEY);
     if(s){const p=JSON.parse(s);state.logs=p.logs||[];state.dailies=p.dailies||[];}
     migrateSleepModel();
-    migrateAwakeningsToNight(); // 中途覚醒を「その夜の日」へ移す（1回だけ・v15.34）
     migrateFoods();
     const city=localStorage.getItem(STORAGE_KEY+"_city");
     if(city){const c=JSON.parse(city);state.weatherCity=c;}
@@ -1108,6 +1129,7 @@ function loadStorage(){
     if(fct){try{const o=JSON.parse(fct); if(o&&Array.isArray(o.cats))state.foodCats=o.cats; if(o&&o.emoji&&typeof o.emoji==="object")state.foodEmoji=o.emoji;}catch{}}
     const mlg=localStorage.getItem(STORAGE_KEY+"_modelog");
     if(mlg){try{const a=JSON.parse(mlg); if(Array.isArray(a))state.modeLog=a;}catch{}}
+    _modeLogLoaded=true;
     // 記録どうしが重なっていると1日の合計が24時間を超える。読み込んだ時点で**点検だけ**する（直すかどうかは本人が決める）
     try{ const _p=modeLogProblems(); if(_p.probs.length) state.modeLogWarn={n:_p.probs.length, over:_p.over.length}; }catch(_){}
     const amd=localStorage.getItem(STORAGE_KEY+"_automode");
@@ -1136,6 +1158,11 @@ function loadStorage(){
   if(!Array.isArray(state.tasks.shopping))state.tasks.shopping=[];
   if(!state.schedule||typeof state.schedule!=="object")state.schedule={};
   if(!Array.isArray(state.repeatEvents))state.repeatEvents=[];
+  // ⚠ 起動時の移しかえは、すべて読み込んだ「後」に行う。途中で描き直すと、まだ読んでいないモードの記録などを空として保存してしまう（v15.34 で起きた）
+  // 途中で失敗してモードの記録を読めていなければ、ここで読む（読まずに保存を許すと上書きしてしまう）
+  if(!_modeLogLoaded){ try{ const a=JSON.parse(localStorage.getItem(STORAGE_KEY+"_modelog")||"null"); if(Array.isArray(a)) state.modeLog=a; }catch(_){} _modeLogLoaded=true; }
+  try{ migrateAwakeningsToNight(); }catch(_){}   // 中途覚醒を「その夜の日」へ移す（1回だけ）
+  _storageLoaded=true;
 }
 
 // 旧「予定」タブ（v8.3）のデータを新モデルへ移行
@@ -1468,7 +1495,10 @@ function keepInnerScroll(content){
   Promise.resolve().then(restore);          // 描き終わった直後（画面に出る前）
   requestAnimationFrame(restore);           // 念のため次の描画でも
 }
+// 読み込みが終わるまでは描き直さない（描き直しが「今のモードが無い」と見て既定モードを始め、読み込む前のモードの記録を上書きしてしまうため）
+let _storageLoaded=false;
 function render(){
+  if(!_storageLoaded) return;
   const root = document.getElementById('root');
 
   // 同じ画面の再描画ではスクロール位置を維持（タブ切替時は維持しない＝自然な挙動）
@@ -2469,7 +2499,9 @@ function migrateLifeModes(){ if(!Array.isArray(state.lifeModes)||!state.lifeMode
 let _appReady=false;   // 起動が終わったか（起動直後の自動処理でAlexaを鳴らさないため）
 function getModeLog(){ if(!Array.isArray(state.modeLog))state.modeLog=[]; return state.modeLog; }
 // 件数で切り捨てない（以前は最新3000件だけ残し、古い記録が黙って消えていた）。容量が足りなくなったら年ごとに書き出して消す
-function saveModeLog(){ safeSet(STORAGE_KEY+'_modelog',JSON.stringify(getModeLog())); }
+// 読み込む前に保存すると、これまでのモードの記録を上書きして消してしまう（v15.34 で起きた）。読み込み前の保存は止める
+let _modeLogLoaded=false;
+function saveModeLog(){ if(!_modeLogLoaded){ console.warn("saveModeLog: 読み込み前の保存は行いません"); return; } safeSet(STORAGE_KEY+'_modelog',JSON.stringify(getModeLog())); }
 function currentModeSession(){ const l=getModeLog(); for(let i=l.length-1;i>=0;i--){ if(!l[i].end) return l[i]; } return null; }
 function currentLifeModeKey(){ const s=currentModeSession(); return s?s.key:null; }
 // 基準日（モードの記録先）。就寝(bedTime)を記録するまでは前日扱い＝深夜でも基準日を変えない。
@@ -4877,7 +4909,8 @@ function shiftAwakeningsToNight(dailies){
 }
 function migrateAwakeningsToNight(){
   try{ if(localStorage.getItem(STORAGE_KEY+"_awakeonnight")) return; }catch(_){ return; }
-  if((state.dailies||[]).some(d=>Array.isArray(d.awakenings)&&d.awakenings.length)){ state.dailies=shiftAwakeningsToNight(state.dailies); saveStorage(); flushStorage(); }
+  // 描き直しを伴う saveStorage は使わず、直接保存する（起動の途中で描き直さないため）
+  if((state.dailies||[]).some(d=>Array.isArray(d.awakenings)&&d.awakenings.length)){ state.dailies=shiftAwakeningsToNight(state.dailies); safeSet(STORAGE_KEY,JSON.stringify({logs:state.logs,dailies:state.dailies})); }
   safeSet(STORAGE_KEY+"_awakeonnight","1");
 }
 function newAwakeUid(list){ return Math.max(Date.now(), ...(list||[]).map(x=>(x&&+x.uid)||0).map(u=>u+1)); }
@@ -9812,6 +9845,20 @@ function renderSettingsHub(){
   importLbl.appendChild(importInp);
   importLbl.appendChild(document.createTextNode("📂 データを読込（復元・上書き）"));
   dataCard.appendChild(importLbl);
+  // 🕒 モードの記録だけをバックアップから足す（今の記録・ほかのデータはそのまま）
+  { const lost=!!state.modeLogLost;
+    if(lost) dataCard.appendChild(div({style:{fontSize:"11px",color:"#fb923c",lineHeight:1.7,margin:"8px 0 4px",padding:"8px 10px",borderRadius:"8px",background:"#f973160f",border:"1px solid #f9731666"}},
+      "⚠ 前の版（v15.34）の不具合で、それまでのモードの記録が消えています。下のボタンでバックアップファイルを選ぶと、モードの記録だけを戻せます（今の記録・ほかのデータはそのまま）。"));
+    const lbl=document.createElement('label'); lbl.setAttribute('data-modelogrestore','1');
+    lbl.style.cssText=`display:block;width:100%;padding:11px;margin-top:8px;text-align:center;background:${lost?"#0ea5e918":"transparent"};border:1px solid ${lost?"#38bdf8":"#334155"};border-radius:8px;color:${lost?"#38bdf8":"#94a3b8"};font-size:13px;font-weight:600;cursor:pointer;box-sizing:border-box`;
+    const fi=document.createElement('input'); fi.type='file'; fi.accept='.json'; fi.style.display='none';
+    fi.addEventListener('change',e=>{ const f=e.target.files&&e.target.files[0]; if(!f) return; const rd=new FileReader();
+      rd.onload=()=>{ try{ const r=restoreModeLogFromBackup(JSON.parse(rd.result)); if(r.err){ showToast(`⚠️ ${r.err}`,"#f97316"); return; }
+          showToast(r.added?`✅ モードの記録を ${r.added}件 戻しました`:"戻す記録はありませんでした（すでにあるか、今の記録と重なっています）",r.added?"#22c55e":"#94a3b8"); render(); }
+        catch(_){ showToast("⚠️ バックアップファイルを読めませんでした","#f97316"); } };
+      rd.readAsText(f); e.target.value=""; });
+    lbl.appendChild(fi); lbl.appendChild(document.createTextNode("🕒 バックアップからモードの記録だけ戻す"));
+    dataCard.appendChild(lbl); }
   // バックアップ閲覧（上書きせず内容を確認）
   const viewLbl=document.createElement('label');
   viewLbl.style.cssText="display:block;width:100%;padding:11px;margin-top:8px;text-align:center;background:transparent;border:1px solid #6366f1;border-radius:8px;color:#a5b4fc;font-size:13px;font-weight:600;cursor:pointer;box-sizing:border-box";
@@ -19041,6 +19088,8 @@ window.addEventListener('pagehide',()=>{try{flushStorage();}catch(_){}});
 document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='hidden'){ try{flushStorage();}catch(_){}} });
 render();
 _appReady=true;   // ここから先のモード切替は「本人の操作」なのでAlexaを鳴らしてよい
+state.modeLogLost=checkModeLogLost();
+if(state.modeLogLost) setTimeout(()=>showToast("⚠ 前の版の不具合でモードの記録が消えています。設定→データ管理の「🕒 バックアップからモードの記録だけ戻す」で戻せます","#f97316"),1600);
 if(state.lostItemsRecovered) setTimeout(()=>showToast(`⚠ 消えたルーティンを${state.lostItemsRecovered}件 戻しました。設定→ルーティン設定で名前を入れ直してください`,"#f97316"),1200);
 setTimeout(()=>{ try{ alexaMaybeSyncPlan(); }catch(_){} },2500);   // 🔊 鳴らす予約をサーバへ（変わっていなければ送らない）
 applyFontScale(); // 保存済みの文字サイズを適用
