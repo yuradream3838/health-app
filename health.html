@@ -3878,16 +3878,17 @@ function renderLifeScreen(){
     inner.appendChild(div({style:{textAlign:'center',fontSize:'13px',color:'#cbd5e1',lineHeight:1.7,marginBottom:'14px'}},'おやすみなさい。'));
     addAssigned();
     // 🛌 眠りの質と💭夢：目が覚めたその場で残せるように（保存先は睡眠タブと同じ＝この朝の日付）
+    // 起床を記録するまで基準日は前日のままなので、ここは基準日ではなく「朝の日」（wakeDayOf）に書く
     if(!peek){
-      const q=sleepQualOf(vd), qd=sleepQualDef(q);
+      const md=wakeDayOf(new Date()), q=sleepQualOf(md), qd=sleepQualDef(q);
       const box=div({style:{background:'#ffffff0d',border:'1px solid #ffffff14',borderRadius:'12px',padding:'11px 13px',marginBottom:'10px'}});
       box.appendChild(div({style:{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:'7px'}},[
         span({style:{fontSize:'12px',color:'#cbd5e1',fontWeight:700}},'🛌 眠りの質'),
         span({style:{fontSize:'12px',fontWeight:700,color:sleepQualColor(q)}},qd?`${qd.icon} ${qd.label}`:'未記録')
       ]));
-      box.appendChild(sleepQualPicker(vd,false));
+      box.appendChild(sleepQualPicker(md,false));
       box.appendChild(div({style:{fontSize:'11px',color:'#94a3b8',margin:'9px 0 5px'}},'💭 夢'));
-      box.appendChild(dreamField(vd,{field:'#00000038',fieldBorder:'#ffffff22',text:'#e2e8f0'}));
+      box.appendChild(dreamField(md,{field:'#00000038',fieldBorder:'#ffffff22',text:'#e2e8f0'}));
       box.appendChild(div({style:{fontSize:'9px',color:'#64748b',marginTop:'5px',lineHeight:1.5}},'目が覚めたときの実感。日記→睡眠と同じ記録なので、あとから直せます'));
       inner.appendChild(box);
     }
