@@ -247,7 +247,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.36"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.37"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -507,42 +507,6 @@ function migrateRoutineModes(){
     getTodoItems().forEach(it=>{ const ms=itemModes(it); if(ms.includes('meal')&&!ms.includes('eatout')){ setItemModes(it,[...ms,'eatout']); changed=true; } else if(!Array.isArray(it.modes)){ setItemModes(it,ms); changed=true; } });
     localStorage.setItem(STORAGE_KEY+"_routinemodes2","1"); } }catch(_){}
   if(changed) saveTodoItems();
-}
-// ── v15.24 の不具合で消えたルーティン項目を戻す ──
-// v15.24 は起動時、保存してあるルーティン項目を読む前に既定の項目を保存してしまい、アプリで追加した項目（id が "ti…"）が消えた。
-// 名前は残っていないが、まとめ（routines）・並び順（_todo_order）・直近の実施記録には id が残っているので、
-// 仮の名前で項目を作り直す（記録・まとめ・並びはそのままつながる）。バックアップがあれば名前ごと戻せる（restoreTodoItemsFromBackup）。
-// 1回だけ行う（毎回やると、自分で消した項目まで「消えたルーティン」として戻してしまうため）
-function recoverLostTodoItems(){
-  try{ if(localStorage.getItem(STORAGE_KEY+"_lostrecovered")) return 0; localStorage.setItem(STORAGE_KEY+"_lostrecovered","1"); }catch(_){ return 0; }
-  const have=new Set(getTodoItems().map(it=>it.id)), ids=[];
-  const add=id=>{ if(typeof id==="string"&&/^ti\d+/.test(id)&&!have.has(id)&&!ids.includes(id)) ids.push(id); };
-  (state.routines||[]).forEach(g=>(g.ids||[]).forEach(add));
-  try{ const o=JSON.parse(localStorage.getItem(STORAGE_KEY+"_todo_order")||"[]"); if(Array.isArray(o)) o.forEach(add); }catch(_){}
-  const since=addDays(todayStr(),-30);
-  Object.keys(state.todos||{}).forEach(d=>{ if(d>=since) Object.keys(state.todos[d]||{}).forEach(add); });
-  if(!ids.length) return 0;
-  // 種類は記録から推測（区間がある＝タイマー・複数回、開始時刻がある＝タイマー）
-  const kindOf=id=>{ let multi=false, timer=false; Object.values(state.todos||{}).forEach(day=>{ const r=day&&day[id]; if(!r) return; if(Array.isArray(r.sessions)&&r.sessions.length) multi=true; if(r.startTime) timer=true; }); return {type:(multi||timer)?"timer":"check", multi}; };
-  const items=getTodoItems();
-  ids.forEach((id,i)=>{ const k=kindOf(id); const it={id,label:`消えたルーティン${ids.length>1?(i+1):""}（名前を入れてください）`,type:k.type,mode:"",modes:[],restored:true}; if(k.multi) it.multi=true; items.push(it); });
-  saveTodoItems();
-  state.lostItemsRecovered=ids.length;
-  return ids.length;
-}
-// バックアップ（health_backup_*.json）からルーティン項目だけを戻す。仮の名前の項目は置き換え、今の一覧に無いものは足す。ほかの項目と記録はさわらない
-function restoreTodoItemsFromBackup(p){
-  const src=p&&Array.isArray(p.todoItems)?p.todoItems:null; if(!src||!src.length) return {err:"このファイルにはルーティン項目が入っていません"};
-  const items=getTodoItems(); let replaced=0, added=0;
-  src.forEach(b=>{ if(!b||!b.id) return; const i=items.findIndex(x=>x.id===b.id);
-    if(i>=0){ if(items[i].restored){ items[i]={...b}; replaced++; } }
-    else { items.push({...b}); added++; } });
-  // バックアップのまとめに入っていて、今のまとめのどこにも無い項目は、同じまとめへ戻す
-  if(Array.isArray(p.routines)){ const inAny=new Set(); (state.routines||[]).forEach(g=>(g.ids||[]).forEach(id=>inAny.add(id)));
-    p.routines.forEach(bg=>{ const g=(state.routines||[]).find(r=>r.key===bg.key); if(!g) return; (bg.ids||[]).forEach(id=>{ if(!inAny.has(id)&&items.some(x=>x.id===id)){ g.ids.push(id); inAny.add(id); } }); });
-    saveRoutines(); }
-  saveTodoItems();
-  return {replaced,added};
 }
 function saveRoutines(){ safeSet(STORAGE_KEY+"_routines",JSON.stringify(state.routines)); }
 // 既存ユーザーに「朝歯磨き（着替えの後）」「夜歯磨き（日記の後）」を一度だけ補完する移行。
@@ -1068,7 +1032,6 @@ function loadStorage(){
     _todoItemsLoaded=true;
     // ⚠ ルーティン項目（_todoitems）を読み込んだ「後」に行うこと。読む前に getTodoItems() を保存すると既定の項目で上書きしてしまう（v15.24の不具合）
     migrateRoutineModes(); // まとめの「表示するモード」を補完
-    try{ recoverLostTodoItems(); }catch(_){}
     const smg=localStorage.getItem(STORAGE_KEY+"_selfmodelog");
     if(smg){try{const a=JSON.parse(smg); if(Array.isArray(a))state.selfModeLog=a;}catch{}}
     const scc=localStorage.getItem(STORAGE_KEY+"_selfchecks");
@@ -8664,28 +8627,6 @@ function renderRoutinePanel(){
   card.appendChild(div({style:{fontSize:"14px",fontWeight:700,color:"#e2e8f0",marginBottom:"4px"}},"⚙ ルーティン設定"));
   card.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"12px",lineHeight:1.6}},
     "毎日のルーティン項目を編集できます。名前・種類（チェック/タイマー）・並び順・所属グループ（実際列でまとめる先）を変更、追加・削除も可能です。項目ごとに「表示するモード」を選ぶと、そのモードの画面に表示され、チェック・時間記録・内容の入力ができます。"));
-  // ⚠ v15.24 の不具合で消えた項目の案内（仮の名前の項目があるあいだ出す）
-  { const lost=getTodoItems().filter(x=>x.restored);
-    if(lost.length){
-      const w=div({style:{padding:"10px 12px",borderRadius:"10px",background:"#f973160f",border:"1px solid #f9731666",marginBottom:"12px"}}); w.setAttribute('data-lostitems',String(lost.length));
-      w.appendChild(div({style:{fontSize:"12px",fontWeight:700,color:"#fb923c",marginBottom:"4px"}},`⚠ 消えたルーティンを ${lost.length}件 戻しました`));
-      w.appendChild(div({style:{fontSize:"11px",color:"#cbd5e1",lineHeight:1.7,marginBottom:"8px"}},
-        "前の版（v15.24）の不具合で、アプリで追加したルーティンが消えていました。記録・まとめ・並び順は残っていたので、仮の名前で戻しています。下の「消えたルーティン…」の名前を入れ直してください（種類・表示するモードも確認してください）。バックアップファイル（health_backup_….json）があれば、名前ごと戻せます。"));
-      // スマホ（特にホーム画面のアプリ）は、隠した入力欄をボタンから click() しても開かないことがあるので、
-      // 「データを読込」と同じく label で包んで、タップがそのまま入力欄に届くようにする
-      const fi=document.createElement('input'); fi.type='file'; fi.accept='.json'; fi.style.display='none'; fi.setAttribute('data-lostfile','1');
-      fi.addEventListener('change',e=>{ const f=e.target.files&&e.target.files[0]; if(!f) return; const rd=new FileReader();
-        rd.onload=()=>{ try{ const r=restoreTodoItemsFromBackup(JSON.parse(rd.result)); if(r.err){ showToast(`⚠️ ${r.err}`,"#f97316"); return; }
-            showToast(`✅ バックアップから ${r.replaced}件の名前を戻しました${r.added?`（ほかに ${r.added}件 追加）`:""}`,"#22c55e"); render(); }
-          catch(_){ showToast("⚠️ バックアップファイルを読めませんでした","#f97316"); } };
-        rd.readAsText(f); e.target.value=""; });
-      const bb=document.createElement('label');
-      bb.style.cssText="display:block;width:100%;box-sizing:border-box;padding:10px;border-radius:8px;border:1px solid #38bdf8;background:#0ea5e918;color:#38bdf8;font-size:12px;font-weight:700;cursor:pointer;text-align:center";
-      bb.setAttribute('data-lostrestore','1');
-      bb.appendChild(fi); bb.appendChild(document.createTextNode("📂 バックアップファイルから名前ごと戻す"));
-      w.appendChild(bb);
-      card.appendChild(w);
-    } }
   const groupOf=id=>{const g=(state.routines||[]).find(r=>(r.ids||[]).includes(id));return g?g.key:"";};
   const items=getOrderedTodoItems();
   items.forEach((item,i)=>{
@@ -8697,7 +8638,7 @@ function renderRoutinePanel(){
     moveCol.appendChild(mkMove("▲",-1)); moveCol.appendChild(mkMove("▼",1)); r1.appendChild(moveCol);
     // 名前
     const li=document.createElement('input');li.type='text';li.value=item.label;li.style.cssText="flex:1;min-width:0;padding:6px 8px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#e2e8f0;font-size:13px;font-family:inherit";
-    li.addEventListener('change',(()=>{const id=item.id;return e=>{ const v=e.target.value.trim(); if(v){ getTodoItems().forEach(x=>{if(x.id===id){ x.label=v; delete x.restored; }}); saveTodoItems(); } render(); };})());
+    li.addEventListener('change',(()=>{const id=item.id;return e=>{ const v=e.target.value.trim(); if(v){ getTodoItems().forEach(x=>{if(x.id===id){ x.label=v; }}); saveTodoItems(); } render(); };})());
     r1.appendChild(li);
     // 削除
     const del=btn({style:{padding:"6px 8px",background:"transparent",border:"1px solid #7f1d1d",borderRadius:"6px",color:"#f87171",fontSize:"12px",cursor:"pointer",flexShrink:0}},"🗑");
@@ -19035,7 +18976,6 @@ window.addEventListener('pagehide',()=>{try{flushStorage();}catch(_){}});
 document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='hidden'){ try{flushStorage();}catch(_){}} });
 render();
 _appReady=true;   // ここから先のモード切替は「本人の操作」なのでAlexaを鳴らしてよい
-if(state.lostItemsRecovered) setTimeout(()=>showToast(`⚠ 消えたルーティンを${state.lostItemsRecovered}件 戻しました。設定→ルーティン設定で名前を入れ直してください`,"#f97316"),1200);
 setTimeout(()=>{ try{ alexaMaybeSyncPlan(); }catch(_){} },2500);   // 🔊 鳴らす予約をサーバへ（変わっていなければ送らない）
 applyFontScale(); // 保存済みの文字サイズを適用
 document.title="体調管理 v"+APP_VERSION;
