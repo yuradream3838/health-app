@@ -247,7 +247,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.40"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.41"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -3599,7 +3599,9 @@ function openFoodRecord(){ state.viewDate=activeDay(); state.foodSelected=[...(g
 // 状態は state.medTimer＝{endAt, mins}。残りは1秒ごとに #med-remaining だけ書き換える。
 const MED_MINS=[3,5,10];
 let _medTick=null, _medWake=null, _medAudio=null;
-function medVibrate(pattern){ try{ if(navigator.vibrate) return navigator.vibrate(pattern); }catch(_){} return false; }
+// タイマーの振動（💓脈拍の計測と🧘瞑想で同じもの）：始まり＝短く1回、終わり＝短く2回。振動できない端末では false
+const VIBE_START=150, VIBE_END=[120,80,120];
+function timerVibrate(pattern){ try{ if(navigator.vibrate) return navigator.vibrate(pattern); }catch(_){} return false; }
 function medChime(){
   try{ const ac=_medAudio; if(!ac) return; const t=ac.currentTime;
     [0,0.9,1.8].forEach(d=>{ const o=ac.createOscillator(), g=ac.createGain(); o.type='sine'; o.frequency.value=660;
@@ -3611,14 +3613,14 @@ function medStart(mins){
   // 音はタップした時に用意しておかないと、あとで鳴らせない（ブラウザの決まり）
   try{ if(!_medAudio){ const AC=window.AudioContext||window.webkitAudioContext; if(AC) _medAudio=new AC(); } if(_medAudio&&_medAudio.state==='suspended') _medAudio.resume(); }catch(_){}
   state.medTimer={endAt:Date.now()+mins*60000, mins};
-  medVibrate(80);
+  timerVibrate(VIBE_START);
   try{ if(navigator.wakeLock&&navigator.wakeLock.request) navigator.wakeLock.request('screen').then(w=>{ _medWake=w; }).catch(()=>{}); }catch(_){}
   medEnsureTick(); render();
 }
 function medStop(){ state.medTimer=null; if(_medTick){ clearInterval(_medTick); _medTick=null; } try{ if(_medWake){ _medWake.release(); _medWake=null; } }catch(_){} }
 function medFinish(){
   const m=state.medTimer&&state.medTimer.mins; medStop();
-  const vib=medVibrate([500,250,500,250,500]);
+  const vib=timerVibrate(VIBE_END);
   if(!vib) medChime();                                   // 振動できない端末（iPhone など）は音で
   showToast(`🧘 ${m||""}分の瞑想おわり。ゆっくり目を開けよう`,"#14b8a6"); render();
 }
@@ -4080,8 +4082,8 @@ function pulseEnsureTick(){
   _pulseTick=setInterval(()=>{
     const pt=state.pulseTimer; if(!pt||pt.phase==='enter'){ clearInterval(_pulseTick); _pulseTick=null; return; }
     const now=Date.now(), ph=pulsePhaseAt(pt,now);
-    if(ph!==pt.phase){ pt.phase=ph; if(ph==='run'){ try{ navigator.vibrate&&navigator.vibrate(150); }catch(_){} }
-      if(ph==='enter'){ pt.n=pt.taps||null; try{ navigator.vibrate&&navigator.vibrate([120,80,120]); }catch(_){} }
+    if(ph!==pt.phase){ pt.phase=ph; if(ph==='run'){ timerVibrate(VIBE_START); }
+      if(ph==='enter'){ pt.n=pt.taps||null; timerVibrate(VIBE_END); }
       render(); return; }
     const el=document.getElementById('pulse-timer-num'); if(!el) return;
     const e=(now-pt.t0)/1000; el.textContent=String(ph==='count'?Math.ceil(PULSE_COUNTDOWN-e):Math.ceil(PULSE_COUNTDOWN+PULSE_SECS-e));
