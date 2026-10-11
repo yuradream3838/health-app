@@ -247,7 +247,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.42"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.43"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -647,6 +647,7 @@ const DRINK_TYPES = [
   {id:"chuhai",  label:"チューハイ", emoji:"🍹",pct:5,  ml:350},
   {id:"strong",  label:"ストロング", emoji:"⚡",pct:9,  ml:500},
   {id:"plum",    label:"梅酒",       emoji:"🍸",pct:12, ml:90 },
+  {id:"cocktail_s",label:"ショートカクテル",emoji:"🍸",pct:25, ml:90 },   // マティーニ・マルガリータなど（グラス1杯≒90ml・25%）
 ];
 
 const FOOD_CATS = [
