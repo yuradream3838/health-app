@@ -247,7 +247,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.41"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.42"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -3632,6 +3632,24 @@ function medEnsureTick(){
     const el=document.getElementById('med-remaining'); if(el){ const s=Math.ceil(left/1000); el.textContent=`${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`; }
   },250);
 }
+// 🍺 その日に飲んだものの一覧（種類・量・度数・時刻＋飲み終わり／削除）。🍶飲みモードと🍻外飲モードで同じものを使う。無ければ null
+function drinkRecordList(vd){
+  const drinkList=(getDaily(vd).drinks||[]).map(dr=>({...dr,drinkType:resolveDT(dr)}));
+  if(!drinkList.length) return null;
+  const list=div({style:{marginTop:"8px",display:"flex",flexDirection:"column",gap:"4px"}});
+  drinkList.forEach(dr=>{ const pct=dr.drinkType.pct, gG=Math.round(pureAlcohol(dr.ml,pct)); const hasEnd=dr.endHour!=null;
+    const row=div({style:{display:"flex",alignItems:"center",gap:"7px",padding:"6px 8px",borderRadius:"8px",background:"#ffffff08"}});
+    row.appendChild(div({style:{fontSize:"15px"}},dr.drinkType.emoji||"🍺"));
+    row.appendChild(div({style:{flex:1,minWidth:0,fontSize:"12px",color:"#f0e9dd"}},[div({},`${dr.drinkType.label} ${dr.ml}ml・${pct}%`),div({style:{fontSize:"9px",color:"#a89e8c"}},`${hhmm(dr.hour,dr.min||0)}${hasEnd?`〜${hhmm(dr.endHour,dr.endMin||0)}`:""}・純ｱﾙｺｰﾙ${gG}g`)]));
+    const eb=btn({style:{padding:"5px 8px",borderRadius:"7px",border:`1px solid ${hasEnd?"#86efac55":"#ffffff22"}`,background:hasEnd?"#22c55e18":"transparent",color:hasEnd?"#86efac":"#cdc3b2",fontSize:"11px",cursor:"pointer",fontFamily:"inherit",flexShrink:0},title:hasEnd?"飲み終わりを取消":"飲み終わりの時刻を記録"},hasEnd?"✓終":"🍵終");
+    eb.addEventListener('click',(()=>{const uid=dr.uid,he=hasEnd;return()=>{ he?clearEnd(vd,uid):recordEnd(vd,uid); };})());
+    row.appendChild(eb);
+    const ce=btn({style:{padding:"5px 8px",borderRadius:"7px",border:"1px solid #ffffff22",background:"transparent",color:"#e0a0a0",fontSize:"11px",cursor:"pointer",fontFamily:"inherit",flexShrink:0}},"削除");
+    ce.addEventListener('click',(()=>{const uid=dr.uid;return()=>{ const d=getDaily(vd); setDaily(vd,{drinks:(d.drinks||[]).filter(x=>x.uid!==uid)}); showToast("削除しました","#a5b4fc"); render(); };})());
+    row.appendChild(ce); list.appendChild(row);
+  });
+  return list;
+}
 function meditationTimerCard(color,peek){
   const T=state.medTimer;
   const box=div({style:{background:'#ffffff0d',border:'1px solid #ffffff14',borderRadius:'12px',padding:'11px 13px',marginBottom:'10px',textAlign:'center'}}); box.setAttribute('data-medtimer',T?'run':'idle');
@@ -3899,6 +3917,9 @@ function renderLifeScreen(){
       inner.appendChild(box); }
     { const ab=lifeActionBtn('🍺 飲み物を追加（種類・量・度数・時刻）',def.color,()=>openAddDrink(todayStr()!==activeDay()));
       inner.appendChild(peek?peekDisabled(ab):ab); }
+    { const dl=drinkRecordList(vd);                       // 飲んだものの一覧（🍶飲みモードと同じ）
+      if(dl){ const w=div({style:{background:'#ffffff0d',border:'1px solid #ffffff14',borderRadius:'11px',padding:'9px 10px',marginBottom:'10px'}}); w.setAttribute('data-drinkoutlist','1');
+        w.appendChild(div({style:{fontSize:'11px',color:'#94a3b8'}},'🍺 飲んだもの')); w.appendChild(dl); inner.appendChild(w); } }
     inner.appendChild(lifeActionBtn('💧 水を1杯 飲んだ（+0.2L）',def.color,()=>addWaterGlass(vd)));
     addAssigned();
   } else if(c==='social'){
@@ -4362,23 +4383,8 @@ function renderSelfMode(){
     const addBtn=btn({style:{width:"100%",padding:"11px",borderRadius:"10px",border:`1px solid ${M.accent}66`,background:M.accent+"1a",color:"#f0e9dd",fontSize:"14px",fontWeight:700,cursor:"pointer",fontFamily:"inherit"}},"＋ 飲み物を追加（種類・量・度数・時刻）");
     addBtn.addEventListener('click',()=>openAddDrink(todayStr()!==activeDay()));
     recWrap.appendChild(addBtn);
-    // 記録済みの一覧（種類・度数・時刻）＋各行の削除
-    const drinkList=(getDaily(vd).drinks||[]).map(dr=>({...dr,drinkType:resolveDT(dr)}));
-    if(drinkList.length){
-      const list=div({style:{marginTop:"8px",display:"flex",flexDirection:"column",gap:"4px"}});
-      drinkList.forEach(dr=>{ const pct=dr.drinkType.pct, gG=Math.round(pureAlcohol(dr.ml,pct)); const hasEnd=dr.endHour!=null;
-        const row=div({style:{display:"flex",alignItems:"center",gap:"7px",padding:"6px 8px",borderRadius:"8px",background:"#ffffff08"}});
-        row.appendChild(div({style:{fontSize:"15px"}},dr.drinkType.emoji||"🍺"));
-        row.appendChild(div({style:{flex:1,minWidth:0,fontSize:"12px",color:"#f0e9dd"}},[div({},`${dr.drinkType.label} ${dr.ml}ml・${pct}%`),div({style:{fontSize:"9px",color:"#a89e8c"}},`${hhmm(dr.hour,dr.min||0)}${hasEnd?`〜${hhmm(dr.endHour,dr.endMin||0)}`:""}・純ｱﾙｺｰﾙ${gG}g`)]));
-        const eb=btn({style:{padding:"5px 8px",borderRadius:"7px",border:`1px solid ${hasEnd?"#86efac55":"#ffffff22"}`,background:hasEnd?"#22c55e18":"transparent",color:hasEnd?"#86efac":"#cdc3b2",fontSize:"11px",cursor:"pointer",fontFamily:"inherit",flexShrink:0},title:hasEnd?"飲み終わりを取消":"飲み終わりの時刻を記録"},hasEnd?"✓終":"🍵終");
-        eb.addEventListener('click',(()=>{const uid=dr.uid,he=hasEnd;return()=>{ he?clearEnd(vd,uid):recordEnd(vd,uid); };})());
-        row.appendChild(eb);
-        const ce=btn({style:{padding:"5px 8px",borderRadius:"7px",border:"1px solid #ffffff22",background:"transparent",color:"#e0a0a0",fontSize:"11px",cursor:"pointer",fontFamily:"inherit",flexShrink:0}},"削除");
-        ce.addEventListener('click',(()=>{const uid=dr.uid;return()=>{ const d=getDaily(vd); setDaily(vd,{drinks:(d.drinks||[]).filter(x=>x.uid!==uid)}); showToast("削除しました","#a5b4fc"); render(); };})());
-        row.appendChild(ce); list.appendChild(row);
-      });
-      recWrap.appendChild(list);
-    }
+    // 記録済みの一覧（種類・度数・時刻）＋各行の飲み終わり・削除（🍻外飲モードと共通）
+    { const dl=drinkRecordList(vd); if(dl) recWrap.appendChild(dl); }
     inner.appendChild(recWrap);
     // ディレイタイマー
     const delayActive=state.selfDelayUntil&&state.selfDelayUntil>Date.now();
