@@ -247,7 +247,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.43"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.44"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -294,6 +294,7 @@ const SAVE_TARGETS=[
   ["saveChangePlan","changePlan","📋 変化の計画"],
   ["saveWidgetSections","widgetSections","🧩 ウィジェットの表示"],
   ["saveFoodCats",["foodCats","foodEmoji"],"🍽 食べたものの一覧"],
+  ["saveFoodNutri","foodNutri","🍽 品目の栄養"],
   ["saveAnaChanges","anaChanges","🔬 変えたことの記録"],
   ["saveModeInvestCats","modeInvestCats","💰 モードの未来投資"],
   ["saveWidgetOrder","widgetSecOrder","🧩 ウィジェットの並び"],
@@ -1066,6 +1067,8 @@ function loadStorage(){
       if(ch) saveModeInvestCats(); localStorage.setItem(STORAGE_KEY+"_modeinvestseed",JSON.stringify(done)); }catch(_){}
     const ach=localStorage.getItem(STORAGE_KEY+"_anachanges");
     if(ach){try{const a=JSON.parse(ach); if(Array.isArray(a))state.anaChanges=a;}catch{}}
+    const fnt=localStorage.getItem(STORAGE_KEY+"_foodnutri");
+    if(fnt){try{const o=JSON.parse(fnt); if(o&&typeof o==="object")state.foodNutri=o;}catch{}}
     const fct=localStorage.getItem(STORAGE_KEY+"_foodcats");
     if(fct){try{const o=JSON.parse(fct); if(o&&Array.isArray(o.cats))state.foodCats=o.cats; if(o&&o.emoji&&typeof o.emoji==="object")state.foodEmoji=o.emoji;}catch{}}
     const mlg=localStorage.getItem(STORAGE_KEY+"_modelog");
@@ -1784,6 +1787,7 @@ const WIDGET_SECTIONS=[
   {k:'decl',      l:'✍️ わたしの宣言'},
   {k:'sched',     l:'📅 今日の予定'},
   {k:'quick',     l:'⚡ クイック記録'},
+  {k:'nutri',     l:'🍽 水分・栄養（今の目安）'},
   {k:'ifthen',    l:'🔀 今のプラン（if-then）'},
   {k:'invest',    l:'💰 未来投資・踏みとどまる'},
   {k:'nextdrink', l:'🍺 次に飲みに行く予定'},
@@ -3871,6 +3875,7 @@ function renderLifeScreen(){
     const foodN=(getDaily(vd).foods||[]).length;
     inner.appendChild(lifeActionBtn(`🍽 食べたものを記録${foodN?`（${foodN}品）`:''}`,def.color,openFoodRecord));
     inner.appendChild(lifeActionBtn('💧 水を1杯 飲んだ（+0.2L）',def.color,()=>addWaterGlass(vd)));
+    inner.appendChild(nutriCard(vd,{next:true,plain:true}));
   } else if(c==='rest'){
     if(state.lifeBreathing) inner.appendChild(breathingGuide(def.color));
     inner.appendChild(lifeActionBtn(state.lifeBreathing?'🫁 呼吸をやめる':'🫁 深呼吸する（4-7-8）',def.color,()=>{ state.lifeBreathing=!state.lifeBreathing; render(); }));
@@ -3909,6 +3914,7 @@ function renderLifeScreen(){
     const foodN=(getDaily(vd).foods||[]).length;
     inner.appendChild(lifeActionBtn(`🍽 食べたものを記録${foodN?`（${foodN}品）`:''}`,def.color,openFoodRecord));
     inner.appendChild(lifeActionBtn('💧 水を1杯 飲んだ（+0.2L）',def.color,()=>addWaterGlass(vd)));
+    inner.appendChild(nutriCard(vd,{next:true,plain:true}));
   } else if(c==='drinkout'){
     const g=Math.round(pureAlcoholG(vd)), lim=alcLimitDay(), dN=(getDaily(vd).drinks||[]).length, water=getDaily(vd).water||0;
     inner.appendChild(div({style:{textAlign:'center',fontSize:'13px',color:'#cbd5e1',lineHeight:1.7,marginBottom:'10px',whiteSpace:'pre-line'}},'外で飲む時間。\n水をはさんで、帰る時間を決めておこう。'));
@@ -4874,6 +4880,7 @@ function renderWidgetView(vd,ds){
   // ── 追加オプション（既定は非表示・⚙️で選べる）──
   if(wSecOn('sleep')) secNodes.sleep=sleepRhythmCard(false); // 🌙 就寝リズム
   if(wSecOn('urge')){ const u=urgeTriggerCard(); if(u)secNodes.urge=u; } // 🔎 飲みに行きたくなる引き金
+  if(wSecOn('nutri')){ try{ secNodes.nutri=nutriCard(vd); }catch(_){} }   // 🍽 水分・栄養（今の目安）
   if(wSecOn('alcgauge')){ const g=alcGaugeMiniCard(vd); if(g)secNodes.alcgauge=g; } // 🍺 純アルコール量
   if(wSecOn('ruler')) secNodes.ruler=motivationRulerCard(vd); // 📏 動機のものさし
 
@@ -6881,9 +6888,10 @@ function renameFoodItem(oldName,newName,past){
   const em=state.foodEmoji||(state.foodEmoji={});
   if(em[oldName]){ em[n]=em[oldName]; delete em[oldName]; }
   else if(FOOD_EMOJI[oldName]&&!FOOD_EMOJI[n]) em[n]=FOOD_EMOJI[oldName];   // 絵文字は名前についていく
+  { const nt=foodNutriOf(oldName); if(nt&&!foodNutriOf(n)){ getFoodNutri()[n]={...nt}; delete getFoodNutri()[oldName]; saveFoodNutri(); } }   // 栄養の値も名前についていく
   if(past){
     state.dailies=state.dailies.map(d=>Array.isArray(d.foods)&&d.foods.includes(oldName)
-      ?{...d,foods:[...new Set(d.foods.map(f=>f===oldName?n:f))]}:d);
+      ?{...d,foods:[...new Set(d.foods.map(f=>f===oldName?n:f))],...(Array.isArray(d.foodLog)?{foodLog:d.foodLog.map(e=>e.name===oldName?{...e,name:n}:e)}:{})}:d);
     saveStorage();
   }
   state.foodSelected=[...new Set((state.foodSelected||[]).map(f=>f===oldName?n:f))];
@@ -6940,6 +6948,141 @@ function foodAddRow(cat,selectToo){
   row.appendChild(btn({style:{flexShrink:0,padding:"6px 12px",borderRadius:"7px",border:"none",background:"#0ea5e9",color:"#fff",fontSize:"12px",fontWeight:600,cursor:"pointer",fontFamily:"inherit"},onClick:go},"追加"));
   return row;
 }
+// ═══════════════════════════════════════════════════
+// 🍽 水分・栄養の「今の目安」（v15.44）
+// ═══════════════════════════════════════════════════
+// ① 1日の目標は体重から自動：水分 30ml/kg（トレーニングした日は＋0.5L/時間）・たんぱく質 1.0g/kg（トレーニングした日は1.4g）・
+//    1日のエネルギー＝基礎代謝×1.5（基礎代謝が無ければ 体重×22）→ 脂質25%・炭水化物55%・食物繊維は 21g（女性18g）。
+// ② 品目ごとに「1人前あたり」の値を持つ（FOOD_NUTRI＝最初からの品目の目安。食品成分表をもとにした概算。state.foodNutri で上書き）。
+// ③ 食べたものは食事ごとに「いつ・何を・何人前」を日次の foodLog=[{uid,name,qty,t}] に残す（t＝その日の0時からの分。0時を過ぎた夜は1440以上）。
+//    今までの foods（品目名の一覧）も今までどおり残すので、古い版・分析・バックアップはそのまま使える。
+// ④ 今の目安：水分は起床〜就寝目標の1.5時間前にならす（起床時に0.2L）。栄養は食事ごとに配る（朝25%・昼35%・間食10%・夜30%）。
+// 値：p＝たんぱく質 f＝脂質 c＝炭水化物 fib＝食物繊維（g）・w＝水分（ml・飲み物だけ）・u＝1人前の単位
+const FOOD_NUTRI={
+  "玄米":{u:"茶碗1杯(150g)",p:4.2,f:1.5,c:53,fib:2.1}, "そば":{u:"1人前(ゆで200g)",p:9.6,f:2,c:52,fib:4}, "小麦":{u:"食パン1枚(60g)",p:5.3,f:2.5,c:28,fib:1.4},
+  "納豆":{u:"1パック(45g)",p:7.4,f:4.5,c:5.4,fib:3}, "豆腐":{u:"1/3丁(100g)",p:7,f:4.9,c:1.5,fib:0.4}, "鶏肉":{u:"100g",p:23,f:2,c:0,fib:0},
+  "豚肉":{u:"100g",p:19,f:19,c:0.2,fib:0}, "牛肉":{u:"100g",p:20,f:10,c:0.4,fib:0}, "レバー":{u:"50g",p:9.5,f:1.6,c:0.3,fib:0}, "卵":{u:"1個(50g)",p:6.1,f:5.1,c:0.2,fib:0},
+  "青魚":{u:"1切れ(80g)",p:16,f:13,c:0.2,fib:0}, "カツオ":{u:"刺身80g",p:20,f:0.4,c:0.1,fib:0}, "牡蠣":{u:"5個(75g)",p:5,f:1.7,c:3.7,fib:0},
+  "あさり・しじみ":{u:"みそ汁1杯分",p:1.8,f:0.1,c:0.1,fib:0}, "タコ・イカ":{u:"80g",p:14,f:0.6,c:0.1,fib:0}, "旬の魚":{u:"1切れ(80g)",p:16,f:4,c:0.1,fib:0},
+  "めかぶ":{u:"1パック(40g)",p:0.4,f:0.2,c:1.4,fib:1.4}, "ブロッコリー":{u:"小鉢(70g)",p:3,f:0.4,c:3.7,fib:3.6}, "ほうれん草":{u:"小鉢(70g)",p:1.5,f:0.3,c:2.2,fib:2},
+  "玉ねぎ":{u:"1/4個(50g)",p:0.5,f:0,c:4.4,fib:0.8}, "オクラ":{u:"5本(50g)",p:1,f:0.1,c:3.3,fib:2.5}, "ブロッコリースプラウト":{u:"1パック(50g)",p:1,f:0.3,c:1.3,fib:0.9},
+  "トマト":{u:"1個(150g)",p:1,f:0.2,c:7,fib:1.5}, "アボカド":{u:"1/2個(70g)",p:1.5,f:12,c:4.4,fib:3.9}, "旬の野菜":{u:"小鉢(70g)",p:1,f:0.1,c:4,fib:2},
+  "きのこ":{u:"1パック(100g)",p:2.7,f:0.2,c:5,fib:3.5}, "芋類":{u:"100g",p:1.2,f:0.2,c:33,fib:2.8},
+  "ミックスベリー":{u:"100g",p:0.8,f:0.2,c:10,fib:4}, "ぶどう":{u:"100g",p:0.4,f:0.1,c:16,fib:0.5}, "バナナ":{u:"1本(100g)",p:1.1,f:0.2,c:22.5,fib:1.1},
+  "なつめ":{u:"3個(10g)",p:0.4,f:0,c:7,fib:1.3}, "旬の果物":{u:"100g",p:0.6,f:0.1,c:12,fib:1.5},
+  "ミックスナッツ":{u:"ひとつかみ(25g)",p:5,f:13,c:4,fib:2}, "ダークチョコレート":{u:"3枚(15g)",p:1.5,f:6,c:5,fib:1.6}, "蒟蒻畑":{u:"1個(25g)",p:0,f:0,c:6,fib:0.2},
+  "ポップコーン":{u:"1袋(30g)",p:3,f:7,c:17,fib:3}, "ガム":{u:"1粒",p:0,f:0,c:0,fib:0},
+  "麦茶":{u:"1杯(200ml)",p:0,f:0,c:0,fib:0,w:200}, "ルイボスティー":{u:"1杯(200ml)",p:0,f:0,c:0,fib:0,w:200}, "豆乳":{u:"1杯(200ml)",p:7,f:7,c:6,fib:0.4,w:180},
+  "コーヒー":{u:"1杯(150ml)",p:0.3,f:0,c:1,fib:0,w:150},
+  "MCTオイル":{u:"大さじ1(14g)",p:0,f:14,c:0,fib:0}, "ヘンプシード":{u:"大さじ1(10g)",p:3,f:5,c:0.9,fib:0.4}, "にんにく":{u:"1かけ(5g)",p:0.3,f:0,c:1.4,fib:0.3},
+  "味噌":{u:"みそ汁1杯分(18g)",p:2.2,f:1.1,c:3.9,fib:0.9}, "オリーブオイル":{u:"大さじ1(12g)",p:0,f:12,c:0,fib:0},
+  "乳酸菌飲料":{u:"1本(65ml)",p:0.8,f:0,c:11,fib:0}, "ヨーグルト":{u:"1個(100g)",p:3.6,f:3,c:5,fib:0}, "チーズ":{u:"1切れ(20g)",p:4.5,f:5.2,c:0.3,fib:0},
+  "クレアチン":{u:"1回",p:0,f:0,c:0,fib:0}, "Q&P KOWA ヒーリング":{u:"1回",p:0,f:0,c:0,fib:0}, "亜鉛マルチビタミン":{u:"1回",p:0,f:0,c:0,fib:0}, "ノコギリヤシ":{u:"1回",p:0,f:0,c:0,fib:0},
+};
+const NUTRI_KEYS=[["w","💧","水分","ml"],["p","🥩","たんぱく質","g"],["f","🧈","脂質","g"],["c","🍚","炭水化物","g"],["fib","🥬","食物繊維","g"]];
+function getFoodNutri(){ if(!state.foodNutri||typeof state.foodNutri!=="object") state.foodNutri={}; return state.foodNutri; }
+function saveFoodNutri(){ safeSet(STORAGE_KEY+"_foodnutri",JSON.stringify(getFoodNutri())); }
+// 1人前の値（自分で入れた値 → 最初からの目安 → なし＝未設定）
+function foodNutriOf(name){ const o=getFoodNutri()[name]; if(o&&typeof o==="object") return o; return FOOD_NUTRI[name]||null; }
+function setFoodNutri(name,patch){ const cur={...(foodNutriOf(name)||{u:"1人前",p:0,f:0,c:0,fib:0})}; getFoodNutri()[name]={...cur,...patch}; saveFoodNutri(); }
+// 体重（体組成の最新 → 飲酒の設定の体重 → 60kg）と基礎代謝
+function nutriBody(){ const bc=latestBodyComp(); const w=(bc&&bc.weight>0)?bc.weight:(parseFloat(state.bacWeight)>0?parseFloat(state.bacWeight):null);
+  const weight=w||60; const bmr=(bc&&bc.bmr>0)?bc.bmr:weight*22; return {weight,bmr,weightKnown:!!w,bmrKnown:!!(bc&&bc.bmr>0)}; }
+// その日のトレーニングの時間（🏋️トレーニングモードの時間）
+function nutriTrainHours(vd){ try{ return modeSegmentsForDay(vd).filter(x=>x.key==='train').reduce((a,x)=>a+(x.endMin-x.startMin),0)/60; }catch(_){ return 0; } }
+function nutriTargets(vd){
+  const B=nutriBody(), th=nutriTrainHours(vd), trained=th>=0.25, kcal=B.bmr*1.5;
+  return { w:Math.round(B.weight*30+th*500), p:Math.round(B.weight*(trained?1.4:1.0)), f:Math.round(kcal*0.25/9), c:Math.round(kcal*0.55/4),
+    fib:bacSexV()==="f"?18:21, kcal:Math.round(kcal), body:B, trained, trainH:th };
+}
+// 食べたもの（foodLog）と💧ボタンの水から、とった量を足す。値が無い品目は数えず unknown に入れる
+function nutriIntake(vd,uptoMin){
+  const d=getDaily(vd), sum={w:Math.round((d.water||0)*1000),p:0,f:0,c:0,fib:0}, unknown=new Set();
+  (d.foodLog||[]).forEach(e=>{ if(!e||!e.name) return; if(uptoMin!=null&&e.t>uptoMin) return; const n=foodNutriOf(e.name); const q=+e.qty||0;
+    if(!n){ unknown.add(e.name); return; } ["w","p","f","c","fib"].forEach(k=>{ sum[k]+=(+n[k]||0)*q; }); });
+  ["p","f","c","fib"].forEach(k=>sum[k]=Math.round(sum[k]*10)/10); sum.w=Math.round(sum.w);
+  return {...sum, unknown:[...unknown]};
+}
+// その日の「0時からの分」（0時を過ぎた夜は1440以上）
+function nutriNowMin(vd,now){ return Math.round(((now||Date.now())-parseDS(vd).getTime())/60000); }
+// 起床・就寝目標（分）と食事の時刻
+function nutriDayFrame(vd){
+  const d=getDaily(vd); const wake=d.wakeTime!=null?Math.round(d.wakeTime*60):7*60;
+  let bed=null; try{ bed=bedTargetNightMin(vd); }catch(_){} if(bed==null) bed=23*60;
+  const sm={}; try{ scheduledMealsForDay(vd).forEach(m=>{ sm[m.key]=m.startMin; }); }catch(_){}
+  const bf=sm.breakfast!=null?sm.breakfast:wake+60, ln=sm.lunch!=null?sm.lunch:12*60+30, dn=sm.dinner!=null?sm.dinner:19*60;
+  const meals=[{key:"breakfast",label:"朝食",t:bf,share:0.25},{key:"lunch",label:"昼食",t:ln,share:0.35},{key:"snack",label:"間食",t:Math.round((ln+dn)/2),share:0.10},{key:"dinner",label:"夕食",t:dn,share:0.30}]
+    .sort((a,b)=>a.t-b.t);
+  return {wake,bed,meals};
+}
+// 今の目安：水分（ml）と栄養（1日の何割か＋次の食事）
+function nutriPace(vd,now){
+  const F=nutriDayFrame(vd), m=nutriNowMin(vd,now), T=nutriTargets(vd);
+  const wEnd=Math.max(F.wake+60,F.bed-90), first=Math.min(200,T.w);
+  let wNow; if(m<F.wake) wNow=0; else if(m>=wEnd) wNow=T.w; else wNow=first+(T.w-first)*(m-F.wake)/(wEnd-F.wake);
+  let frac=0; F.meals.forEach(x=>{ if(m>=x.t) frac+=x.share; });
+  const next=F.meals.find(x=>x.t>m)||null;
+  return {m, wNow:Math.round(wNow), frac:Math.min(1,frac), next, frame:F, T};
+}
+// 記録画面の下書き（その日の foodLog の写し）。選んだ品目ごとに「何人前・何時」を持つ
+function foodDraft(vd){ if(!state.foodLogDraft||state.foodLogDraft.vd!==vd) state.foodLogDraft={vd,list:JSON.parse(JSON.stringify(getDaily(vd).foodLog||[]))}; return state.foodLogDraft.list; }
+function newFoodLogUid(list){ return Math.max(Date.now(),...(list||[]).map(x=>(+x.uid||0)+1)); }
+function foodDraftAdd(vd,name){ const L=foodDraft(vd); L.push({uid:newFoodLogUid(L),name,qty:1,t:Math.max(0,nutriNowMin(vd))}); }
+function fmtFoodT(t){ const m=((t%1440)+1440)%1440; return hhmm(Math.floor(m/60),m%60); }
+// "HH:MM" → その日の0時からの分（4時より前は、その日の夜＝0時を過ぎた分として1440を足す）
+function parseFoodT(v){ const q=String(v||"").split(":"); const h=+q[0], mi=+q[1]; if(isNaN(h)||isNaN(mi)) return null; const x=h*60+mi; return x<240?x+1440:x; }
+function nutriSumOf(list){ const s={w:0,p:0,f:0,c:0,fib:0}; let unknown=0; (list||[]).forEach(e=>{ const n=foodNutriOf(e.name); if(!n){ unknown++; return; } ["w","p","f","c","fib"].forEach(k=>{ s[k]+=(+n[k]||0)*(+e.qty||0); }); }); return {...s,unknown}; }
+function fmtNutriLine(s){ return `P ${Math.round(s.p)}g・F ${Math.round(s.f)}g・C ${Math.round(s.c)}g・繊維 ${Math.round(s.fib*10)/10}g${s.w?`・水分 ${Math.round(s.w)}ml`:""}`; }
+// 品目の栄養（1人前あたり）を直す欄
+function foodNutriEditor(item){
+  const n=foodNutriOf(item)||{u:"1人前",p:0,f:0,c:0,fib:0,w:0};
+  const w=div({style:{padding:"7px 8px",margin:"0 0 8px 0",borderRadius:"8px",background:"#0b1220",border:"1px solid #1e3a5f"}}); w.setAttribute('data-foodnutri',item);
+  const inp=(val,ph,width,on,attr)=>{ const i=document.createElement('input'); i.value=val==null?"":String(val); i.placeholder=ph; if(attr) i.setAttribute('data-nutrikey',attr);
+    i.style.cssText=`width:${width};padding:5px 6px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#e2e8f0;font-size:12px;font-family:inherit;box-sizing:border-box`;
+    i.addEventListener('change',e=>on(e.target.value)); return i; };
+  const r1=div({style:{display:"flex",alignItems:"center",gap:"5px",marginBottom:"6px"}});
+  r1.appendChild(span({style:{fontSize:"10px",color:"#94a3b8",flexShrink:0}},"1人前＝")); r1.appendChild(inp(n.u,"単位（例：1パック）","100%",v=>{ setFoodNutri(item,{u:(v||"").trim()||"1人前"}); render(); },"u"));
+  w.appendChild(r1);
+  const g=div({style:{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:"5px"}});
+  [["p","たんぱく質g"],["f","脂質g"],["c","炭水化物g"],["fib","繊維g"],["w","水分ml"]].forEach(([k,l])=>{
+    g.appendChild(div({},[div({style:{fontSize:"9px",color:"#64748b",marginBottom:"2px"}},l),inp(n[k]||0,"0","100%",v=>{ const x=parseFloat(v); setFoodNutri(item,{[k]:isNaN(x)||x<0?0:x}); render(); },k)])); });
+  w.appendChild(g);
+  w.appendChild(div({style:{fontSize:"9px",color:"#475569",marginTop:"5px",lineHeight:1.5}},FOOD_NUTRI[item]&&!getFoodNutri()[item]?"最初から入っている目安の値です（食品成分表をもとにした概算）。直すと自分の値になります。水分は飲み物だけ入れると「飲んだ水分」に足されます":"水分は飲み物だけ入れると「飲んだ水分」に足されます"));
+  return w;
+}
+// 🍽 水分・栄養のカード（ウィジェット・🍚食事・🍽️外食モード）。opts.next＝次の食事の目安も出す
+function nutriCard(vd,opts){
+  opts=opts||{}; const P=nutriPace(vd), T=P.T, I=nutriIntake(vd);
+  const box=div({className:opts.plain?"":"card",style:opts.plain?{background:'#ffffff0d',border:'1px solid #ffffff14',borderRadius:'12px',padding:'11px 13px',marginBottom:'10px'}:{}}); box.setAttribute('data-nutricard','1');
+  box.appendChild(div({style:{display:"flex",justifyContent:"space-between",alignItems:"baseline",gap:"8px",marginBottom:"8px"}},[
+    span({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0"}},"🍽 水分・栄養（今の目安）"),
+    span({style:{fontSize:"10px",color:"#64748b",whiteSpace:"nowrap"}},`${hhmm(Math.floor((((P.m%1440)+1440)%1440)/60),(((P.m%1440)+1440)%1440)%60)} 時点`)]));
+  NUTRI_KEYS.forEach(([k,ic,lab,unit])=>{
+    const tot=T[k]||0, now=k==="w"?P.wNow:Math.round(tot*P.frac), got=I[k]||0;
+    const behind=got<now*0.85, over=k!=="w"&&k!=="p"&&k!=="fib"&&got>tot*1.15;
+    const col=over?"#f87171":behind?"#f59e0b":"#22c55e";
+    const fmt=v=>k==="w"?(v>=1000?`${(v/1000).toFixed(1)}L`:`${Math.round(v)}ml`):`${Math.round(v)}g`;
+    const row=div({style:{marginBottom:"7px"}}); row.setAttribute('data-nutrirow',k);
+    row.appendChild(div({style:{display:"flex",justifyContent:"space-between",fontSize:"11px",marginBottom:"3px",gap:"6px"}},[
+      span({style:{color:"#cbd5e1"}},`${ic} ${lab}`),
+      span({style:{color:col,fontWeight:700,whiteSpace:"nowrap"}},`とった ${fmt(got)}／今の目安 ${fmt(now)}`)]));
+    const bar=div({style:{position:"relative",height:"8px",background:"#0f172a",borderRadius:"5px",overflow:"visible"}});
+    bar.appendChild(div({style:{height:"100%",width:`${Math.min(100,tot?got/tot*100:0)}%`,background:col,borderRadius:"5px"}}));
+    if(tot) bar.appendChild(div({style:{position:"absolute",top:"-3px",bottom:"-3px",left:`calc(${Math.min(100,now/tot*100)}% - 1px)`,width:"2px",background:"#e2e8f0",borderRadius:"1px"}}));   // 今の目安の印
+    row.appendChild(bar);
+    row.appendChild(div({style:{fontSize:"9px",color:"#64748b",marginTop:"2px",textAlign:"right"}},`1日 ${fmt(tot)}`));
+    box.appendChild(row);
+  });
+  if(opts.next && P.next && P.next.t<P.frame.bed){ const x=P.next.share;
+    box.appendChild(div({style:{fontSize:"11px",color:"#a5b4fc",margin:"4px 0 2px",lineHeight:1.6}},`次の${P.next.label}（${fmtFoodT(P.next.t)}ごろ）の目安：P ${Math.round(T.p*x)}g・F ${Math.round(T.f*x)}g・C ${Math.round(T.c*x)}g・繊維 ${Math.round(T.fib*x*10)/10}g`)); }
+  const notes=[];
+  if(I.unknown.length) notes.push(`栄養が未設定の品目（${I.unknown.slice(0,3).join("・")}${I.unknown.length>3?" ほか":""}）は数えていません`);
+  if(!T.body.weightKnown) notes.push("体重が未入力のため 60kg で計算しています（日記→トレーニングの体組成で入れられます）");
+  if(T.trained) notes.push(`🏋️ トレーニング ${Math.round(T.trainH*10)/10}時間ぶん、水分とたんぱく質を多めにしています`);
+  notes.push(`体重 ${T.body.weight}kg から計算（1日のエネルギー ${T.kcal}kcal）。品目の値は目安です`);
+  box.appendChild(div({style:{fontSize:"9px",color:"#475569",lineHeight:1.6,marginTop:"2px"}},notes.join("／")));
+  return box;
+}
 function renderFoodModal(vd){
   const bg=div({className:"modal-bg"});
   const m=div({style:{width:"100%",maxWidth:"600px",margin:"0 auto",background:"#1e293b",borderRadius:"16px 16px 0 0",padding:"16px 0 36px",maxHeight:"88vh",display:"flex",flexDirection:"column"}});
@@ -6960,10 +7103,38 @@ function renderFoodModal(vd){
   ]);
   m.appendChild(hdr);
   if(!edit && state.foodSelected.length>0){
-    const chips=div({style:{padding:"8px 16px",borderBottom:"1px solid #1e3a5f",flexShrink:0,display:"flex",flexWrap:"wrap",gap:"5px"}},
-      state.foodSelected.map(f=>span({style:{fontSize:"11px",padding:"3px 10px",borderRadius:"20px",background:"#0ea5e933",color:"#38bdf8",border:"1px solid #0ea5e955",cursor:"pointer"},onClick:()=>{state.foodSelected=state.foodSelected.filter(x=>x!==f);render();}},`${fe(f)} ${f} ×`))
-    );
-    m.appendChild(chips);
+    // 選んだ品目ごとに「何人前・何時」（同じ品目を2回とったら「＋」でもう1件）
+    const D=foodDraft(state.viewDate);
+    const box=div({style:{padding:"8px 16px",borderBottom:"1px solid #1e3a5f",flexShrink:0,maxHeight:"38vh",overflowY:"auto"}}); box.setAttribute('data-foodlog','1');
+    const mini=(t,fn,attr)=>{ const b=btn({style:{flexShrink:0,minWidth:"26px",padding:"3px 7px",borderRadius:"6px",border:"1px solid #334155",background:"transparent",color:"#cbd5e1",fontSize:"12px",cursor:"pointer",fontFamily:"inherit"}},t); if(attr) b.setAttribute(attr[0],attr[1]); b.addEventListener('click',fn); return b; };
+    state.foodSelected.forEach(name=>{
+      const n=foodNutriOf(name), es=D.filter(e=>e.name===name).sort((a,b)=>a.t-b.t);
+      if(!es.length){
+        const r=div({style:{display:"flex",alignItems:"center",gap:"6px",marginBottom:"5px"}});
+        r.appendChild(span({style:{flex:1,fontSize:"12px",color:"#94a3b8"}},`${fe(name)} ${name}（量・時刻なし）`));
+        r.appendChild(mini("＋ 量と時刻",()=>{ foodDraftAdd(state.viewDate,name); render(); },['data-foodlogadd',name]));
+        r.appendChild(mini("×",()=>{ state.foodSelected=state.foodSelected.filter(x=>x!==name); render(); }));
+        box.appendChild(r); return;
+      }
+      es.forEach(e=>{
+        const r=div({style:{display:"flex",alignItems:"center",gap:"5px",marginBottom:"5px"}}); r.setAttribute('data-foodlogrow',name);
+        r.appendChild(div({style:{flex:1,minWidth:0}},[div({style:{fontSize:"12px",color:"#e2e8f0",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},`${fe(name)} ${name}`),
+          div({style:{fontSize:"9px",color:n?"#64748b":"#f59e0b"}},n?`1人前＝${n.u||"1人前"}`:"栄養が未設定（✏️ 編集で入れられます）")]));
+        r.appendChild(mini("−",()=>{ e.qty=Math.max(0.5,Math.round(((+e.qty||1)-0.5)*2)/2); render(); },['data-foodqtydown',name]));
+        r.appendChild(span({style:{minWidth:"30px",textAlign:"center",fontSize:"13px",fontWeight:700,color:"#38bdf8"}},`${e.qty}`)); 
+        r.appendChild(mini("＋",()=>{ e.qty=Math.round(((+e.qty||1)+0.5)*2)/2; render(); },['data-foodqtyup',name]));
+        const ti=document.createElement('input'); ti.type='time'; ti.value=fmtFoodT(e.t); ti.setAttribute('data-foodtime',name);
+        ti.style.cssText="width:104px;flex-shrink:0;padding:4px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#e2e8f0;font-size:12px;color-scheme:dark;font-family:inherit";
+        ti.addEventListener('change',ev=>{ const t=parseFoodT(ev.target.value); if(t!=null){ e.t=t; render(); } });
+        r.appendChild(ti);
+        r.appendChild(mini("×",()=>{ state.foodLogDraft.list=D.filter(x=>x.uid!==e.uid); if(!state.foodLogDraft.list.some(x=>x.name===name)) state.foodSelected=state.foodSelected.filter(x=>x!==name); render(); },['data-foodlogdel',name]));
+        box.appendChild(r);
+      });
+      if(es.length) box.appendChild(div({style:{textAlign:"right",marginTop:"-3px",marginBottom:"5px"}},[mini(`＋ もう1回（${name}）`,()=>{ foodDraftAdd(state.viewDate,name); render(); },['data-foodlogagain',name])]));
+    });
+    const sum=nutriSumOf(D.filter(e=>state.foodSelected.includes(e.name)));
+    box.appendChild(div({style:{fontSize:"11px",color:"#a5b4fc",marginTop:"4px",lineHeight:1.6}},`この日の合計：${fmtNutriLine(sum)}${sum.unknown?`（未設定 ${sum.unknown}件は数えていません）`:""}`));
+    m.appendChild(box);
   }
   const list=div({style:{flex:1,overflowY:"auto",padding:"8px 16px"}});
   cats.forEach((cat,ci)=>{
@@ -6995,8 +7166,10 @@ function renderFoodModal(vd){
             const err=renameFoodItem(item,nn,past); if(err) showToast(`⚠️ ${err}`,"#f97316"); render(); }));
           r.appendChild(foodMiniBtn("▲",()=>{ moveFoodItem(item,-1); render(); },false,ii===0));
           r.appendChild(foodMiniBtn("▼",()=>{ moveFoodItem(item,1); render(); },false,ii===cat.items.length-1));
+          r.appendChild(foodMiniBtn(state.foodNutriOpen===item?"閉じる":"栄養",()=>{ state.foodNutriOpen=state.foodNutriOpen===item?null:item; render(); }));
           r.appendChild(foodMiniBtn("🗑",()=>{ removeFoodItem(item); showToast(`「${item}」を一覧から消しました（過去の記録は残ります）`); render(); },true));
           box.appendChild(r);
+          if(state.foodNutriOpen===item) box.appendChild(foodNutriEditor(item));
         });
         if(!cat.items.length) box.appendChild(div({style:{fontSize:"11px",color:"#475569",padding:"2px 0 6px"}},"まだ品目がありません"));
         box.appendChild(foodAddRow(cat,false));
@@ -7020,7 +7193,8 @@ function renderFoodModal(vd){
         cat.items.map(item=>{
           const on=state.foodSelected.includes(item);
           return btn({style:{padding:"5px 12px",borderRadius:"20px",fontSize:"12px",cursor:"pointer",background:on?"#0ea5e9":"#1e293b",color:on?"#fff":"#94a3b8",border:`1px solid ${on?"#0ea5e9":"#334155"}`,fontWeight:on?600:400},
-            onClick:()=>{state.foodSelected=on?state.foodSelected.filter(x=>x!==item):[...state.foodSelected,item];render();}
+            onClick:()=>{ if(on){ state.foodSelected=state.foodSelected.filter(x=>x!==item); const L=foodDraft(state.viewDate); state.foodLogDraft.list=L.filter(e=>e.name!==item); }
+              else { state.foodSelected=[...state.foodSelected,item]; foodDraftAdd(state.viewDate,item); } render(); }
           },`${fe(item)} ${item}`);
         })
       );
@@ -7047,7 +7221,10 @@ function renderFoodModal(vd){
   bg.appendChild(m);return bg;
 }
 function saveFoods(){
-  setDaily(state.viewDate,{foods:[...state.foodSelected]});
+  const vd=state.viewDate, sel=[...state.foodSelected];
+  const log=(state.foodLogDraft&&state.foodLogDraft.vd===vd)?state.foodLogDraft.list.filter(e=>sel.includes(e.name)):(getDaily(vd).foodLog||[]).filter(e=>sel.includes(e.name));
+  setDaily(vd,{foods:sel, foodLog:log.sort((a,b)=>a.t-b.t)});   // 品目名の一覧（今まで）＋食事ごとの記録（量・時刻）
+  state.foodLogDraft=null;
   state.modal=null; state.foodEdit=false; state.foodAddCat=null;
   render();
 }
@@ -17775,6 +17952,7 @@ function exportDataInner(){
     nextDrink:state.nextDrink,
     foodCats:(Array.isArray(state.foodCats)&&state.foodCats.length)?{cats:state.foodCats,emoji:state.foodEmoji||{}}:null,
     anaChanges:state.anaChanges||[],
+    foodNutri:state.foodNutri||{},       // 🍽 品目の栄養（自分で直した値。食事ごとの記録 foodLog は dailies に入っている）
     modeInvestCats:state.modeInvestCats||{},
     sleepGoal:state.sleepGoal,
     bodyComps:state.bodyComps,
@@ -17854,6 +18032,7 @@ function importData(e){
       if(p.shiftColors&&typeof p.shiftColors==="object"){safeSet(STORAGE_KEY+"_shiftcolors",JSON.stringify(p.shiftColors)); Object.keys(p.shiftColors).forEach(k=>{ if(SHIFT_TYPES[k]&&p.shiftColors[k])SHIFT_TYPES[k].color=p.shiftColors[k]; });}
       if(p.ejacColor){safeSet(STORAGE_KEY+"_ejaccolor",p.ejacColor);}
       if(Array.isArray(p.anaChanges)){ state.anaChanges=p.anaChanges; saveAnaChanges(); }
+      if(p.foodNutri&&typeof p.foodNutri==="object"){ state.foodNutri=p.foodNutri; saveFoodNutri(); }
       if(p.modeInvestCats&&typeof p.modeInvestCats==="object"){ state.modeInvestCats=p.modeInvestCats; saveModeInvestCats(); }
       if(p.foodCats&&Array.isArray(p.foodCats.cats)&&p.foodCats.cats.length){ state.foodCats=p.foodCats.cats; state.foodEmoji=(p.foodCats.emoji&&typeof p.foodCats.emoji==="object")?p.foodCats.emoji:{}; saveFoodCats(); }
       if(p.colorLabels&&typeof p.colorLabels==="object"){safeSet(STORAGE_KEY+"_colorlabels",JSON.stringify(p.colorLabels));}
