@@ -247,7 +247,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.49"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.50"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -5288,19 +5288,14 @@ function renderDailyPanel(vd){
     //   しまう不具合があったため、この操作は値表示だけをその場で更新する（render()を呼ばない）。
     (()=>{
       let cur=d.water!=null?d.water:0;
-      // 色は「今の必要量」に対する達成率で（起きる前・未来の日は量だけで）
-      const wc=v=>{ try{ const P=nutriPace(vd), need=P.wNow; if(need>0){ const rate=nutriIntake(vd).w/need; return rate>=1?"#22c55e":rate>=0.85?"#84cc16":rate>=0.6?"#f59e0b":"#f87171"; } }catch(_){}
+      // 色はウィジェットと同じ（今の目安の85%以上 緑・足りない 橙。起きる前・未来の日は量だけで）
+      const wc=v=>{ try{ const P=nutriPace(vd), need=P.wNow; if(need>0){ const rate=nutriIntake(vd).w/need; return rate>=0.85?"#22c55e":"#f59e0b"; } }catch(_){}
         return v>=2?"#22c55e":(v>0&&v<=1)?"#f97316":v>0?"#eab308":"#475569"; };
       const valTop=span({style:{fontSize:"13px",fontWeight:700,color:wc(cur)}},cur>0?`${cur}L（${Math.round(cur*1000)}ml）`:"—");
       const valMid=span({style:{flex:"0 0 96px",textAlign:"center",fontSize:"19px",fontWeight:800,color:wc(cur)}},cur>0?`${cur}L`:"0L");
-      // ⏰ 今の必要量と達成率（とった量＝この欄の水＋食べたもののコーヒー・お茶など。今の必要量は 水分・栄養の「今の目安」と同じ）
-      const pace=div({style:{fontSize:"11px",lineHeight:1.6,marginBottom:"6px"}}); pace.setAttribute('data-waterpace','1');
-      const fmtMl=v=>v>=1000?`${(v/1000).toFixed(2).replace(/0$/,"")}L`:`${Math.round(v)}ml`;
-      const paceRefresh=()=>{ try{ const P=nutriPace(vd), I=nutriIntake(vd), need=P.wNow, got=I.w, extra=got-Math.round((getDaily(vd).water||0)*1000);
-          if(need<=0){ pace.textContent=`⏰ 今の必要量：まだ起きる前（1日の目標 ${fmtMl(P.T.w)}）`; pace.style.color="#64748b"; return; }
-          const rate=Math.round(got/need*100), col=rate>=100?"#22c55e":rate>=85?"#84cc16":rate>=60?"#f59e0b":"#f87171";
-          pace.textContent=`⏰ 今の必要量 ${fmtMl(need)}／とった ${fmtMl(got)}${extra>0?`（コーヒー・お茶など ${fmtMl(extra)} を含む）`:""}・達成率 ${rate}%　（1日の目標 ${fmtMl(P.T.w)}）`; pace.style.color=col;
-        }catch(_){ pace.textContent=""; } };
+      // 今の目安との比較（ウィジェットの💧水分と同じ表示。とった量＝この欄の水＋食べたもののコーヒー・お茶など）
+      const pace=div({style:{marginBottom:"4px"}}); pace.setAttribute('data-waterpace','1');
+      const paceRefresh=()=>{ pace.innerHTML=""; try{ pace.appendChild(nutriRow("w",nutriPace(vd),nutriIntake(vd))); }catch(_){} };
       paceRefresh();
       const refresh=()=>{ const col=wc(cur);
         valTop.textContent=cur>0?`${cur}L（${Math.round(cur*1000)}ml）`:"—"; valTop.style.color=col;
@@ -7100,6 +7095,24 @@ function foodNutriEditor(item){
   return w;
 }
 // 🍽 水分・栄養のカード（ウィジェット・🍚食事・🍽️外食モード）。opts.next＝次の食事の目安も出す
+// 水分・栄養の1行（とった量／今の目安・バー・1日の量）。ウィジェットと日記の💧飲水量で共通
+function nutriRow(k,P,I){
+  const [,ic,lab]=NUTRI_KEYS.find(x=>x[0]===k), T=P.T;
+  const tot=T[k]||0, now=k==="w"?P.wNow:Math.round(tot*P.frac), got=I[k]||0;
+  const behind=got<now*0.85, over=k!=="w"&&k!=="p"&&k!=="fib"&&got>tot*1.15;
+  const col=over?"#f87171":behind?"#f59e0b":"#22c55e";
+  const fmt=v=>k==="w"?(v>=1000?`${(v/1000).toFixed(1)}L`:`${Math.round(v)}ml`):`${Math.round(v)}g`;
+  const row=div({style:{marginBottom:"7px"}}); row.setAttribute('data-nutrirow',k);
+  row.appendChild(div({style:{display:"flex",justifyContent:"space-between",fontSize:"11px",marginBottom:"3px",gap:"6px"}},[
+    span({style:{color:"#cbd5e1"}},`${ic} ${lab}`),
+    span({style:{color:col,fontWeight:700,whiteSpace:"nowrap"}},`とった ${fmt(got)}／今の目安 ${fmt(now)}`)]));
+  const bar=div({style:{position:"relative",height:"8px",background:"#0f172a",borderRadius:"5px",overflow:"visible"}});
+  bar.appendChild(div({style:{height:"100%",width:`${Math.min(100,tot?got/tot*100:0)}%`,background:col,borderRadius:"5px"}}));
+  if(tot) bar.appendChild(div({style:{position:"absolute",top:"-3px",bottom:"-3px",left:`calc(${Math.min(100,now/tot*100)}% - 1px)`,width:"2px",background:"#e2e8f0",borderRadius:"1px"}}));   // 今の目安の印
+  row.appendChild(bar);
+  row.appendChild(div({style:{fontSize:"9px",color:"#64748b",marginTop:"2px",textAlign:"right"}},`1日 ${fmt(tot)}`));
+  return row;
+}
 function nutriCard(vd,opts){
   opts=opts||{}; const P=nutriPace(vd), T=P.T, I=nutriIntake(vd);
   const box=div({className:opts.plain?"":"card",style:opts.plain?{background:'#ffffff0d',border:'1px solid #ffffff14',borderRadius:'12px',padding:'11px 13px',marginBottom:'10px'}:{}}); box.setAttribute('data-nutricard','1');
@@ -7143,22 +7156,7 @@ function nutriCard(vd,opts){
     });
     box.appendChild(ed);
   }
-  NUTRI_KEYS.forEach(([k,ic,lab,unit])=>{
-    const tot=T[k]||0, now=k==="w"?P.wNow:Math.round(tot*P.frac), got=I[k]||0;
-    const behind=got<now*0.85, over=k!=="w"&&k!=="p"&&k!=="fib"&&got>tot*1.15;
-    const col=over?"#f87171":behind?"#f59e0b":"#22c55e";
-    const fmt=v=>k==="w"?(v>=1000?`${(v/1000).toFixed(1)}L`:`${Math.round(v)}ml`):`${Math.round(v)}g`;
-    const row=div({style:{marginBottom:"7px"}}); row.setAttribute('data-nutrirow',k);
-    row.appendChild(div({style:{display:"flex",justifyContent:"space-between",fontSize:"11px",marginBottom:"3px",gap:"6px"}},[
-      span({style:{color:"#cbd5e1"}},`${ic} ${lab}`),
-      span({style:{color:col,fontWeight:700,whiteSpace:"nowrap"}},`とった ${fmt(got)}／今の目安 ${fmt(now)}`)]));
-    const bar=div({style:{position:"relative",height:"8px",background:"#0f172a",borderRadius:"5px",overflow:"visible"}});
-    bar.appendChild(div({style:{height:"100%",width:`${Math.min(100,tot?got/tot*100:0)}%`,background:col,borderRadius:"5px"}}));
-    if(tot) bar.appendChild(div({style:{position:"absolute",top:"-3px",bottom:"-3px",left:`calc(${Math.min(100,now/tot*100)}% - 1px)`,width:"2px",background:"#e2e8f0",borderRadius:"1px"}}));   // 今の目安の印
-    row.appendChild(bar);
-    row.appendChild(div({style:{fontSize:"9px",color:"#64748b",marginTop:"2px",textAlign:"right"}},`1日 ${fmt(tot)}`));
-    box.appendChild(row);
-  });
+  NUTRI_KEYS.forEach(([k])=>box.appendChild(nutriRow(k,P,I)));
   if(opts.next && P.next && P.next.t<P.frame.bed){ const x=P.next.share;
     box.appendChild(div({style:{fontSize:"11px",color:"#a5b4fc",margin:"4px 0 2px",lineHeight:1.6}},`次の${P.next.label}（${fmtFoodT(P.next.t)}ごろ）の目安：P ${Math.round(T.p*x)}g・F ${Math.round(T.f*x)}g・C ${Math.round(T.c*x)}g・繊維 ${Math.round(T.fib*x*10)/10}g`)); }
   const notes=[];
