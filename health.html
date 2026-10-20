@@ -247,7 +247,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.48"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.49"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -3888,6 +3888,7 @@ function renderLifeScreen(){
     inner.appendChild(lifeActionBtn(`🍽 食べたものを記録${foodN?`（${foodN}品）`:''}`,def.color,openFoodRecord));
     inner.appendChild(lifeActionBtn('💧 水を1杯 飲んだ（+0.2L）',def.color,()=>addWaterGlass(vd)));
     inner.appendChild(nutriCard(vd,{next:true,plain:true}));
+    { const sl=foodStaleLine(vd); if(sl) inner.appendChild(peek?peekDisabled(sl):sl); }
   } else if(c==='rest'){
     if(state.lifeBreathing) inner.appendChild(breathingGuide(def.color));
     inner.appendChild(lifeActionBtn(state.lifeBreathing?'🫁 呼吸をやめる':'🫁 深呼吸する（4-7-8）',def.color,()=>{ state.lifeBreathing=!state.lifeBreathing; render(); }));
@@ -3927,6 +3928,7 @@ function renderLifeScreen(){
     inner.appendChild(lifeActionBtn(`🍽 食べたものを記録${foodN?`（${foodN}品）`:''}`,def.color,openFoodRecord));
     inner.appendChild(lifeActionBtn('💧 水を1杯 飲んだ（+0.2L）',def.color,()=>addWaterGlass(vd)));
     inner.appendChild(nutriCard(vd,{next:true,plain:true}));
+    { const sl=foodStaleLine(vd); if(sl) inner.appendChild(peek?peekDisabled(sl):sl); }
   } else if(c==='drinkout'){
     const g=Math.round(pureAlcoholG(vd)), lim=alcLimitDay(), dN=(getDaily(vd).drinks||[]).length, water=getDaily(vd).water||0;
     inner.appendChild(div({style:{textAlign:'center',fontSize:'13px',color:'#cbd5e1',lineHeight:1.7,marginBottom:'10px',whiteSpace:'pre-line'}},'外で飲む時間。\n水をはさんで、帰る時間を決めておこう。'));
@@ -7170,6 +7172,26 @@ function nutriCard(vd,opts){
   box.appendChild(div({style:{fontSize:"9px",color:"#475569",lineHeight:1.6,marginTop:"2px"}},notes.join("／")));
   return box;
 }
+// ── 🕰 しばらく食べていないもの ──
+// 品目ごとに最後に食べた日（日次の foods）を調べ、基準の日から何日たったかを出す。サプリは除く。記録が一度も無い品目は「まだ」
+const FOOD_STALE_DAYS=7;
+function foodLastEatenMap(){ const m={}; (state.dailies||[]).forEach(d=>{ (d.foods||[]).forEach(f=>{ if(!m[f]||d.dateStr>m[f]) m[f]=d.dateStr; }); }); return m; }
+function daysBetweenDS(a,b){ return Math.round((parseDS(b)-parseDS(a))/86400000); }
+function foodStaleList(vd,minDays){
+  const last=foodLastEatenMap(), out=[];
+  getFoodCats().forEach(c=>{ if(c.id==="supple") return; c.items.forEach(name=>{ const ld=last[name]&&last[name]<=vd?last[name]:null;
+    const days=ld?daysBetweenDS(ld,vd):null; if(days==null||days>=(minDays||FOOD_STALE_DAYS)) out.push({name,days,last:ld,cat:c}); }); });
+  return out.sort((a,b)=>(b.days==null?1e9:b.days)-(a.days==null?1e9:a.days)).filter(x=>x.days!=null).concat(out.filter(x=>x.days==null));
+}
+function foodDaysAgoLabel(days){ return days==null?"記録なし":days===0?"今日":days===1?"昨日":`${days}日前`; }
+// モード画面の1行：しばらく食べていないもの（上位5品）。タップで食べたものの記録を開く
+function foodStaleLine(vd){
+  const st=foodStaleList(vd).filter(x=>x.days!=null); if(!st.length) return null;
+  const b=btn({style:{width:"100%",textAlign:"left",padding:"9px 12px",borderRadius:"11px",border:"1px solid #f59e0b44",background:"#f59e0b0d",color:"#e2e8f0",fontSize:"12px",lineHeight:1.6,cursor:"pointer",fontFamily:"inherit",marginBottom:"10px"}},
+    [span({style:{color:"#fbbf24",fontWeight:700}},`🕰 しばらく食べていない（${st.length}品）：`),st.slice(0,5).map(x=>`${x.name}（${foodDaysAgoLabel(x.days)}）`).join("・"),st.length>5?" ほか":""]);
+  b.setAttribute('data-foodstaleline','1'); b.addEventListener('click',()=>{ openFoodRecord(); });
+  return b;
+}
 function renderFoodModal(vd){
   const bg=div({className:"modal-bg"});
   const m=div({style:{width:"100%",maxWidth:"600px",margin:"0 auto",background:"#1e293b",borderRadius:"16px 16px 0 0",padding:"16px 0 36px",maxHeight:"88vh",display:"flex",flexDirection:"column"}});
@@ -7224,6 +7246,23 @@ function renderFoodModal(vd){
     m.appendChild(box);
   }
   const list=div({style:{flex:1,overflowY:"auto",padding:"8px 16px"}});
+  // 🕰 しばらく食べていないもの（タップで選ぶ）
+  if(!edit){ const st=foodStaleList(state.viewDate).filter(x=>!state.foodSelected.includes(x.name)&&x.days!=null);
+    if(st.length){ const open=!!state.foodStaleOpen;
+      const sec=div({style:{marginBottom:"8px",padding:"8px 10px",borderRadius:"10px",background:"#f59e0b0d",border:"1px solid #f59e0b44"}}); sec.setAttribute('data-foodstale',String(st.length));
+      const hd=btn({style:{width:"100%",display:"flex",justifyContent:"space-between",alignItems:"center",background:"transparent",border:"none",cursor:"pointer",padding:"0",fontFamily:"inherit"}},[
+        span({style:{fontSize:"12px",fontWeight:700,color:"#fbbf24"}},`🕰 しばらく食べていないもの（${FOOD_STALE_DAYS}日以上・${st.length}品）`),span({style:{fontSize:"11px",color:"#94a3b8"}},open?"▲":"▼")]);
+      hd.addEventListener('click',()=>{ state.foodStaleOpen=!open; render(); }); sec.appendChild(hd);
+      const show=open?st:st.slice(0,6);
+      const chips=div({style:{display:"flex",flexWrap:"wrap",gap:"5px",marginTop:"7px"}});
+      show.forEach(x=>{ const b=btn({style:{padding:"4px 10px",borderRadius:"20px",fontSize:"11px",cursor:"pointer",background:"#1e293b",color:"#e2e8f0",border:"1px solid #f59e0b55",fontFamily:"inherit"}},`${fe(x.name)} ${x.name} `);
+        b.appendChild(span({style:{fontSize:"10px",color:"#fbbf24"}},foodDaysAgoLabel(x.days))); b.setAttribute('data-foodstalepick',x.name);
+        b.addEventListener('click',()=>{ state.foodSelected=[...state.foodSelected,x.name]; foodDraftAdd(state.viewDate,x.name); render(); }); chips.appendChild(b); });
+      if(!open&&st.length>show.length) chips.appendChild(span({style:{fontSize:"10px",color:"#94a3b8",alignSelf:"center"}},`ほか ${st.length-show.length}品…`));
+      sec.appendChild(chips);
+      sec.appendChild(div({style:{fontSize:"9px",color:"#64748b",marginTop:"5px"}},"タップすると今日食べたものに入ります。長く食べていない順"));
+      list.appendChild(sec); } }
+  const _last=edit?null:foodLastEatenMap();
   cats.forEach((cat,ci)=>{
     const n=cat.items.filter(i=>state.foodSelected.includes(i)).length;
     const isOpen=state.foodOpenCat===cat.id;
@@ -7282,7 +7321,8 @@ function renderFoodModal(vd){
           return btn({style:{padding:"5px 12px",borderRadius:"20px",fontSize:"12px",cursor:"pointer",background:on?"#0ea5e9":"#1e293b",color:on?"#fff":"#94a3b8",border:`1px solid ${on?"#0ea5e9":"#334155"}`,fontWeight:on?600:400},
             onClick:()=>{ if(on){ state.foodSelected=state.foodSelected.filter(x=>x!==item); const L=foodDraft(state.viewDate); state.foodLogDraft.list=L.filter(e=>e.name!==item); }
               else { state.foodSelected=[...state.foodSelected,item]; foodDraftAdd(state.viewDate,item); } render(); }
-          },`${fe(item)} ${item}`);
+          },[`${fe(item)} ${item}`,(()=>{ if(on) return null; const ld=_last[item]&&_last[item]<=state.viewDate?_last[item]:null; const dd=ld?daysBetweenDS(ld,state.viewDate):null;
+              return (dd==null||dd>=FOOD_STALE_DAYS)?span({style:{marginLeft:"5px",fontSize:"9px",color:dd==null?"#64748b":"#fbbf24"}},foodDaysAgoLabel(dd)):null; })()]);
         })
       );
       // その場で一覧に足して選ぶ
