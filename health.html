@@ -247,7 +247,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.46"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.47"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -7011,11 +7011,25 @@ function nutriAutoTargets(vd){
   return { w:Math.round(B.weight*30+th*500), p:Math.round(B.weight*(trained?1.4:1.0)), f:Math.round(kcal*0.25/9), c:Math.round(kcal*0.55/4),
     fib:bacSexV()==="f"?18:21, kcal:Math.round(kcal), body:B, trained, trainH:th };
 }
+// バランス（%）で決めるとき（G.mode==="pct"）：たんぱく質・脂質・炭水化物を 1日のエネルギー×割合 から出す（P・Cは4kcal/g、Fは9kcal/g）。
+// エネルギー（G.kcal）が空なら自動（基礎代謝×1.5）。割合が空の項目は 15・25・60% を使う。水分・食物繊維は数字か自動のまま
+const NUTRI_PCT_DEFAULT={p:15,f:25,c:60};
+function nutriPctOf(G){ const P=(G&&G.pct)||{}; return {p:P.p>0?P.p:NUTRI_PCT_DEFAULT.p, f:P.f>0?P.f:NUTRI_PCT_DEFAULT.f, c:P.c>0?P.c:NUTRI_PCT_DEFAULT.c}; }
 function nutriTargets(vd){
   const A=nutriAutoTargets(vd), G=getNutriGoal(), T={...A, custom:{}};
+  if(G.mode==="pct"){
+    const kcal=G.kcal>0?G.kcal:A.kcal, R=nutriPctOf(G);
+    T.p=Math.round(kcal*R.p/100/4); T.f=Math.round(kcal*R.f/100/9); T.c=Math.round(kcal*R.c/100/4); T.kcal=Math.round(kcal);
+    T.custom.p=T.custom.f=T.custom.c=true; T.pct=R;
+    ["w","fib"].forEach(k=>{ if(G[k]>0){ T[k]=G[k]; T.custom[k]=true; } });
+    return T;
+  }
   ["w","p","f","c","fib"].forEach(k=>{ if(G[k]>0){ T[k]=G[k]; T.custom[k]=true; } });
   return T;
 }
+function setNutriGoalPct(k,v){ const g=getNutriGoal(), x=parseFloat(v); g.pct=g.pct||{}; if(v===""||isNaN(x)||x<=0) delete g.pct[k]; else g.pct[k]=Math.round(x); saveNutriGoal(); }
+function setNutriGoalKcal(v){ const g=getNutriGoal(), x=parseFloat(v); if(v===""||isNaN(x)||x<=0) delete g.kcal; else g.kcal=Math.round(x); saveNutriGoal(); }
+function setNutriGoalMode(m){ const g=getNutriGoal(); if(m==="pct") g.mode="pct"; else delete g.mode; saveNutriGoal(); }
 // 食べたもの（foodLog）と💧ボタンの水から、とった量を足す。値が無い品目は数えず unknown に入れる
 function nutriIntake(vd,uptoMin){
   const d=getDaily(vd), sum={w:Math.round((d.water||0)*1000),p:0,f:0,c:0,fib:0}, unknown=new Set();
@@ -7085,7 +7099,26 @@ function nutriCard(vd,opts){
     const A=nutriAutoTargets(vd), G=getNutriGoal();
     const ed=div({style:{padding:"8px 10px",borderRadius:"9px",background:"#0b1220",border:"1px solid #1e3a5f",marginBottom:"9px"}}); ed.setAttribute('data-nutrigoaledit','1');
     ed.appendChild(div({style:{fontSize:"10px",color:"#94a3b8",lineHeight:1.6,marginBottom:"6px"}},"1日の目標を自分で決められます。空欄の項目は体重からの自動（薄い数字）を使います。"));
-    NUTRI_KEYS.forEach(([k,ic,lab,unit])=>{
+    const pctMode=G.mode==="pct";
+    { const sw=div({style:{display:"flex",gap:"6px",marginBottom:"8px"}});
+      [["num","数字で決める"],["pct","バランス（%）で決める"]].forEach(([m,l])=>{ const on=(m==="pct")===pctMode;
+        const b=btn({style:{flex:1,padding:"6px",borderRadius:"7px",border:`1px solid ${on?"#38bdf8":"#334155"}`,background:on?"#0ea5e922":"transparent",color:on?"#38bdf8":"#94a3b8",fontSize:"11px",fontWeight:on?700:500,cursor:"pointer",fontFamily:"inherit"}},l);
+        b.setAttribute('data-nutrimode',m); b.addEventListener('click',()=>{ setNutriGoalMode(m); render(); }); sw.appendChild(b); });
+      ed.appendChild(sw); }
+    const numIn=(val,ph,attr,on)=>{ const i=document.createElement('input'); i.type='number'; i.min='0'; i.inputMode='decimal'; i.value=val>0?String(val):""; i.placeholder=ph; i.setAttribute(attr[0],attr[1]);
+      i.style.cssText="width:90px;padding:5px 7px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#e2e8f0;font-size:13px;text-align:right;font-family:inherit";
+      i.addEventListener('change',e=>{ on(e.target.value); render(); }); return i; };
+    const line=(label,input,unit,sub)=>{ const r=div({style:{display:"flex",alignItems:"center",gap:"6px",marginBottom:"5px"}});
+      r.appendChild(div({style:{flex:1,minWidth:0}},[span({style:{fontSize:"11px",color:"#cbd5e1"}},label),sub?div({style:{fontSize:"9px",color:"#64748b"}},sub):null]));
+      r.appendChild(input); r.appendChild(span({style:{width:"30px",fontSize:"10px",color:"#64748b"}},unit)); return r; };
+    if(pctMode){
+      const Tn=nutriTargets(vd), R=nutriPctOf(G), sumPct=R.p+R.f+R.c;
+      ed.appendChild(line("🔥 1日のエネルギー",numIn(G.kcal,`自動 ${A.kcal}`,['data-nutrikcal','1'],v=>setNutriGoalKcal(v)),"kcal"));
+      [["p","🥩","たんぱく質",4],["f","🧈","脂質",9],["c","🍚","炭水化物",4]].forEach(([k,ic,lab,kc])=>{
+        ed.appendChild(line(`${ic} ${lab}`,numIn(G.pct&&G.pct[k],`${NUTRI_PCT_DEFAULT[k]}`,['data-nutripct',k],v=>setNutriGoalPct(k,v)),"%",`→ ${Tn[k]}g（${R[k]}%）`)); });
+      ed.appendChild(div({style:{fontSize:"10px",color:sumPct===100?"#4ade80":"#fb923c",margin:"2px 0 8px",textAlign:"right"}},sumPct===100?"合計 100% ✓":`合計 ${sumPct}%（100%にしてください）`));
+    }
+    NUTRI_KEYS.filter(([k])=>!pctMode||k==="w"||k==="fib").forEach(([k,ic,lab,unit])=>{
       const r=div({style:{display:"flex",alignItems:"center",gap:"6px",marginBottom:"5px"}});
       r.appendChild(span({style:{flex:1,fontSize:"11px",color:"#cbd5e1"}},`${ic} ${lab}`));
       const i=document.createElement('input'); i.type='number'; i.min='0'; i.inputMode='decimal'; i.value=G[k]>0?String(G[k]):""; i.placeholder=`自動 ${A[k]}`; i.setAttribute('data-nutrigoal',k);
@@ -7118,8 +7151,10 @@ function nutriCard(vd,opts){
   if(I.unknown.length) notes.push(`栄養が未設定の品目（${I.unknown.slice(0,3).join("・")}${I.unknown.length>3?" ほか":""}）は数えていません`);
   if(!T.body.weightKnown) notes.push("体重が未入力のため 60kg で計算しています（日記→トレーニングの体組成で入れられます）");
   if(T.trained) notes.push(`🏋️ トレーニング ${Math.round(T.trainH*10)/10}時間ぶん、水分とたんぱく質を多めにしています`);
-  const cu=Object.keys(T.custom||{}); if(cu.length) notes.push(`自分で決めた目標：${cu.map(k=>(NUTRI_KEYS.find(x=>x[0]===k)||[])[2]).join("・")}`);
-  notes.push(`${cu.length===5?"":`ほかは体重 ${T.body.weight}kg から計算（1日のエネルギー ${T.kcal}kcal）。`}品目の値は目安です`);
+  const cu=Object.keys(T.custom||{});
+  if(T.pct) notes.push(`バランスで決めた目標：たんぱく質${T.pct.p}%・脂質${T.pct.f}%・炭水化物${T.pct.c}%（1日 ${T.kcal}kcal）`);
+  const cuNum=cu.filter(k=>!(T.pct&&["p","f","c"].includes(k))); if(cuNum.length) notes.push(`自分で決めた目標：${cuNum.map(k=>(NUTRI_KEYS.find(x=>x[0]===k)||[])[2]).join("・")}`);
+  notes.push(`${cu.length===5?"":`ほかは体重 ${T.body.weight}kg から計算${T.pct?"":`（1日のエネルギー ${T.kcal}kcal）`}。`}品目の値は目安です`);
   box.appendChild(div({style:{fontSize:"9px",color:"#475569",lineHeight:1.6,marginTop:"2px"}},notes.join("／")));
   return box;
 }
