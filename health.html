@@ -247,7 +247,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.47"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.48"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -5286,12 +5286,23 @@ function renderDailyPanel(vd){
     //   しまう不具合があったため、この操作は値表示だけをその場で更新する（render()を呼ばない）。
     (()=>{
       let cur=d.water!=null?d.water:0;
-      const wc=v=>v>=2?"#22c55e":(v>0&&v<=1)?"#f97316":v>0?"#eab308":"#475569";
+      // 色は「今の必要量」に対する達成率で（起きる前・未来の日は量だけで）
+      const wc=v=>{ try{ const P=nutriPace(vd), need=P.wNow; if(need>0){ const rate=nutriIntake(vd).w/need; return rate>=1?"#22c55e":rate>=0.85?"#84cc16":rate>=0.6?"#f59e0b":"#f87171"; } }catch(_){}
+        return v>=2?"#22c55e":(v>0&&v<=1)?"#f97316":v>0?"#eab308":"#475569"; };
       const valTop=span({style:{fontSize:"13px",fontWeight:700,color:wc(cur)}},cur>0?`${cur}L（${Math.round(cur*1000)}ml）`:"—");
       const valMid=span({style:{flex:"0 0 96px",textAlign:"center",fontSize:"19px",fontWeight:800,color:wc(cur)}},cur>0?`${cur}L`:"0L");
+      // ⏰ 今の必要量と達成率（とった量＝この欄の水＋食べたもののコーヒー・お茶など。今の必要量は 水分・栄養の「今の目安」と同じ）
+      const pace=div({style:{fontSize:"11px",lineHeight:1.6,marginBottom:"6px"}}); pace.setAttribute('data-waterpace','1');
+      const fmtMl=v=>v>=1000?`${(v/1000).toFixed(2).replace(/0$/,"")}L`:`${Math.round(v)}ml`;
+      const paceRefresh=()=>{ try{ const P=nutriPace(vd), I=nutriIntake(vd), need=P.wNow, got=I.w, extra=got-Math.round((getDaily(vd).water||0)*1000);
+          if(need<=0){ pace.textContent=`⏰ 今の必要量：まだ起きる前（1日の目標 ${fmtMl(P.T.w)}）`; pace.style.color="#64748b"; return; }
+          const rate=Math.round(got/need*100), col=rate>=100?"#22c55e":rate>=85?"#84cc16":rate>=60?"#f59e0b":"#f87171";
+          pace.textContent=`⏰ 今の必要量 ${fmtMl(need)}／とった ${fmtMl(got)}${extra>0?`（コーヒー・お茶など ${fmtMl(extra)} を含む）`:""}・達成率 ${rate}%　（1日の目標 ${fmtMl(P.T.w)}）`; pace.style.color=col;
+        }catch(_){ pace.textContent=""; } };
+      paceRefresh();
       const refresh=()=>{ const col=wc(cur);
         valTop.textContent=cur>0?`${cur}L（${Math.round(cur*1000)}ml）`:"—"; valTop.style.color=col;
-        valMid.textContent=cur>0?`${cur}L`:"0L"; valMid.style.color=col; };
+        valMid.textContent=cur>0?`${cur}L`:"0L"; valMid.style.color=col; paceRefresh(); };
       const setW=delta=>{ cur=Math.round(Math.max(0,cur+delta)*10)/10; setDaily(vd,{water:cur>0?cur:null}); refresh(); };
       const stepBtn=(lbl,delta)=>btn({style:{flex:"1",height:"36px",border:"1px solid #334155",borderRadius:"8px",cursor:"pointer",fontSize:"14px",fontWeight:700,background:"#0f172a",color:"#38bdf8"},onClick:()=>setW(delta)},lbl);
       const quick=(lbl,delta,col)=>btn({style:{flex:"1",height:"28px",border:"1px solid #1e3a5f",borderRadius:"7px",cursor:"pointer",fontSize:"11px",fontWeight:600,background:"#0f172a",color:col||"#64748b"},onClick:()=>setW(delta)},lbl);
@@ -5300,6 +5311,7 @@ function renderDailyPanel(vd){
           span({style:{fontSize:"12px",color:"#94a3b8"}},"💧 飲水量"),
           valTop
         ]),
+        pace,
         div({style:{display:"flex",gap:"8px",alignItems:"center",marginBottom:"5px"}},[
           stepBtn("−100ml",-0.1),
           valMid,
