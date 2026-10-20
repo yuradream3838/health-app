@@ -247,7 +247,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.57"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.58"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -7313,16 +7313,17 @@ function renderFoodModal(vd){
   const pickedRows=name=>{
     const es=D.filter(e=>e.name===name).sort((a,b)=>a.t-b.t), known=!!foodNutriOf(name);
     const rowBox=st=>{ const r=div({style:{flexBasis:"100%",minWidth:0,display:"flex",alignItems:"center",gap:"4px",minHeight:"38px",boxSizing:"border-box",padding:"5px 6px 5px 12px",borderRadius:"20px",background:"#0ea5e922",border:"1px solid #0ea5e9",...st}}); r.setAttribute('data-foodlogrow',name); return r; };
-    const nameBtn=e=>{ const n=foodNutriOf(name), amt=e&&n&&n.u?scaleFoodUnit(n.u,+e.qty||1):"";
-      const b=btn({style:{flex:1,minWidth:0,textAlign:"left",background:"transparent",border:"none",padding:"0",cursor:"pointer",fontSize:"12px",fontWeight:600,color:known?"#e2e8f0":"#f59e0b",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",fontFamily:"inherit"}},
-        [`${fe(name)} ${name}`,amt?span({style:{marginLeft:"5px",fontSize:"10px",fontWeight:400,color:"#7dd3fc"}},amt):null]);
+    const nameBtn=()=>{ const b=btn({style:{flex:1,minWidth:0,textAlign:"left",background:"transparent",border:"none",padding:"0",cursor:"pointer",fontSize:"12px",fontWeight:600,color:known?"#e2e8f0":"#f59e0b",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",fontFamily:"inherit"}},`${fe(name)} ${name}`);
       b.setAttribute('data-foodpicked',name); b.addEventListener('click',()=>unselect(name)); return b; };
     if(!es.length){   // 量・時刻のない今までの記録（栄養には数えない）
       const r=rowBox({}); r.appendChild(nameBtn()); r.appendChild(mini("＋ 量と時刻",()=>{ foodDraftAdd(state.viewDate,name); render(); },['data-foodlogadd',name])); return [r]; }
     return es.map(e=>{ const r=rowBox({});
-      r.appendChild(nameBtn(e));
+      r.appendChild(nameBtn());
       r.appendChild(mini("−",()=>{ e.qty=Math.max(0.5,Math.round(((+e.qty||1)-0.5)*2)/2); render(); },['data-foodqtydown',name]));
-      r.appendChild(span({style:{flexShrink:0,textAlign:"center",fontSize:"13px",fontWeight:700,color:"#38bdf8",whiteSpace:"nowrap"}},[`${e.qty}`,span({style:{fontSize:"9px",fontWeight:400,marginLeft:"1px"}},"人前")]));
+      // 量は数量で（1人前の単位を量に合わせて：例「1.5パック」＋小さく「(68g)」。単位が無ければ数だけ）
+      { const nn=foodNutriOf(name), amt=nn&&nn.u?scaleFoodUnit(nn.u,+e.qty||1):String(e.qty), k=amt.indexOf("(");
+        const q=span({style:{flexShrink:0,textAlign:"center",fontSize:"13px",fontWeight:700,color:"#38bdf8",whiteSpace:"nowrap"}},[k>0?amt.slice(0,k):amt,k>0?span({style:{fontSize:"9px",fontWeight:400,marginLeft:"1px"}},amt.slice(k)):null]);
+        q.setAttribute('data-foodqty',name); r.appendChild(q); }
       r.appendChild(mini("＋",()=>{ e.qty=Math.round(((+e.qty||1)+0.5)*2)/2; render(); },['data-foodqtyup',name]));
       const ti=document.createElement('input'); ti.type='time'; ti.value=fmtFoodT(e.t); ti.setAttribute('data-foodtime',name);
       ti.style.cssText="width:90px;box-sizing:border-box;flex-shrink:0;padding:3px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#e2e8f0;font-size:12px;color-scheme:dark;font-family:inherit";
