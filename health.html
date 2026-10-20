@@ -247,7 +247,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.53"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.54"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -906,7 +906,7 @@ const state = {
   editHour:null, editDate:null, editScore:null, editMental:null, editSymptoms:[], editNote:"", editCraving:null,
   modal:null, // "food"|"addDrink"|"editEnd"
   foodOpenCat:null, foodSelected:[],
-  foodCats:null, foodEmoji:{}, foodEdit:false, foodAddCat:null,
+  foodCats:null, foodEmoji:{}, foodEdit:false,
   modeInvestCats:{}, modeInvestEdit:null,   // 💰 モード画面に出す未来投資の分類 {モードkey:[分類]}
   anaChanges:[], anaOpen:null, anaChgLabel:"", anaChgDate:null, anaWhyAI:{},   // 📊 分析（🔬 変えたことの記録・ランキングで開いている要因）   // 🍽 食べたものの一覧（null＝初期の一覧）
   newDrink:{typeId:"beer",ml:350,hour:new Date().getHours(),min:new Date().getMinutes(),pct:5},
@@ -6956,14 +6956,13 @@ function foodMiniBtn(label,onClick,danger,disabled){
     background:"transparent",border:`1px solid ${danger?"#7f1d1d":"#334155"}`,color:disabled?"#334155":(danger?"#f87171":"#94a3b8")},
     onClick:disabled?null:onClick},label);
 }
-// 「＋」から出す追加欄（選択モードでも編集モードでも共通）
-function foodAddRow(cat,selectToo){
+// 編集モードの品目の追加欄
+function foodAddRow(cat){
   const row=div({style:{display:"flex",gap:"5px",alignItems:"center",padding:"2px 0 8px"}});
   const inp=foodInput("","品目の名前（例：サバ缶）",null,null); inp.setAttribute('data-foodadd',cat.id);
   const go=()=>{ const v=inp.value; const err=addFoodItem(cat.id,v);
     if(err){ showToast(`⚠️ ${err}`,"#f97316"); return; }
-    if(selectToo){ const n=v.trim(); if(!state.foodSelected.includes(n)) state.foodSelected=[...state.foodSelected,n]; }
-    state.foodAddCat=cat.id; render();
+    render();
     setTimeout(()=>{ const x=document.querySelector(`[data-foodadd="${cat.id}"]`); if(x) x.focus(); },0); };
   inp.addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); go(); } });
   row.appendChild(inp);
@@ -7212,7 +7211,7 @@ function renderFoodModal(vd){
   const bg=div({className:"modal-bg"});
   const m=div({style:{width:"100%",maxWidth:"600px",margin:"0 auto",background:"#1e293b",borderRadius:"16px 16px 0 0",padding:"16px 0 36px",maxHeight:"88vh",display:"flex",flexDirection:"column"}});
   const edit=!!state.foodEdit;
-  bg.addEventListener('click',()=>{ if(edit){ state.foodEdit=false; state.foodAddCat=null; render(); } else saveFoods(); });
+  bg.addEventListener('click',()=>{ if(edit){ state.foodEdit=false; render(); } else saveFoods(); });
   m.addEventListener('click',e=>e.stopPropagation());
   const cats=getFoodCats();
   // ヘッダー
@@ -7222,7 +7221,7 @@ function renderFoodModal(vd){
       div({style:{flex:1,minWidth:0}},[div({style:{fontSize:"14px",fontWeight:700,color:"#e2e8f0"}},edit?"✏️ 食べたものの一覧を編集":"🍽️ 食べたものを記録"),
         div({style:{fontSize:"11px",color:"#64748b",marginTop:"2px"}},edit?"名前・絵文字・並びを変えられます。消しても過去の記録は残ります":`${state.foodSelected.length}品目選択中`)]),
       btn({style:{flexShrink:0,padding:"7px 10px",background:edit?"#0ea5e922":"transparent",border:`1px solid ${edit?"#0ea5e9":"#334155"}`,borderRadius:"8px",color:edit?"#38bdf8":"#94a3b8",fontSize:"12px",fontWeight:600,cursor:"pointer",fontFamily:"inherit"},
-        onClick:()=>{ state.foodEdit=!edit; state.foodAddCat=null; render(); }},edit?"✓ 編集を終える":"✏️ 編集"),
+        onClick:()=>{ state.foodEdit=!edit; render(); }},edit?"✓ 編集を終える":"✏️ 編集"),
       edit?null:btn({style:{flexShrink:0,padding:"7px 16px",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:600,cursor:"pointer"},onClick:()=>saveFoods()},"保存")
     ])
   ]);
@@ -7288,7 +7287,7 @@ function renderFoodModal(vd){
       row.appendChild(foodInput(cat.label,"カテゴリ名",null,v=>{ const l=(v||"").trim(); if(!l){ render(); return; } setFoodCat(cat.id,{label:l}); render(); }));
       row.appendChild(foodMiniBtn("▲",()=>{ moveFoodCat(cat.id,-1); render(); },false,ci===0));
       row.appendChild(foodMiniBtn("▼",()=>{ moveFoodCat(cat.id,1); render(); },false,ci===cats.length-1));
-      row.appendChild(foodMiniBtn(isOpen?"閉じる":`品目 ${cat.items.length}`,()=>{ state.foodOpenCat=isOpen?null:cat.id; state.foodAddCat=null; render(); }));
+      row.appendChild(foodMiniBtn(isOpen?"閉じる":`品目 ${cat.items.length}`,()=>{ state.foodOpenCat=isOpen?null:cat.id; render(); }));
       row.appendChild(foodMiniBtn("🗑",()=>{
         if(cat.items.length && !confirm(`「${cat.label}」と中の${cat.items.length}品目を一覧から消しますか？\n（過去の記録は残ります）`)) return;
         removeFoodCat(cat.id); render(); },true));
@@ -7312,13 +7311,13 @@ function renderFoodModal(vd){
           if(state.foodNutriOpen===item) box.appendChild(foodNutriEditor(item));
         });
         if(!cat.items.length) box.appendChild(div({style:{fontSize:"11px",color:"#475569",padding:"2px 0 6px"}},"まだ品目がありません"));
-        box.appendChild(foodAddRow(cat,false));
+        box.appendChild(foodAddRow(cat));
         list.appendChild(box);
       }
       return;
     }
     const folded=foodCatFolded(cat.id);
-    const catBtn=btn({style:{flex:1,minWidth:0,display:"flex",alignItems:"center",justifyContent:"space-between",padding:"7px 12px",background:n>0?"#0ea5e911":"#0f172a",border:`1px solid ${n>0?"#0ea5e944":"#1e3a5f"}`,borderRadius:"10px",cursor:"pointer",marginBottom:"6px",fontFamily:"inherit"},
+    const catBtn=btn({style:{width:"100%",display:"flex",alignItems:"center",justifyContent:"space-between",padding:"7px 12px",background:n>0?"#0ea5e911":"#0f172a",border:`1px solid ${n>0?"#0ea5e944":"#1e3a5f"}`,borderRadius:"10px",cursor:"pointer",marginBottom:"6px",fontFamily:"inherit"},
       onClick:()=>{ setFoodCatFolded(cat.id,!folded); render(); }
     },[
       div({style:{display:"flex",alignItems:"center",gap:"8px"}},[
@@ -7329,11 +7328,7 @@ function renderFoodModal(vd){
       span({style:{fontSize:"11px",color:"#475569"}},folded?"▼":"▲")
     ]);
     catBtn.setAttribute('data-foodcathead',cat.id);
-    // ＋（その場で一覧に足して選ぶ）は見出しの横に
-    const plus=btn({style:{flexShrink:0,padding:"0 12px",borderRadius:"10px",fontSize:"12px",cursor:"pointer",background:state.foodAddCat===cat.id?"#0ea5e922":"transparent",color:"#38bdf8",border:"1px dashed #0ea5e9",marginBottom:"6px",fontFamily:"inherit"},
-      onClick:()=>{ setFoodCatFolded(cat.id,false); state.foodAddCat=state.foodAddCat===cat.id?null:cat.id; render(); setTimeout(()=>{ const x=document.querySelector(`[data-foodadd="${cat.id}"]`); if(x) x.focus(); },0); }},"＋");
-    plus.setAttribute('data-foodplus',cat.id);
-    list.appendChild(div({style:{display:"flex",gap:"6px",alignItems:"stretch"}},[catBtn,plus]));
+    list.appendChild(catBtn);
     if(!folded){
       const items=div({style:{display:"flex",flexWrap:"wrap",gap:"5px",paddingBottom:"10px"}});
       cat.items.forEach(item=>{
@@ -7344,9 +7339,8 @@ function renderFoodModal(vd){
         },[`${fe(item)} ${item}`,(dd==null||dd>=FOOD_STALE_DAYS)?span({style:{marginLeft:"5px",fontSize:"9px",color:dd==null?"#64748b":"#fbbf24"}},foodDaysAgoLabel(dd)):null]);
         b.setAttribute('data-foodpick',item); items.appendChild(b);
       });
-      if(!cat.items.length) items.appendChild(span({style:{fontSize:"11px",color:"#475569"}},"まだ品目がありません（＋で足せます）"));
+      if(!cat.items.length) items.appendChild(span({style:{fontSize:"11px",color:"#475569"}},"まだ品目がありません（✏️ 編集で足せます）"));
       list.appendChild(items);
-      if(state.foodAddCat===cat.id) list.appendChild(foodAddRow(cat,true));
     }
   });
   if(edit){
@@ -7367,7 +7361,7 @@ function saveFoods(){
   const log=(state.foodLogDraft&&state.foodLogDraft.vd===vd)?state.foodLogDraft.list.filter(e=>sel.includes(e.name)):(getDaily(vd).foodLog||[]).filter(e=>sel.includes(e.name));
   setDaily(vd,{foods:sel, foodLog:log.sort((a,b)=>a.t-b.t)});   // 品目名の一覧（今まで）＋食事ごとの記録（量・時刻）
   state.foodLogDraft=null;
-  state.modal=null; state.foodEdit=false; state.foodAddCat=null;
+  state.modal=null; state.foodEdit=false;
   render();
 }
 
