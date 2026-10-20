@@ -247,7 +247,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.44"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.46"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -295,6 +295,7 @@ const SAVE_TARGETS=[
   ["saveWidgetSections","widgetSections","🧩 ウィジェットの表示"],
   ["saveFoodCats",["foodCats","foodEmoji"],"🍽 食べたものの一覧"],
   ["saveFoodNutri","foodNutri","🍽 品目の栄養"],
+  ["saveNutriGoal","nutriGoal","🍽 1日の栄養の目標"],
   ["saveAnaChanges","anaChanges","🔬 変えたことの記録"],
   ["saveModeInvestCats","modeInvestCats","💰 モードの未来投資"],
   ["saveWidgetOrder","widgetSecOrder","🧩 ウィジェットの並び"],
@@ -1067,6 +1068,8 @@ function loadStorage(){
       if(ch) saveModeInvestCats(); localStorage.setItem(STORAGE_KEY+"_modeinvestseed",JSON.stringify(done)); }catch(_){}
     const ach=localStorage.getItem(STORAGE_KEY+"_anachanges");
     if(ach){try{const a=JSON.parse(ach); if(Array.isArray(a))state.anaChanges=a;}catch{}}
+    const ngl=localStorage.getItem(STORAGE_KEY+"_nutrigoal");
+    if(ngl){try{const o=JSON.parse(ngl); if(o&&typeof o==="object")state.nutriGoal=o;}catch{}}
     const fnt=localStorage.getItem(STORAGE_KEY+"_foodnutri");
     if(fnt){try{const o=JSON.parse(fnt); if(o&&typeof o==="object")state.foodNutri=o;}catch{}}
     const fct=localStorage.getItem(STORAGE_KEY+"_foodcats");
@@ -1440,8 +1443,17 @@ function keepInnerScroll(content){
 }
 // 読み込みが終わるまでは描き直さない（描き直しが「今のモードが無い」と見て既定モードを始め、読み込む前のモードの記録を上書きしてしまうため）
 let _storageLoaded=false;
+// 表示している日が「いまの日」のままなら、いまの日が変わったとき（起床を記録した・正午を過ぎた）に一緒に進める。
+// 自分で別の日を開いているときは動かさない
+function followActiveDay(){
+  const a=activeDay();
+  if(state._autoDay && state.viewDate===state._autoDay && a!==state._autoDay){ state.viewDate=a; state._autoDay=a; return true; }
+  if(!state._autoDay || state.viewDate===a) state._autoDay=a;
+  return false;
+}
 function render(){
   if(!_storageLoaded) return;
+  try{ followActiveDay(); }catch(_){}
   const root = document.getElementById('root');
 
   // 同じ画面の再描画ではスクロール位置を維持（タブ切替時は維持しない＝自然な挙動）
@@ -6990,10 +7002,19 @@ function nutriBody(){ const bc=latestBodyComp(); const w=(bc&&bc.weight>0)?bc.we
   const weight=w||60; const bmr=(bc&&bc.bmr>0)?bc.bmr:weight*22; return {weight,bmr,weightKnown:!!w,bmrKnown:!!(bc&&bc.bmr>0)}; }
 // その日のトレーニングの時間（🏋️トレーニングモードの時間）
 function nutriTrainHours(vd){ try{ return modeSegmentsForDay(vd).filter(x=>x.key==='train').reduce((a,x)=>a+(x.endMin-x.startMin),0)/60; }catch(_){ return 0; } }
-function nutriTargets(vd){
+// 1日の目標を自分で決めた項目（state.nutriGoal＝{w,p,f,c,fib}。入れていない項目は体重からの自動）
+function getNutriGoal(){ if(!state.nutriGoal||typeof state.nutriGoal!=="object") state.nutriGoal={}; return state.nutriGoal; }
+function saveNutriGoal(){ safeSet(STORAGE_KEY+"_nutrigoal",JSON.stringify(getNutriGoal())); }
+function setNutriGoal(k,v){ const g=getNutriGoal(), x=parseFloat(v); if(v===""||v==null||isNaN(x)||x<=0) delete g[k]; else g[k]=Math.round(x); saveNutriGoal(); }
+function nutriAutoTargets(vd){
   const B=nutriBody(), th=nutriTrainHours(vd), trained=th>=0.25, kcal=B.bmr*1.5;
   return { w:Math.round(B.weight*30+th*500), p:Math.round(B.weight*(trained?1.4:1.0)), f:Math.round(kcal*0.25/9), c:Math.round(kcal*0.55/4),
     fib:bacSexV()==="f"?18:21, kcal:Math.round(kcal), body:B, trained, trainH:th };
+}
+function nutriTargets(vd){
+  const A=nutriAutoTargets(vd), G=getNutriGoal(), T={...A, custom:{}};
+  ["w","p","f","c","fib"].forEach(k=>{ if(G[k]>0){ T[k]=G[k]; T.custom[k]=true; } });
+  return T;
 }
 // 食べたもの（foodLog）と💧ボタンの水から、とった量を足す。値が無い品目は数えず unknown に入れる
 function nutriIntake(vd,uptoMin){
@@ -7054,9 +7075,27 @@ function foodNutriEditor(item){
 function nutriCard(vd,opts){
   opts=opts||{}; const P=nutriPace(vd), T=P.T, I=nutriIntake(vd);
   const box=div({className:opts.plain?"":"card",style:opts.plain?{background:'#ffffff0d',border:'1px solid #ffffff14',borderRadius:'12px',padding:'11px 13px',marginBottom:'10px'}:{}}); box.setAttribute('data-nutricard','1');
-  box.appendChild(div({style:{display:"flex",justifyContent:"space-between",alignItems:"baseline",gap:"8px",marginBottom:"8px"}},[
+  const editing=!!state.nutriGoalEdit;
+  const gb=btn({style:{flexShrink:0,padding:"3px 9px",borderRadius:"7px",border:`1px solid ${editing?"#38bdf8":"#334155"}`,background:editing?"#0ea5e918":"transparent",color:editing?"#38bdf8":"#94a3b8",fontSize:"10px",cursor:"pointer",fontFamily:"inherit"}},editing?"✓ 閉じる":"⚙ 1日の目標");
+  gb.setAttribute('data-nutrigoalbtn','1'); gb.addEventListener('click',()=>{ state.nutriGoalEdit=!editing; render(); });
+  box.appendChild(div({style:{display:"flex",justifyContent:"space-between",alignItems:"center",gap:"8px",marginBottom:"8px"}},[
     span({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0"}},"🍽 水分・栄養（今の目安）"),
-    span({style:{fontSize:"10px",color:"#64748b",whiteSpace:"nowrap"}},`${hhmm(Math.floor((((P.m%1440)+1440)%1440)/60),(((P.m%1440)+1440)%1440)%60)} 時点`)]));
+    div({style:{display:"flex",alignItems:"center",gap:"6px"}},[span({style:{fontSize:"10px",color:"#64748b",whiteSpace:"nowrap"}},`${hhmm(Math.floor((((P.m%1440)+1440)%1440)/60),(((P.m%1440)+1440)%1440)%60)} 時点`),gb])]));
+  if(editing){
+    const A=nutriAutoTargets(vd), G=getNutriGoal();
+    const ed=div({style:{padding:"8px 10px",borderRadius:"9px",background:"#0b1220",border:"1px solid #1e3a5f",marginBottom:"9px"}}); ed.setAttribute('data-nutrigoaledit','1');
+    ed.appendChild(div({style:{fontSize:"10px",color:"#94a3b8",lineHeight:1.6,marginBottom:"6px"}},"1日の目標を自分で決められます。空欄の項目は体重からの自動（薄い数字）を使います。"));
+    NUTRI_KEYS.forEach(([k,ic,lab,unit])=>{
+      const r=div({style:{display:"flex",alignItems:"center",gap:"6px",marginBottom:"5px"}});
+      r.appendChild(span({style:{flex:1,fontSize:"11px",color:"#cbd5e1"}},`${ic} ${lab}`));
+      const i=document.createElement('input'); i.type='number'; i.min='0'; i.inputMode='decimal'; i.value=G[k]>0?String(G[k]):""; i.placeholder=`自動 ${A[k]}`; i.setAttribute('data-nutrigoal',k);
+      i.style.cssText="width:90px;padding:5px 7px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#e2e8f0;font-size:13px;text-align:right;font-family:inherit";
+      i.addEventListener('change',e=>{ setNutriGoal(k,e.target.value); render(); });
+      r.appendChild(i); r.appendChild(span({style:{width:"22px",fontSize:"10px",color:"#64748b"}},unit));
+      ed.appendChild(r);
+    });
+    box.appendChild(ed);
+  }
   NUTRI_KEYS.forEach(([k,ic,lab,unit])=>{
     const tot=T[k]||0, now=k==="w"?P.wNow:Math.round(tot*P.frac), got=I[k]||0;
     const behind=got<now*0.85, over=k!=="w"&&k!=="p"&&k!=="fib"&&got>tot*1.15;
@@ -7079,7 +7118,8 @@ function nutriCard(vd,opts){
   if(I.unknown.length) notes.push(`栄養が未設定の品目（${I.unknown.slice(0,3).join("・")}${I.unknown.length>3?" ほか":""}）は数えていません`);
   if(!T.body.weightKnown) notes.push("体重が未入力のため 60kg で計算しています（日記→トレーニングの体組成で入れられます）");
   if(T.trained) notes.push(`🏋️ トレーニング ${Math.round(T.trainH*10)/10}時間ぶん、水分とたんぱく質を多めにしています`);
-  notes.push(`体重 ${T.body.weight}kg から計算（1日のエネルギー ${T.kcal}kcal）。品目の値は目安です`);
+  const cu=Object.keys(T.custom||{}); if(cu.length) notes.push(`自分で決めた目標：${cu.map(k=>(NUTRI_KEYS.find(x=>x[0]===k)||[])[2]).join("・")}`);
+  notes.push(`${cu.length===5?"":`ほかは体重 ${T.body.weight}kg から計算（1日のエネルギー ${T.kcal}kcal）。`}品目の値は目安です`);
   box.appendChild(div({style:{fontSize:"9px",color:"#475569",lineHeight:1.6,marginTop:"2px"}},notes.join("／")));
   return box;
 }
@@ -17952,7 +17992,8 @@ function exportDataInner(){
     nextDrink:state.nextDrink,
     foodCats:(Array.isArray(state.foodCats)&&state.foodCats.length)?{cats:state.foodCats,emoji:state.foodEmoji||{}}:null,
     anaChanges:state.anaChanges||[],
-    foodNutri:state.foodNutri||{},       // 🍽 品目の栄養（自分で直した値。食事ごとの記録 foodLog は dailies に入っている）
+    foodNutri:state.foodNutri||{},
+    nutriGoal:state.nutriGoal||{},       // 🍽 1日の栄養の目標（自分で決めた項目だけ）       // 🍽 品目の栄養（自分で直した値。食事ごとの記録 foodLog は dailies に入っている）
     modeInvestCats:state.modeInvestCats||{},
     sleepGoal:state.sleepGoal,
     bodyComps:state.bodyComps,
@@ -18033,6 +18074,7 @@ function importData(e){
       if(p.ejacColor){safeSet(STORAGE_KEY+"_ejaccolor",p.ejacColor);}
       if(Array.isArray(p.anaChanges)){ state.anaChanges=p.anaChanges; saveAnaChanges(); }
       if(p.foodNutri&&typeof p.foodNutri==="object"){ state.foodNutri=p.foodNutri; saveFoodNutri(); }
+      if(p.nutriGoal&&typeof p.nutriGoal==="object"){ state.nutriGoal=p.nutriGoal; saveNutriGoal(); }
       if(p.modeInvestCats&&typeof p.modeInvestCats==="object"){ state.modeInvestCats=p.modeInvestCats; saveModeInvestCats(); }
       if(p.foodCats&&Array.isArray(p.foodCats.cats)&&p.foodCats.cats.length){ state.foodCats=p.foodCats.cats; state.foodEmoji=(p.foodCats.emoji&&typeof p.foodCats.emoji==="object")?p.foodCats.emoji:{}; saveFoodCats(); }
       if(p.colorLabels&&typeof p.colorLabels==="object"){safeSet(STORAGE_KEY+"_colorlabels",JSON.stringify(p.colorLabels));}
@@ -19214,16 +19256,8 @@ SAVE_TARGETS.forEach(t=>{
   }; }
 setTimeout(()=>{ _histReady=true; _prevSnap=snapshotData(); },0); // 起動時の読み込み・移行が終わってから取り始める
 state.forecast=genForecast();
-state.viewDate = todayStr();
-// 夜更かし対応：日付をまたいでも、前日の就寝(睡眠開始)が未記録のうちは前日を既定表示にする。
-// （起動時の初期表示のみ。正午以降は新しい日として扱う。日付ナビでいつでも切替可）
-(function(){
-  const now=new Date();
-  if(now.getHours()<12){
-    const y=addDays(todayStr(),-1);
-    if(getDaily(y).bedTime==null) state.viewDate=y;
-  }
-})();
+// 起動時は「いまの日」（基準日＝起床を記録するまでは前日）を表示する。起床を記録したら、その日に自動で進む（followActiveDay）
+state.viewDate = activeDay(); state._autoDay = state.viewDate;
 // ホーム画面ショートカット等から #widget で直接ウィジェット表示
 // デフォルトの初期表示はウィジェット画面（起動時に今日をすぐ確認・チェックできる）
 state.widget=true;
@@ -19282,10 +19316,8 @@ if(state.weatherCity) doFetchWeather(state.weatherCity);
 setInterval(()=>{
   const td = todayStr();
   let changed=false;
-  if(state.viewDate !== td && state.viewDate < td){
-    // 今日タブを見ていた場合のみ自動で今日に進む
-    if(state.viewDate === state._lastToday){ state.viewDate = td; changed=true; }
-  }
+  // いまの日を見ていたら、いまの日が変わったときに自動で進む（起床を記録した・正午を過ぎた）
+  if(followActiveDay()) changed=true;
   state._lastToday = td;
   // 日付が変わったときだけ再描画。操作中（モーダル表示中）は再描画しない
   // → 入力中のポップアップやAI分析結果が消えるのを防ぐ
