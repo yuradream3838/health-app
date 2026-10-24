@@ -247,7 +247,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.59"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.60"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -575,6 +575,23 @@ function defaultShiftPattern(){
   };
 }
 function saveShiftPattern(){ safeSet(STORAGE_KEY+"_shift",JSON.stringify(state.shiftPattern)); }
+// シフトパターンを変える（設定画面から）。今日以降で「この日だけ」シフトを変えた日（休みにした日・時間を変えた日など）のうち、
+// パターンの変更でその日のパターンが変わり、しかも自分の変更と違う日があれば、そのまま残すか確認する
+// （OK＝この日の変更を残す／キャンセル＝新しいパターンに合わせる＝その日の変更（時間を含む）を外す。名前・場所・メモは残す）
+function setShiftPatternConfirm(next){
+  const today=todayStr();
+  const cand=(state.dailies||[]).filter(d=>d&&d.dateStr>=today&&d.planShift!=null).map(d=>d.dateStr).sort();
+  const olds={}; cand.forEach(ds=>olds[ds]=getPatternShift(ds));   // 変える前のパターン
+  state.shiftPattern=next; saveShiftPattern();
+  if(!next.enabled) return;
+  const lbl=k=>k&&SHIFT_TYPES[k]?SHIFT_TYPES[k].label:"なし";
+  const hit=cand.filter(ds=>{ const nk=getPatternShift(ds); return nk!==olds[ds] && basePlanShiftKey(ds)!==nk; });
+  if(!hit.length) return;
+  const lines=hit.slice(0,6).map(ds=>{ const ps=getDaily(ds).planShift, t=(ps&&typeof ps==='object'&&ps.startH!=null)?`（${hhmm(ps.startH,ps.startM)}〜${hhmm(ps.endH,ps.endM)}）`:"";
+    return `・${+ds.slice(5,7)}/${+ds.slice(8,10)}(${WEEKDAYS_JP[parseDS(ds).getDay()]})：${lbl(basePlanShiftKey(ds))}${t} → パターンは${lbl(getPatternShift(ds))}`; });
+  const keep=confirm(`この日だけシフトを変えた日が ${hit.length}日 あります。\n${lines.join("\n")}${hit.length>6?`\n…ほか ${hit.length-6}日`:""}\n\n新しいパターンでも、この日の変更を残しますか？\n\nOK：この日の変更を残す\nキャンセル：新しいパターンに合わせる`);
+  if(!keep){ hit.forEach(ds=>setDayShift(ds,null)); showToast(`${hit.length}日を新しいパターンに合わせました`); }
+}
 // 指定日のパターン上のシフトキー（s1/s2/off）を返す。無効・範囲外はnull
 function getPatternShift(ds){
   const sp=state.shiftPattern;
@@ -7252,7 +7269,6 @@ function nutriCard(vd,opts){
 // 品目ごとに最後に食べた日（日次の foods）を調べ、基準の日から何日たったかを出す。サプリは除く。記録が一度も無い品目は「まだ」
 const FOOD_STALE_DAYS=7;
 function foodLastEatenMap(){ const m={}; (state.dailies||[]).forEach(d=>{ (d.foods||[]).forEach(f=>{ if(!m[f]||d.dateStr>m[f]) m[f]=d.dateStr; }); }); return m; }
-function daysBetweenDS(a,b){ return Math.round((parseDS(b)-parseDS(a))/86400000); }
 function foodStaleList(vd,minDays){
   const last=foodLastEatenMap(), out=[];
   getFoodCats().forEach(c=>{ if(c.id==="supple") return; c.items.forEach(name=>{ const ld=last[name]&&last[name]<=vd?last[name]:null;
@@ -9215,7 +9231,7 @@ function renderShiftPanel(){
   enRow.appendChild(div({style:{fontSize:"13px",color:"#e2e8f0"}},"パターンを使う"));
   const enBtn=btn({style:{fontSize:"12px",padding:"5px 16px",borderRadius:"7px",cursor:"pointer",fontWeight:600,
     border:`1px solid ${sp.enabled?"#22c55e":"#334155"}`,background:sp.enabled?"#22c55e22":"transparent",color:sp.enabled?"#22c55e":"#64748b"}},sp.enabled?"ON":"OFF");
-  enBtn.addEventListener('click',()=>{state.shiftPattern={...sp,enabled:!sp.enabled};saveShiftPattern();render();});
+  enBtn.addEventListener('click',()=>{setShiftPatternConfirm({...sp,enabled:!sp.enabled});render();});
   enRow.appendChild(enBtn);
   card.appendChild(enRow);
 
@@ -9227,13 +9243,13 @@ function renderShiftPanel(){
     const n=parseInt(e.target.value);
     let grid=sp.grid.slice(0,n);
     while(grid.length<n)grid.push(["off","off","off","off","off","off","off"]);
-    state.shiftPattern={...sp,weeks:n,grid};saveShiftPattern();render();
+    setShiftPatternConfirm({...sp,weeks:n,grid});render();
   });
   wkRow.appendChild(wkSel);
   card.appendChild(wkRow);
 
   card.appendChild(btn({style:{width:"100%",fontSize:"11px",padding:"6px",marginBottom:"12px",background:"transparent",border:"1px solid #334155",borderRadius:"7px",color:"#94a3b8",cursor:"pointer"},
-    onClick:()=>{state.shiftPattern={...state.shiftPattern,anchorMonday:mondayStr(state.viewDate)};saveShiftPattern();showToast("この週を第1週に合わせました");render();}},"表示中の週を「第1週」に合わせる"));
+    onClick:()=>{setShiftPatternConfirm({...state.shiftPattern,anchorMonday:mondayStr(state.viewDate)});showToast("この週を第1週に合わせました");render();}},"表示中の週を「第1週」に合わせる"));
 
   const DAY_LBL=["月","火","水","木","金","土","日"];
   (sp.grid||[]).forEach((row,wi)=>{
@@ -9246,7 +9262,7 @@ function renderShiftPanel(){
       [["off","休1"],["off2","休2"],["s1","1直"],["s2","2直"]].forEach(([v,l])=>{const o=document.createElement('option');o.value=v;o.textContent=l;if((row[d]||"off")===v)o.selected=true;sel.appendChild(o);});
       sel.addEventListener('change',(()=>{const w=wi,dd=d;return e=>{
         const grid=state.shiftPattern.grid.map(r=>[...r]); grid[w][dd]=e.target.value;
-        state.shiftPattern={...state.shiftPattern,grid};saveShiftPattern();render();
+        setShiftPatternConfirm({...state.shiftPattern,grid});render();
       };})());
       cell.appendChild(sel);
       rowEl.appendChild(cell);
