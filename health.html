@@ -247,7 +247,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.60"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.61"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -1552,6 +1552,8 @@ function render(){
     if(state.modal==="addDrink"){ const mo=renderAddDrinkModal(activeDay()); mo.style.zIndex="10000"; content.appendChild(mo); }
     // エロモードから「射精を記録」＝生活記録と同じモーダルをセルフモードの上に重ねる
     if(state.modal==="addEjac"){ const mo=renderAddEjacModal(activeDay()); mo.style.zIndex="10000"; content.appendChild(mo); }
+    // 飲みモードから「食べたものを記録」＝食事モーダルを上に重ねる
+    if(state.modal==="food"){ const mo=renderFoodModal(state.viewDate); mo.style.zIndex="10000"; content.appendChild(mo); }
     appendModeOverlayModals(content);
     tintSurfaces(content); return; }
   if(state.modeSwitcher){ content.appendChild(renderModeSwitcher()); tintSurfaces(content); return; }
@@ -3970,6 +3972,9 @@ function renderLifeScreen(){
       if(dl){ const w=div({style:{background:'#ffffff0d',border:'1px solid #ffffff14',borderRadius:'11px',padding:'9px 10px',marginBottom:'10px'}}); w.setAttribute('data-drinkoutlist','1');
         w.appendChild(div({style:{fontSize:'11px',color:'#94a3b8'}},'🍺 飲んだもの')); w.appendChild(dl); inner.appendChild(w); } }
     inner.appendChild(lifeActionBtn('💧 水を1杯 飲んだ（+0.2L）',def.color,()=>addWaterGlass(vd)));
+    // 🍽 食べたもの・今の栄養（🍚食事・🍽️外食モードと同じ）
+    { const foodN=(getDaily(vd).foods||[]).length; inner.appendChild(lifeActionBtn(`🍽 食べたものを記録${foodN?`（${foodN}品）`:''}`,def.color,openFoodRecord));
+      inner.appendChild(nutriCard(vd,{next:true,plain:true})); }
     addAssigned();
   } else if(c==='social'){
     inner.appendChild(div({style:{textAlign:'center',fontSize:'13px',color:'#cbd5e1',lineHeight:1.7,marginBottom:'14px'}},'人とのつながりを大切に。'));
@@ -4435,6 +4440,9 @@ function renderSelfMode(){
     // 記録済みの一覧（種類・度数・時刻）＋各行の飲み終わり・削除（🍻外飲モードと共通）
     { const dl=drinkRecordList(vd); if(dl) recWrap.appendChild(dl); }
     inner.appendChild(recWrap);
+    // 🍽 食べたもの・今の栄養（🍚食事・🍽️外食モードと同じ。おつまみも記録できる）
+    { const foodN=(getDaily(vd).foods||[]).length, fb=lifeActionBtn(`🍽 食べたものを記録${foodN?`（${foodN}品）`:''}`,M.accent,openFoodRecord);
+      inner.appendChild(peek?peekDisabled(fb):fb); inner.appendChild(nutriCard(vd,{next:true,plain:true})); }
     // ディレイタイマー
     const delayActive=state.selfDelayUntil&&state.selfDelayUntil>Date.now();
     if(delayActive){
