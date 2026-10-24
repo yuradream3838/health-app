@@ -247,7 +247,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.62"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.63"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -945,7 +945,7 @@ const state = {
   editTimerHasStart:false, editTimerHasEnd:false,
   editSessionItemId:null, editSessionUid:null, editSessionSessions:[],
   cravingExpanded:false,
-  newEjacH:0, newEjacM:0, newEjacTag:null, newEjacNextDay:false,
+  newEjacH:0, newEjacM:0, newEjacTag:null, newEjacNextDay:false, newMedNextDay:false,
   newNapH:0, newNapM:0, newNapEndH:0, newNapEndM:0, newNapDur:30, editNapUid:null, todoSortMode:false,
   newAwakeH:3, newAwakeM:0, newAwakeEndH:3, newAwakeEndM:20, editAwakeUid:null,
   newMedName:"", newMedH:0, newMedM:0, editMedUid:null,
@@ -5473,18 +5473,18 @@ function renderDailyPanel(vd){
           meds.length>0?span({style:{fontSize:"11px",color:"#64748b",marginLeft:"6px"}},`${meds.length}件`):null
         ]),
         btn({style:{fontSize:"11px",padding:"3px 10px",background:"#0ea5e918",border:"1px solid #0ea5e9",borderRadius:"8px",color:"#38bdf8",cursor:"pointer",fontWeight:600},
-          onClick:()=>{ const now=new Date(); state.modal="addMed"; state.newMedName=""; state.newMedH=now.getHours(); state.newMedM=now.getMinutes(); render(); }},"+ 記録")
+          onClick:()=>{ const now=new Date(); state.modal="addMed"; state.newMedName=""; state.newMedH=now.getHours(); state.newMedM=now.getMinutes(); state.newMedNextDay=addDays(vd,1)===todayStr(); render(); }},"+ 記録")
       ]));
       if(meds.length===0){
         sec.appendChild(div({style:{fontSize:"11px",color:"#475569",textAlign:"center",padding:"6px 0"}},"まだ記録がありません"));
       } else {
         const list=div({style:{display:"flex",flexWrap:"wrap",gap:"5px"}});
-        [...meds].sort((a,b)=>(a.hour*60+(a.min||0))-(b.hour*60+(b.min||0))).forEach(md0=>{
-          const tL=`${String(md0.hour).padStart(2,'0')}:${String(md0.min||0).padStart(2,'0')}`;
+        [...meds].sort((a,b)=>(a.hour*60+(a.min||0)+(a.startNextDay?1440:0))-(b.hour*60+(b.min||0)+(b.startNextDay?1440:0))).forEach(md0=>{
+          const tL=`${md0.startNextDay?"翌":""}${String(md0.hour).padStart(2,'0')}:${String(md0.min||0).padStart(2,'0')}`;
           const item=div({style:{display:"flex",alignItems:"center",gap:"5px",padding:"3px 10px",background:"#0f172a",borderRadius:"20px",border:"1px solid #1e3a5f",cursor:"pointer"}});
           item.appendChild(span({style:{fontSize:"11px",color:"#94a3b8"}},tL));
           item.appendChild(span({style:{fontSize:"11px",color:"#7dd3fc"}},md0.name||""));
-          item.addEventListener('click',(()=>{const rec=md0;return()=>{ state.modal="editMed"; state.editMedUid=rec.uid; state.newMedName=rec.name||""; state.newMedH=rec.hour; state.newMedM=rec.min||0; render(); };})());
+          item.addEventListener('click',(()=>{const rec=md0;return()=>{ state.modal="editMed"; state.editMedUid=rec.uid; state.newMedName=rec.name||""; state.newMedH=rec.hour; state.newMedM=rec.min||0; state.newMedNextDay=!!rec.startNextDay; render(); };})());
           const del=btn({style:{background:"transparent",border:"none",color:"#334155",cursor:"pointer",fontSize:"14px",padding:"0"}},"×");
           del.addEventListener('click',(()=>{const uid=md0.uid;return(e)=>{e.stopPropagation(); pushUndo("服薬を削除しました");const nd={...getDaily(vd)};nd.meds=(nd.meds||[]).filter(x=>x.uid!==uid);setDaily(vd,nd);render();};})());
           item.appendChild(del);
@@ -7891,6 +7891,7 @@ function getActualActivities(vd){
   });
   // 服薬（点イベント）
   (daily.meds||[]).forEach(md0=>{
+    if(md0.startNextDay) return; // 翌日ぶんは翌日側のタイムラインで表示
     const s=(md0.hour||0)*60+(md0.min||0);
     const k=`med:${md0.uid||(md0.hour+':'+md0.min+':'+(md0.name||''))}`;
     acts.push({title:`💊 ${md0.name||""}`.trim()+aNote(k),startMin:s,endMin:s+12,isPoint:true,color:"#14b8a6",noteKey:k});
@@ -10581,7 +10582,10 @@ function renderDaySchedule(vd,ds,isToday){
     // 色は設定した表示色を使う（当日分と同じ。ここだけ固定色だと「翌日」の記録だけ色が変わらない）
     return {title:`💧${tagAbbr?" "+tagAbbr:""}`,startMin:s,endMin:s+12,isPoint:true,color:getEjacColor()};
   });
-  const actuals=[...getActualActivities(vd), ...prevActuals, ...prevEjacTails];
+  // 前日の「翌日」服薬も当日(vd)の早朝として表示
+  const prevMedTails=(getDaily(addDays(vd,-1)).meds||[]).filter(md0=>md0.startNextDay).map(md0=>{
+    const s=(md0.hour||0)*60+(md0.min||0); return {title:`💊 ${md0.name||""}`.trim(),startMin:s,endMin:s+12,isPoint:true,color:"#14b8a6"}; });
+  const actuals=[...getActualActivities(vd), ...prevActuals, ...prevEjacTails, ...prevMedTails];
 
   // 予定・実績の追加はタイムラインの空き時間タップで行う（左=予定 / 右=実績）
   wrap.appendChild(div({style:{marginBottom:"10px"}},[
@@ -18542,6 +18546,11 @@ function renderAddMedModal(vd,isEdit){
   m.appendChild(div({style:{display:"flex",gap:"8px",alignItems:"center",marginBottom:"16px"}},[
     clockField(state.newMedH,state.newMedM,(H,M)=>{state.newMedH=H;state.newMedM=M;})
   ]));
+  // 翌日（0時をまたいだ深夜ぶんを、この日の記録として翌日の時刻で扱う。射精・飲酒と同じ）
+  { const on=!!state.newMedNextDay;
+    const nd=btn({style:{width:"100%",padding:"8px",marginTop:"-8px",marginBottom:"14px",borderRadius:"8px",cursor:"pointer",fontSize:"12px",fontWeight:600,
+      border:`1px solid ${on?"#38bdf8":"#334155"}`,background:on?"#0ea5e922":"transparent",color:on?"#38bdf8":"#64748b"}},on?"🌙 翌日: ON":"🌙 翌日: OFF");
+    nd.setAttribute('data-mednextday','1'); nd.addEventListener('click',()=>{state.newMedNextDay=!state.newMedNextDay;render();}); m.appendChild(nd); }
   if(isEdit){
     m.appendChild(btn({style:{width:"100%",padding:"7px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#475569",cursor:"pointer",fontSize:"12px",marginBottom:"8px"},
       onClick:()=>{ pushUndo("服薬を削除しました");const nd={...getDaily(vd)};nd.meds=(nd.meds||[]).filter(x=>x.uid!==state.editMedUid);setDaily(vd,nd);state.modal=null;render(); }},"この記録を削除"));
@@ -18552,8 +18561,9 @@ function renderAddMedModal(vd,isEdit){
       onClick:()=>{
         const name=(state.newMedName||"").trim(); if(!name){alert("薬の名前を入力してください");return;}
         const nd={...getDaily(vd)};
-        if(isEdit){ nd.meds=(nd.meds||[]).map(x=>x.uid===state.editMedUid?{...x,name,hour:state.newMedH,min:state.newMedM}:x); }
-        else { nd.meds=[...(nd.meds||[]),{uid:Date.now(),name,hour:state.newMedH,min:state.newMedM}]; }
+        const withND=x=>{ if(state.newMedNextDay) x.startNextDay=true; else delete x.startNextDay; return x; };
+        if(isEdit){ nd.meds=(nd.meds||[]).map(x=>x.uid===state.editMedUid?withND({...x,name,hour:state.newMedH,min:state.newMedM}):x); }
+        else { nd.meds=[...(nd.meds||[]),withND({uid:Date.now(),name,hour:state.newMedH,min:state.newMedM})]; }
         setDaily(vd,nd);state.modal=null;render();
       }},"記録する")
   ]));
