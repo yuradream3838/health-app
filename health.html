@@ -247,7 +247,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.61"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.62"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -7149,9 +7149,17 @@ function nutriIntake(vd,uptoMin,log){
   const d=getDaily(vd), sum={w:Math.round((d.water||0)*1000),p:0,f:0,c:0,fib:0}, unknown=new Set();
   (log||d.foodLog||[]).forEach(e=>{ if(!e||!e.name) return; if(uptoMin!=null&&e.t>uptoMin) return; const n=foodNutriOf(e.name); const q=+e.qty||0;
     if(!n){ unknown.add(e.name); return; } ["w","p","f","c","fib"].forEach(k=>{ sum[k]+=(+n[k]||0)*q; }); });
+  // 🍺 お酒は炭水化物として数える（お酒の糖質＋アルコールを炭水化物に置きかえた量）。水分には数えない
+  let alcC=0; (d.drinks||[]).forEach(dr=>{ const t=(dr.hour||0)*60+(dr.min||0)+(dr.startNextDay?1440:0); if(uptoMin!=null&&t>uptoMin) return; alcC+=drinkCarbG(dr); });
+  sum.c+=alcC;
   ["p","f","c","fib"].forEach(k=>sum[k]=Math.round(sum[k]*10)/10); sum.w=Math.round(sum.w);
-  return {...sum, unknown:[...unknown]};
+  return {...sum, alcC:Math.round(alcC*10)/10, unknown:[...unknown]};
 }
+// お酒1杯の「炭水化物として数える量」(g)＝糖質（種類ごとの100mlあたりの目安・食品成分表（八訂）をもとにした概算）
+//   ＋ アルコール（純アルコールg×7kcal÷4kcal＝同じエネルギーの炭水化物のg）
+const DRINK_CARB_PER100={beer:3.1,beer_lg:3.1,happo:3.6,sake:4.9,shochu_w:0,shochu_r:0,wine:2,whisky:0,highball:0,chuhai:3,strong:2.5,plum:20.7,cocktail_s:5};
+function drinkCarbG(dr){ const dt=resolveDT(dr), ml=+dr.ml||0, pct=dr.pct!=null?dr.pct:dt.pct;
+  return ml*(DRINK_CARB_PER100[dr.id]||0)/100 + pureAlcohol(ml,pct)*7/4; }
 // その日の「0時からの分」（0時を過ぎた夜は1440以上）
 function nutriNowMin(vd,now){ return Math.round(((now||Date.now())-parseDS(vd).getTime())/60000); }
 // 起床・就寝目標（分）と食事の時刻
@@ -7213,7 +7221,7 @@ function nutriRow(k,P,I){
   bar.appendChild(div({style:{height:"100%",width:`${Math.min(100,tot?got/tot*100:0)}%`,background:col,borderRadius:"5px"}}));
   if(tot) bar.appendChild(div({style:{position:"absolute",top:"-3px",bottom:"-3px",left:`calc(${Math.min(100,now/tot*100)}% - 1px)`,width:"2px",background:"#e2e8f0",borderRadius:"1px"}}));   // 今の目安の印
   row.appendChild(bar);
-  row.appendChild(div({style:{fontSize:"9px",color:"#64748b",marginTop:"2px",textAlign:"right"}},`1日 ${fmt(tot)}`));
+  row.appendChild(div({style:{fontSize:"9px",color:"#64748b",marginTop:"2px",textAlign:"right"}},`${k==="c"&&I.alcC>0?`うちお酒 ${Math.round(I.alcC)}g・`:""}1日 ${fmt(tot)}`));
   return row;
 }
 function nutriCard(vd,opts){
