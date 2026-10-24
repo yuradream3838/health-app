@@ -247,7 +247,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.58"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.59"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -610,7 +610,7 @@ function getPlanShiftBlock(ds){
   const ps=d.planShift;
   let b=null;
   if(ps&&typeof ps==='object'&&ps.startH!=null){
-    b={startH:ps.startH,startM:ps.startM||0,endH:ps.endH,endM:ps.endM||0,label:"勤務",color:ps.startH<12?SHIFT_TYPES.s1.color:SHIFT_TYPES.s2.color,custom:true};
+    b={startH:ps.startH,startM:ps.startM||0,endH:ps.endH,endM:ps.endM||0,label:"勤務",color:(SHIFT_TYPES[ps.key]&&SHIFT_TYPES[ps.key].color)||(ps.startH<12?SHIFT_TYPES.s1.color:SHIFT_TYPES.s2.color),custom:true};
   } else {
     const key=(ps!=null)?ps:getPatternShift(ds);
     if(!key||key==="off"||key==="off2")return null;
@@ -628,6 +628,17 @@ function setDayShift(ds,key){
   if(key==null){ setDaily(ds,{planShift:null}); return; }
   if(!SHIFT_TYPES[key])return;
   setDaily(ds,{planShift:key});
+}
+// 画面からシフトを変えるとき：その日の時間を自分で変えていたら、時間を残すか確認する
+// （OK＝時間はそのままでシフトの種類だけ変える／キャンセル＝新しいシフトの決まった時間。休みにするときは聞かずに時間を外す）
+function changeDayShift(ds,key){
+  const ps=getDaily(ds).planShift, custom=ps&&typeof ps==='object'&&ps.startH!=null;
+  const nk=key==null?getPatternShift(ds):key;
+  if(custom&&nk&&nk!=="off"&&nk!=="off2"&&SHIFT_TYPES[nk]){
+    const keep=confirm(`この日は勤務時間を自分で変えています（${hhmm(ps.startH,ps.startM)}〜${hhmm(ps.endH,ps.endM)}）。\n${SHIFT_TYPES[nk].label}に変えても、この時間を残しますか？\n\nOK：時間はそのまま残す\nキャンセル：${SHIFT_TYPES[nk].label}の決まった時間にする`);
+    if(keep){ setDaily(ds,{planShift:{...ps,key:nk}}); return; }
+  }
+  setDayShift(ds,key);
 }
 
 // ── パターン予定（睡眠など・毎週の計画ブロック。予定＝左列に表示）──
@@ -8314,7 +8325,7 @@ function renderPatternEditModal(vd){
       const on=getPlanShiftKey(vd)===k&&!(typeof getDaily(vd).planShift==='object');
       const b=btn({style:{flex:1,padding:"9px",borderRadius:"8px",cursor:"pointer",fontSize:"13px",fontWeight:600,
         border:`1px solid ${on?SHIFT_TYPES[k].color:"#334155"}`,background:on?SHIFT_TYPES[k].color+"22":"transparent",color:on?SHIFT_TYPES[k].color:"#64748b"}},l);
-      b.addEventListener('click',()=>{setDayShift(vd,k);state.modal=null;showToast(`${l}にしました`);render();});
+      b.addEventListener('click',()=>{changeDayShift(vd,k);state.modal=null;showToast(`${l}にしました`);render();});
       row.appendChild(b);
     });
     m.appendChild(row);
@@ -10559,13 +10570,13 @@ function renderDaySchedule(vd,ds,isToday){
       const on=curKey===k;
       const c=SHIFT_TYPES[k].color;
       const b=btn({style:{flex:1,padding:"8px",borderRadius:"8px",cursor:"pointer",fontSize:"13px",fontWeight:600,border:`1px solid ${on?c:"#334155"}`,background:on?c+"22":"transparent",color:on?c:"#64748b"}},l);
-      b.addEventListener('click',()=>{setDayShift(vd,k);showToast(`${l}に変更しました`);render();});
+      b.addEventListener('click',()=>{changeDayShift(vd,k);showToast(`${l}に変更しました`);render();});
       row.appendChild(b);
     });
     sc.appendChild(row);
     if(isOverride)
       sc.appendChild(btn({style:{width:"100%",marginTop:"6px",padding:"6px",background:"transparent",border:"1px solid #334155",borderRadius:"7px",color:"#64748b",cursor:"pointer",fontSize:"11px"},
-        onClick:()=>{setDayShift(vd,null);showToast("パターンに戻しました");render();}},"↩ パターンに戻す"));
+        onClick:()=>{changeDayShift(vd,null);showToast("パターンに戻しました");render();}},"↩ パターンに戻す"));
     wrap.appendChild(sc);
   }
 
@@ -11059,15 +11070,16 @@ function renderWeekCalendar(vd,ds){
   ]));
 
   const cycleDayShift=(dsK)=>{
-    const ov=getDaily(dsK).planShift; // 予定上書きの有無
-    if(ov==null){ setDayShift(dsK,"s1"); }
-    else if(ov==="s1"){ setDayShift(dsK,"s2"); }
-    else if(ov==="s2"){ setDayShift(dsK,"off"); }
-    else if(ov==="off"){ setDayShift(dsK,"off2"); }
-    else { setDayShift(dsK,null); }
+    const p0=getDaily(dsK).planShift; // 予定上書きの有無（時間を変えた日はそのシフトの種類から次へ）
+    const ov=(p0&&typeof p0==='object')?(p0.key||null):p0;
+    if(ov==null){ changeDayShift(dsK,"s1"); }
+    else if(ov==="s1"){ changeDayShift(dsK,"s2"); }
+    else if(ov==="s2"){ changeDayShift(dsK,"off"); }
+    else if(ov==="off"){ changeDayShift(dsK,"off2"); }
+    else { changeDayShift(dsK,null); }
     render();
   };
-  const doSwap=(a,b)=>{ const ka=currentShiftKey(a)||"off", kb=currentShiftKey(b)||"off"; setDayShift(a,kb); setDayShift(b,ka); };
+  const doSwap=(a,b)=>{ const ka=currentShiftKey(a)||"off", kb=currentShiftKey(b)||"off"; changeDayShift(a,kb); changeDayShift(b,ka); };
   const onDayTap=(dsK)=>{
     if(state.swapMode){
       if(!state.swapFirst){ state.swapFirst=dsK; }
