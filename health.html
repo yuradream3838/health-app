@@ -247,7 +247,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.63"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.64"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -292,6 +292,7 @@ const SAVE_TARGETS=[
   ["saveDecisBalance","decisBalance","⚖ 決断バランス"],
   ["saveMIValues","miValues","💎 価値"],
   ["saveChangePlan","changePlan","📋 変化の計画"],
+  ["saveSoberCfg","soberCfg","🚱 休肝日の設定"],
   ["saveWidgetSections","widgetSections","🧩 ウィジェットの表示"],
   ["saveFoodCats",["foodCats","foodEmoji"],"🍽 食べたものの一覧"],
   ["saveFoodNutri","foodNutri","🍽 品目の栄養"],
@@ -976,7 +977,7 @@ const state = {
   investHistExpanded:false, // 未来投資履歴の全件展開
   lifeVision:null, nightRitual:null, connectGoal:null, // 根本解決の習慣機能
   ctJournal:null, ctPromptIdx:0, ctDraft:"", // 動機づけ面談：チェンジトーク・ジャーナル
-  decisBalance:null, miValues:null, changePlan:null, // 動機づけ面談：心の天秤／価値／変化の計画書
+  decisBalance:null, miValues:null, changePlan:null, soberCfg:null, soberCfgOpen:false, // 動機づけ面談：心の天秤／価値／変化の計画書
   saved:false
 };
 
@@ -1125,6 +1126,8 @@ function loadStorage(){
     if(mvv){try{const o=JSON.parse(mvv); if(o&&typeof o==="object")state.miValues=o;}catch{}}
     const cpl=localStorage.getItem(STORAGE_KEY+"_changeplan");
     if(cpl){try{const o=JSON.parse(cpl); if(o&&typeof o==="object")state.changePlan=o;}catch{}}
+    const sbc=localStorage.getItem(STORAGE_KEY+"_sober");
+    if(sbc){try{const o=JSON.parse(sbc); if(o&&typeof o==="object")state.soberCfg=o;}catch{}}
     // 旧形式（v8.3 events/taskList/wishList/shopList）からの一度きり移行
     if(!sc && !tk){ migrateOldSchedule(); }
   }catch{}
@@ -1827,6 +1830,7 @@ function nextDate(){
 // ── ウィジェットの表示項目（ユーザーが表示/非表示を選べる）──
 const WIDGET_SECTIONS=[
   {k:'decl',      l:'✍️ わたしの宣言'},
+  {k:'sober',     l:'🚱 休肝日（今週）'},
   {k:'sched',     l:'📅 今日の予定'},
   {k:'quick',     l:'⚡ クイック記録'},
   {k:'nutri',     l:'🍽 水分・栄養（今の目安）'},
@@ -1853,7 +1857,8 @@ function saveWidgetSections(){ safeSet(STORAGE_KEY+"_widgetsections",JSON.string
 function widgetOrder(){
   const def=WIDGET_SECTIONS.map(s=>s.k);
   let ord=Array.isArray(state.widgetSecOrder)?state.widgetSecOrder.filter(k=>def.includes(k)):[];
-  def.forEach(k=>{ if(!ord.includes(k))ord.push(k); });
+  // まだ並びに無い新しい項目は、既定の並びで1つ前の項目のすぐ後ろに入れる（無ければ末尾）
+  def.forEach((k,i)=>{ if(ord.includes(k))return; const prev=i>0?ord.indexOf(def[i-1]):-1; if(prev>=0) ord.splice(prev+1,0,k); else ord.push(k); });
   return ord;
 }
 function saveWidgetOrder(){ safeSet(STORAGE_KEY+"_widgetorder",JSON.stringify(widgetOrder())); }
@@ -2527,7 +2532,7 @@ function setAlexaTrigger(id,patch){ const t=alexaTrigger(id); if(!t)return; Obje
 function removeAlexaTrigger(id){
   state.alexaTriggers=getAlexaTriggers().filter(t=>t.id!==id);
   const m=getAlexaModes(); Object.keys(m).forEach(k=>{ if(m[k]===id) delete m[k]; });
-  const sl=getAlexaSleep(); ["bed","wind"].forEach(k=>{ if(sl[k]&&sl[k].t===id) delete sl[k]; });
+  const sl=getAlexaSleep(); ["bed","wind","sober"].forEach(k=>{ if(sl[k]&&sl[k].t===id) delete sl[k]; });
   saveAlexa();
 }
 function saveAlexa(){ try{safeSet(STORAGE_KEY+"_alexa",JSON.stringify({
@@ -3151,6 +3156,8 @@ const NUDGE_DEFS=[
   {id:'stall', icon:'🔀', label:'モードの停滞', pri:6,
    desc:'趣味・休息のモードが長く続いているとき',
    num:{key:'min', def:180, min:30, max:720, unit:'min', label:'同じモードが何分続いたら'}},
+  {id:'sober', icon:'🚱', label:'今日は休肝日', pri:0,
+   desc:'休肝日にした日の、勤務の終わり（会社を出る時刻）／休みの日は休肝日の設定の時刻から2時間。飲む記録をつけたら出しません'},
   {id:'mood', icon:'🫧', label:'今日の気分は？', pri:4,
    desc:'この時刻以降に1日1回。落ち込み・たかぶりのケアへの入口になります',
    time:{label:'出す時刻'}},
@@ -3254,6 +3261,9 @@ function evalNudges(now){
   if(state.sleepMode||state.selfMode||state.modeSwitcher||state.lifeScreen) return null; // 全画面表示中は出さない
   now=now||Date.now(); const nd=new Date(now); const nowMin=nd.getHours()*60+nd.getMinutes();
   const vd=todayStr(); const curMode=currentLifeModeKey(); const cands=[];
+  // R0 休肝日（会社を出る時刻／休みの日の夕方）
+  if(nudgeOn('sober') && nudgeActive('sober',now)){ const ad=activeDay(); if(soberPlanned(ad) && !dayHasAlcohol(ad)){ const r=soberRemindMin(ad), m=nowMin+(ad<vd?1440:0);
+    if(m>=r.min && m<=r.min+120) cands.push({pri:0,id:'sober',icon:'🚱',title:'今日は休肝日',sub:soberMsg(r.work).replace(/^今日は休肝日。/,""),goLabel:'わかった',act:()=>dismissNudge('sober')}); } }
   // R3 飲み過ぎ（飲みモードが設定の分数だけ続いた）
   if(nudgeOn('drink') && nudgeActive('drink',now) && (curMode==='drink'||curMode==='drinkout')){ const lim0=nudgeNum('drink'); const ses=currentModeSession(); const el=ses?(now-ses.start):0; if(el>=lim0*60000){ const g=Math.round(pureAlcoholG(vd)), lim=alcLimitDay(), over=g>=lim; cands.push({pri:1,id:'drink',icon:'🍶',title:over?`今日 ${g}g（上限${lim}g）`:`${curMode==='drinkout'?'外飲':'飲み'}モードが${fmtMinLabel(lim0)}`,sub:'そろそろ切り上げませんか？',act:()=>{ state.modeSwitcher=true; }}); } }
   // R2 寝坊（目標起床時刻・シフト別）
@@ -3297,7 +3307,7 @@ function nudgeBanner(){
     c.appendChild(dm);
   } else {
     const row=div({style:{display:'flex',gap:'7px',marginTop:'9px'}});
-    const go=btn({style:{flex:1,padding:'9px',borderRadius:'9px',border:'none',background:'#0ea5e9',color:'#fff',fontSize:'13px',fontWeight:700,cursor:'pointer',fontFamily:'inherit'}},'切り替える');
+    const go=btn({style:{flex:1,padding:'9px',borderRadius:'9px',border:'none',background:'#0ea5e9',color:'#fff',fontSize:'13px',fontWeight:700,cursor:'pointer',fontFamily:'inherit'}},n.goLabel||'切り替える');
     go.addEventListener('click',()=>{ if(n.act)n.act(); render(); });
     row.appendChild(go);
     const later=btn({style:{padding:'9px 11px',borderRadius:'9px',border:'1px solid #334155',background:'transparent',color:'#94a3b8',fontSize:'12px',cursor:'pointer',fontFamily:'inherit'}},'あとで');
@@ -3938,6 +3948,8 @@ function renderLifeScreen(){
       inner.appendChild(tp); }
     inner.appendChild(lifeActionBtn('📔 日記のトレーニングを開く（他の日を見る）',def.color,()=>{ state.lifeScreen=null; state.tab='日記'; state.diarySubTab='トレーニング'; state.widget=false; state.viewDate=activeDay(); render(); }));
   } else if(c==='shop'){
+    if(soberPlanned(activeDay())){ const sb=div({style:{padding:'10px 12px',borderRadius:'11px',background:'#22c55e18',border:'1px solid #22c55e66',color:'#bbf7d0',fontSize:'13px',fontWeight:700,textAlign:'center',lineHeight:1.6,marginBottom:'12px'}},'🚱 今日は休肝日。お酒は買わない日');
+      sb.setAttribute('data-shopsober','1'); inner.appendChild(sb); }
     inner.appendChild(div({style:{textAlign:'center',fontSize:'13px',color:'#cbd5e1',lineHeight:1.7,marginBottom:'14px',whiteSpace:'pre-line'}},'リストにあるものを買おう。\nついで買いはひと呼吸おいてから。'));
     addAssigned();
     // タスク→買物リストをまるごと表示（同じ関数・同じデータ。買ったらチェック）
@@ -4724,6 +4736,7 @@ function renderWidgetView(vd,ds){
     secNodes.invest=c;
   }
   if(wSecOn('nextdrink')) secNodes.nextdrink=nextDrinkCard(); // 🍺 次に飲みに行く予定（踏みとどまるの下）
+  if(wSecOn('sober')) secNodes.sober=soberWeekCard(); // 🚱 休肝日（今週）
   if(vd===todayStr() && wSecOn('nightritual')) secNodes.nightritual=nightRitualCard(vd,false); // 🌙 飲まない夜のルーティン
 
   // ── 🫂 つながり習慣（今日・今週の進捗） ──
@@ -9804,6 +9817,8 @@ function alexaReservationsAll(){
         if(wref) out.push(alexaPlanItem(ds,bt-windLeadMin(),wref,"🛏 寝支度の目標","wind"));
       }
     }catch(_){}
+    // ④ 休肝日の声かけ（勤務の終わり／休みの日は設定の時刻）
+    try{ if(soberPlanned(ds)){ const ref=alexaRefOf({alexa:getAlexaSleep().sober}); if(ref){ const r=soberRemindMin(ds); out.push(alexaPlanItem(ds,r.min,ref,"🚱 休肝日","sober")); } } }catch(_){}
     // ③ 定期ルーティン（時刻を設定しているもの）
     try{ dueCustomTodos(ds).forEach(ct=>{
       const ref=alexaRefOf(ct); if(!ref) return;
@@ -12254,6 +12269,87 @@ function soberMorningCard(){
   c.appendChild(div({style:{fontSize:"11px",color:"#94a3b8",marginTop:"6px",lineHeight:1.6}},"飲まなかった分、体も財布も軽い。この調子でいきましょう。"));
   return c;
 }
+// ── 🚱 休肝日の計画（家飲み・会社帰りの買物対策）──
+// 設定 state.soberCfg＝{perWeek:週の目標日数, yen:1日あたり浮くお金, offH/offM:休みの日に声をかける時刻}。
+// 休肝日にする日は daily.soberPlan=true、会社帰りに寄らずに帰れた日は daily.skipShop=true。
+const SOBER_CFG_DEFAULT={perWeek:1,yen:800,offH:16,offM:30};
+function getSoberCfg(){ const c=state.soberCfg&&typeof state.soberCfg==="object"?state.soberCfg:{}; return {...SOBER_CFG_DEFAULT,...c}; }
+function setSoberCfg(patch){ state.soberCfg={...getSoberCfg(),...patch}; saveSoberCfg(); }
+function saveSoberCfg(){ safeSet(STORAGE_KEY+"_sober",JSON.stringify(getSoberCfg())); }
+function soberPlanned(ds){ return !!getDaily(ds).soberPlan; }
+function setSoberPlanned(ds,on){ setDaily(ds,{soberPlan:on?true:null}); try{ alexaSyncPlan(true); }catch(_){} }
+// 声をかける時刻（その日の0時からの分）：勤務がある日は勤務の終わり（＝会社を出る時刻）、休みの日は設定の時刻
+function soberRemindMin(ds){
+  const b=getPlanShiftBlock(ds);
+  if(b){ const s=b.startH*60+(b.startM||0); let e=b.endH*60+(b.endM||0); if(e<=s) e+=1440; return {min:e,work:true}; }
+  const c=getSoberCfg(); return {min:c.offH*60+(c.offM||0),work:false};
+}
+function soberMsg(work){ return work?"今日は休肝日。トライアルに寄らずに、まっすぐ帰ろう":"今日は休肝日。夕方の予定を先に入れて、炭酸水を冷やしておこう"; }
+// 今週（月〜日）の状況
+function soberWeekStats(ds){
+  const mon=mondayStr(ds), today=activeDay(), days=[];
+  for(let i=0;i<7;i++){ const d=addDays(mon,i); days.push({ds:d, planned:soberPlanned(d), drank:dayHasAlcohol(d), past:d<today, today:d===today}); }
+  const done=days.filter(x=>x.past&&!x.drank).length;
+  return {days,done,planned:days.filter(x=>x.planned).length};
+}
+// 浮いたお金（今月：飲まなかった日×1日あたりの金額）
+function soberMonthSaved(ds){ const c=getSoberCfg(), m=ds.slice(0,7), today=activeDay(); let n=0;
+  const first=(state.dailies||[]).map(d=>d.dateStr).filter(Boolean).sort()[0]||today;
+  for(let d=m+"-01"; d<today && d.slice(0,7)===m; d=addDays(d,1)){ if(d>=first && !dayHasAlcohol(d)) n++; }
+  return {days:n, yen:n*c.yen}; }
+function soberWeekCard(){
+  const today=activeDay(), c=getSoberCfg(), W=soberWeekStats(today), WD=["月","火","水","木","金","土","日"];
+  const card=div({className:"card",style:{padding:"12px 14px",marginBottom:"10px",border:"1px solid #22c55e44",background:"#22c55e0a"}}); card.setAttribute('data-sobercard','1');
+  const gear=btn({style:{flexShrink:0,padding:"3px 8px",borderRadius:"7px",border:"1px solid #334155",background:"transparent",color:"#94a3b8",fontSize:"10px",cursor:"pointer",fontFamily:"inherit"}},state.soberCfgOpen?"✓ 閉じる":"⚙ 設定");
+  gear.addEventListener('click',()=>{ state.soberCfgOpen=!state.soberCfgOpen; render(); });
+  card.appendChild(div({style:{display:"flex",justifyContent:"space-between",alignItems:"center",gap:"8px",marginBottom:"8px"}},[
+    span({style:{fontSize:"13px",fontWeight:800,color:"#4ade80"}},`🚱 休肝日 今週 ${W.done}／${c.perWeek}日`),gear]));
+  // 1週間（タップで休肝日にする／やめる。過ぎた日は結果）
+  const row=div({style:{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:"4px",marginBottom:"8px"}});
+  W.days.forEach((x,i)=>{
+    let mark="", col="#475569", bd="#1e293b", bg="transparent";
+    if(x.past){ if(!x.drank){ mark="✓"; col="#22c55e"; bd="#22c55e66"; bg="#22c55e18"; } else if(x.planned){ mark="✗"; col="#f87171"; bd="#f8717166"; } else { mark="🍺"; col="#64748b"; } }
+    else if(x.planned){ mark=x.today&&x.drank?"✗":"🚱"; col="#4ade80"; bd="#22c55e"; bg="#22c55e22"; }
+    else { mark="＋"; col="#334155"; }
+    const b=btn({style:{padding:"5px 0",borderRadius:"8px",border:`1px solid ${x.today?"#e2e8f0":bd}`,background:bg,cursor:x.past?"default":"pointer",fontFamily:"inherit",color:col}},
+      [div({style:{fontSize:"9px",color:"#64748b"}},`${WD[i]} ${+x.ds.slice(8,10)}`),div({style:{fontSize:"14px",fontWeight:700,minHeight:"18px"}},mark)]);
+    b.setAttribute('data-soberday',x.ds);
+    if(!x.past) b.addEventListener('click',()=>{ setSoberPlanned(x.ds,!x.planned); render(); });
+    row.appendChild(b);
+  });
+  card.appendChild(row);
+  card.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"6px"}},`今日・これからの日をタップで休肝日にする（予定 ${W.planned}日）。✓＝飲まなかった日`));
+  // 今日が休肝日なら：声かけと「寄らずに帰れた」
+  if(soberPlanned(today)){
+    const r=soberRemindMin(today), d=getDaily(today);
+    const box=div({style:{padding:"9px 11px",borderRadius:"9px",background:"#22c55e14",border:"1px solid #22c55e55",marginBottom:"6px"}}); box.setAttribute('data-sobertoday','1');
+    box.appendChild(div({style:{fontSize:"12px",fontWeight:700,color:"#bbf7d0",lineHeight:1.6}},`🚱 ${soberMsg(r.work)}`));
+    box.appendChild(div({style:{fontSize:"10px",color:"#86efac",marginTop:"2px"}},`${hhmm(Math.floor(r.min/60)%24,r.min%60)}${r.work?"（勤務の終わり）":""}に声をかけます`));
+    if(r.work){ const on=!!d.skipShop;
+      const sk=btn({style:{width:"100%",marginTop:"7px",padding:"8px",borderRadius:"8px",border:`1px solid ${on?"#22c55e":"#334155"}`,background:on?"#22c55e22":"transparent",color:on?"#4ade80":"#94a3b8",fontSize:"12px",fontWeight:700,cursor:"pointer",fontFamily:"inherit"}},on?"✓ 寄らずに帰れた":"🏠 寄らずに帰れたらタップ");
+      sk.setAttribute('data-soberskip','1'); sk.addEventListener('click',()=>{ setDaily(today,{skipShop:on?null:true}); render(); }); box.appendChild(sk); }
+    card.appendChild(box);
+  }
+  { const S=soberMonthSaved(today); const skip=(state.dailies||[]).filter(x=>x.dateStr&&x.dateStr.slice(0,7)===today.slice(0,7)&&x.skipShop).length;
+    card.appendChild(div({style:{fontSize:"11px",color:"#94a3b8"}},`💰 今月浮いたお金 約¥${S.yen.toLocaleString()}（飲まなかった日 ${S.days}日×¥${c.yen}）${skip?`・🏠 寄らずに帰れた ${skip}回`:""}`)); }
+  if(state.soberCfgOpen){
+    const ed=div({style:{marginTop:"9px",paddingTop:"9px",borderTop:"1px solid #1e293b"}}); ed.setAttribute('data-sobercfg','1');
+    const numIn=(val,w,on,attr)=>{ const i=document.createElement('input'); i.type='number'; i.value=String(val); i.setAttribute('data-sobercfgkey',attr);
+      i.style.cssText=`width:${w};padding:5px 6px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#e2e8f0;font-size:12px;font-family:inherit;text-align:center`;
+      i.addEventListener('change',e=>{ on(e.target.value); render(); }); return i; };
+    const line=(label,...els)=>div({style:{display:"flex",alignItems:"center",gap:"6px",marginBottom:"7px",fontSize:"11px",color:"#94a3b8"}},[span({style:{flex:1}},label),...els]);
+    ed.appendChild(line("週の目標（日）",numIn(c.perWeek,"52px",v=>setSoberCfg({perWeek:Math.max(1,Math.min(7,parseInt(v)||1))}),"perWeek")));
+    ed.appendChild(line("1日あたり浮くお金（円）",numIn(c.yen,"72px",v=>setSoberCfg({yen:Math.max(0,parseInt(v)||0)}),"yen")));
+    { const ti=document.createElement('input'); ti.type='time'; ti.value=hhmm(c.offH,c.offM); ti.setAttribute('data-sobercfgkey','off');
+      ti.style.cssText="padding:4px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#e2e8f0;font-size:12px;color-scheme:dark;font-family:inherit";
+      ti.addEventListener('change',e=>{ const [h,m]=(e.target.value||"").split(":").map(Number); if(!isNaN(h)){ setSoberCfg({offH:h,offM:m||0}); try{ alexaSyncPlan(true); }catch(_){} render(); } });
+      ed.appendChild(line("休みの日に声をかける時刻",ti)); }
+    ed.appendChild(div({style:{fontSize:"10px",color:"#64748b",lineHeight:1.6,marginBottom:"5px"}},"勤務がある日は、シフトの勤務の終わりの時刻に声をかけます（通知はアプリの🔔通知の設定・アプリが開いているとき。Alexaは下で選ぶと予約されます）"));
+    ed.appendChild(line("🔊 Alexaで声をかける",alexaRefPicker(getAlexaSleep().sober,(v)=>{ const s2=getAlexaSleep(); if(v)s2.sober=v; else delete s2.sober; saveAlexa(); try{ alexaSyncPlan(true); }catch(_){} render(); })));
+    card.appendChild(ed);
+  }
+  return card;
+}
 // 休肝日◯日達成のバッジ（ヴィジェット・予定用）
 function soberBadge(){
   const n=alcoholFreeStreak();
@@ -13095,11 +13191,49 @@ function declarationCard(){
   }
   return c;
 }
+// 家飲み・休肝日向けの案（会社帰りの買物の対策を含む）。入れる前の計画は p.prev に残し、「前の計画に戻す」で戻せる
+const CHANGE_PLAN_SOBER={
+  want:"家で毎日飲むのをやめて、週1日は飲まない日（休肝日）をつくる。慣れたら週2日にする。",
+  why:"自分のやりたいこと、価値のあることに時間とお金を使うため。毎日の習慣になっている飲み方を、自分で選べる飲み方に戻したい。",
+  firstStep:"今週の水曜（または2直の日）を休肝日にする。その日は会社帰りにトライアルに寄らず、お酒を家に置かない。",
+  support:"このアプリで休肝日を決めて記録する。会社を出る時刻に通知・Alexaで声をかけてもらう。必要なら減酒外来に相談する。",
+  obstacle:"休みの日の夕方（17時ごろ）、することがない時。2直の帰り、0時すぎの疲れている時。会社帰りにトライアルに寄った時。家にお酒の買い置きがある時。不安な気持ちを紛らわせたい時。",
+  cope:"休みの日は16時台に外出・食事・トレーニングの予定を先に入れる。休肝日はトライアルの前を通らない道で帰る。寄る日は入口で買物リストを開いて、リストのものだけ買う（お酒はその日の分1本まで）。2直の帰りはシャワー→ノンアル→食事の順。買い置きはしない。不安な時はグラビティでトークルームを開く。",
+};
+const IFTHEN_SOBER=[
+  {cue:"会社を出たら",action:"今日が休肝日か確かめて、休肝日ならトライアルの前を通らない道で帰る",weekdays:[],afterH:null},
+  {cue:"休みの日の16時半になったら",action:"炭酸水を冷やして、先にごはんを食べる",weekdays:[],afterH:16},
+  {cue:"2直の帰りに飲みたくなったら",action:"家に着いたらまずシャワーを浴びる",weekdays:[],afterH:22},
+  {cue:"飲みたくて落ち着かない時",action:"15分だけ待つ（欲求の波は15〜20分で下がる）",weekdays:[],afterH:null},
+];
+function applySoberChangePlan(){
+  const p=getChangePlan(), keys=Object.keys(CHANGE_PLAN_SOBER);
+  const already=keys.every(k=>(p[k]||"")===CHANGE_PLAN_SOBER[k]);   // もう入っていれば、前の計画（p.prev）は残したまま if-then だけ確かめる
+  if(!already && keys.some(k=>(p[k]||"").trim()) && !confirm("今の計画書の内容を「家飲み・休肝日」向けの案に書きかえますか？\n（今の内容は「↩ 前の計画に戻す」で戻せます）")) return;
+  if(!already){ const prev={}; keys.forEach(k=>prev[k]=p[k]||""); prev.conf=p.conf;
+    state.changePlan={...p,...CHANGE_PLAN_SOBER,conf:null,prev}; saveChangePlan(); }
+  // if-then：同じきっかけのものが無ければ足す
+  const plans=getIfThenPlans(); let added=0;
+  IFTHEN_SOBER.forEach((x,i)=>{ if(plans.some(y=>(y.cue||"").trim()===x.cue)) return; plans.push({id:Date.now()+i,...x,active:true}); added++; });
+  if(added) saveIfThenPlans();
+  showToast(`🚱 家飲み・休肝日の計画にしました${added?`（if-then ${added}件を追加）`:""}`);
+}
+function restorePrevChangePlan(){
+  const p=getChangePlan(); if(!p.prev) return;
+  if(!confirm("計画書を、書きかえる前の内容に戻しますか？")) return;
+  const {prev,...rest}=p; state.changePlan={...rest,...prev}; delete state.changePlan.prev; saveChangePlan(); showToast("↩ 前の計画に戻しました");
+}
 function changePlanCard(){
   const p=getChangePlan();
   const c=div({className:"card",style:{marginBottom:"10px",border:"1px solid #f59e0b44",background:"#f59e0b0d"}});
   c.appendChild(div({style:{fontSize:"13px",fontWeight:800,color:"#fbbf24",marginBottom:"3px"}},"📋 変化の計画書"));
   c.appendChild(div({style:{fontSize:"10px",color:"#64748b",lineHeight:1.5,marginBottom:"10px"}},"気持ちが固まってきたら、1枚にまとめましょう。書き換えは何度でもOK。"));
+  { const r=div({style:{display:"flex",gap:"6px",marginBottom:"10px"}});
+    const a=btn({style:{flex:1,padding:"8px",borderRadius:"8px",border:"1px dashed #22c55e",background:"#22c55e12",color:"#4ade80",fontSize:"12px",fontWeight:700,cursor:"pointer",fontFamily:"inherit"}},"🚱 家飲み・休肝日向けの案を入れる");
+    a.setAttribute('data-plansober','1'); a.addEventListener('click',()=>{ applySoberChangePlan(); render(); }); r.appendChild(a);
+    if(p.prev){ const b=btn({style:{flexShrink:0,padding:"8px 10px",borderRadius:"8px",border:"1px solid #334155",background:"transparent",color:"#94a3b8",fontSize:"11px",cursor:"pointer",fontFamily:"inherit"}},"↩ 前の計画に戻す");
+      b.setAttribute('data-planprev','1'); b.addEventListener('click',()=>{ restorePrevChangePlan(); render(); }); r.appendChild(b); }
+    c.appendChild(r); }
   const field=(key,label,ph,rows)=>{
     const box=div({style:{marginBottom:"9px"}});
     box.appendChild(div({style:{fontSize:"11px",color:"#fbbf24",fontWeight:600,marginBottom:"4px"}},label));
@@ -18241,6 +18375,7 @@ function exportDataInner(){
     decisBalance:state.decisBalance,
     miValues:state.miValues,
     changePlan:state.changePlan,
+    soberCfg:state.soberCfg,
     weather,
     city
   };
@@ -18351,6 +18486,7 @@ function importData(e){
       if(p.decisBalance&&typeof p.decisBalance==="object"){state.decisBalance=p.decisBalance;saveDecisBalance();}
       if(p.miValues&&typeof p.miValues==="object"){state.miValues=p.miValues;saveMIValues();}
       if(p.changePlan&&typeof p.changePlan==="object"){state.changePlan=p.changePlan;saveChangePlan();}
+      if(p.soberCfg&&typeof p.soberCfg==="object"){state.soberCfg=p.soberCfg;saveSoberCfg();}
       if(p.weather){safeSet(STORAGE_KEY+"_weather",JSON.stringify(p.weather));}
       if(p.city){state.weatherCity=p.city;safeSet(STORAGE_KEY+"_city",JSON.stringify(p.city));}
       // 旧形式（v8.3）のバックアップは新モデルへ移行して取り込む
