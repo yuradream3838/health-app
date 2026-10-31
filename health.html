@@ -247,7 +247,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.65"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.66"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -7919,6 +7919,10 @@ function getActualActivities(vd){
     const k=`ej:${ej.uid||s}`;
     acts.push({title:`💧${tagAbbr?" "+tagAbbr:""}`+aNote(k),startMin:s,endMin:s+12,isPoint:true,color:getEjacColor(),noteKey:k});
   });
+  // 🫂 つながりの記録（点イベント）。記録した日が前後でも、記録の時刻がこの日（0〜24時）なら出す（深夜0時すぎの分は翌日側に）
+  [-1,0,1].forEach(off=>{ const D=addDays(vd,off), base=parseDS(vd).getTime();
+    (getDaily(D).investments||[]).forEach(r=>{ if(!isConnectInvest(r)||!r.t) return; const s=Math.floor((new Date(r.t).getTime()-base)/60000); if(s<0||s>=1440) return;
+      const k=`cn:${r.t}`; acts.push({title:`🫂 ${r.label||"つながり"}${r.note?`：${r.note}`:""}`+aNote(k),startMin:s,endMin:s+12,isPoint:true,color:"#ec4899",noteKey:k}); }); });
   // 服薬（点イベント）
   (daily.meds||[]).forEach(md0=>{
     if(md0.startNextDay) return; // 翌日ぶんは翌日側のタイムラインで表示
