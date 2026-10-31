@@ -247,7 +247,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.64"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.65"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -3354,6 +3354,20 @@ function modeSegmentsForDay(ds){
 // ルーティン項目の当日の計測秒（タイマー式：セッション/開始終了の合計。実行中は現在まで加算）
 function routineItemSec(vd,item){ const t=(state.todos[vd]||{})[item.id]||{}; let sec=0; const nowISO=new Date().toISOString(); const add=(a,b)=>{ if(a&&b)sec+=Math.max(0,(Date.parse(b)-Date.parse(a))/1000); }; if(item.multi){ (t.sessions||[]).forEach(s=>{ if(s.startTime) add(s.startTime,s.endTime||nowISO); }); } else if(t.startTime){ add(t.startTime,t.endTime||nowISO); } return Math.round(sec); }
 // ルーティン項目1件の行（チェック式＝✓トグル／タイマー式＝▶開始・⏹停止＋経過表示）。既存のルーティン記録(setTodo)に連動
+// モード画面からルーティンの記録時刻を直す（タスクタブと同じ画面を開く。vd はモード画面の日＝state.rtEditVd）
+function openRoutineTimeEdit(vd,item,kind,session){
+  const t=(state.todos[vd]||{})[item.id]||{}, hm=str=>{ if(!str) return {h:new Date().getHours(),m:0}; const d=new Date(str); return {h:d.getHours(),m:d.getMinutes()}; };
+  const nd=str=>!!(str&&fmtDS(new Date(str))!==vd);
+  state.rtEditVd=vd;
+  if(kind==='check'){ state.editCheckItemId=item.id; state.editCheckTime=hm(t.time); state.editCheckNextDay=nd(t.time); state.modal="editCheckTime"; }
+  else if(kind==='timer'){ state.editTimerItemId=item.id; state.editTimerStart=hm(t.startTime); state.editTimerEnd=hm(t.endTime); state.editTimerStartNextDay=nd(t.startTime); state.editTimerEndNextDay=nd(t.endTime); state.modal="editTimer"; }
+  else if(kind==='session'){ state.editSessionItemId=item.id; state.editSessionUid=session.uid; state.editSessionSessions=t.sessions||[];
+    state.editTimerStart=hm(session.startTime); state.editTimerEnd=hm(session.endTime); state.editTimerStartNextDay=nd(session.startTime); state.editTimerEndNextDay=nd(session.endTime); state.modal="editSession"; }
+  render();
+}
+// 「7:30 ✏️」のような小さい時刻ボタン（押すと時刻を直す画面）
+function rtTimeChip(label,accent,onClick,attr){ const b=btn({style:{flexShrink:0,padding:'3px 8px',borderRadius:'7px',border:`1px solid ${accent}55`,background:accent+'14',color:'#cbd5e1',fontSize:'11px',cursor:'pointer',fontFamily:'inherit',whiteSpace:'nowrap'}},`${label} ✏️`);
+  if(attr) b.setAttribute('data-rttime',attr); b.addEventListener('click',e=>{ e.stopPropagation(); onClick(); }); return b; }
 function routineItemRow(vd,item,accent,forceTimer){
   const t=(state.todos[vd]||{})[item.id]||{};
   const asTimer = forceTimer || item.type==='timer';
@@ -3362,6 +3376,7 @@ function routineItemRow(vd,item,accent,forceTimer){
     const row=div({style:{display:'flex',alignItems:'center',gap:'10px',padding:'8px 0',cursor:'pointer',borderBottom:'1px solid #ffffff10'}});
     row.appendChild(div({style:{width:'24px',height:'24px',borderRadius:'6px',flexShrink:0,border:`2px solid ${on?accent:'#475569'}`,background:on?accent:'transparent',display:'flex',alignItems:'center',justifyContent:'center',fontSize:'14px',color:'#0b1120'}},on?'✓':''));
     row.appendChild(div({style:{flex:1,fontSize:'14px',color:on?'#94a3b8':'#e2e8f0',textDecoration:on?'line-through':'none'}},item.label));
+    if(on&&t.time){ const d=new Date(t.time); row.appendChild(rtTimeChip(`${fmtDS(d)!==vd?"翌":""}${d.getHours()}:${String(d.getMinutes()).padStart(2,'0')}`,accent,()=>openRoutineTimeEdit(vd,item,'check'),item.id)); }
     row.addEventListener('click',()=>{ setTodo(vd,item.id,{...t,checked:!t.checked,time:!t.checked?new Date().toISOString():null}); });
     return row;
   }
@@ -3383,6 +3398,8 @@ function routineItemRow(vd,item,accent,forceTimer){
   row.appendChild(b);
   row.appendChild(div({style:{flex:1,fontSize:'14px',color:doneMark&&!running?'#94a3b8':'#e2e8f0'}},item.label));
   row.appendChild(div({'data-rtid':item.id,'data-rtmulti':(item.multi&&item.type==='timer')?'1':'',style:{fontSize:'12px',fontWeight:700,color:running?'#f97316':'#94a3b8',flexShrink:0}}, (sec>0||running)?fmtDur(sec*1000):''));
+  if(!multi && t.startTime && t.endTime){ const f=x=>{ const d=new Date(x); return `${fmtDS(d)!==vd?"翌":""}${d.getHours()}:${String(d.getMinutes()).padStart(2,'0')}`; };
+    row.appendChild(rtTimeChip(`${f(t.startTime)}〜${f(t.endTime)}`,accent,()=>openRoutineTimeEdit(vd,item,'timer'),item.id)); }
   // マルチ計測（インプット/アウトプット/トレーニング等）は、ルーティン画面と同じ
   // 「セッションごとの内容欄」をここにも出す。編集先は同じ s.note なので双方が常に同期する。
   const sessions=(t.sessions||[]);
@@ -3399,7 +3416,7 @@ function routineItemRow(vd,item,accent,forceTimer){
     const sw=div({style:{background:'#ffffff0d',borderRadius:'7px',padding:'5px 8px'}});
     sw.appendChild(div({style:{display:'flex',alignItems:'center',gap:'6px'}},[
       span({style:{fontSize:'10px',color:'#94a3b8'}},`${i+1}.`),
-      span({style:{fontSize:'11px',color:'#cbd5e1'}},`${hm(sT)} 〜 ${hm(eT)}`),
+      rtTimeChip(`${hm(sT)} 〜 ${hm(eT)}`,accent,()=>openRoutineTimeEdit(vd,item,'session',s),`${item.id}#${i}`),
       dur?span({style:{fontSize:'11px',fontWeight:700,color:accent}},dur):null
     ]));
     const ni=document.createElement('input'); ni.type='text';
@@ -12178,6 +12195,11 @@ function ctStartChip(vd,ct,rec,col){
 // モード画面（生活モード・セルフモード・睡眠前）の上に重ねるモーダル。定期ルーティンの行をタップしたときの詳細・編集と、開始時刻の修正
 function appendModeOverlayModals(content){
   const add=mo=>{ mo.style.zIndex="10000"; content.appendChild(mo); };
+  // ルーティンの記録時刻（モード画面の ✏️ から）
+  { const rv=state.rtEditVd||activeDay();
+    if(state.modal==="editCheckTime") add(renderEditCheckTimeModal(rv));
+    if(state.modal==="editTimer") add(renderEditTimerModal(rv));
+    if(state.modal==="editSession") add(renderEditSessionModal(rv)); }
   if(state.modal==="planCustomTodo") add(renderPlanCustomTodoModal());
   if(state.modal==="ctStart") add(renderCtStartModal());
   if(state.lifeScreen&&state.modal==="addDrink") add(renderAddDrinkModal(activeDay()));   // 🍻外飲モードから飲み物を追加
