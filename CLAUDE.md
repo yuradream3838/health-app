@@ -11,6 +11,7 @@
   変更はすべてこの1ファイルに対して行う。
 - データは **localStorage のみ**（サーバDBなし）。キー接頭辞 `health_v2`。
 - AIは外部プロキシ **`api.php`（ConoHa上）経由で Gemini** を呼ぶ。
+- ☁️ 同期（任意）：**`sync.php`（ConoHa上）**に、端末の中で暗号化したデータを預ける（PCなど別の端末で読み込む）。契約は API.md 11章。
 - 配信は **GitHub Pages**（`https://yuradream3838.github.io`）。
 
 ## ドキュメント
@@ -19,9 +20,9 @@
 
 ## 必ず守るルール
 1. **⚠ 仕様を変えたら SPEC.md / API.md を必ず同じコミットで更新する**（下記「ドキュメント同期ルール」）。
-2. **`api.php` はリポジトリにコミットしない**（Gemini APIキーを含む。サーバ側にのみ置く）。
+2. **`api.php` / `alexa.php` / `sync.php` はリポジトリにコミットしない**（キーや合言葉の値を含む。サーバ側にのみ置く。`.gitignore` 済み。sync.php はひな形 `server/sync.php.example` だけを管理）。
 3. リリース時は `health.html` 先頭の **`const APP_VERSION` を1つ上げる**（表示・SWキャッシュ更新に使用）。
-4. 変更後は必ず **テストを実行**：`node test/syntax-check.js`・`node test/undefined-call-check.js`（定義の無い関数の呼び出し）・`node test/smoke.js`（まとめて `npm test`）。
+4. 変更後は必ず **テストを実行**：`node test/syntax-check.js`・`node test/undefined-call-check.js`（定義の無い関数の呼び出し）・`node test/smoke.js`・`node test/sync.js`（☁️同期。php が無ければ SKIP）（まとめて `npm test`）。
 5. AIプロキシのキー/URLは health.html の **`AI_ENDPOINT` / `AI_SECRET`** の1箇所で管理。
    エラーコード `__DAILY_LIMIT__` / `__GEMINI_RATE__` は名称固定（クライアントが特別扱い）。
 6. クライアントの `X-Secret-Key` は公開露出前提。**実防御は api.php の Origin制限＋レート制限**。

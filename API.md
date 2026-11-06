@@ -2,8 +2,8 @@
 
 > AIが参照しやすいよう、`api.php`（Geminiプロキシ）と、それを呼ぶクライアント関数の
 > **正確な契約**をまとめた常設リファレンス。実装は `health.html`（クライアント）と
-> サーバー上の `api.php` / `alexa.php`（どちらもリポジトリ管理外）。
-> 最終更新: アプリ v15.30 / api.php v4.1 / alexa.php v2.3。
+> サーバー上の `api.php` / `alexa.php` / `sync.php`（どれもリポジトリ管理外。sync.php はひな形 `server/sync.php.example` だけを管理）。
+> 最終更新: アプリ v15.69 / api.php v4.1 / alexa.php v2.3 / sync.php v1。
 
 ---
 
@@ -307,3 +307,41 @@ curl -s "https://nuts024.com/health/alexa.php?tick=1" > /dev/null
   最近の記録（2xx＝届いた）を出し、時報が止まっていれば 10-3 の A／B のコマンドをコピーできる形で出す。
 
 どちらも送るのは `{url, auth, 時刻, 表示名}` だけで、**体調などの記録は一切送らない**。
+
+---
+
+## 11. ☁️ 同期エンドポイント（`sync.php` v1・アプリ v15.69〜）
+
+- 置き場所：`https://nuts024.com/health/sync.php`（クライアントの既定 `SYNC_URL_DEFAULT`。⚙設定で変えられる）。
+- ひな形：リポジトリの `server/sync.php.example`。`SYNC_AUTH_HASH` を書き込んだ `sync.php` は**コミットしない**（`.gitignore` 済み）。
+- 保存先：`sync.php` と同じフォルダの `sync_data/`（初回に自動で作る。`.htaccess` で外から読めなくする）。
+  `sync_data/meta.json`（版の一覧）と `sync_data/hist/{rev}.bin`（各版。最大 `KEEP_HISTORY`=50、古いものから消す）。
+
+### 11-1. 認証・CORS
+- ヘッダ `X-Sync-Auth`：64桁の16進。サーバは `sha256(この文字列)` が `SYNC_AUTH_HASH` と同じかを `hash_equals` で比べる。違えば **401** `{"error":"auth"}`（0.4秒待ってから返す）。
+- この値と暗号の鍵は、クライアントが合言葉から PBKDF2-SHA256（salt `health_v2-sync-v1`・250,000回・512bit）で作る：前半256bit＝AES-GCMの鍵（端末の中だけ）、後半256bit＝`X-Sync-Auth`。`SYNC_AUTH_HASH` に貼る値は ⚙設定 →「サーバに貼る値」。
+- `Origin` があって `ALLOWED_ORIGINS`（`https://yuradream3838.github.io`）に無ければ **403** `{"error":"origin"}`。`OPTIONS` は 204（`X-Sync-Auth, X-Base-Rev, X-Device, Content-Type` を許可、`X-Rev` を公開）。
+- `X-Device`：端末の名前（`encodeURIComponent` したもの。サーバで戻して40文字まで保存）。
+
+### 11-2. 操作（`?a=`）
+| a | メソッド | 内容 | 返事 |
+|---|---|---|---|
+| `meta`（省略時） | GET | 今の版 | 200 `{rev, savedAt, size, device}`（空なら `rev:0`） |
+| `list` | GET | 過去の版の一覧（新しい順） | 200 `{rev, items:[{rev, savedAt, size, device}]}` |
+| `get` | GET | データ（暗号化されたまま）。`&id=版` で過去の版 | 200 バイナリ＋ヘッダ `X-Rev`／404 `{"error":"none"}` |
+| `put` | POST | 新しい版を預ける（本文はバイナリ・先頭が `HS1`・最大20MB） | 200 `{rev, savedAt}`／409／400／413 |
+
+- `put` のヘッダ `X-Base-Rev`：この端末が最後に送った／読み込んだ版。はじめては `none`、上書きは `force`。
+  サーバの今の版と違えば（`none` でサーバにデータがあるときも）**409** `{"error":"conflict", rev, savedAt, device}` を返して**保存しない**（別の端末のデータを黙って消さない）。
+- エラー：400 `empty`/`format`/`id`/`action`、405 `method`、413 `too_large`、500 `mkdir`/`lock`/`write`。
+
+### 11-3. 本文の形（クライアントが作る）
+`"HS1"`(3byte) ＋ 圧縮フラグ(1byte：1＝gzip／0＝なし) ＋ IV(12byte) ＋ AES-GCM の暗号文。
+中身は手動のバックアップと同じ JSON（`buildBackupPayload()`）。サーバは中身を読めない。
+
+### 11-4. クライアント側（health.html）
+- 設定は端末ごと：`localStorage["health_v2_sync"]`＝`{url, device, auth, key, authHash, on, rev, upAt, downAt, dirtyAt, conflict, err, errAt}`（合言葉そのものは保存しない）。
+- `safeSet` で `health_v2…` に保存するたびに「送っていない変更あり」（`dirtyAt`）。`_sync`・`_nudges`・`_lastbackup` は除く。サーバから読み込んでいる最中の保存も除く。
+- 自動（`on`）：変更から2分たったら毎分のチェックで送る（失敗が続くときは5分あける）／画面を閉じたとき（`visibilitychange`）に送る／開いたとき・画面に戻ったときに `meta` を見て、サーバの方が新しく送っていない変更がなければ自動で読み込む。両方に変更があれば `conflict` にして選んでもらう。
+- 読み込むときに送っていない変更があれば、先に今のデータをファイル（`health_backup_日付_before_sync.json`）に書き出す。
+

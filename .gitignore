@@ -1,0 +1,6 @@
+# サーバ側にだけ置くファイル（キー・合言葉の値を含む。コミットしない）
+api.php
+alexa.php
+sync.php
+sync_data/
+server/sync.php

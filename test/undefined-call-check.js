@@ -61,7 +61,7 @@ const builtin = new Set(('if for while switch catch function return typeof new a
   'parseInt parseFloat isNaN isFinite encodeURIComponent decodeURIComponent encodeURI decodeURI escape unescape ' +
   'String Number Boolean Array Object Date RegExp Error TypeError Promise Map Set WeakMap Symbol BigInt JSON Math ' +
   'fetch alert confirm prompt atob btoa structuredClone getComputedStyle matchMedia URL Blob FileReader Image Notification ' +
-  'AbortController Intl Uint8Array ArrayBuffer TextEncoder TextDecoder require console').split(/\s+/));
+  'AbortController Intl Uint8Array ArrayBuffer TextEncoder TextDecoder Response CompressionStream DecompressionStream require console').split(/\s+/));
 
 const missing = new Map();
 const lines = code.split('\n');

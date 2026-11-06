@@ -1,0 +1,142 @@
+<?php
+// ─────────────────────────────────────────────────────────────
+// 体調管理 ☁️ 同期サーバ（sync.php） v1
+//
+// 使い方：
+//   1. このファイルを sync.php という名前にして、api.php と同じフォルダ（例：public_html/health/）に置く
+//   2. 下の SYNC_AUTH_HASH に、アプリの「⚙設定 → ☁️ ConoHa 同期 → サーバに貼る値」をそのまま貼る
+//   3. 同じフォルダに sync_data フォルダが自動で作られ、データはそこに保存される（外からは見えないようにする）
+//
+// ・データはアプリの中で合言葉から作った鍵で暗号化されてから届く。このサーバは中身を読めない。
+// ・SYNC_AUTH_HASH を書き込んだ sync.php はリポジトリにコミットしない（api.php と同じ扱い）。
+// ・送られてくるたびに版を1つ増やし、過去の版を KEEP_HISTORY 個まで残す（古いものから消す）。
+// ─────────────────────────────────────────────────────────────
+
+const SYNC_AUTH_HASH  = 'ここにアプリの「サーバに貼る値」を貼る';
+const ALLOWED_ORIGINS = ['https://yuradream3838.github.io'];
+const DATA_DIR        = __DIR__ . '/sync_data';
+const MAX_BYTES       = 20 * 1024 * 1024;   // 1回に送れる大きさ（暗号化・圧縮したあと）
+const KEEP_HISTORY    = 50;                 // 残す版の数
+
+$origin = $_SERVER['HTTP_ORIGIN'] ?? '';
+if (in_array($origin, ALLOWED_ORIGINS, true)) {
+  header('Access-Control-Allow-Origin: ' . $origin);
+  header('Vary: Origin');
+  header('Access-Control-Allow-Headers: X-Sync-Auth, X-Base-Rev, X-Device, Content-Type');
+  header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
+  header('Access-Control-Expose-Headers: X-Rev');
+  header('Access-Control-Max-Age: 600');
+}
+if (($_SERVER['REQUEST_METHOD'] ?? '') === 'OPTIONS') { http_response_code(204); exit; }
+header('Cache-Control: no-store');
+header('X-Content-Type-Options: nosniff');
+
+function out($code, $arr) {
+  http_response_code($code);
+  header('Content-Type: application/json; charset=utf-8');
+  echo json_encode($arr, JSON_UNESCAPED_UNICODE);
+  exit;
+}
+
+// 許可していないサイトからの呼び出しは断る（ブラウザ以外の呼び出しは合言葉の確認で守る）
+if ($origin !== '' && !in_array($origin, ALLOWED_ORIGINS, true)) out(403, ['error' => 'origin']);
+
+// 合言葉の確認：アプリが送る値（64桁の16進）の SHA-256 が SYNC_AUTH_HASH と同じか
+$auth = $_SERVER['HTTP_X_SYNC_AUTH'] ?? '';
+if (!preg_match('/^[0-9a-f]{64}$/', $auth) || !preg_match('/^[0-9a-f]{64}$/', SYNC_AUTH_HASH)
+    || !hash_equals(SYNC_AUTH_HASH, hash('sha256', $auth))) {
+  usleep(400000);
+  out(401, ['error' => 'auth']);
+}
+
+// 保存先（外から見えないようにする）
+if (!is_dir(DATA_DIR . '/hist')) { @mkdir(DATA_DIR . '/hist', 0700, true); }
+if (!is_dir(DATA_DIR . '/hist')) out(500, ['error' => 'mkdir']);
+if (!file_exists(DATA_DIR . '/.htaccess')) {
+  @file_put_contents(DATA_DIR . '/.htaccess',
+    "<IfModule mod_authz_core.c>\nRequire all denied\n</IfModule>\n<IfModule !mod_authz_core.c>\nOrder allow,deny\nDeny from all\n</IfModule>\n");
+}
+if (!file_exists(DATA_DIR . '/index.html')) { @file_put_contents(DATA_DIR . '/index.html', ''); }
+
+$metaFile = DATA_DIR . '/meta.json';
+function readMeta($f) {
+  if (!file_exists($f)) return ['rev' => 0, 'hist' => []];
+  $m = json_decode((string)@file_get_contents($f), true);
+  return is_array($m) ? $m : ['rev' => 0, 'hist' => []];
+}
+
+$a = $_GET['a'] ?? 'meta';
+
+// 今の版の情報 {rev, savedAt, size, device}（まだ何もなければ rev:0）
+if ($a === 'meta') {
+  $m = readMeta($metaFile);
+  out(200, ['rev' => (int)($m['rev'] ?? 0), 'savedAt' => $m['savedAt'] ?? null, 'size' => $m['size'] ?? 0, 'device' => $m['device'] ?? '']);
+}
+
+// 過去の版の一覧（新しい順）
+if ($a === 'list') {
+  $m = readMeta($metaFile);
+  out(200, ['rev' => (int)($m['rev'] ?? 0), 'items' => $m['hist'] ?? []]);
+}
+
+// データ（暗号化されたまま）を返す。id があればその版
+if ($a === 'get') {
+  $m = readMeta($metaFile);
+  $id = $_GET['id'] ?? '';
+  if ($id !== '' && !preg_match('/^[0-9]{1,10}$/', $id)) out(400, ['error' => 'id']);
+  $rev = $id !== '' ? (int)$id : (int)($m['rev'] ?? 0);
+  $f = DATA_DIR . '/hist/' . $rev . '.bin';
+  if ($rev <= 0 || !file_exists($f)) out(404, ['error' => 'none']);
+  header('Content-Type: application/octet-stream');
+  header('X-Rev: ' . $rev);
+  header('Content-Length: ' . filesize($f));
+  readfile($f);
+  exit;
+}
+
+// 新しい版を預ける。X-Base-Rev＝この端末が最後に送った／読み込んだ版（はじめては none、上書きは force）。
+// サーバの版と違えば 409 を返して保存しない（別の端末のデータを消さないため）
+if ($a === 'put') {
+  if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') out(405, ['error' => 'method']);
+  $len = (int)($_SERVER['CONTENT_LENGTH'] ?? 0);
+  if ($len > MAX_BYTES) out(413, ['error' => 'too_large']);
+  $body = file_get_contents('php://input');
+  if ($body === false || strlen($body) < 32) out(400, ['error' => 'empty']);
+  if (strlen($body) > MAX_BYTES) out(413, ['error' => 'too_large']);
+  if (substr($body, 0, 3) !== 'HS1') out(400, ['error' => 'format']);
+
+  $lock = fopen(DATA_DIR . '/.lock', 'c');
+  if (!$lock || !flock($lock, LOCK_EX)) out(500, ['error' => 'lock']);
+  $m = readMeta($metaFile);
+  $cur = (int)($m['rev'] ?? 0);
+  $base = $_SERVER['HTTP_X_BASE_REV'] ?? 'none';
+  if ($base !== 'force') {
+    $conflict = ($base === 'none') ? ($cur > 0) : ((int)$base !== $cur);
+    if ($conflict) {
+      flock($lock, LOCK_UN);
+      out(409, ['error' => 'conflict', 'rev' => $cur, 'savedAt' => $m['savedAt'] ?? null, 'device' => $m['device'] ?? '']);
+    }
+  }
+  $rev = $cur + 1;
+  $dev = rawurldecode((string)($_SERVER['HTTP_X_DEVICE'] ?? ''));
+  $dev = mb_substr(preg_replace('/[\x00-\x1f\x7f]/u', '', $dev) ?? '', 0, 40);
+  $now = gmdate('Y-m-d\TH:i:s\Z');
+  $tmp = DATA_DIR . '/hist/' . $rev . '.tmp';
+  if (file_put_contents($tmp, $body) !== strlen($body) || !rename($tmp, DATA_DIR . '/hist/' . $rev . '.bin')) {
+    @unlink($tmp); flock($lock, LOCK_UN); out(500, ['error' => 'write']);
+  }
+  $hist = is_array($m['hist'] ?? null) ? $m['hist'] : [];
+  array_unshift($hist, ['rev' => $rev, 'savedAt' => $now, 'size' => strlen($body), 'device' => $dev]);
+  while (count($hist) > KEEP_HISTORY) {
+    $old = array_pop($hist);
+    @unlink(DATA_DIR . '/hist/' . (int)$old['rev'] . '.bin');
+  }
+  $meta = ['rev' => $rev, 'savedAt' => $now, 'size' => strlen($body), 'device' => $dev, 'hist' => $hist];
+  $mt = $metaFile . '.tmp';
+  file_put_contents($mt, json_encode($meta, JSON_UNESCAPED_UNICODE));
+  rename($mt, $metaFile);
+  flock($lock, LOCK_UN);
+  out(200, ['rev' => $rev, 'savedAt' => $now]);
+}
+
+out(400, ['error' => 'action']);

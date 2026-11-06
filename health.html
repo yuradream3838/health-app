@@ -247,7 +247,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.68"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.69"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -1184,6 +1184,7 @@ function safeSet(key,value){
   if(typeof state!=='undefined' && state && state.viewingBackup) return true;
   try{
     localStorage.setItem(key,value);
+    try{ if(key!==STORAGE_KEY+"_sync" && key!==STORAGE_KEY+"_nudges" && key!==STORAGE_KEY+"_lastbackup" && String(key).indexOf(STORAGE_KEY)===0) syncMarkDirty(); }catch(_){}
     return true;
   }catch(e){
     // 容量超過の可能性が高い → アーカイブ用モーダルを開く
@@ -1546,7 +1547,7 @@ function render(){
       [_rgb('#f1f5f9'),_t0],[_rgb('#e2e8f0'),_t1],[_rgb('#cbd5e1'),_t1b],[_rgb('#94a3b8'),_t2],[_rgb('#64748b'),_t3],[_rgb('#475569'),_t4],[_rgb('#334155'),_tdim]
     ];
   }catch(_){}
-  if(!window._autoTick) window._autoTick=setInterval(()=>{ const changed=autoModeTick(); nudgeNotifyTick(); try{alexaMaybeSyncPlan();}catch(_){} if(changed) render(); },60000);
+  if(!window._autoTick) window._autoTick=setInterval(()=>{ const changed=autoModeTick(); nudgeNotifyTick(); try{alexaMaybeSyncPlan();}catch(_){} try{syncAutoTick(Date.now());}catch(_){} if(changed) render(); },60000);
 
   // 🌙 睡眠前モード：起動中は全画面で専用画面に切り替える（他は描画しない）
   if(state.sleepMode){ content.appendChild(renderSleepMode()); appendModeOverlayModals(content); tintSurfaces(content); return; }
@@ -10281,6 +10282,7 @@ function renderSettingsHub(){
   wrap.appendChild(collapsibleSetting('pattern',renderPlanPatternPanel()));
   wrap.appendChild(collapsibleSetting('sleep',sleepRhythmSettingsCard()));
   wrap.appendChild(collapsibleSetting('routine',renderRoutinePanel()));
+  wrap.appendChild(collapsibleSetting('sync',renderSyncPanel()));
   const dataCard=div({className:"card"});
   dataCard.appendChild(div({style:{fontSize:"14px",fontWeight:700,color:"#e2e8f0",marginBottom:"4px"}},"💾 データ管理"));
   dataCard.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"10px",lineHeight:1.6}},"全データをJSONで出力・読込できます（機種変更やバックアップに）。"));
@@ -18338,6 +18340,14 @@ function exportData(){
   catch(e){ console.error(e); showToast(`⚠️ バックアップを出力できませんでした（${(e&&e.message)||e}）`,"#f97316"); }
 }
 function exportDataInner(){
+  const payload=buildBackupPayload();
+  downloadJSON(payload,`health_backup_${todayStr()}.json`);
+  showToast("💾 バックアップを出力しました","#22c55e");
+  // バックアップ日時を記録（バックアップ促進リマインダー用）
+  safeSet(STORAGE_KEY+"_lastbackup",String(Date.now()));
+}
+// バックアップの中身（手動の書き出しと ☁️ConoHa 同期で共通）
+function buildBackupPayload(){
   let weather={}, city=null, todoOrder=null, shiftColors=null, ejacColor=null;
   try{const w=localStorage.getItem(STORAGE_KEY+"_weather");if(w)weather=JSON.parse(w);}catch{}
   try{const c=localStorage.getItem(STORAGE_KEY+"_city");if(c)city=JSON.parse(c);}catch{}
@@ -18408,12 +18418,220 @@ function exportDataInner(){
     weather,
     city
   };
-  const blob=new Blob([JSON.stringify(payload,null,2)],{type:"application/json"});
-  const url=URL.createObjectURL(blob);const a=document.createElement("a");
-  downloadJSON(payload,`health_backup_${todayStr()}.json`);
-  showToast("💾 バックアップを出力しました","#22c55e");
-  // バックアップ日時を記録（バックアップ促進リマインダー用）
-  safeSet(STORAGE_KEY+"_lastbackup",String(Date.now()));
+  return payload;
+}
+// ═══════════════════════════════════════════════════
+// ☁️ ConoHa 同期（v15.69）：第1段階＝自動でサーバに預ける／第2段階＝別の端末（PCなど）で読み込む
+// ・データは端末の中で、合言葉から作った鍵で暗号化（AES-GCM・gzip圧縮）してから送る。サーバ（sync.php）は中身を読めない。
+// ・合言葉そのものは保存しない。端末には作った鍵と、サーバに見せる値（auth）だけを置く（_sync・端末ごと）。
+// ・サーバは版（rev）を数える。最後に送った／読み込んだ版と違えば保存しない（409）＝別の端末のデータを黙って消さない。
+// ・開いたとき：サーバの方が新しく、この端末に送っていない変更がなければ、自動で読み込む。どちらにも変更があれば「どちらを残すか」を聞く。
+// ═══════════════════════════════════════════════════
+const SYNC_URL_DEFAULT="https://nuts024.com/health/sync.php", SYNC_DEBOUNCE_MS=2*60000, SYNC_SALT="health_v2-sync-v1";
+function getSyncCfg(){ try{ const o=JSON.parse(localStorage.getItem(STORAGE_KEY+"_sync")||"null"); return (o&&typeof o==="object")?o:{}; }catch(_){ return {}; } }
+function setSyncCfg(patch){ const c={...getSyncCfg(),...patch}; Object.keys(c).forEach(k=>{ if(c[k]===undefined) delete c[k]; }); try{ localStorage.setItem(STORAGE_KEY+"_sync",JSON.stringify(c)); }catch(_){} return c; }
+function syncReady(){ const c=getSyncCfg(); return !!(c.auth&&c.key); }
+function syncDefaultDevice(){ const ua=(typeof navigator!=="undefined"&&navigator.userAgent)||""; return /iPad|Tablet/i.test(ua)?"タブレット":/iPhone|Android|Mobile/i.test(ua)?"スマホ":"PC"; }
+let _syncLastChange=0, _syncBusy=false, _syncApplying=false;
+function syncMarkDirty(){
+  if(_syncApplying) return;                     // サーバから読み込んでいる最中の保存は「変更」にしない
+  _syncLastChange=Date.now();
+  const c=getSyncCfg(); if(!c.auth) return;
+  if(!c.dirtyAt) setSyncCfg({dirtyAt:_syncLastChange});
+}
+const _syncTE=new TextEncoder();
+const _hex=b=>[...b].map(x=>x.toString(16).padStart(2,"0")).join("");
+// 合言葉 → 暗号の鍵（端末の中だけ）とサーバに見せる値。どの端末でも同じ合言葉なら同じ値になる
+async function syncDeriveKeys(pass){
+  const base=await crypto.subtle.importKey("raw",_syncTE.encode(pass),"PBKDF2",false,["deriveBits"]);
+  const bits=new Uint8Array(await crypto.subtle.deriveBits({name:"PBKDF2",salt:_syncTE.encode(SYNC_SALT),iterations:250000,hash:"SHA-256"},base,512));
+  const auth=_hex(bits.slice(32)), authHash=_hex(new Uint8Array(await crypto.subtle.digest("SHA-256",_syncTE.encode(auth))));
+  return {key:btoa(String.fromCharCode(...bits.slice(0,32))), auth, authHash};
+}
+async function syncAesKey(){ const c=getSyncCfg(); if(!c.key) throw new Error("合言葉が未設定です");
+  return crypto.subtle.importKey("raw",Uint8Array.from(atob(c.key),ch=>ch.charCodeAt(0)),"AES-GCM",false,["encrypt","decrypt"]); }
+async function syncStreamBytes(bytes,stream){ return new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(stream)).arrayBuffer()); }
+// 形式："HS1"＋圧縮(1)/なし(0)＋IV(12)＋暗号文
+async function syncEncode(obj){
+  let data=_syncTE.encode(JSON.stringify(obj)), flag=0;
+  if(typeof CompressionStream!=="undefined"){ try{ data=await syncStreamBytes(data,new CompressionStream("gzip")); flag=1; }catch(_){ data=_syncTE.encode(JSON.stringify(obj)); flag=0; } }
+  const iv=crypto.getRandomValues(new Uint8Array(12));
+  const ct=new Uint8Array(await crypto.subtle.encrypt({name:"AES-GCM",iv},await syncAesKey(),data));
+  const out=new Uint8Array(16+ct.length); out.set(_syncTE.encode("HS1"),0); out[3]=flag; out.set(iv,4); out.set(ct,16); return out;
+}
+async function syncDecode(buf){
+  const b=new Uint8Array(buf); if(b.length<32||String.fromCharCode(b[0],b[1],b[2])!=="HS1") throw new Error("サーバのデータの形式が違います");
+  let data; try{ data=new Uint8Array(await crypto.subtle.decrypt({name:"AES-GCM",iv:b.slice(4,16)},await syncAesKey(),b.slice(16))); }
+  catch(_){ throw new Error("合言葉が違うため読めません（送った端末と同じ合言葉にしてください）"); }
+  if(b[3]===1) data=await syncStreamBytes(data,new DecompressionStream("gzip"));
+  return JSON.parse(new TextDecoder().decode(data));
+}
+async function syncFetch(a,opt){
+  const c=getSyncCfg(), o=opt||{}, url=(c.url||SYNC_URL_DEFAULT);
+  const headers={"X-Sync-Auth":c.auth||"","X-Device":encodeURIComponent(c.device||syncDefaultDevice()),...(o.headers||{})};
+  return fetch(`${url}${url.includes("?")?"&":"?"}a=${a}${o.q?"&"+o.q:""}`,{method:o.body?"POST":"GET",headers,body:o.body,cache:"no-store"});
+}
+function syncErrMsg(st,j){ return st===401?"合言葉がサーバと合いません（sync.php の値を確かめてください）":st===403?"このサイトからは使えない設定です（sync.php の ALLOWED_ORIGINS）":st===404&&!(j&&j.error)?"sync.php が見つかりません（置いた場所とURLを確かめてください）":`サーバの返事が ${st} でした${j&&j.error?`（${j.error}）`:""}`; }
+// 今のデータを送る。force＝別の端末の新しいデータがあっても、この端末の内容で上書きする（前の版はサーバに残る）
+async function syncUpload(force){
+  if(!syncReady()) return {ok:false,msg:"合言葉が未設定です"};
+  if(_syncBusy) return {ok:false,msg:"送受信中です"};
+  _syncBusy=true;
+  try{
+    const c=getSyncCfg(), startedAt=Date.now();
+    const body=await syncEncode(buildBackupPayload());
+    const r=await syncFetch("put",{body,headers:{"Content-Type":"application/octet-stream","X-Base-Rev":force?"force":(c.rev?String(c.rev):"none")}});
+    const j=await r.json().catch(()=>({}));
+    if(r.status===409){ setSyncCfg({conflict:{rev:j.rev,savedAt:j.savedAt,device:j.device||""},err:undefined}); return {ok:false,conflict:true,msg:"別の端末で新しいデータが保存されています"}; }
+    if(!r.ok){ const msg=syncErrMsg(r.status,j); setSyncCfg({err:msg,errAt:Date.now()}); return {ok:false,msg}; }
+    setSyncCfg({rev:j.rev,upAt:Date.now(),savedAt:j.savedAt,size:body.length,err:undefined,errAt:undefined,conflict:undefined,dirtyAt:_syncLastChange>startedAt?Date.now():undefined});
+    return {ok:true,rev:j.rev};
+  }catch(e){ const msg=`送れませんでした（${(e&&e.message)||e}）`; setSyncCfg({err:msg,errAt:Date.now()}); return {ok:false,msg}; }
+  finally{ _syncBusy=false; }
+}
+async function syncMeta(){ const r=await syncFetch("meta"); const j=await r.json().catch(()=>({})); if(!r.ok) throw new Error(syncErrMsg(r.status,j)); return j; }
+// サーバのデータ（id があればその版）を取ってきて、中身を返す
+async function syncDownload(id){
+  const r=await syncFetch("get",{q:id?`id=${encodeURIComponent(id)}`:""});
+  if(!r.ok){ const j=await r.json().catch(()=>({})); throw new Error(r.status===404?"サーバにまだデータがありません":syncErrMsg(r.status,j)); }
+  const rev=parseInt(r.headers.get("X-Rev"))||null;
+  const p=await syncDecode(await r.arrayBuffer());
+  if(!p||!p.logs||!p.dailies) throw new Error("サーバのデータの形式が違います");
+  return {p,rev};
+}
+// サーバの中身で、この端末のデータを置き換える。keepLocal＝先に今のデータをファイルに書き出す（消える変更があるとき）
+function syncApply(p,rev,opts){
+  const o=opts||{};
+  if(o.keepLocal){ try{ downloadJSON(buildBackupPayload(),`health_backup_${todayStr()}_before_sync.json`); }catch(_){} }
+  _syncApplying=true;
+  try{ applyBackupPayload(p); flushStorage(); }
+  finally{ _syncApplying=false; }
+  setSyncCfg({rev:o.asRev!=null?o.asRev:rev,downAt:Date.now(),conflict:undefined,err:undefined,errAt:undefined,dirtyAt:o.dirty?Date.now():undefined});
+  _syncLastChange=o.dirty?Date.now():0;
+  try{ state.viewDate=activeDay(); state._autoDay=state.viewDate; }catch(_){}
+  render();
+}
+async function syncPullInteractive(id,asRev){
+  if(!syncReady()) return;
+  state.syncMsg="⏳ サーバから取ってきています…"; render();
+  try{
+    const {p,rev}=await syncDownload(id);
+    const c=getSyncCfg(), dirty=!!c.dirtyAt;
+    const when=p.exportedAt?fmtSyncTime(p.exportedAt):"";
+    if(!confirm(`サーバのデータ${id?`（版${id}）`:""}${when?`（${when}）`:""}で、この端末のデータを置き換えますか？\n\n${backupSummary(p)}${dirty?"\n\n⚠ この端末には、まだサーバに送っていない変更があります。置き換える前に、今のデータをファイルに書き出します。":""}`)){ state.syncMsg=null; render(); return; }
+    syncApply(p,rev,{keepLocal:dirty,asRev:asRev,dirty:asRev!=null});
+    state.syncMsg=`✅ サーバ${id?`の版${id}`:""}から読み込みました`; showToast("☁️ サーバから読み込みました","#22c55e"); render();
+  }catch(e){ state.syncMsg=`⚠ ${(e&&e.message)||e}`; render(); }
+}
+function fmtSyncTime(t){ const d=new Date(t); if(isNaN(d)) return ""; return `${d.getMonth()+1}/${d.getDate()} ${hhmm(d.getHours(),d.getMinutes())}`; }
+// 毎分：変更があってから2分たったら送る（失敗が続くときは5分あける）
+function syncAutoTick(now){
+  const c=getSyncCfg();
+  if(!c.on||!syncReady()||!c.dirtyAt||c.conflict||_syncBusy) return;
+  if(typeof navigator!=="undefined"&&navigator.onLine===false) return;
+  if(c.errAt&&now-c.errAt<5*60000) return;
+  if(now-Math.max(_syncLastChange||0,c.dirtyAt)<SYNC_DEBOUNCE_MS) return;
+  syncUpload(false).then(r=>{ if(r.conflict) showToast("☁️ 別の端末で新しいデータが保存されています（⚙設定の☁️同期で選んでください）","#f97316"); if(state.tab==="設定"||r.conflict) render(); });
+}
+// 開いたとき・画面に戻ったとき：サーバの方が新しければ読み込む（この端末に送っていない変更があれば聞く）
+async function syncCheckRemote(){
+  const c=getSyncCfg(); if(!c.on||!syncReady()||_syncBusy||c.conflict) return;
+  if(typeof navigator!=="undefined"&&navigator.onLine===false) return;
+  try{
+    const m=await syncMeta(); if(!(m.rev>(c.rev||0))) return;
+    if(getSyncCfg().dirtyAt){ setSyncCfg({conflict:{rev:m.rev,savedAt:m.savedAt,device:m.device||""}}); showToast("☁️ 別の端末で新しいデータが保存されています（⚙設定の☁️同期で選んでください）","#f97316"); render(); return; }
+    _syncBusy=true; let got; try{ got=await syncDownload(); }finally{ _syncBusy=false; }
+    if(getSyncCfg().dirtyAt){ setSyncCfg({conflict:{rev:m.rev,savedAt:m.savedAt,device:m.device||""}}); render(); return; }   // 取ってくる間に記録した
+    syncApply(got.p,got.rev);
+    showToast(`☁️ ${m.device||"別の端末"}のデータ（${fmtSyncTime(m.savedAt)}）を読み込みました`,"#22c55e");
+  }catch(_){}
+}
+if(typeof document!=="undefined"){
+  document.addEventListener('visibilitychange',()=>{ try{
+    if(document.hidden){ const c=getSyncCfg(); if(c.on&&syncReady()&&c.dirtyAt&&!c.conflict) syncUpload(false); }
+    else syncCheckRemote();
+  }catch(_){} });
+  setTimeout(()=>{ try{ syncCheckRemote().then(()=>syncAutoTick(Date.now()+SYNC_DEBOUNCE_MS)); }catch(_){} },4000);
+}
+// ⚙設定のカード
+function renderSyncPanel(){
+  const c=getSyncCfg(), ready=syncReady();
+  const card=div({className:"card"}); card.setAttribute('data-syncpanel','1');
+  card.appendChild(div({style:{fontSize:"14px",fontWeight:700,color:"#e2e8f0",marginBottom:"4px"}},"☁️ ConoHa 同期（PCでも使う）"));
+  card.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"10px",lineHeight:1.7}},"データを暗号化して ConoHa（sync.php）に預けます。同じ合言葉を入れた別の端末（PCなど）で読み込めます。合言葉はサーバにもこの端末にも残りません。忘れると預けたデータは読めなくなります。"));
+  const inp=(ph,type,val,attr)=>{ const i=document.createElement('input'); i.type=type||'text'; i.placeholder=ph; i.value=val||""; if(attr) i.setAttribute('data-syncin',attr);
+    i.style.cssText="width:100%;box-sizing:border-box;padding:9px 11px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit;margin-bottom:7px"; return i; };
+  const bigBtn=(label,col,onClick,attr)=>{ const b=btn({style:{width:"100%",padding:"10px",marginBottom:"7px",borderRadius:"8px",border:`1px solid ${col}`,background:col+"18",color:col,fontSize:"13px",fontWeight:700,cursor:"pointer",fontFamily:"inherit"}},label); if(attr) b.setAttribute('data-syncbtn',attr); b.addEventListener('click',onClick); return b; };
+  const msg=state.syncMsg?div({style:{fontSize:"12px",color:/^⚠/.test(state.syncMsg)?"#fbbf24":"#86efac",margin:"2px 0 8px",lineHeight:1.6}},state.syncMsg):null;
+  if(!ready || state.syncSetup){
+    const p1=inp("合言葉（12文字以上・どの端末でも同じもの）","password","", "pass1"), p2=inp("合言葉をもう一度","password","","pass2");
+    const dv=inp("この端末の名前（例：スマホ・PC）","text",c.device||syncDefaultDevice(),"device");
+    const ur=inp("sync.php のURL","url",c.url||SYNC_URL_DEFAULT,"url");
+    [p1,p2,dv,ur].forEach(x=>card.appendChild(x));
+    card.appendChild(bigBtn("🔑 この合言葉で設定する","#0ea5e9",async()=>{
+      const a=p1.value, b=p2.value;
+      if(a.length<12){ state.syncMsg="⚠ 合言葉は12文字以上にしてください（長いほど安全です）"; render(); return; }
+      if(a!==b){ state.syncMsg="⚠ 2回入れた合言葉が違います"; render(); return; }
+      state.syncMsg="⏳ 鍵を作っています…"; render();
+      try{ const k=await syncDeriveKeys(a);
+        setSyncCfg({auth:k.auth,key:k.key,authHash:k.authHash,device:(dv.value||"").trim()||syncDefaultDevice(),url:(ur.value||"").trim()||SYNC_URL_DEFAULT,on:false,rev:undefined,conflict:undefined,err:undefined,errAt:undefined,
+          dirtyAt:((state.logs||[]).length+(state.dailies||[]).length>3)?Date.now():undefined});   // 記録のある端末だけ「送っていない変更あり」に
+        state.syncSetup=false; state.syncShowHash=true; state.syncMsg="✅ 設定しました。下の「サーバに貼る値」を sync.php に貼ってから「接続を確かめる」を押してください"; render();
+      }catch(e){ state.syncMsg=`⚠ 鍵を作れませんでした（${(e&&e.message)||e}）`; render(); }
+    },"setup"));
+    if(ready) card.appendChild(bigBtn("キャンセル","#64748b",()=>{ state.syncSetup=false; state.syncMsg=null; render(); }));
+    if(msg) card.appendChild(msg);
+    return card;
+  }
+  // 状態
+  const line=(l,v,col)=>div({style:{display:"flex",justifyContent:"space-between",gap:"8px",fontSize:"12px",color:"#94a3b8",marginBottom:"4px"}},[span({},l),span({style:{color:col||"#e2e8f0",textAlign:"right"}},v)]);
+  card.appendChild(line("この端末",c.device||syncDefaultDevice()));
+  card.appendChild(line("最後に送った",c.upAt?`${fmtSyncTime(c.upAt)}（版${c.rev}・${Math.max(1,Math.round((c.size||0)/1024))}KB）`:"まだ"));
+  if(c.downAt) card.appendChild(line("最後に読み込んだ",fmtSyncTime(c.downAt)));
+  card.appendChild(line("送っていない変更",c.dirtyAt?`あり（${fmtSyncTime(c.dirtyAt)}〜）`:"なし",c.dirtyAt?"#fbbf24":"#86efac"));
+  if(c.err) card.appendChild(div({style:{fontSize:"11px",color:"#fbbf24",margin:"4px 0 6px",lineHeight:1.6}},`⚠ ${c.err}`));
+  // 自動で送る
+  { const on=!!c.on; const b=btn({style:{width:"100%",padding:"9px",margin:"6px 0 8px",borderRadius:"8px",border:`1px solid ${on?"#22c55e":"#334155"}`,background:on?"#22c55e22":"transparent",color:on?"#4ade80":"#94a3b8",fontSize:"13px",fontWeight:700,cursor:"pointer",fontFamily:"inherit"}},on?"✓ 自動で同期する：ON":"自動で同期する：OFF");
+    b.setAttribute('data-syncbtn','auto'); b.addEventListener('click',()=>{ setSyncCfg({on:!on}); if(!on){ syncCheckRemote(); } render(); }); card.appendChild(b);
+    card.appendChild(div({style:{fontSize:"10px",color:"#64748b",lineHeight:1.6,marginBottom:"9px"}},"ON：記録してから2分たつか、アプリを閉じたときに送ります。開いたときにサーバの方が新しければ自動で読み込みます。")); }
+  // 別の端末の新しいデータ
+  if(c.conflict){
+    const cf=c.conflict, box=div({style:{padding:"10px 12px",borderRadius:"10px",border:"1px solid #f9731688",background:"#f973160f",marginBottom:"9px"}}); box.setAttribute('data-syncconflict','1');
+    box.appendChild(div({style:{fontSize:"12px",color:"#fdba74",lineHeight:1.7,marginBottom:"8px"}},`⚠ 別の端末（${cf.device||"?"}・${fmtSyncTime(cf.savedAt)}・版${cf.rev}）で新しいデータが保存されています。この端末にも送っていない変更があります。どちらかを選んでください（選ばなかった方も、サーバの過去の版かファイルに残ります）。`));
+    box.appendChild(bigBtn("☁️ サーバのデータを読み込む（この端末の変更はファイルに書き出す）","#38bdf8",()=>syncPullInteractive(null),"pull"));
+    box.appendChild(bigBtn("📤 この端末の内容でサーバを上書きする","#f97316",async()=>{ if(!confirm("この端末の内容でサーバを上書きしますか？\n別の端末で保存したデータは、サーバの「過去の版」に残ります。")) return; state.syncMsg="⏳ 送っています…"; render(); const r=await syncUpload(true); state.syncMsg=r.ok?`✅ 上書きしました（版${r.rev}）`:`⚠ ${r.msg}`; render(); },"force"));
+    card.appendChild(box);
+  }
+  card.appendChild(bigBtn("📤 今すぐ送る","#22c55e",async()=>{ state.syncMsg="⏳ 送っています…"; render(); const r=await syncUpload(false); state.syncMsg=r.ok?`✅ 送りました（版${r.rev}）`:`⚠ ${r.msg}`; render(); },"up"));
+  card.appendChild(bigBtn("☁️ サーバから読み込む（この端末のデータを置き換え）","#38bdf8",()=>syncPullInteractive(null),"down"));
+  card.appendChild(bigBtn("🔌 接続を確かめる","#a5b4fc",async()=>{ state.syncMsg="⏳ 確かめています…"; render();
+    try{ const m=await syncMeta(); state.syncMsg=m.rev?`✅ つながりました。サーバの最新は 版${m.rev}（${m.device||"?"}・${fmtSyncTime(m.savedAt)}）です${(getSyncCfg().rev||0)<m.rev?"。この端末より新しいので「サーバから読み込む」で取り込めます":""}`:"✅ つながりました。サーバはまだ空です。「今すぐ送る」で預けてください"; }
+    catch(e){ state.syncMsg=`⚠ ${(e&&e.message)||e}`; } render(); },"check"));
+  if(msg) card.appendChild(msg);
+  // 過去の版
+  { const open=!!state.syncHistOpen; const hb=btn({style:{width:"100%",padding:"7px",marginBottom:"7px",borderRadius:"8px",border:"1px solid #334155",background:"transparent",color:"#94a3b8",fontSize:"12px",cursor:"pointer",fontFamily:"inherit"}},open?"▲ 過去の版を閉じる":"🕘 サーバの過去の版（最大50）");
+    hb.setAttribute('data-syncbtn','hist'); hb.addEventListener('click',async()=>{ if(open){ state.syncHistOpen=false; render(); return; } state.syncHistOpen=true; state.syncHist=null; render();
+      try{ const r=await syncFetch("list"); const j=await r.json(); if(!r.ok) throw new Error(syncErrMsg(r.status,j)); state.syncHist=j; }catch(e){ state.syncHist={err:(e&&e.message)||String(e)}; } render(); });
+    card.appendChild(hb);
+    if(open){ const H=state.syncHist, box=div({style:{marginBottom:"8px"}});
+      if(!H) box.appendChild(div({style:{fontSize:"11px",color:"#64748b"}},"⏳ 読み込み中…"));
+      else if(H.err) box.appendChild(div({style:{fontSize:"11px",color:"#fbbf24"}},`⚠ ${H.err}`));
+      else if(!(H.items||[]).length) box.appendChild(div({style:{fontSize:"11px",color:"#64748b"}},"まだありません"));
+      else { (H.items||[]).forEach(it=>{ const row=div({style:{display:"flex",alignItems:"center",gap:"6px",padding:"5px 0",borderBottom:"1px solid #1e293b",fontSize:"11px",color:"#cbd5e1"}});
+        row.appendChild(span({style:{flex:1}},`版${it.rev}・${fmtSyncTime(it.savedAt)}・${it.device||"?"}・${Math.max(1,Math.round((it.size||0)/1024))}KB`));
+        const rb=btn({style:{flexShrink:0,padding:"4px 9px",borderRadius:"7px",border:"1px solid #38bdf8",background:"transparent",color:"#38bdf8",fontSize:"11px",cursor:"pointer",fontFamily:"inherit"}},"この版に戻す");
+        rb.setAttribute('data-synchist',String(it.rev)); rb.addEventListener('click',()=>syncPullInteractive(String(it.rev),H.rev)); row.appendChild(rb); box.appendChild(row); }); }
+      card.appendChild(box); } }
+  // サーバに貼る値・設定し直す
+  { const sh=!!state.syncShowHash; const b=btn({style:{width:"100%",padding:"7px",marginBottom:"7px",borderRadius:"8px",border:"1px solid #334155",background:"transparent",color:"#94a3b8",fontSize:"12px",cursor:"pointer",fontFamily:"inherit"}},sh?"▲ サーバに貼る値を閉じる":"🔐 サーバに貼る値（sync.php の SYNC_AUTH_HASH）");
+    b.addEventListener('click',()=>{ state.syncShowHash=!sh; render(); }); card.appendChild(b);
+    if(sh){ const v=c.authHash||""; const box=div({style:{padding:"8px 10px",borderRadius:"8px",background:"#0b1220",border:"1px solid #334155",marginBottom:"8px"}}); box.setAttribute('data-synchash','1');
+      box.appendChild(div({style:{fontSize:"11px",color:"#e2e8f0",wordBreak:"break-all",fontFamily:"ui-monospace,monospace",marginBottom:"6px"}},v));
+      box.appendChild(btn({style:{padding:"5px 10px",borderRadius:"7px",border:"1px solid #38bdf8",background:"transparent",color:"#38bdf8",fontSize:"11px",cursor:"pointer",fontFamily:"inherit"},onClick:()=>copyText(v)},"📋 コピー"));
+      box.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginTop:"6px",lineHeight:1.6}},"合言葉そのものではありません。sync.php の SYNC_AUTH_HASH にこの値を貼ってアップロードします（最初の1回だけ）。"));
+      card.appendChild(box); } }
+  card.appendChild(bigBtn("合言葉・URLを設定し直す","#64748b",()=>{ state.syncSetup=true; state.syncMsg=null; render(); },"reset"));
+  return card;
 }
 // ── バックアップ促進リマインダー ──
 // localStorage はブラウザ側のみの保存で、キャッシュ削除等で消えるリスクがある。
@@ -18445,93 +18663,99 @@ function importData(e){
       }
       if(!p.logs||!p.dailies)throw new Error("形式が違います");
       // 確認画面：内容のサマリーを表示して上書き確認
-      const summary=[
-        `体調記録: ${p.logs.length}件`,
-        `日次記録: ${p.dailies.length}日分`,
-        p.todos?`TODO: ${Object.keys(p.todos).length}日分`:null,
-        p.goals?`目標: ${Object.keys(p.goals).length}件`:null,
-        p.schedule?`予定: ${Object.keys(p.schedule).length}日分`:null,
-        p.tasks?`リスト: ${(p.tasks.todo||[]).length+(p.tasks.wish||[]).length+(p.tasks.shopping||[]).length}件`:null,
-        p.weather?`天気: ${Object.keys(p.weather).length}日分`:null,
-        p.exportedAt?`エクスポート日時: ${p.exportedAt.slice(0,10)}`:null
-      ].filter(Boolean).join("\n");
+      const summary=backupSummary(p);
       if(!confirm(`このバックアップをインポートしますか？\n現在のデータは上書きされます。\n\n${summary}`))return;
-
-      state.logs=p.logs;
-      state.dailies=p.dailies;
-      if(p.todos){state.todos=p.todos;safeSet(STORAGE_KEY+"_todo",JSON.stringify(p.todos));}
-      if(p.todoOrder){safeSet(STORAGE_KEY+"_todo_order",JSON.stringify(p.todoOrder));}
-      if(p.shiftColors&&typeof p.shiftColors==="object"){safeSet(STORAGE_KEY+"_shiftcolors",JSON.stringify(p.shiftColors)); Object.keys(p.shiftColors).forEach(k=>{ if(SHIFT_TYPES[k]&&p.shiftColors[k])SHIFT_TYPES[k].color=p.shiftColors[k]; });}
-      if(p.ejacColor){safeSet(STORAGE_KEY+"_ejaccolor",p.ejacColor);}
-      if(Array.isArray(p.anaChanges)){ state.anaChanges=p.anaChanges; saveAnaChanges(); }
-      if(p.foodNutri&&typeof p.foodNutri==="object"){ state.foodNutri=p.foodNutri; saveFoodNutri(); }
-      if(p.nutriGoal&&typeof p.nutriGoal==="object"){ state.nutriGoal=p.nutriGoal; saveNutriGoal(); }
-      if(p.modeInvestCats&&typeof p.modeInvestCats==="object"){ state.modeInvestCats=p.modeInvestCats; saveModeInvestCats(); }
-      if(p.foodCats&&Array.isArray(p.foodCats.cats)&&p.foodCats.cats.length){ state.foodCats=p.foodCats.cats; state.foodEmoji=(p.foodCats.emoji&&typeof p.foodCats.emoji==="object")?p.foodCats.emoji:{}; saveFoodCats(); }
-      if(p.colorLabels&&typeof p.colorLabels==="object"){safeSet(STORAGE_KEY+"_colorlabels",JSON.stringify(p.colorLabels));}
-      if(p.sleepColor){safeSet(STORAGE_KEY+"_sleepcolor",p.sleepColor);}
-      if(p.alcColor){safeSet(STORAGE_KEY+"_alccolor",p.alcColor);}
-      if(p.defaultColor){safeSet(STORAGE_KEY+"_defaultcolor",p.defaultColor); EV_DEFAULT=p.defaultColor;}
-      if(p.goals){state.goals=p.goals;safeSet(STORAGE_KEY+"_goals",JSON.stringify(p.goals));}
-      if(p.schedule){state.schedule=p.schedule;safeSet(STORAGE_KEY+"_schedule",JSON.stringify(p.schedule));}
-      if(p.repeatEvents){state.repeatEvents=p.repeatEvents;safeSet(STORAGE_KEY+"_repeat",JSON.stringify(p.repeatEvents));}
-      if(p.tasks){state.tasks=p.tasks;safeSet(STORAGE_KEY+"_tasks",JSON.stringify(p.tasks));}
-      if(Array.isArray(p.routines)&&p.routines.length){state.routines=p.routines;saveRoutines();}
-      if(p.shiftPattern&&Array.isArray(p.shiftPattern.grid)){state.shiftPattern={...defaultShiftPattern(),...p.shiftPattern};saveShiftPattern();}
-      if(Array.isArray(p.planPatterns)){state.planPatterns=p.planPatterns;savePlanPatterns();}
-      if(Array.isArray(p.customTodos)){state.customTodos=p.customTodos;saveCustomTodos();}
-      if(Array.isArray(p.goalTree)){state.goalTree=p.goalTree;try{migrateGoalRules(state.goalTree);}catch(_){}saveGoalTree();}
-      if(Array.isArray(p.rewards)){state.rewards=p.rewards;saveRewards();}
-      if(Array.isArray(p.investActions)){state.investActions=p.investActions;saveInvestActions();}
-      if(Array.isArray(p.ifThenPlans)){state.ifThenPlans=p.ifThenPlans;saveIfThenPlans();}
-      if(Array.isArray(p.investSpends)){state.investSpends=p.investSpends;saveInvestSpends();}
-      if(p.bacProfile&&typeof p.bacProfile==="object"){ if(p.bacProfile.weight)state.bacWeight=p.bacProfile.weight; if(p.bacProfile.sex)state.bacSex=p.bacProfile.sex; saveBacProfile(); }
-      if(p.alcLimit&&typeof p.alcLimit==="object"){ if(p.alcLimit.day)state.alcLimitDay=p.alcLimit.day; if(p.alcLimit.week)state.alcLimitWeek=p.alcLimit.week; saveAlcLimit(); }
-      if(p.lifeVision&&typeof p.lifeVision==="object"){state.lifeVision=p.lifeVision;saveLifeVision();}
-      if(p.nightRitual&&typeof p.nightRitual==="object"){state.nightRitual=p.nightRitual;saveNightRitual();}
-      if(p.connectGoal&&typeof p.connectGoal==="object"){state.connectGoal=p.connectGoal;saveConnectGoal();}
-      if(Array.isArray(p.ctJournal)){state.ctJournal=p.ctJournal;saveCTJournal();}
-      if(p.nextDrink&&typeof p.nextDrink==="object"){state.nextDrink=p.nextDrink;saveNextDrinkPlan();}
-      if(p.sleepGoal&&typeof p.sleepGoal==="object"&&p.sleepGoal.bedH!=null){state.sleepGoal=p.sleepGoal;saveSleepGoal();}
-      if(Array.isArray(p.bodyComps)){state.bodyComps=p.bodyComps;saveBodyComps();}
-      if(Array.isArray(p.todoItems)&&p.todoItems.length){state.todoItems=p.todoItems;saveTodoItems();}
-      if(Array.isArray(p.selfModeLog)){state.selfModeLog=p.selfModeLog;saveSelfModeLog();}
-      if(p.selfChecksCfg&&typeof p.selfChecksCfg==="object"){state.selfChecksCfg=p.selfChecksCfg;saveSelfChecksCfg();}
-      if(Array.isArray(p.lifeModes)&&p.lifeModes.length){state.lifeModes=p.lifeModes;saveLifeModes();}
-      if(Array.isArray(p.modeLog)){state.modeLog=p.modeLog;saveModeLog();}
-      if(p.alexa&&typeof p.alexa==="object"){ const o=p.alexa; state.alexaOn=!!o.on; state.alexaHooks=(o.hooks&&typeof o.hooks==="object")?o.hooks:{};
-        if("relay" in o)state.alexaRelay=!!o.relay; if(typeof o.relayUrl==="string")state.alexaRelayUrl=o.relayUrl;
-        if(Array.isArray(o.triggers))state.alexaTriggers=o.triggers; if(o.modes&&typeof o.modes==="object")state.alexaModes=o.modes;
-        if(o.sleep&&typeof o.sleep==="object")state.alexaSleep=o.sleep; if("planOn" in o)state.alexaPlanOn=!!o.planOn;
-        if(o.mute&&typeof o.mute==="object")state.alexaMute={days:Array.isArray(o.mute.days)?o.mute.days:[],items:Array.isArray(o.mute.items)?o.mute.items:[]};
-        try{ migrateAlexaHooks(); }catch(_){} saveAlexa(); }
-      if(p.modeTags&&typeof p.modeTags==="object"){state.modeTags=p.modeTags;saveModeTags();}
-      if(p.wakeGoal&&typeof p.wakeGoal==="object"){state.wakeGoal=p.wakeGoal;saveWakeGoal();}
-      if(p.notifyCfg&&typeof p.notifyCfg==="object"){applyNudgeCfg(p.notifyCfg);saveNudgeCfg();}
-      if(p.modeGoals&&typeof p.modeGoals==="object"){state.modeGoals=p.modeGoals;saveModeGoals();}
-      if(typeof p.defaultMode==="string"&&p.defaultMode) setDefaultMode(p.defaultMode);
-      if(p.widgetSections&&typeof p.widgetSections==="object"){state.widgetSections=p.widgetSections;saveWidgetSections();}
-      if(Array.isArray(p.widgetSecOrder)){state.widgetSecOrder=p.widgetSecOrder;saveWidgetOrder();}
-      if(p.decisBalance&&typeof p.decisBalance==="object"){state.decisBalance=p.decisBalance;saveDecisBalance();}
-      if(p.miValues&&typeof p.miValues==="object"){state.miValues=p.miValues;saveMIValues();}
-      if(p.changePlan&&typeof p.changePlan==="object"){state.changePlan=p.changePlan;saveChangePlan();}
-      if(p.soberCfg&&typeof p.soberCfg==="object"){state.soberCfg=p.soberCfg;saveSoberCfg();}
-      if(p.weather){safeSet(STORAGE_KEY+"_weather",JSON.stringify(p.weather));}
-      if(p.city){state.weatherCity=p.city;safeSet(STORAGE_KEY+"_city",JSON.stringify(p.city));}
-      // 旧形式（v8.3）のバックアップは新モデルへ移行して取り込む
-      if(!p.schedule && !p.tasks && (p.events||p.taskList||p.wishList||p.shopList)){
-        state.events=p.events||{};
-        state.taskList=p.taskList||[];
-        state.wishList=p.wishList||[];
-        state.shopList=p.shopList||[];
-        state.schedule={};state.repeatEvents=[];state.tasks={todo:[],shopping:[]};
-        migrateOldSchedule();
-      }
-      saveStorage();render();
+      applyBackupPayload(p);
       alert(`インポート完了！\n${summary}`);
     }catch(err){alert("インポート失敗: "+err.message);}
   };
   reader.readAsText(file);e.target.value="";
+}
+function backupSummary(p){
+  return [
+    `体調記録: ${p.logs.length}件`,
+    `日次記録: ${p.dailies.length}日分`,
+    p.todos?`TODO: ${Object.keys(p.todos).length}日分`:null,
+    p.goals?`目標: ${Object.keys(p.goals).length}件`:null,
+    p.schedule?`予定: ${Object.keys(p.schedule).length}日分`:null,
+    p.tasks?`リスト: ${(p.tasks.todo||[]).length+(p.tasks.wish||[]).length+(p.tasks.shopping||[]).length}件`:null,
+    p.weather?`天気: ${Object.keys(p.weather).length}日分`:null,
+    p.exportedAt?`エクスポート日時: ${p.exportedAt.slice(0,10)}`:null
+  ].filter(Boolean).join("\n");
+}
+// バックアップの中身を今のデータに反映する（手動の読込と ☁️ConoHa から読み込むで共通。今のデータは上書き）
+function applyBackupPayload(p){
+  state.logs=p.logs;
+  state.dailies=p.dailies;
+  if(p.todos){state.todos=p.todos;safeSet(STORAGE_KEY+"_todo",JSON.stringify(p.todos));}
+  if(p.todoOrder){safeSet(STORAGE_KEY+"_todo_order",JSON.stringify(p.todoOrder));}
+  if(p.shiftColors&&typeof p.shiftColors==="object"){safeSet(STORAGE_KEY+"_shiftcolors",JSON.stringify(p.shiftColors)); Object.keys(p.shiftColors).forEach(k=>{ if(SHIFT_TYPES[k]&&p.shiftColors[k])SHIFT_TYPES[k].color=p.shiftColors[k]; });}
+  if(p.ejacColor){safeSet(STORAGE_KEY+"_ejaccolor",p.ejacColor);}
+  if(Array.isArray(p.anaChanges)){ state.anaChanges=p.anaChanges; saveAnaChanges(); }
+  if(p.foodNutri&&typeof p.foodNutri==="object"){ state.foodNutri=p.foodNutri; saveFoodNutri(); }
+  if(p.nutriGoal&&typeof p.nutriGoal==="object"){ state.nutriGoal=p.nutriGoal; saveNutriGoal(); }
+  if(p.modeInvestCats&&typeof p.modeInvestCats==="object"){ state.modeInvestCats=p.modeInvestCats; saveModeInvestCats(); }
+  if(p.foodCats&&Array.isArray(p.foodCats.cats)&&p.foodCats.cats.length){ state.foodCats=p.foodCats.cats; state.foodEmoji=(p.foodCats.emoji&&typeof p.foodCats.emoji==="object")?p.foodCats.emoji:{}; saveFoodCats(); }
+  if(p.colorLabels&&typeof p.colorLabels==="object"){safeSet(STORAGE_KEY+"_colorlabels",JSON.stringify(p.colorLabels));}
+  if(p.sleepColor){safeSet(STORAGE_KEY+"_sleepcolor",p.sleepColor);}
+  if(p.alcColor){safeSet(STORAGE_KEY+"_alccolor",p.alcColor);}
+  if(p.defaultColor){safeSet(STORAGE_KEY+"_defaultcolor",p.defaultColor); EV_DEFAULT=p.defaultColor;}
+  if(p.goals){state.goals=p.goals;safeSet(STORAGE_KEY+"_goals",JSON.stringify(p.goals));}
+  if(p.schedule){state.schedule=p.schedule;safeSet(STORAGE_KEY+"_schedule",JSON.stringify(p.schedule));}
+  if(p.repeatEvents){state.repeatEvents=p.repeatEvents;safeSet(STORAGE_KEY+"_repeat",JSON.stringify(p.repeatEvents));}
+  if(p.tasks){state.tasks=p.tasks;safeSet(STORAGE_KEY+"_tasks",JSON.stringify(p.tasks));}
+  if(Array.isArray(p.routines)&&p.routines.length){state.routines=p.routines;saveRoutines();}
+  if(p.shiftPattern&&Array.isArray(p.shiftPattern.grid)){state.shiftPattern={...defaultShiftPattern(),...p.shiftPattern};saveShiftPattern();}
+  if(Array.isArray(p.planPatterns)){state.planPatterns=p.planPatterns;savePlanPatterns();}
+  if(Array.isArray(p.customTodos)){state.customTodos=p.customTodos;saveCustomTodos();}
+  if(Array.isArray(p.goalTree)){state.goalTree=p.goalTree;try{migrateGoalRules(state.goalTree);}catch(_){}saveGoalTree();}
+  if(Array.isArray(p.rewards)){state.rewards=p.rewards;saveRewards();}
+  if(Array.isArray(p.investActions)){state.investActions=p.investActions;saveInvestActions();}
+  if(Array.isArray(p.ifThenPlans)){state.ifThenPlans=p.ifThenPlans;saveIfThenPlans();}
+  if(Array.isArray(p.investSpends)){state.investSpends=p.investSpends;saveInvestSpends();}
+  if(p.bacProfile&&typeof p.bacProfile==="object"){ if(p.bacProfile.weight)state.bacWeight=p.bacProfile.weight; if(p.bacProfile.sex)state.bacSex=p.bacProfile.sex; saveBacProfile(); }
+  if(p.alcLimit&&typeof p.alcLimit==="object"){ if(p.alcLimit.day)state.alcLimitDay=p.alcLimit.day; if(p.alcLimit.week)state.alcLimitWeek=p.alcLimit.week; saveAlcLimit(); }
+  if(p.lifeVision&&typeof p.lifeVision==="object"){state.lifeVision=p.lifeVision;saveLifeVision();}
+  if(p.nightRitual&&typeof p.nightRitual==="object"){state.nightRitual=p.nightRitual;saveNightRitual();}
+  if(p.connectGoal&&typeof p.connectGoal==="object"){state.connectGoal=p.connectGoal;saveConnectGoal();}
+  if(Array.isArray(p.ctJournal)){state.ctJournal=p.ctJournal;saveCTJournal();}
+  if(p.nextDrink&&typeof p.nextDrink==="object"){state.nextDrink=p.nextDrink;saveNextDrinkPlan();}
+  if(p.sleepGoal&&typeof p.sleepGoal==="object"&&p.sleepGoal.bedH!=null){state.sleepGoal=p.sleepGoal;saveSleepGoal();}
+  if(Array.isArray(p.bodyComps)){state.bodyComps=p.bodyComps;saveBodyComps();}
+  if(Array.isArray(p.todoItems)&&p.todoItems.length){state.todoItems=p.todoItems;saveTodoItems();}
+  if(Array.isArray(p.selfModeLog)){state.selfModeLog=p.selfModeLog;saveSelfModeLog();}
+  if(p.selfChecksCfg&&typeof p.selfChecksCfg==="object"){state.selfChecksCfg=p.selfChecksCfg;saveSelfChecksCfg();}
+  if(Array.isArray(p.lifeModes)&&p.lifeModes.length){state.lifeModes=p.lifeModes;saveLifeModes();}
+  if(Array.isArray(p.modeLog)){state.modeLog=p.modeLog;saveModeLog();}
+  if(p.alexa&&typeof p.alexa==="object"){ const o=p.alexa; state.alexaOn=!!o.on; state.alexaHooks=(o.hooks&&typeof o.hooks==="object")?o.hooks:{};
+    if("relay" in o)state.alexaRelay=!!o.relay; if(typeof o.relayUrl==="string")state.alexaRelayUrl=o.relayUrl;
+    if(Array.isArray(o.triggers))state.alexaTriggers=o.triggers; if(o.modes&&typeof o.modes==="object")state.alexaModes=o.modes;
+    if(o.sleep&&typeof o.sleep==="object")state.alexaSleep=o.sleep; if("planOn" in o)state.alexaPlanOn=!!o.planOn;
+    if(o.mute&&typeof o.mute==="object")state.alexaMute={days:Array.isArray(o.mute.days)?o.mute.days:[],items:Array.isArray(o.mute.items)?o.mute.items:[]};
+    try{ migrateAlexaHooks(); }catch(_){} saveAlexa(); }
+  if(p.modeTags&&typeof p.modeTags==="object"){state.modeTags=p.modeTags;saveModeTags();}
+  if(p.wakeGoal&&typeof p.wakeGoal==="object"){state.wakeGoal=p.wakeGoal;saveWakeGoal();}
+  if(p.notifyCfg&&typeof p.notifyCfg==="object"){applyNudgeCfg(p.notifyCfg);saveNudgeCfg();}
+  if(p.modeGoals&&typeof p.modeGoals==="object"){state.modeGoals=p.modeGoals;saveModeGoals();}
+  if(typeof p.defaultMode==="string"&&p.defaultMode) setDefaultMode(p.defaultMode);
+  if(p.widgetSections&&typeof p.widgetSections==="object"){state.widgetSections=p.widgetSections;saveWidgetSections();}
+  if(Array.isArray(p.widgetSecOrder)){state.widgetSecOrder=p.widgetSecOrder;saveWidgetOrder();}
+  if(p.decisBalance&&typeof p.decisBalance==="object"){state.decisBalance=p.decisBalance;saveDecisBalance();}
+  if(p.miValues&&typeof p.miValues==="object"){state.miValues=p.miValues;saveMIValues();}
+  if(p.changePlan&&typeof p.changePlan==="object"){state.changePlan=p.changePlan;saveChangePlan();}
+  if(p.soberCfg&&typeof p.soberCfg==="object"){state.soberCfg=p.soberCfg;saveSoberCfg();}
+  if(p.weather){safeSet(STORAGE_KEY+"_weather",JSON.stringify(p.weather));}
+  if(p.city){state.weatherCity=p.city;safeSet(STORAGE_KEY+"_city",JSON.stringify(p.city));}
+  // 旧形式（v8.3）のバックアップは新モデルへ移行して取り込む
+  if(!p.schedule && !p.tasks && (p.events||p.taskList||p.wishList||p.shopList)){
+    state.events=p.events||{};
+    state.taskList=p.taskList||[];
+    state.wishList=p.wishList||[];
+    state.shopList=p.shopList||[];
+    state.schedule={};state.repeatEvents=[];state.tasks={todo:[],shopping:[]};
+    migrateOldSchedule();
+  }
+  saveStorage();render();
 }
 
 // ── バックアップの閲覧（読み取り専用・現在のデータは上書きしない）──
