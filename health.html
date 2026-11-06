@@ -247,7 +247,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.67"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.68"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -10664,6 +10664,9 @@ function renderDaySchedule(vd,ds,isToday){
     for(let off=1; off<=90; off++){
       const dd=addDays(vd,off);
       (state.schedule[dd]||[]).forEach(e=>{ if(e.preDays && e.preDays>=off){ preItems.push({title:e.title,color:e.color||EV_DEFAULT,daysAhead:off,dd,uid:e.uid,allDay:!!e.allDay,place:e.place,note:e.note}); } });
+      // 繰り返し予定も（v15.67まで出ていなかった）。同じ予定は一番近い回だけ出す
+      (state.repeatEvents||[]).forEach(e=>{ if(!e.preDays || e.preDays<off || preItems.some(x=>x.repeat&&x.uid===e.uid) || !repeatMatches(e,dd)) return;
+        preItems.push({title:`🔁 ${e.title}`,color:e.color||EV_DEFAULT,daysAhead:off,dd,uid:e.uid,repeat:true,allDay:!!e.allDay,place:e.place,note:e.note}); });
     }
     preItems.sort((a,b)=>a.daysAhead-b.daysAhead);
     // 🎯 今日の目標（日次目標＋直近の週間/月次目標の下の期日なし目標）
