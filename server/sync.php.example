@@ -1,6 +1,6 @@
 <?php
 // ─────────────────────────────────────────────────────────────
-// 体調管理 ☁️ 同期サーバ（sync.php） v1
+// 体調管理 ☁️ 同期サーバ（sync.php） v2
 //
 // 使い方：
 //   1. このファイルを sync.php という名前にして、api.php と同じフォルダ（例：public_html/health/）に置く
@@ -9,20 +9,23 @@
 //
 // ・データはアプリの中で合言葉から作った鍵で暗号化されてから届く。このサーバは中身を読めない。
 // ・SYNC_AUTH_HASH を書き込んだ sync.php はリポジトリにコミットしない（api.php と同じ扱い）。
-// ・送られてくるたびに版を1つ増やし、過去の版を KEEP_HISTORY 個まで残す（古いものから消す）。
+// ・送られてくるたびに版を1つ増やす。過去の版は「新しい KEEP_HISTORY 個」＋「1日1つを KEEP_DAYS 日分」＋「1か月に1つを KEEP_MONTHS か月分」を残す（v2）。
+// ・年ごとに書き出した記録（アーカイブ）は sync_data/archive/ に、版とは別に消さずに残す（同じ年を預け直すと、前のものは日時つきの名前で残す）（v2）。
 // ─────────────────────────────────────────────────────────────
 
 const SYNC_AUTH_HASH  = 'ここにアプリの「サーバに貼る値」を貼る';
 const ALLOWED_ORIGINS = ['https://yuradream3838.github.io'];
 const DATA_DIR        = __DIR__ . '/sync_data';
 const MAX_BYTES       = 20 * 1024 * 1024;   // 1回に送れる大きさ（暗号化・圧縮したあと）
-const KEEP_HISTORY    = 50;                 // 残す版の数
+const KEEP_HISTORY    = 50;                 // 残す版：新しいものからこの数
+const KEEP_DAYS       = 30;                 // ＋1日1つ（その日の最後の版）をこの日数分
+const KEEP_MONTHS     = 12;                 // ＋1か月に1つ（その月の最後の版）をこの月数分
 
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
 if (in_array($origin, ALLOWED_ORIGINS, true)) {
   header('Access-Control-Allow-Origin: ' . $origin);
   header('Vary: Origin');
-  header('Access-Control-Allow-Headers: X-Sync-Auth, X-Base-Rev, X-Device, Content-Type');
+  header('Access-Control-Allow-Headers: X-Sync-Auth, X-Base-Rev, X-Device, X-Archive, Content-Type');
   header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
   header('Access-Control-Expose-Headers: X-Rev');
   header('Access-Control-Max-Age: 600');
@@ -51,7 +54,8 @@ if (!preg_match('/^[0-9a-f]{64}$/', $auth) || !preg_match('/^[0-9a-f]{64}$/', SY
 
 // 保存先（外から見えないようにする）
 if (!is_dir(DATA_DIR . '/hist')) { @mkdir(DATA_DIR . '/hist', 0700, true); }
-if (!is_dir(DATA_DIR . '/hist')) out(500, ['error' => 'mkdir']);
+if (!is_dir(DATA_DIR . '/archive')) { @mkdir(DATA_DIR . '/archive', 0700, true); }
+if (!is_dir(DATA_DIR . '/hist') || !is_dir(DATA_DIR . '/archive')) out(500, ['error' => 'mkdir']);
 if (!file_exists(DATA_DIR . '/.htaccess')) {
   @file_put_contents(DATA_DIR . '/.htaccess',
     "<IfModule mod_authz_core.c>\nRequire all denied\n</IfModule>\n<IfModule !mod_authz_core.c>\nOrder allow,deny\nDeny from all\n</IfModule>\n");
@@ -64,6 +68,23 @@ function readMeta($f) {
   $m = json_decode((string)@file_get_contents($f), true);
   return is_array($m) ? $m : ['rev' => 0, 'hist' => []];
 }
+
+// 残す版を選ぶ：新しい KEEP_HISTORY 個＋1日1つ（日本時間の日ごとに一番新しい版）を KEEP_DAYS 日分＋1か月に1つを KEEP_MONTHS か月分
+function keepRevs($hist, $nowTs) {
+  $keep = [];
+  foreach (array_slice($hist, 0, KEEP_HISTORY) as $h) $keep[(int)$h['rev']] = true;
+  $days = []; $months = [];
+  foreach ($hist as $h) {   // $hist は新しい順
+    $t = strtotime($h['savedAt'] ?? '') ?: 0; $jst = $t + 9 * 3600;
+    $d = gmdate('Y-m-d', $jst); $m = gmdate('Y-m', $jst);
+    if ($t >= $nowTs - KEEP_DAYS * 86400 && !isset($days[$d])) { $days[$d] = true; $keep[(int)$h['rev']] = true; }
+    if ($t >= $nowTs - KEEP_MONTHS * 31 * 86400 && !isset($months[$m])) { $months[$m] = true; $keep[(int)$h['rev']] = true; }
+  }
+  return $keep;
+}
+function safeName($n) { return (is_string($n) && preg_match('/^[0-9A-Za-z_-]{1,40}$/', $n)) ? $n : null; }
+$archIndex = DATA_DIR . '/archive/index.json';
+function readArch($f) { if (!file_exists($f)) return []; $a = json_decode((string)@file_get_contents($f), true); return is_array($a) ? $a : []; }
 
 $a = $_GET['a'] ?? 'meta';
 
@@ -127,16 +148,66 @@ if ($a === 'put') {
   }
   $hist = is_array($m['hist'] ?? null) ? $m['hist'] : [];
   array_unshift($hist, ['rev' => $rev, 'savedAt' => $now, 'size' => strlen($body), 'device' => $dev]);
-  while (count($hist) > KEEP_HISTORY) {
-    $old = array_pop($hist);
-    @unlink(DATA_DIR . '/hist/' . (int)$old['rev'] . '.bin');
-  }
+  $keep = keepRevs($hist, time());
+  $hist = array_values(array_filter($hist, function ($h) use ($keep) {
+    if (isset($keep[(int)$h['rev']])) return true;
+    @unlink(DATA_DIR . '/hist/' . (int)$h['rev'] . '.bin');
+    return false;
+  }));
   $meta = ['rev' => $rev, 'savedAt' => $now, 'size' => strlen($body), 'device' => $dev, 'hist' => $hist];
   $mt = $metaFile . '.tmp';
   file_put_contents($mt, json_encode($meta, JSON_UNESCAPED_UNICODE));
   rename($mt, $metaFile);
   flock($lock, LOCK_UN);
   out(200, ['rev' => $rev, 'savedAt' => $now]);
+}
+
+// ── 年ごとの記録（アーカイブ）：版とは別に、消さずに残す ──
+// 一覧 {items:[{name, savedAt, size, device}]}（新しい順）
+if ($a === 'alist') {
+  out(200, ['items' => readArch($archIndex)]);
+}
+// 中身（暗号化されたまま）。name＝一覧の name
+if ($a === 'aget') {
+  $n = safeName($_GET['name'] ?? '');
+  if ($n === null) out(400, ['error' => 'name']);
+  $f = DATA_DIR . '/archive/' . $n . '.bin';
+  if (!file_exists($f)) out(404, ['error' => 'none']);
+  header('Content-Type: application/octet-stream');
+  header('Content-Length: ' . filesize($f));
+  readfile($f);
+  exit;
+}
+// 預ける。ヘッダ X-Archive＝名前（例 y2025）。同じ名前があれば、前のものは「名前_日時」で残す
+if ($a === 'aput') {
+  if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') out(405, ['error' => 'method']);
+  $n = safeName($_SERVER['HTTP_X_ARCHIVE'] ?? '');
+  if ($n === null) out(400, ['error' => 'name']);
+  $len = (int)($_SERVER['CONTENT_LENGTH'] ?? 0);
+  if ($len > MAX_BYTES) out(413, ['error' => 'too_large']);
+  $body = file_get_contents('php://input');
+  if ($body === false || strlen($body) < 32) out(400, ['error' => 'empty']);
+  if (strlen($body) > MAX_BYTES) out(413, ['error' => 'too_large']);
+  if (substr($body, 0, 3) !== 'HS1') out(400, ['error' => 'format']);
+  $lock = fopen(DATA_DIR . '/.lock', 'c');
+  if (!$lock || !flock($lock, LOCK_EX)) out(500, ['error' => 'lock']);
+  $items = readArch($archIndex);
+  $dev = rawurldecode((string)($_SERVER['HTTP_X_DEVICE'] ?? ''));
+  $dev = mb_substr(preg_replace('/[\x00-\x1f\x7f]/u', '', $dev) ?? '', 0, 40);
+  $now = gmdate('Y-m-d\TH:i:s\Z');
+  $f = DATA_DIR . '/archive/' . $n . '.bin';
+  if (file_exists($f)) {
+    $old = $n . '_' . gmdate('YmdHis');
+    @rename($f, DATA_DIR . '/archive/' . $old . '.bin');
+    foreach ($items as &$it) { if (($it['name'] ?? '') === $n) $it['name'] = $old; }
+    unset($it);
+  }
+  $tmp = $f . '.tmp';
+  if (file_put_contents($tmp, $body) !== strlen($body) || !rename($tmp, $f)) { @unlink($tmp); flock($lock, LOCK_UN); out(500, ['error' => 'write']); }
+  array_unshift($items, ['name' => $n, 'savedAt' => $now, 'size' => strlen($body), 'device' => $dev]);
+  $it2 = $archIndex . '.tmp'; file_put_contents($it2, json_encode($items, JSON_UNESCAPED_UNICODE)); rename($it2, $archIndex);
+  flock($lock, LOCK_UN);
+  out(200, ['name' => $n, 'savedAt' => $now]);
 }
 
 out(400, ['error' => 'action']);

@@ -151,7 +151,14 @@ function archiveYearData(year){
     selfModeLog:getSelfModeLog().filter(x=>x.t&&String(x.t).startsWith(y)) };
 }
 // ① 書き出す（まだ消さない）
-function exportArchiveYear(year){ downloadJSON(archiveYearData(year),`health_archive_${year}.json`); state.archiveSaved={year,at:Date.now()}; render(); }
+function exportArchiveYear(year){
+  const data=archiveYearData(year);
+  downloadJSON(data,`health_archive_${year}.json`); state.archiveSaved={year,at:Date.now()};
+  // ☁️同期を設定していれば ConoHa にも預ける（版とは別の、消えない場所）
+  if(syncReady()){ state.archiveSaved.cloud="sending";
+    syncPutArchive(year,data).then(r=>{ if(state.archiveSaved&&state.archiveSaved.year===year){ state.archiveSaved.cloud=r.ok?"ok":`err:${r.msg}`; render(); } }); }
+  render();
+}
 // ② 保存できたのを確かめてから消す
 function deleteArchivedYear(year){
   const y=String(year);
@@ -236,6 +243,10 @@ function renderStorageAlertModal(){
     if(saved){
       m.appendChild(div({style:{fontSize:"11px",color:"#fbbf24",lineHeight:1.7,margin:"2px 0 8px",padding:"8px 10px",borderRadius:"8px",background:"#f59e0b14",border:"1px solid #f59e0b55"}},
         `health_archive_${Y}.json が保存されたか確かめてください（iPhoneは「ファイル」アプリの「ダウンロード」など）。保存できていたら②へ。消したあとも、このファイルを「📂 データを読込」で選べば${Y}年の分を戻せます。`));
+      { const cl=state.archiveSaved.cloud; if(cl){ const okC=cl==="ok";
+        const cd=div({style:{fontSize:"11px",lineHeight:1.7,margin:"0 0 8px",padding:"7px 10px",borderRadius:"8px",color:okC?"#86efac":cl==="sending"?"#94a3b8":"#fbbf24",background:okC?"#22c55e12":"#0f172a",border:`1px solid ${okC?"#22c55e55":"#334155"}`}},
+          okC?`☁️ ConoHa にも預けました。消したあとも、⚙設定の「☁️ ConoHa 同期」→「🗄 年ごとの記録」から見る・戻すことができます。`:cl==="sending"?"☁️ ConoHa にも預けています…":`⚠ ConoHa には預けられませんでした（${cl.slice(4)}）。ファイルの保存を確かめてから消してください。`);
+        cd.setAttribute('data-archivecloud',okC?"ok":cl==="sending"?"sending":"err"); m.appendChild(cd); } }
       const del=btn({style:{width:"100%",padding:"10px",background:"linear-gradient(135deg,#f97316,#ef4444)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"13px",fontWeight:600,cursor:"pointer",marginBottom:"8px"},
         onClick:()=>{ if(confirm(`${Y}年の記録をアプリから消します。\nhealth_archive_${Y}.json を保存できていますか？`)) deleteArchivedYear(Y); }},`🗑 ② 保存できたので ${Y}年をアプリから消す`);
       del.setAttribute('data-archivedelete',String(Y)); m.appendChild(del);
@@ -247,7 +258,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.71"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.72"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -18496,6 +18507,7 @@ let _syncPrevUnits=null, _syncStampTimer=null;
 // 前に見たときと比べて、変わった・消えたユニットに今の時刻を付ける（はじめては基準を覚えるだけ）
 function syncStampNow(){
   if(_syncStampTimer){ clearTimeout(_syncStampTimer); _syncStampTimer=null; }
+  if(state&&state.viewingBackup) return;   // バックアップを見ている間は、今のデータではないので比べない
   const cur=syncUnits(buildBackupPayload());
   if(!_syncPrevUnits){ _syncPrevUnits=cur; return; }
   const st=getSyncStamps(), now=Date.now(); let ch=0;
@@ -18565,6 +18577,7 @@ function syncErrMsg(st,j){ return st===401?"合言葉がサーバと合いませ
 // 今のデータを送る。force＝別の端末の新しいデータがあっても、この端末の内容で上書きする（前の版はサーバに残る）
 async function syncUpload(force){
   if(!syncReady()) return {ok:false,msg:"合言葉が未設定です"};
+  if(state.viewingBackup) return {ok:false,msg:"バックアップを見ている間は送りません（閲覧を終えてから）"};
   if(_syncBusy) return {ok:false,msg:"送受信中です"};
   _syncBusy=true;
   try{
@@ -18634,6 +18647,7 @@ function syncApply(p,rev,opts){
 }
 async function syncPullInteractive(id,asRev){
   if(!syncReady()) return;
+  if(state.viewingBackup){ state.syncMsg="⚠ バックアップを見ている間は読み込めません（閲覧を終えてから）"; render(); return; }
   state.syncMsg="⏳ サーバから取ってきています…"; render();
   try{
     const {p,rev}=await syncDownload(id);
@@ -18644,11 +18658,43 @@ async function syncPullInteractive(id,asRev){
     state.syncMsg=`✅ サーバ${id?`の版${id}`:""}から読み込みました`; showToast("☁️ サーバから読み込みました","#22c55e"); render();
   }catch(e){ state.syncMsg=`⚠ ${(e&&e.message)||e}`; render(); }
 }
+// 年ごとに書き出した記録（アーカイブ）を ConoHa にも預ける（版とは別の、消えない場所。暗号化は同じ）
+async function syncPutArchive(year,payload){
+  if(!syncReady()) return {ok:false,msg:"☁️同期が未設定です"};
+  try{
+    const body=await syncEncode(payload||archiveYearData(year));
+    const r=await syncFetch("aput",{body,headers:{"Content-Type":"application/octet-stream","X-Archive":`y${year}`}});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok) return {ok:false,msg:syncErrMsg(r.status,j)};
+    return {ok:true,savedAt:j.savedAt};
+  }catch(e){ return {ok:false,msg:(e&&e.message)||String(e)}; }
+}
+async function syncListArchives(){ const r=await syncFetch("alist"); const j=await r.json().catch(()=>({})); if(!r.ok) throw new Error(syncErrMsg(r.status,j)); return j.items||[]; }
+async function syncGetArchive(name){
+  const r=await syncFetch("aget",{q:`name=${encodeURIComponent(name)}`});
+  if(!r.ok){ const j=await r.json().catch(()=>({})); throw new Error(syncErrMsg(r.status,j)); }
+  return syncDecode(await r.arrayBuffer());
+}
+// ConoHa の過去の版・年ごとの記録を「見るだけ」で開く
+async function syncViewRemote(kind,id,label){
+  state.syncMsg="⏳ サーバから取ってきています…"; render();
+  try{ const p=kind==="archive"?await syncGetArchive(id):(await syncDownload(id)).p;
+    state.syncMsg=null; viewBackupPayload(p,label); }
+  catch(e){ state.syncMsg=`⚠ ${(e&&e.message)||e}`; render(); }
+}
+async function syncMergeArchiveInteractive(name){
+  if(state.viewingBackup){ state.syncMsg="⚠ バックアップを見ている間は戻せません（閲覧を終えてから）"; render(); return; }
+  state.syncMsg="⏳ サーバから取ってきています…"; render();
+  try{ const p=await syncGetArchive(name);
+    if(!confirm(`ConoHa に預けた ${p.year||name} の記録を、今のデータに足して戻しますか？\n今のデータはそのまま残ります（同じ日・時間がすでにあれば今の方を残します）。\n\n体調記録: ${(p.logs||[]).length}件\n日次記録: ${(p.dailies||[]).length}日分\nモードの記録: ${(p.modeLog||[]).length}件`)){ state.syncMsg=null; render(); return; }
+    const n=mergeArchive(p); state.syncMsg=`✅ ${p.year||name}の記録を戻しました（体調${n.logs}件・日次${n.dailies}日・モード${n.modes}件）`; render(); }
+  catch(e){ state.syncMsg=`⚠ ${(e&&e.message)||e}`; render(); }
+}
 function fmtSyncTime(t){ const d=new Date(t); if(isNaN(d)) return ""; return `${d.getMonth()+1}/${d.getDate()} ${hhmm(d.getHours(),d.getMinutes())}`; }
 // 毎分：変更があってから2分たったら送る（失敗が続くときは5分あける）
 function syncAutoTick(now){
   const c=getSyncCfg();
-  if(!c.on||!syncReady()||!c.dirtyAt||c.conflict||_syncBusy) return;
+  if(!c.on||!syncReady()||!c.dirtyAt||c.conflict||_syncBusy||state.viewingBackup) return;
   if(typeof navigator!=="undefined"&&navigator.onLine===false) return;
   if(c.errAt&&now-c.errAt<5*60000) return;
   if(now-Math.max(_syncLastChange||0,c.dirtyAt)<SYNC_DEBOUNCE_MS) return;
@@ -18656,7 +18702,7 @@ function syncAutoTick(now){
 }
 // 開いたとき・画面に戻ったとき：サーバの方が新しければ読み込む（この端末に送っていない変更があれば聞く）
 async function syncCheckRemote(){
-  const c=getSyncCfg(); if(!c.on||!syncReady()||_syncBusy||c.conflict) return;
+  const c=getSyncCfg(); if(!c.on||!syncReady()||_syncBusy||c.conflict||state.viewingBackup) return;
   if(typeof navigator!=="undefined"&&navigator.onLine===false) return;
   try{
     const m=await syncMeta(); if(!(m.rev>(c.rev||0))) return;
@@ -18734,7 +18780,7 @@ function renderSyncPanel(){
     catch(e){ state.syncMsg=`⚠ ${(e&&e.message)||e}`; } render(); },"check"));
   if(msg) card.appendChild(msg);
   // 過去の版
-  { const open=!!state.syncHistOpen; const hb=btn({style:{width:"100%",padding:"7px",marginBottom:"7px",borderRadius:"8px",border:"1px solid #334155",background:"transparent",color:"#94a3b8",fontSize:"12px",cursor:"pointer",fontFamily:"inherit"}},open?"▲ 過去の版を閉じる":"🕘 サーバの過去の版（最大50）");
+  { const open=!!state.syncHistOpen; const hb=btn({style:{width:"100%",padding:"7px",marginBottom:"7px",borderRadius:"8px",border:"1px solid #334155",background:"transparent",color:"#94a3b8",fontSize:"12px",cursor:"pointer",fontFamily:"inherit"}},open?"▲ 過去の版を閉じる":"🕘 サーバの過去の版（直近50・1日1つを30日・1か月に1つを12か月）");
     hb.setAttribute('data-syncbtn','hist'); hb.addEventListener('click',async()=>{ if(open){ state.syncHistOpen=false; render(); return; } state.syncHistOpen=true; state.syncHist=null; render();
       try{ const r=await syncFetch("list"); const j=await r.json(); if(!r.ok) throw new Error(syncErrMsg(r.status,j)); state.syncHist=j; }catch(e){ state.syncHist={err:(e&&e.message)||String(e)}; } render(); });
     card.appendChild(hb);
@@ -18744,8 +18790,37 @@ function renderSyncPanel(){
       else if(!(H.items||[]).length) box.appendChild(div({style:{fontSize:"11px",color:"#64748b"}},"まだありません"));
       else { (H.items||[]).forEach(it=>{ const row=div({style:{display:"flex",alignItems:"center",gap:"6px",padding:"5px 0",borderBottom:"1px solid #1e293b",fontSize:"11px",color:"#cbd5e1"}});
         row.appendChild(span({style:{flex:1}},`版${it.rev}・${fmtSyncTime(it.savedAt)}・${it.device||"?"}・${Math.max(1,Math.round((it.size||0)/1024))}KB`));
+        const vb=btn({style:{flexShrink:0,padding:"4px 9px",borderRadius:"7px",border:"1px solid #a5b4fc",background:"transparent",color:"#a5b4fc",fontSize:"11px",cursor:"pointer",fontFamily:"inherit"}},"👁 見る");
+        vb.setAttribute('data-syncview',String(it.rev)); vb.addEventListener('click',()=>syncViewRemote("rev",String(it.rev),`ConoHa 版${it.rev}（${fmtSyncTime(it.savedAt)}）`)); row.appendChild(vb);
         const rb=btn({style:{flexShrink:0,padding:"4px 9px",borderRadius:"7px",border:"1px solid #38bdf8",background:"transparent",color:"#38bdf8",fontSize:"11px",cursor:"pointer",fontFamily:"inherit"}},"この版に戻す");
         rb.setAttribute('data-synchist',String(it.rev)); rb.addEventListener('click',()=>syncPullInteractive(String(it.rev),H.rev)); row.appendChild(rb); box.appendChild(row); }); }
+      card.appendChild(box); } }
+  // 🗄 年ごとの記録（版とは別に消えずに残る）
+  { const open=!!state.syncArchOpen; const ab=btn({style:{width:"100%",padding:"7px",marginBottom:"7px",borderRadius:"8px",border:"1px solid #334155",background:"transparent",color:"#94a3b8",fontSize:"12px",cursor:"pointer",fontFamily:"inherit"}},open?"▲ 年ごとの記録を閉じる":"🗄 年ごとの記録（消した年の分も見られる）");
+    ab.setAttribute('data-syncbtn','arch'); ab.addEventListener('click',async()=>{ if(open){ state.syncArchOpen=false; render(); return; } state.syncArchOpen=true; state.syncArch=null; render();
+      try{ state.syncArch={items:await syncListArchives()}; }catch(e){ state.syncArch={err:(e&&e.message)||String(e)}; } render(); });
+    card.appendChild(ab);
+    if(open){ const A=state.syncArch, box=div({style:{marginBottom:"8px"}}); box.setAttribute('data-syncarch','1');
+      box.appendChild(div({style:{fontSize:"10px",color:"#64748b",lineHeight:1.6,marginBottom:"6px"}},"「データがいっぱい」で年ごとに書き出すと、ここにも預けられます。アプリから消したあとも、見る（今のデータはそのまま）・今のデータに足して戻すができます。"));
+      if(!A) box.appendChild(div({style:{fontSize:"11px",color:"#64748b"}},"⏳ 読み込み中…"));
+      else if(A.err) box.appendChild(div({style:{fontSize:"11px",color:"#fbbf24"}},`⚠ ${A.err}`));
+      else if(!A.items.length) box.appendChild(div({style:{fontSize:"11px",color:"#64748b"}},"まだありません"));
+      else { A.items.forEach(it=>{ const nm=String(it.name||""), yr=(nm.match(/^y(\d{4})/)||[])[1]||nm, old=/_\d{14}$/.test(nm);
+        const row=div({style:{display:"flex",alignItems:"center",gap:"6px",padding:"5px 0",borderBottom:"1px solid #1e293b",fontSize:"11px",color:"#cbd5e1"}});
+        row.appendChild(span({style:{flex:1}},`${yr}年${old?"（前に預けた分）":""}・${fmtSyncTime(it.savedAt)}・${it.device||"?"}・${Math.max(1,Math.round((it.size||0)/1024))}KB`));
+        const vb=btn({style:{flexShrink:0,padding:"4px 9px",borderRadius:"7px",border:"1px solid #a5b4fc",background:"transparent",color:"#a5b4fc",fontSize:"11px",cursor:"pointer",fontFamily:"inherit"}},"👁 見る");
+        vb.setAttribute('data-archview',nm); vb.addEventListener('click',()=>syncViewRemote("archive",nm,`ConoHa ${yr}年の記録`)); row.appendChild(vb);
+        const mb=btn({style:{flexShrink:0,padding:"4px 9px",borderRadius:"7px",border:"1px solid #22c55e",background:"transparent",color:"#4ade80",fontSize:"11px",cursor:"pointer",fontFamily:"inherit"}},"📥 戻す");
+        mb.setAttribute('data-archmerge',nm); mb.addEventListener('click',()=>syncMergeArchiveInteractive(nm)); row.appendChild(mb);
+        box.appendChild(row); }); }
+      // まだ消していない年も、先に預けておける
+      { const ys=getArchiveYears(); if(ys.length){ const r2=div({style:{display:"flex",gap:"6px",alignItems:"center",marginTop:"8px"}});
+        const sel=document.createElement('select'); sel.className='sel'; sel.style.cssText="flex:1;font-size:12px"; ys.forEach(y=>{ const o=document.createElement('option'); o.value=y; o.textContent=`${y}年`; sel.appendChild(o); });
+        r2.appendChild(sel);
+        const pb=btn({style:{flexShrink:0,padding:"6px 10px",borderRadius:"7px",border:"1px solid #38bdf8",background:"transparent",color:"#38bdf8",fontSize:"11px",cursor:"pointer",fontFamily:"inherit"}},"☁️ この年を預ける");
+        pb.setAttribute('data-archput','1'); pb.addEventListener('click',async()=>{ const y=parseInt(sel.value); state.syncMsg=`⏳ ${y}年を預けています…`; render(); const r=await syncPutArchive(y);
+          state.syncMsg=r.ok?`✅ ${y}年の記録を預けました`:`⚠ ${r.msg}`; try{ state.syncArch={items:await syncListArchives()}; }catch(_){} render(); });
+        r2.appendChild(pb); box.appendChild(r2); } }
       card.appendChild(box); } }
   // サーバに貼る値・設定し直す
   { const sh=!!state.syncShowHash; const b=btn({style:{width:"100%",padding:"7px",marginBottom:"7px",borderRadius:"8px",border:"1px solid #334155",background:"transparent",color:"#94a3b8",fontSize:"12px",cursor:"pointer",fontFamily:"inherit"}},sh?"▲ サーバに貼る値を閉じる":"🔐 サーバに貼る値（sync.php の SYNC_AUTH_HASH）");
@@ -18889,44 +18964,49 @@ function viewBackupFile(e){
   const file=e.target.files[0];if(!file)return;
   const reader=new FileReader();
   reader.onload=ev=>{
-    try{
-      const p=JSON.parse(ev.target.result);
-      if(!p.logs||!p.dailies)throw new Error("体調管理アプリのバックアップ形式ではありません");
-      // 現在の生データをメモリに退避（localStorageには触れない）
-      const snap={}; VIEW_FIELDS.forEach(k=>{ snap[k]=state[k]; });
-      state._liveSnapshot=snap;
-      // バックアップを state に読み込み（保存はしない）
-      state.logs=p.logs||[];
-      state.dailies=p.dailies||[];
-      state.todos=p.todos||{};
-      if(p.goals)state.goals=p.goals;
-      state.schedule=p.schedule||{};
-      state.repeatEvents=p.repeatEvents||[];
-      state.tasks=p.tasks||{todo:[],shopping:[]};
-      if(Array.isArray(p.routines)&&p.routines.length)state.routines=p.routines;
-      if(p.shiftPattern&&Array.isArray(p.shiftPattern.grid))state.shiftPattern={...defaultShiftPattern(),...p.shiftPattern};
-      if(Array.isArray(p.planPatterns))state.planPatterns=p.planPatterns;
-      if(Array.isArray(p.customTodos))state.customTodos=p.customTodos;
-      state.goalTree=Array.isArray(p.goalTree)?p.goalTree:[]; try{migrateGoalRules(state.goalTree);}catch(_){}
-      if(Array.isArray(p.rewards))state.rewards=p.rewards;
-      if(Array.isArray(p.investActions))state.investActions=p.investActions;
-      if(Array.isArray(p.ifThenPlans))state.ifThenPlans=p.ifThenPlans;
-      if(p.city)state.weatherCity=p.city;
-      state._viewWeather=p.weather||{}; // 閲覧用の天気（localStorageには入れない）
-      // 旧形式（v8.3）バックアップも移行して閲覧
-      if(!p.schedule && !p.tasks && (p.events||p.taskList||p.wishList||p.shopList)){
-        state.events=p.events||{};state.taskList=p.taskList||[];state.wishList=p.wishList||[];state.shopList=p.shopList||[];
-        state.schedule={};state.repeatEvents=[];state.tasks={todo:[],shopping:[]};
-        migrateOldSchedule();
-      }
-      state.viewingBackup=file.name||"バックアップ";
-      state.viewingBackupInfo=p.exportedAt?`エクスポート: ${p.exportedAt.slice(0,10)}`:"";
-      state.tab="日記"; state.viewDate=todayStr(); state.modal=null; state.storageAlert=false;
-      showToast("バックアップを閲覧中（保存されません）","#818cf8");
-      render();
-    }catch(err){alert("閲覧できませんでした: "+err.message);}
+    try{ viewBackupPayload(JSON.parse(ev.target.result),file.name||"バックアップ"); }
+    catch(err){alert("閲覧できませんでした: "+err.message);}
   };
   reader.readAsText(file);e.target.value="";
+}
+// バックアップの中身を「見るだけ」で開く（今のデータは保存も上書きもしない）。ファイルからと ☁️ConoHa から（過去の版・年ごとの記録）で共通
+function viewBackupPayload(p,name){
+  if(!p||!p.logs||!p.dailies)throw new Error("体調管理アプリのバックアップ形式ではありません");
+  if(state.viewingBackup) exitBackupView();
+  // 現在の生データをメモリに退避（localStorageには触れない）
+  const snap={}; VIEW_FIELDS.forEach(k=>{ snap[k]=state[k]; });
+  state._liveSnapshot=snap;
+  // バックアップを state に読み込み（保存はしない）
+  state.logs=p.logs||[];
+  state.dailies=p.dailies||[];
+  state.todos=p.todos||{};
+  if(p.goals)state.goals=p.goals;
+  state.schedule=p.schedule||{};
+  state.repeatEvents=p.repeatEvents||[];
+  state.tasks=p.tasks||{todo:[],shopping:[]};
+  if(Array.isArray(p.routines)&&p.routines.length)state.routines=p.routines;
+  if(p.shiftPattern&&Array.isArray(p.shiftPattern.grid))state.shiftPattern={...defaultShiftPattern(),...p.shiftPattern};
+  if(Array.isArray(p.planPatterns))state.planPatterns=p.planPatterns;
+  if(Array.isArray(p.customTodos))state.customTodos=p.customTodos;
+  state.goalTree=Array.isArray(p.goalTree)?p.goalTree:[]; try{migrateGoalRules(state.goalTree);}catch(_){}
+  if(Array.isArray(p.rewards))state.rewards=p.rewards;
+  if(Array.isArray(p.investActions))state.investActions=p.investActions;
+  if(Array.isArray(p.ifThenPlans))state.ifThenPlans=p.ifThenPlans;
+  if(p.city)state.weatherCity=p.city;
+  state._viewWeather=p.weather||{}; // 閲覧用の天気（localStorageには入れない）
+  // 旧形式（v8.3）バックアップも移行して閲覧
+  if(!p.schedule && !p.tasks && (p.events||p.taskList||p.wishList||p.shopList)){
+    state.events=p.events||{};state.taskList=p.taskList||[];state.wishList=p.wishList||[];state.shopList=p.shopList||[];
+    state.schedule={};state.repeatEvents=[];state.tasks={todo:[],shopping:[]};
+    migrateOldSchedule();
+  }
+  state.viewingBackup=name||"バックアップ";
+  state.viewingBackupInfo=p.exportedAt?`エクスポート: ${p.exportedAt.slice(0,10)}`:"";
+  // 年ごとの記録はその年の最後の日を開く（今日には記録が無いので）
+  const lastDay=(p.dailies||[]).map(d=>d.dateStr).filter(Boolean).sort().pop();
+  state.tab="日記"; state.viewDate=(isArchiveFile(p)&&lastDay)?lastDay:todayStr(); state.modal=null; state.storageAlert=false;
+  showToast("バックアップを閲覧中（保存されません）","#818cf8");
+  render();
 }
 function exitBackupView(){
   const snap=state._liveSnapshot;

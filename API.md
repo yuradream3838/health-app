@@ -3,7 +3,7 @@
 > AIが参照しやすいよう、`api.php`（Geminiプロキシ）と、それを呼ぶクライアント関数の
 > **正確な契約**をまとめた常設リファレンス。実装は `health.html`（クライアント）と
 > サーバー上の `api.php` / `alexa.php` / `sync.php`（どれもリポジトリ管理外。sync.php はひな形 `server/sync.php.example` だけを管理）。
-> 最終更新: アプリ v15.71 / api.php v4.1 / alexa.php v2.3 / sync.php v1。
+> 最終更新: アプリ v15.72 / api.php v4.1 / alexa.php v2.3 / sync.php v2。
 
 ---
 
@@ -310,17 +310,18 @@ curl -s "https://nuts024.com/health/alexa.php?tick=1" > /dev/null
 
 ---
 
-## 11. ☁️ 同期エンドポイント（`sync.php` v1・アプリ v15.69〜）
+## 11. ☁️ 同期エンドポイント（`sync.php` v2・アプリ v15.69〜／v2 はアプリ v15.72〜）
 
 - 置き場所：`https://nuts024.com/health/sync.php`（クライアントの既定 `SYNC_URL_DEFAULT`。⚙設定で変えられる）。
 - ひな形：リポジトリの `server/sync.php.example`。`SYNC_AUTH_HASH` を書き込んだ `sync.php` は**コミットしない**（`.gitignore` 済み）。
 - 保存先：`sync.php` と同じフォルダの `sync_data/`（初回に自動で作る。`.htaccess` で外から読めなくする）。
-  `sync_data/meta.json`（版の一覧）と `sync_data/hist/{rev}.bin`（各版。最大 `KEEP_HISTORY`=50、古いものから消す）。
+  `sync_data/meta.json`（版の一覧）と `sync_data/hist/{rev}.bin`（各版）。**残す版（v2）**＝新しい `KEEP_HISTORY`=50 個＋日本時間の1日1つ（その日の最後の版）を `KEEP_DAYS`=30 日分＋1か月に1つ（その月の最後の版）を `KEEP_MONTHS`=12 か月分。それ以外は送られてきたときに消す（v1 は50個だけ）。
+  `sync_data/archive/{name}.bin`＋`archive/index.json`（年ごとの記録。**版とは別で消さない**・v2）。
 
 ### 11-1. 認証・CORS
 - ヘッダ `X-Sync-Auth`：64桁の16進。サーバは `sha256(この文字列)` が `SYNC_AUTH_HASH` と同じかを `hash_equals` で比べる。違えば **401** `{"error":"auth"}`（0.4秒待ってから返す）。
 - この値と暗号の鍵は、クライアントが合言葉から PBKDF2-SHA256（salt `health_v2-sync-v1`・250,000回・512bit）で作る：前半256bit＝AES-GCMの鍵（端末の中だけ）、後半256bit＝`X-Sync-Auth`。`SYNC_AUTH_HASH` に貼る値は ⚙設定 →「サーバに貼る値」。
-- `Origin` があって `ALLOWED_ORIGINS`（`https://yuradream3838.github.io`）に無ければ **403** `{"error":"origin"}`。`OPTIONS` は 204（`X-Sync-Auth, X-Base-Rev, X-Device, Content-Type` を許可、`X-Rev` を公開）。
+- `Origin` があって `ALLOWED_ORIGINS`（`https://yuradream3838.github.io`）に無ければ **403** `{"error":"origin"}`。`OPTIONS` は 204（`X-Sync-Auth, X-Base-Rev, X-Device, X-Archive, Content-Type` を許可、`X-Rev` を公開）。
 - `X-Device`：端末の名前（`encodeURIComponent` したもの。サーバで戻して40文字まで保存）。
 
 ### 11-2. 操作（`?a=`）
@@ -330,6 +331,9 @@ curl -s "https://nuts024.com/health/alexa.php?tick=1" > /dev/null
 | `list` | GET | 過去の版の一覧（新しい順） | 200 `{rev, items:[{rev, savedAt, size, device}]}` |
 | `get` | GET | データ（暗号化されたまま）。`&id=版` で過去の版 | 200 バイナリ＋ヘッダ `X-Rev`／404 `{"error":"none"}` |
 | `put` | POST | 新しい版を預ける（本文はバイナリ・先頭が `HS1`・最大20MB） | 200 `{rev, savedAt}`／409／400／413 |
+| `alist` | GET | 年ごとの記録の一覧（新しい順・v2） | 200 `{items:[{name, savedAt, size, device}]}` |
+| `aget` | GET | 年ごとの記録（暗号化されたまま）。`&name=` | 200 バイナリ／404／400 `name` |
+| `aput` | POST | 年ごとの記録を預ける（ヘッダ `X-Archive`＝名前 `[0-9A-Za-z_-]{1,40}`、アプリは `y2025` の形）。同じ名前があれば、前のものを `名前_YYYYMMDDHHMMSS` に名前を変えて残す | 200 `{name, savedAt}`／400 `name`/`empty`/`format`／413 |
 
 - `put` のヘッダ `X-Base-Rev`：この端末が最後に送った／読み込んだ版。はじめては `none`、上書きは `force`。
   サーバの今の版と違えば（`none` でサーバにデータがあるときも）**409** `{"error":"conflict", rev, savedAt, device}` を返して**保存しない**（別の端末のデータを黙って消さない）。
@@ -344,6 +348,9 @@ curl -s "https://nuts024.com/health/alexa.php?tick=1" > /dev/null
 - `safeSet` で `health_v2…` に保存するたびに「送っていない変更あり」（`dirtyAt`）。`_sync`・`_nudges`・`_lastbackup` は除く。サーバから読み込んでいる最中の保存も除く。
 - 自動（`on`）：変更から2分たったら毎分のチェックで送る（失敗が続くときは5分あける）／画面を閉じたとき（`visibilitychange`）に送る／開いたとき・画面に戻ったときに `meta` を見て、サーバの方が新しく送っていない変更がなければ自動で読み込む。両方に変更があれば `conflict` にして選んでもらう。
 - 読み込むときに送っていない変更があれば、先に今のデータをファイル（`health_backup_日付_before_sync.json`）に書き出す。
+- **年ごとの記録（v15.72）**：「データがいっぱい」で年を書き出すと（`exportArchiveYear`）、☁️同期を設定していれば `aput` で `y年` として預ける（中身は書き出すファイルと同じ `kind:"archive"`・同じ暗号化）。⚙設定の「🗄 年ごとの記録」で一覧（`alist`）→「👁 見る」（`aget` → `viewBackupPayload`＝見るだけ・今のデータは触らない）／「📥 戻す」（`mergeArchive`＝今のデータに足す）／まだ消していない年も「☁️ この年を預ける」。
+- **過去の版を見る（v15.72）**：「🕘 過去の版」の「👁 見る」は `get&id=` を見るだけで開く（「この版に戻す」は置き換え）。
+- **見ている間は同期しない（v15.72）**：バックアップ・過去の版・年ごとの記録を見ている間（`state.viewingBackup`）は、送る・読み込む・変えた時刻の記録をしない（見ている中身を今のデータとして送らないため）。
 - **双方向（v15.70）**：中身に `_syncStamps`（`{ユニット: 最後に変えた時刻(ms)}`）を付けて送る（サーバは中身を読まないので sync.php は変更なし）。
   - ユニット：`dailies|日付|項目`（日記の項目ごと）。**一覧の項目（飲酒・服薬・食べたもの・射精・昼寝…）は1件ずつ**（v15.71）：`dailies|日付|項目|#鍵`（鍵＝`u`+uid → `t`+記録時刻 → `v`+中身）と、一覧があることを表す `dailies|日付|項目|[]`。組み立てるときは時刻のある一覧を時刻順に並べる／`logs|日付|h時`（体調記録は時ごと・v15.71。それまでは日ごと）／`todos|日付|id`／`schedule|日付`／`weather|日付`／`modeLog|始まった日`／それ以外のトップの項目は丸ごと（`goals`・`foodNutri` など）。
   - 時刻は端末の `localStorage["health_v2_syncstamps"]`。保存のたび（1.5秒まとめて）に、前に見た中身と比べて変わった・消えたユニットに今の時刻を付ける（消したことも記録）。

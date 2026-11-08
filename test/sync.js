@@ -43,11 +43,14 @@ const EXE = findChromium();
   const tpl = fs.readFileSync(path.join(ROOT, 'server/sync.php.example'), 'utf8').replace("['https://yuradream3838.github.io']", "['https://yuradream3838.github.io','null']");
   const writePhp = hash => fs.writeFileSync(path.join(SRV, 'sync.php'), tpl.replace("'ここにアプリの「サーバに貼る値」を貼る'", `'${hash}'`));
   writePhp('ここにアプリの「サーバに貼る値」を貼る');
-  const php = spawn('php', ['-S', '127.0.0.1:8765', '-t', SRV], { stdio: 'ignore' }); await new Promise(r => setTimeout(r, 700));
-  const URL = 'http://127.0.0.1:8765/sync.php';
+  // 空いているポートを使う（前のテストの PHP が残っていても混ざらないように）
+  const PORT = await new Promise(res => { const srv = require('net').createServer(); srv.listen(0, '127.0.0.1', () => { const p = srv.address().port; srv.close(() => res(p)); }); });
+  const php = spawn('php', ['-S', `127.0.0.1:${PORT}`, '-t', SRV], { stdio: 'ignore' }); await new Promise(r => setTimeout(r, 700));
+  process.on('exit', () => { try { php.kill(); } catch (_) {} });
+  const URL = `http://127.0.0.1:${PORT}/sync.php`;
   const b = await chromium.launch({ ...(EXE ? { executablePath: EXE } : {}), args: ['--no-sandbox'] });
   const mk = async () => { const ctx = await b.newContext({ timezoneId: 'Asia/Tokyo', acceptDownloads: true });
-    await ctx.route('**/*', r => { const u = r.request().url(); return (u.startsWith('file:') || u.startsWith('http://127.0.0.1:8765/')) ? r.continue() : r.abort(); });
+    await ctx.route('**/*', r => { const u = r.request().url(); return (u.startsWith('file:') || u.startsWith(`http://127.0.0.1:${PORT}/`)) ? r.continue() : r.abort(); });
     const p = await ctx.newPage(); p.errs = []; p.on('pageerror', e => p.errs.push(String(e))); p.on('dialog', d => d.accept());
     p.downloads = 0; p.on('download', () => p.downloads++);
     await p.goto('file://' + path.join(ROOT, 'health.html')); await p.waitForTimeout(900); return p; };
@@ -146,9 +149,60 @@ const EXE = findChromium();
     const n = state.syncHist.items.length; document.querySelector('[data-synchist="2"]').click(); for (let i = 0; i < 50 && !/^✅/.test(state.syncMsg || ''); i++) await new Promise(r => setTimeout(r, 100));
     const x = await syncUpload(false); return `${n}:${getDaily(todayStr()).water}:${x.ok}`; });
   await B.evaluate(() => syncCheckRemote()); r.histB = await day(B, 0);
+  // ── 年ごとの記録（v15.72）：書き出すと ConoHa にも預ける → アプリから消しても、見る・戻すができる ──
+  const LY = new Date().getFullYear() - 1;
+  r.arch = await A.evaluate(async LY => {
+    setDaily(`${LY}-06-15`, { water: 1.7, foods: ['去年のごはん'] }); state.logs.push({ dateStr: `${LY}-06-15`, hour: 8, score: 5, mental: 5, symptoms: [], note: '去年のメモ' }); saveStorage(); flushStorage();
+    exportArchiveYear(LY);
+    for (let i = 0; i < 80 && state.archiveSaved && state.archiveSaved.cloud === 'sending'; i++) await new Promise(r => setTimeout(r, 100));
+    const cloud = state.archiveSaved.cloud;
+    deleteArchivedYear(LY);
+    return `${cloud}:${state.dailies.some(d => d.dateStr === `${LY}-06-15`)}`; }, LY);
+  r.archFile = fs.existsSync(path.join(SRV, `sync_data/archive/y${LY}.bin`)) && !fs.readFileSync(path.join(SRV, `sync_data/archive/y${LY}.bin`)).includes(Buffer.from('去年のメモ'));
+  // 一覧 → 👁 見る（今のデータはそのまま）→ 閲覧中は送らない → 閲覧を終える → 📥 戻す
+  r.archView = await A.evaluate(async LY => {
+    state.tab = '設定'; render(); document.querySelector('[data-syncbtn="arch"]').click();
+    for (let i = 0; i < 50 && !(state.syncArch && state.syncArch.items); i++) await new Promise(r => setTimeout(r, 100));
+    const n = state.syncArch.items.length;
+    document.querySelector(`[data-archview="y${LY}"]`).click();
+    for (let i = 0; i < 50 && !state.viewingBackup; i++) await new Promise(r => setTimeout(r, 100));
+    const seen = `${state.viewingBackup}|${state.viewDate}|${getDaily(`${LY}-06-15`).water}|${state.logs.some(l => l.note === '去年のメモ')}`;
+    const up = await syncUpload(false); const revBefore = getSyncCfg().rev; syncAutoTick(Date.now() + 9e6);
+    exitBackupView();
+    const back = `${state.dailies.some(d => d.dateStr === `${LY}-06-15`)}`;
+    state.tab = '設定'; render();
+    document.querySelector(`[data-archmerge="y${LY}"]`).click();
+    for (let i = 0; i < 50 && !/^✅/.test(state.syncMsg || ''); i++) await new Promise(r => setTimeout(r, 100));
+    return `${n}|${seen}|${up.ok}|${getSyncCfg().rev === revBefore}|${back}|${getDaily(`${LY}-06-15`).water}|${state.logs.some(l => l.note === '去年のメモ')}`; }, LY);
+  // 預け直すと前の分も残る・まだ消していない年も預けられる
+  r.archAgain = await A.evaluate(async LY => { const x = await syncPutArchive(LY); const items = await syncListArchives(); return `${x.ok}|${items.length}|${items.filter(i => new RegExp('^y' + LY + '_\\d{14}$').test(i.name)).length}`; }, LY);
+  // 過去の版を 👁 見る
+  r.revView = await A.evaluate(async () => { state.tab = '設定'; state.syncHistOpen = false; render(); document.querySelector('[data-syncbtn="hist"]').click();
+    for (let i = 0; i < 50 && !(state.syncHist && state.syncHist.items); i++) await new Promise(r => setTimeout(r, 100));
+    document.querySelector('[data-syncview="1"]').click(); for (let i = 0; i < 50 && !state.viewingBackup; i++) await new Promise(r => setTimeout(r, 100));
+    const v = state.viewingBackup; const pcMed = (getDaily(todayStr()).meds || []).length; exitBackupView(); return `${/^ConoHa 版1/.test(v)}|${pcMed}`; });
   // 合言葉が違う端末
   const C = await mk(); await setup(C, 'wrong passphrase 12345', 'X'); r.wrong = await click(C, 'check');
-  await A.evaluate(() => { state.syncHistOpen = false; render(); document.querySelector('[data-syncpanel]').scrollIntoView(); });
+  await A.evaluate(() => { state.tab = '設定'; state.syncHistOpen = false; state.syncArchOpen = true; render(); document.querySelector('[data-syncpanel]').scrollIntoView(); });
+  // ── 版の残し方（sync.php v2）：直近50＋1日1つを30日分＋1か月に1つを12か月分。古い日付の版を作ってから1回送る ──
+  {
+    const auth = await A.evaluate(() => getSyncCfg().auth), meta = JSON.parse(fs.readFileSync(path.join(SRV, 'sync_data/meta.json'), 'utf8'));
+    const day = 86400000, now = Date.now(), iso = t => new Date(t).toISOString().replace(/\.\d{3}Z$/, 'Z');
+    const fake = []; let rev = 1000;
+    for (let i = 0; i < 60; i++) fake.push({ rev: rev++, savedAt: iso(now - 40 * day - i * 3600000) });          // 40日前ごろの同じ日に 60 版（日ごとは対象外・月ごとは1つ）
+    for (let d = 1; d <= 20; d++) for (let k = 0; k < 3; k++) fake.push({ rev: rev++, savedAt: iso(now - d * day - k * 3600000) });   // 1〜20日前に1日3版
+    for (let mo = 2; mo <= 14; mo++) fake.push({ rev: rev++, savedAt: iso(now - mo * 31 * day) });                // 2〜14か月前に1つずつ
+    fake.sort((x, y) => y.savedAt.localeCompare(x.savedAt));
+    fake.forEach(h => { h.size = 40; h.device = 'x'; fs.writeFileSync(path.join(SRV, `sync_data/hist/${h.rev}.bin`), 'HS1x'); });
+    meta.hist = fake; meta.rev = 9999; fs.writeFileSync(path.join(SRV, 'sync_data/meta.json'), JSON.stringify(meta));
+    const body = Buffer.concat([Buffer.from('HS1'), Buffer.alloc(40, 1)]);
+    const res = await fetch(URL + '?a=put', { method: 'POST', headers: { 'X-Sync-Auth': auth, 'X-Base-Rev': 'force', 'Content-Type': 'application/octet-stream' }, body });
+    const m2 = JSON.parse(fs.readFileSync(path.join(SRV, 'sync_data/meta.json'), 'utf8'));
+    // 試しに作った版（1000番以降）のうち、残す一覧に無いものはファイルも消えている
+    const files = fs.readdirSync(path.join(SRV, 'sync_data/hist')).filter(f => f.endsWith('.bin') && +f.split('.')[0] >= 1000).length;
+    const daysKept = new Set(m2.hist.map(h => h.savedAt.slice(0, 10))).size;
+    r.keep = `${res.status}|${m2.hist.length}|${files === m2.hist.filter(h => h.rev >= 1000).length}|${m2.hist.some(h => h.rev === 9999 + 1)}|${daysKept >= 20}|${!m2.hist.some(h => Date.parse(h.savedAt) < now - 12 * 31 * day - day)}`;
+  }
   if (process.argv[2]) await A.screenshot({ path: path.join(process.argv[2], 'sync.png') });
   console.log(JSON.stringify(r, null, 1));
   const errs = [...A.errs, ...B.errs, ...C.errs];
@@ -160,6 +214,9 @@ const EXE = findChromium();
     && r.m6 === 'beer@19:501,highball@20:601,beer@21:602|卵/玄米/鮭 beer@19:501,highball@20:601,beer@21:602|卵/玄米/鮭'
     && r.m7 === 'highball@20:601,beer@21:602,sake@22:603|卵/玄米/鮭 highball@20:601,beer@21:602,sake@22:603|卵/玄米/鮭'
     && r.m8 === 'スマホ9時,PC20時 スマホ9時,PC20時' && r.noConflict && /^true:\d+$/.test(r.force) && /^\d+->\d+:false$/.test(r.auto) && /:1:true$/.test(r.hist) && r.histB === '1|納豆'
+    && r.arch === 'ok:false' && r.archFile && /^1\|ConoHa \d{4}年の記録\|\d{4}-06-15\|1\.7\|true\|false\|true\|false\|1\.7\|true$/.test(r.archView)
+    && /^true\|2\|1$/.test(r.archAgain) && r.revView === 'true|0'
+    && /^200\|\d+\|true\|true\|true\|true$/.test(r.keep)
     && /合言葉がサーバと合いません/.test(r.wrong) && errs.length === 0;
   console.log(ok ? '✓ 同期テスト PASS' : '✗ 同期テスト FAIL', errs); await b.close(); php.kill(); fs.rmSync(SRV, { recursive: true, force: true }); process.exit(ok ? 0 : 1);
 })();
