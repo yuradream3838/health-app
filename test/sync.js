@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// ☁️ ConoHa 同期の結合テスト（v15.69）：本物の server/sync.php.example を PHP の組み込みサーバで動かし、
-// スマホ・PC の2つの端末（別々のブラウザ）で、設定 → 送る → PCで読み込む → 自動で届く → 両方で記録したとき選ぶ
+// ☁️ ConoHa 同期の結合テスト（v15.69・双方向 v15.70）：本物の server/sync.php.example を PHP の組み込みサーバで動かし、
+// スマホ・PC の2つの端末（別々のブラウザ）で、設定 → 送る → PCで読み込む → 自動で届く → 両方で記録したとき自動で混ぜる（新しいほうが残る）
 // → 過去の版に戻す → 合言葉違い・サーバの中身が暗号化されていること を確かめる。
 // php が無い環境では SKIP（終了コード0）。実行: node test/sync.js
 const fs = require('fs');
@@ -83,18 +83,43 @@ const EXE = findChromium();
   await B.evaluate(() => { document.querySelector('[data-syncbtn="auto"]').click(); setDaily(todayStr(), { meds: [{ uid: 1, name: 'PCで記録', hour: 10, min: 0 }] }); flushStorage(); });
   r.pcUp = await click(B, 'up');
   r.phoneAuto = await A.evaluate(async () => { await syncCheckRemote(); return `${(getDaily(todayStr()).meds || []).map(m => m.name).join()}:${getSyncCfg().rev}`; });
-  // 両方で記録：PC が先に送る → スマホは 409 → 上書きを選ぶ
-  await B.evaluate(async () => { setDaily(todayStr(), { water: 2.5 }); flushStorage(); await syncUpload(false); });
-  r.conflict = await A.evaluate(async () => { setDaily(todayStr(), { water: 3 }); flushStorage(); const x = await syncUpload(false); render(); return x.conflict && !!document.querySelector('[data-syncconflict]'); });
-  r.force = await click(A, 'force');
-  r.pcAfter = await B.evaluate(async () => { await syncCheckRemote(); return `${getDaily(todayStr()).water}:${getSyncCfg().rev}`; });
+  // ── 両方の端末で記録したとき（双方向・v15.70）：日ごと・項目ごとに、新しく変えたほうを残して自動で混ぜる ──
+  const T = () => 'todayStr()';
+  const wait = ms => new Promise(r => setTimeout(r, ms));
+  const chg = (p, code) => p.evaluate(new Function(`return (async () => { ${code}; flushStorage(); syncStampNow(); })()`));
+  const up = p => p.evaluate(async () => { const x = await syncUpload(false); return `${x.ok}:${x.rev}:${!!x.merged}`; });
+  const day = (p, off) => p.evaluate(off => { const d = getDaily(addDays(todayStr(), off)); return `${d.water}|${(d.foods || []).join('/')}`; }, off);
+  // ① 同じ日の違う項目：PC は水分、スマホは食べたもの → 両方残る
+  await chg(B, "setDaily(todayStr(), { water: 2.5 })"); await wait(20);
+  await chg(A, "setDaily(todayStr(), { foods: ['卵'] }); setDaily(addDays(todayStr(), -1), { water: 9 })");
+  r.m1up = [await up(B), await up(A)].join(' ');
+  r.m1A = await day(A, 0); r.m1Ay = await day(A, -1);
+  await B.evaluate(() => syncCheckRemote()); r.m1B = await day(B, 0) + ' ' + await day(B, -1);
+  // ② 同じ項目：スマホが先に変え（3.0）、PC が後で変えた（3.5）。スマホが先に送っても、後で変えた PC の 3.5 が残る
+  await chg(A, "setDaily(todayStr(), { water: 3.0 })"); await wait(20); await chg(B, "setDaily(todayStr(), { water: 3.5 })");
+  r.m2up = [await up(A), await up(B)].join(' ');
+  await A.evaluate(() => syncCheckRemote()); r.m2 = await day(A, 0) + ' ' + await day(B, 0);
+  // ③ 逆：PC が先に変え（4.0）、スマホが後で変えた（4.5）。PC が先に送っても、スマホの 4.5 が残る
+  await chg(B, "setDaily(todayStr(), { water: 4.0 })"); await wait(20); await chg(A, "setDaily(todayStr(), { water: 4.5 })");
+  r.m3up = [await up(B), await up(A)].join(' ');
+  await B.evaluate(() => syncCheckRemote()); r.m3 = await day(A, 0) + ' ' + await day(B, 0);
+  // ④ 消したことも新しければ残る：PC は昨日の食べたものを足し、スマホは今日の体調記録（ひみつのメモ）を消す
+  await chg(B, "setDaily(addDays(todayStr(), -1), { foods: ['鮭'] })"); await wait(20);
+  await chg(A, "state.logs = state.logs.filter(l => l.note !== 'ひみつのメモABC'); saveStorage()");
+  r.m4up = [await up(B), await up(A)].join(' ');
+  await B.evaluate(() => syncCheckRemote());
+  r.m4 = await A.evaluate(() => `${state.logs.some(l => l.note === 'ひみつのメモABC')}|${(getDaily(addDays(todayStr(), -1)).foods || []).join()}`) + ' ' + await B.evaluate(() => `${state.logs.some(l => l.note === 'ひみつのメモABC')}|${(getDaily(addDays(todayStr(), -1)).foods || []).join()}`);
+  r.noConflict = await A.evaluate(() => !getSyncCfg().conflict && !document.querySelector('[data-syncconflict]')) && await B.evaluate(() => !getSyncCfg().conflict);
+  // 上書き（混ぜられないときの手段）も動く
+  r.force = await A.evaluate(async () => { const x = await syncUpload(true); return `${x.ok}:${x.rev}`; });
   // 自動送信：変更から2分たったら
-  r.auto = await A.evaluate(async () => { setDaily(todayStr(), { water: 3.2 }); flushStorage(); const before = getSyncCfg().rev; syncAutoTick(Date.now() + 3 * 60000);
+  r.auto = await A.evaluate(async () => { setDaily(todayStr(), { water: 5.2 }); flushStorage(); const before = getSyncCfg().rev; syncAutoTick(Date.now() + 3 * 60000);
     for (let i = 0; i < 50 && getSyncCfg().rev === before; i++) await new Promise(r => setTimeout(r, 100)); return `${before}->${getSyncCfg().rev}:${!!getSyncCfg().dirtyAt}`; });
-  // 過去の版に戻す（版2＝PCの記録だけの頃）
+  // 過去の版に戻す（版2＝PCの記録だけの頃）→ 次に送ると PC でもその内容になる（戻したことが一番新しい変更）
   r.hist = await A.evaluate(async () => { document.querySelector('[data-syncbtn="hist"]').click(); for (let i = 0; i < 50 && !(state.syncHist && state.syncHist.items); i++) await new Promise(r => setTimeout(r, 100));
     const n = state.syncHist.items.length; document.querySelector('[data-synchist="2"]').click(); for (let i = 0; i < 50 && !/^✅/.test(state.syncMsg || ''); i++) await new Promise(r => setTimeout(r, 100));
-    return `${n}:${getDaily(todayStr()).water}:${getSyncCfg().rev}:${!!getSyncCfg().dirtyAt}`; });
+    const x = await syncUpload(false); return `${n}:${getDaily(todayStr()).water}:${x.ok}`; });
+  await B.evaluate(() => syncCheckRemote()); r.histB = await day(B, 0);
   // 合言葉が違う端末
   const C = await mk(); await setup(C, 'wrong passphrase 12345', 'X'); r.wrong = await click(C, 'check');
   await A.evaluate(() => { state.syncHistOpen = false; render(); document.querySelector('[data-syncpanel]').scrollIntoView(); });
@@ -103,6 +128,8 @@ const EXE = findChromium();
   const errs = [...A.errs, ...B.errs, ...C.errs];
   const ok = r.hashOk && /合言葉がサーバと合いません/.test(r.check401) && /サーバはまだ空です/.test(r.checkEmpty) && /送りました（版1）/.test(r.up1) && r.encrypted && r.htaccess
     && /版1/.test(r.pcCheck) && /読み込みました/.test(r.pcDown) && r.pcData === '5:true:1:false' && r.pcDownloads === 0 && /版2/.test(r.pcUp) && r.phoneAuto === 'PCで記録:2'
-    && r.conflict && /上書きしました（版4）/.test(r.force) && r.pcAfter === '3:4' && r.auto === '4->5:false' && r.hist === '5:1:5:true' && /合言葉がサーバと合いません/.test(r.wrong) && errs.length === 0;
+    && r.m1A === '2.5|卵' && r.m1Ay === '9|納豆' && r.m1B === '2.5|卵 9|納豆' && r.m2 === '3.5|卵 3.5|卵' && r.m3 === '4.5|卵 4.5|卵'
+    && r.m4 === 'false|鮭 false|鮭' && r.noConflict && /^true:\d+$/.test(r.force) && /^\d+->\d+:false$/.test(r.auto) && /:1:true$/.test(r.hist) && r.histB === '1|納豆'
+    && /合言葉がサーバと合いません/.test(r.wrong) && errs.length === 0;
   console.log(ok ? '✓ 同期テスト PASS' : '✗ 同期テスト FAIL', errs); await b.close(); php.kill(); fs.rmSync(SRV, { recursive: true, force: true }); process.exit(ok ? 0 : 1);
 })();

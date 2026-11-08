@@ -247,7 +247,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.69"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.70"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -18438,6 +18438,69 @@ function syncMarkDirty(){
   _syncLastChange=Date.now();
   const c=getSyncCfg(); if(!c.auth) return;
   if(!c.dirtyAt) setSyncCfg({dirtyAt:_syncLastChange});
+  syncStampSoon();
+}
+// ── 双方向の同期（v15.70）：項目ごとの「最後に変えた時刻」を持ち、両方の端末で変えたときは新しいほうを残して混ぜる ──
+// 項目（ユニット）の単位：日記＝日ごと・項目ごと（dailies|日付|water など）／体調記録＝日ごと／ルーティン＝日ごと・項目ごと／
+// 予定・天気＝日ごと／モードの記録＝始まった日ごと／それ以外の設定などは丸ごと1つ。
+// 時刻は端末ごとに _syncstamps（{ユニット:変えた時刻}）。消したユニットも消した時刻を残す（消したことも新しいほうが勝つ）。
+function syncUnits(p){
+  const u=new Map(), put=(k,v)=>{ if(v!==undefined) u.set(k,JSON.stringify(v)); };
+  Object.keys(p||{}).forEach(K=>{
+    if(K==="version"||K==="exportedAt"||K==="_syncStamps") return;
+    const v=p[K];
+    if(K==="dailies"&&Array.isArray(v)){ v.forEach(d=>{ if(d&&d.dateStr) Object.keys(d).forEach(f=>{ if(f!=="dateStr") put(`dailies|${d.dateStr}|${f}`,d[f]); }); }); return; }
+    if((K==="logs"||K==="modeLog")&&Array.isArray(v)){ const g={};
+      v.forEach(x=>{ const ds=K==="logs"?((x&&x.dateStr)||"?"):((x&&x.start)?fmtDS(new Date(x.start)):"?"); (g[ds]=g[ds]||[]).push(x); });
+      Object.keys(g).forEach(ds=>put(`${K}|${ds}`,g[ds])); return; }
+    if(K==="todos"&&v&&typeof v==="object"){ Object.keys(v).forEach(ds=>{ const o=v[ds]; if(o&&typeof o==="object"&&!Array.isArray(o)) Object.keys(o).forEach(id=>put(`todos|${ds}|${id}`,o[id])); else put(`todos|${ds}`,o); }); return; }
+    if((K==="schedule"||K==="weather")&&v&&typeof v==="object"&&!Array.isArray(v)){ Object.keys(v).forEach(ds=>put(`${K}|${ds}`,v[ds])); return; }
+    put(K,v);
+  });
+  return u;
+}
+// ユニットから中身を組み立て直す（syncUnits の逆）
+function syncBuild(units){
+  const p={version:2,exportedAt:new Date().toISOString()}, dl={}, grp={logs:{},modeLog:{}};
+  units.forEach((js,k)=>{ const v=JSON.parse(js), a=k.split("|"), K=a[0];
+    if(K==="dailies"&&a.length===3){ (dl[a[1]]=dl[a[1]]||{dateStr:a[1]})[a[2]]=v; }
+    else if((K==="logs"||K==="modeLog")&&a.length===2){ grp[K][a[1]]=v; }
+    else if(K==="todos"&&a.length===3){ p.todos=p.todos||{}; (p.todos[a[1]]=p.todos[a[1]]||{})[a[2]]=v; }
+    else if((K==="todos"||K==="schedule"||K==="weather")&&a.length===2){ p[K]=p[K]||{}; p[K][a[1]]=v; }
+    else p[k]=v;
+  });
+  p.dailies=Object.keys(dl).sort().map(d=>dl[d]);
+  p.logs=Object.keys(grp.logs).sort().flatMap(d=>grp.logs[d]);
+  p.modeLog=Object.keys(grp.modeLog).sort().flatMap(d=>grp.modeLog[d]).sort((x,y)=>(x.start||0)-(y.start||0));
+  return p;
+}
+function getSyncStamps(){ try{ const o=JSON.parse(localStorage.getItem(STORAGE_KEY+"_syncstamps")||"null"); return (o&&typeof o==="object")?o:{}; }catch(_){ return {}; } }
+function saveSyncStamps(o){ try{ localStorage.setItem(STORAGE_KEY+"_syncstamps",JSON.stringify(o)); }catch(_){} }
+let _syncPrevUnits=null, _syncStampTimer=null;
+// 前に見たときと比べて、変わった・消えたユニットに今の時刻を付ける（はじめては基準を覚えるだけ）
+function syncStampNow(){
+  if(_syncStampTimer){ clearTimeout(_syncStampTimer); _syncStampTimer=null; }
+  const cur=syncUnits(buildBackupPayload());
+  if(!_syncPrevUnits){ _syncPrevUnits=cur; return; }
+  const st=getSyncStamps(), now=Date.now(); let ch=0;
+  cur.forEach((v,k)=>{ if(_syncPrevUnits.get(k)!==v){ st[k]=now; ch++; } });
+  _syncPrevUnits.forEach((v,k)=>{ if(!cur.has(k)){ st[k]=now; ch++; } });
+  _syncPrevUnits=cur; if(ch) saveSyncStamps(st);
+}
+function syncStampSoon(){ if(_syncStampTimer) clearTimeout(_syncStampTimer); _syncStampTimer=setTimeout(()=>{ try{ syncStampNow(); }catch(_){} },1500); }
+// 2つを混ぜる：ユニットごとに変えた時刻が新しいほう。時刻が同じ（どちらも記録なし）なら、片方にしかなければそれを残し、
+// 両方にあって違えば、新しく書き出したほうを残す。返す {p, stamps, fromL(この端末から採った数), fromS(サーバから採った数)}
+function syncMerge(L,Ls,S,Ss){
+  const Lu=syncUnits(L), Su=syncUnits(S), out=new Map(), st={}; let fromL=0, fromS=0;
+  const newerL=(L.exportedAt||"")>(S.exportedAt||"");
+  new Set([...Lu.keys(),...Su.keys(),...Object.keys(Ls||{}),...Object.keys(Ss||{})]).forEach(k=>{
+    const tl=(Ls&&Ls[k])||0, ts=(Ss&&Ss[k])||0, lv=Lu.get(k), sv=Su.get(k);
+    const takeL = tl>ts ? true : ts>tl ? false : (lv===sv||lv===undefined) ? false : sv===undefined ? true : newerL;
+    const v=takeL?lv:sv; if(v!==undefined) out.set(k,v);
+    if(lv!==sv){ if(takeL) fromL++; else fromS++; }
+    const m=Math.max(tl,ts); if(m) st[k]=m;
+  });
+  return {p:syncBuild(out), stamps:st, fromL, fromS};
 }
 const _syncTE=new TextEncoder();
 const _hex=b=>[...b].map(x=>x.toString(16).padStart(2,"0")).join("");
@@ -18478,14 +18541,24 @@ async function syncUpload(force){
   if(_syncBusy) return {ok:false,msg:"送受信中です"};
   _syncBusy=true;
   try{
-    const c=getSyncCfg(), startedAt=Date.now();
-    const body=await syncEncode(buildBackupPayload());
-    const r=await syncFetch("put",{body,headers:{"Content-Type":"application/octet-stream","X-Base-Rev":force?"force":(c.rev?String(c.rev):"none")}});
-    const j=await r.json().catch(()=>({}));
-    if(r.status===409){ setSyncCfg({conflict:{rev:j.rev,savedAt:j.savedAt,device:j.device||""},err:undefined}); return {ok:false,conflict:true,msg:"別の端末で新しいデータが保存されています"}; }
-    if(!r.ok){ const msg=syncErrMsg(r.status,j); setSyncCfg({err:msg,errAt:Date.now()}); return {ok:false,msg}; }
-    setSyncCfg({rev:j.rev,upAt:Date.now(),savedAt:j.savedAt,size:body.length,err:undefined,errAt:undefined,conflict:undefined,dirtyAt:_syncLastChange>startedAt?Date.now():undefined});
-    return {ok:true,rev:j.rev};
+    let merged=null;
+    for(let attempt=0; attempt<3; attempt++){
+      const c=getSyncCfg(), startedAt=Date.now();
+      syncStampNow();
+      const payload=buildBackupPayload(); payload._syncStamps=getSyncStamps();
+      const body=await syncEncode(payload);
+      const r=await syncFetch("put",{body,headers:{"Content-Type":"application/octet-stream","X-Base-Rev":force?"force":(c.rev?String(c.rev):"none")}});
+      const j=await r.json().catch(()=>({}));
+      if(r.status===409){
+        // 別の端末が先に送っていた → サーバの分と混ぜてから送り直す（混ぜられないときだけ選んでもらう）
+        if(attempt<2){ try{ merged=await syncMergeFromServer(); continue; }catch(e){ setSyncCfg({conflict:{rev:j.rev,savedAt:j.savedAt,device:j.device||""},err:`自動で混ぜられませんでした（${(e&&e.message)||e}）`,errAt:Date.now()}); return {ok:false,conflict:true,msg:"別の端末のデータと自動で混ぜられませんでした"}; } }
+        setSyncCfg({conflict:{rev:j.rev,savedAt:j.savedAt,device:j.device||""},err:undefined}); return {ok:false,conflict:true,msg:"別の端末で新しいデータが保存されています"};
+      }
+      if(!r.ok){ const msg=syncErrMsg(r.status,j); setSyncCfg({err:msg,errAt:Date.now()}); return {ok:false,msg}; }
+      setSyncCfg({rev:j.rev,upAt:Date.now(),savedAt:j.savedAt,size:body.length,err:undefined,errAt:undefined,conflict:undefined,dirtyAt:_syncLastChange>startedAt?Date.now():undefined});
+      return {ok:true,rev:j.rev,merged};
+    }
+    return {ok:false,msg:"送り直しが続いたため止めました"};
   }catch(e){ const msg=`送れませんでした（${(e&&e.message)||e}）`; setSyncCfg({err:msg,errAt:Date.now()}); return {ok:false,msg}; }
   finally{ _syncBusy=false; }
 }
@@ -18499,13 +18572,34 @@ async function syncDownload(id){
   if(!p||!p.logs||!p.dailies) throw new Error("サーバのデータの形式が違います");
   return {p,rev};
 }
-// サーバの中身で、この端末のデータを置き換える。keepLocal＝先に今のデータをファイルに書き出す（消える変更があるとき）
+async function syncMergeFromServer(){
+  const got=await syncDownload();
+  syncStampNow();
+  const L=buildBackupPayload(), res=syncMerge(L,getSyncStamps(),got.p,got.p._syncStamps||{});
+  _syncApplying=true;
+  try{ applyBackupPayload(res.p); flushStorage(); }
+  finally{ _syncApplying=false; }
+  saveSyncStamps(res.stamps); _syncPrevUnits=syncUnits(buildBackupPayload());
+  setSyncCfg({rev:got.rev,downAt:Date.now(),conflict:undefined});
+  try{ state.viewDate=activeDay(); state._autoDay=state.viewDate; }catch(_){}
+  render();
+  if(res.fromS) showToast(`☁️ 別の端末のデータと混ぜました（${res.fromS}か所を取り込み）`,"#22c55e");
+  return res;
+}
+// サーバの中身で、この端末のデータを置き換える。keepLocal＝先に今のデータをファイルに書き出す（消える変更があるとき）。
+// asChange＝この端末の変更として扱う（過去の版に戻したとき：戻した所に今の時刻を付けて、次に送ると他の端末でも勝つ）
 function syncApply(p,rev,opts){
   const o=opts||{};
   if(o.keepLocal){ try{ downloadJSON(buildBackupPayload(),`health_backup_${todayStr()}_before_sync.json`); }catch(_){} }
+  try{ syncStampNow(); }catch(_){}
+  const before=_syncPrevUnits;
   _syncApplying=true;
   try{ applyBackupPayload(p); flushStorage(); }
   finally{ _syncApplying=false; }
+  { const after=syncUnits(buildBackupPayload()), st=getSyncStamps(), now=Date.now();
+    if(o.asChange&&before){ after.forEach((v,k)=>{ if(before.get(k)!==v) st[k]=now; }); before.forEach((v,k)=>{ if(!after.has(k)) st[k]=now; }); }
+    else { const ss=p._syncStamps||{}; Object.keys(ss).forEach(k=>{ if(!(st[k]>=ss[k])) st[k]=ss[k]; }); }
+    saveSyncStamps(st); _syncPrevUnits=after; }
   setSyncCfg({rev:o.asRev!=null?o.asRev:rev,downAt:Date.now(),conflict:undefined,err:undefined,errAt:undefined,dirtyAt:o.dirty?Date.now():undefined});
   _syncLastChange=o.dirty?Date.now():0;
   try{ state.viewDate=activeDay(); state._autoDay=state.viewDate; }catch(_){}
@@ -18519,7 +18613,7 @@ async function syncPullInteractive(id,asRev){
     const c=getSyncCfg(), dirty=!!c.dirtyAt;
     const when=p.exportedAt?fmtSyncTime(p.exportedAt):"";
     if(!confirm(`サーバのデータ${id?`（版${id}）`:""}${when?`（${when}）`:""}で、この端末のデータを置き換えますか？\n\n${backupSummary(p)}${dirty?"\n\n⚠ この端末には、まだサーバに送っていない変更があります。置き換える前に、今のデータをファイルに書き出します。":""}`)){ state.syncMsg=null; render(); return; }
-    syncApply(p,rev,{keepLocal:dirty,asRev:asRev,dirty:asRev!=null});
+    syncApply(p,rev,{keepLocal:dirty,asRev:asRev,dirty:asRev!=null,asChange:asRev!=null});
     state.syncMsg=`✅ サーバ${id?`の版${id}`:""}から読み込みました`; showToast("☁️ サーバから読み込みました","#22c55e"); render();
   }catch(e){ state.syncMsg=`⚠ ${(e&&e.message)||e}`; render(); }
 }
@@ -18531,7 +18625,7 @@ function syncAutoTick(now){
   if(typeof navigator!=="undefined"&&navigator.onLine===false) return;
   if(c.errAt&&now-c.errAt<5*60000) return;
   if(now-Math.max(_syncLastChange||0,c.dirtyAt)<SYNC_DEBOUNCE_MS) return;
-  syncUpload(false).then(r=>{ if(r.conflict) showToast("☁️ 別の端末で新しいデータが保存されています（⚙設定の☁️同期で選んでください）","#f97316"); if(state.tab==="設定"||r.conflict) render(); });
+  syncUpload(false).then(r=>{ if(r.conflict) showToast("☁️ 別の端末のデータと自動で混ぜられませんでした（⚙設定の☁️同期で選んでください）","#f97316"); if(state.tab==="設定"||r.conflict) render(); });
 }
 // 開いたとき・画面に戻ったとき：サーバの方が新しければ読み込む（この端末に送っていない変更があれば聞く）
 async function syncCheckRemote(){
@@ -18539,9 +18633,10 @@ async function syncCheckRemote(){
   if(typeof navigator!=="undefined"&&navigator.onLine===false) return;
   try{
     const m=await syncMeta(); if(!(m.rev>(c.rev||0))) return;
-    if(getSyncCfg().dirtyAt){ setSyncCfg({conflict:{rev:m.rev,savedAt:m.savedAt,device:m.device||""}}); showToast("☁️ 別の端末で新しいデータが保存されています（⚙設定の☁️同期で選んでください）","#f97316"); render(); return; }
+    // この端末にも送っていない変更がある → 送る（サーバの分と混ぜてから送られる）
+    if(getSyncCfg().dirtyAt){ const r=await syncUpload(false); if(r.conflict) showToast("☁️ 別の端末のデータと自動で混ぜられませんでした（⚙設定の☁️同期で選んでください）","#f97316"); render(); return; }
     _syncBusy=true; let got; try{ got=await syncDownload(); }finally{ _syncBusy=false; }
-    if(getSyncCfg().dirtyAt){ setSyncCfg({conflict:{rev:m.rev,savedAt:m.savedAt,device:m.device||""}}); render(); return; }   // 取ってくる間に記録した
+    if(getSyncCfg().dirtyAt){ await syncUpload(false); render(); return; }   // 取ってくる間に記録した → 混ぜて送る
     syncApply(got.p,got.rev);
     showToast(`☁️ ${m.device||"別の端末"}のデータ（${fmtSyncTime(m.savedAt)}）を読み込みました`,"#22c55e");
   }catch(_){}
@@ -18551,6 +18646,7 @@ if(typeof document!=="undefined"){
     if(document.hidden){ const c=getSyncCfg(); if(c.on&&syncReady()&&c.dirtyAt&&!c.conflict) syncUpload(false); }
     else syncCheckRemote();
   }catch(_){} });
+  setTimeout(()=>{ try{ if(syncReady()&&!_syncPrevUnits) syncStampNow(); }catch(_){} },0);   // 起動時の中身を基準に（ここからの変更に時刻を付ける）
   setTimeout(()=>{ try{ syncCheckRemote().then(()=>syncAutoTick(Date.now()+SYNC_DEBOUNCE_MS)); }catch(_){} },4000);
 }
 // ⚙設定のカード
@@ -18576,6 +18672,7 @@ function renderSyncPanel(){
       try{ const k=await syncDeriveKeys(a);
         setSyncCfg({auth:k.auth,key:k.key,authHash:k.authHash,device:(dv.value||"").trim()||syncDefaultDevice(),url:(ur.value||"").trim()||SYNC_URL_DEFAULT,on:false,rev:undefined,conflict:undefined,err:undefined,errAt:undefined,
           dirtyAt:((state.logs||[]).length+(state.dailies||[]).length>3)?Date.now():undefined});   // 記録のある端末だけ「送っていない変更あり」に
+        try{ syncStampNow(); }catch(_){}
         state.syncSetup=false; state.syncShowHash=true; state.syncMsg="✅ 設定しました。下の「サーバに貼る値」を sync.php に貼ってから「接続を確かめる」を押してください"; render();
       }catch(e){ state.syncMsg=`⚠ 鍵を作れませんでした（${(e&&e.message)||e}）`; render(); }
     },"setup"));
@@ -18593,11 +18690,12 @@ function renderSyncPanel(){
   // 自動で送る
   { const on=!!c.on; const b=btn({style:{width:"100%",padding:"9px",margin:"6px 0 8px",borderRadius:"8px",border:`1px solid ${on?"#22c55e":"#334155"}`,background:on?"#22c55e22":"transparent",color:on?"#4ade80":"#94a3b8",fontSize:"13px",fontWeight:700,cursor:"pointer",fontFamily:"inherit"}},on?"✓ 自動で同期する：ON":"自動で同期する：OFF");
     b.setAttribute('data-syncbtn','auto'); b.addEventListener('click',()=>{ setSyncCfg({on:!on}); if(!on){ syncCheckRemote(); } render(); }); card.appendChild(b);
-    card.appendChild(div({style:{fontSize:"10px",color:"#64748b",lineHeight:1.6,marginBottom:"9px"}},"ON：記録してから2分たつか、アプリを閉じたときに送ります。開いたときにサーバの方が新しければ自動で読み込みます。")); }
+    card.appendChild(div({style:{fontSize:"10px",color:"#64748b",lineHeight:1.6,marginBottom:"9px"}},"ON：記録してから2分たつか、アプリを閉じたときに送ります。開いたときにサーバの方が新しければ自動で読み込みます。両方の端末で記録したときは、同じ日の同じ項目なら新しく変えたほうを残して自動で混ぜます。")); }
   // 別の端末の新しいデータ
   if(c.conflict){
     const cf=c.conflict, box=div({style:{padding:"10px 12px",borderRadius:"10px",border:"1px solid #f9731688",background:"#f973160f",marginBottom:"9px"}}); box.setAttribute('data-syncconflict','1');
-    box.appendChild(div({style:{fontSize:"12px",color:"#fdba74",lineHeight:1.7,marginBottom:"8px"}},`⚠ 別の端末（${cf.device||"?"}・${fmtSyncTime(cf.savedAt)}・版${cf.rev}）で新しいデータが保存されています。この端末にも送っていない変更があります。どちらかを選んでください（選ばなかった方も、サーバの過去の版かファイルに残ります）。`));
+    box.appendChild(div({style:{fontSize:"12px",color:"#fdba74",lineHeight:1.7,marginBottom:"8px"}},`⚠ 別の端末（${cf.device||"?"}・${fmtSyncTime(cf.savedAt)}・版${cf.rev}）で新しいデータが保存されていて、自動で混ぜられませんでした。どちらかを選んでください（選ばなかった方も、サーバの過去の版かファイルに残ります）。`));
+    box.appendChild(bigBtn("🔀 もう一度、自動で混ぜて送る","#22c55e",async()=>{ setSyncCfg({conflict:undefined}); state.syncMsg="⏳ 混ぜています…"; render(); const r=await syncUpload(false); state.syncMsg=r.ok?`✅ 混ぜて送りました（版${r.rev}）`:`⚠ ${r.msg}`; render(); },"merge"));
     box.appendChild(bigBtn("☁️ サーバのデータを読み込む（この端末の変更はファイルに書き出す）","#38bdf8",()=>syncPullInteractive(null),"pull"));
     box.appendChild(bigBtn("📤 この端末の内容でサーバを上書きする","#f97316",async()=>{ if(!confirm("この端末の内容でサーバを上書きしますか？\n別の端末で保存したデータは、サーバの「過去の版」に残ります。")) return; state.syncMsg="⏳ 送っています…"; render(); const r=await syncUpload(true); state.syncMsg=r.ok?`✅ 上書きしました（版${r.rev}）`:`⚠ ${r.msg}`; render(); },"force"));
     card.appendChild(box);
