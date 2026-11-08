@@ -980,7 +980,7 @@ if-then・つながり・MI各種・ウィジェット表示など）を**新し
 | `test/syntax-check.js` | なし | 最大の `<script>` を抽出し `node --check` |
 | `test/undefined-call-check.js` | なし | **定義の無い関数の呼び出し**を探す（消した関数の呼び残し・打ち間違い。v14.93〜v15.26 の「データを出力」無反応はこれで防げた）。文字列・コメント・正規表現を消してから、呼び出し名と定義名を照らし合わせる簡易チェック |
 | `test/smoke.js` | Chromium＋playwright-core | 全タブ・全サブタブを実描画し JSエラー0を検証＋主要機能の存在確認 |
-| `test/sync.js` | Chromium＋playwright-core＋php | ☁️同期の結合テスト（v15.69〜）：`server/sync.php.example` を PHP の組み込みサーバで動かし、2つの端末で 送る・読み込む・自動で届く・両方で記録したとき自動で混ぜる（違う項目は両方・同じ項目は新しいほう・消したこと・一覧は1件ずつ・重複・体調記録は時ごと）・年ごとの記録を預ける・見る・戻す・過去の版を見る・見ている間は送らない・版の残し方（v2）・過去の版・合言葉違い・暗号化 を確かめる。php が無ければ SKIP |
+| `test/sync.js` | Chromium＋playwright-core＋php | ☁️同期の結合テスト（v15.69〜）：`server/sync.php.example` を PHP の組み込みサーバで動かし、2つの端末で 送る・読み込む・自動で届く・両方で記録したとき自動で混ぜる（違う項目は両方・同じ項目は新しいほう・消したこと・一覧は1件ずつ・重複・体調記録は時ごと）・年ごとの記録を預ける・見る・戻す・過去の版を見る・見ている間は送らない・版の残し方（v2）・読み取り専用トークン（v2.1：読めて書けない・取れるのは暗号化されたまま）・過去の版・合言葉違い・暗号化 を確かめる。php が無ければ SKIP |
 
 実行: `node test/syntax-check.js` / `node test/undefined-call-check.js` / `node test/smoke.js` / `node test/sync.js` / `npm test`（4つまとめて）
 

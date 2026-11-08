@@ -3,7 +3,7 @@
 > AIが参照しやすいよう、`api.php`（Geminiプロキシ）と、それを呼ぶクライアント関数の
 > **正確な契約**をまとめた常設リファレンス。実装は `health.html`（クライアント）と
 > サーバー上の `api.php` / `alexa.php` / `sync.php`（どれもリポジトリ管理外。sync.php はひな形 `server/sync.php.example` だけを管理）。
-> 最終更新: アプリ v15.73 / api.php v4.1 / alexa.php v2.3 / sync.php v2。
+> 最終更新: アプリ v15.73 / api.php v4.1 / alexa.php v2.3 / sync.php v2.1。
 
 ---
 
@@ -310,7 +310,7 @@ curl -s "https://nuts024.com/health/alexa.php?tick=1" > /dev/null
 
 ---
 
-## 11. ☁️ 同期エンドポイント（`sync.php` v2・アプリ v15.69〜／v2 はアプリ v15.72〜）
+## 11. ☁️ 同期エンドポイント（`sync.php` v2.1・アプリ v15.69〜／v2 はアプリ v15.72〜／v2.1＝v2＋読み取り専用トークン）
 
 - 置き場所：`https://nuts024.com/health/sync.php`（クライアントの既定 `SYNC_URL_DEFAULT`。⚙設定で変えられる）。
 - ひな形：リポジトリの `server/sync.php.example`。`SYNC_AUTH_HASH` を書き込んだ `sync.php` は**コミットしない**（`.gitignore` 済み）。
@@ -321,6 +321,8 @@ curl -s "https://nuts024.com/health/alexa.php?tick=1" > /dev/null
 ### 11-1. 認証・CORS
 - ヘッダ `X-Sync-Auth`：64桁の16進。サーバは `sha256(この文字列)` が `SYNC_AUTH_HASH` と同じかを `hash_equals` で比べる。違えば **401** `{"error":"auth"}`（0.4秒待ってから返す）。
 - この値と暗号の鍵は、クライアントが合言葉から PBKDF2-SHA256（salt `health_v2-sync-v1`・250,000回・512bit）で作る：前半256bit＝AES-GCMの鍵（端末の中だけ）、後半256bit＝`X-Sync-Auth`。`SYNC_AUTH_HASH` に貼る値は ⚙設定 →「サーバに貼る値」。
+- **読み取り専用トークン（v2.1・任意）**：`SYNC_READ_HASH` に、アプリの合言葉とは無関係なランダムな値（64桁の16進）の SHA-256 を貼ると、その値を `X-Sync-Auth` に入れた呼び出しでも `meta`・`list`・`get`・`alist`・`aget` が通る（Muse など読むだけの道具用）。`put`・`aput` は **403** `{"error":"readonly"}` で断る。`SYNC_READ_HASH` が空（既定）なら無効（v2 と同じ）。無効にするには空に戻すだけ。
+  取れるのは**暗号化されたままのデータ**だけで、中身を読むにはアプリの合言葉から作る鍵が別に要る（鍵を渡した相手は過去の版・年ごとの記録も含めて全部読める。トークンは「書けない・消せない」を守る仕組み）。ブラウザから呼ぶ道具は、そのサイトを `ALLOWED_ORIGINS` に足さないと 403 `origin`。
 - `Origin` があって `ALLOWED_ORIGINS`（`https://yuradream3838.github.io`）に無ければ **403** `{"error":"origin"}`。`OPTIONS` は 204（`X-Sync-Auth, X-Base-Rev, X-Device, X-Archive, Content-Type` を許可、`X-Rev` を公開）。
 - `X-Device`：端末の名前（`encodeURIComponent` したもの。サーバで戻して40文字まで保存）。
 
@@ -337,7 +339,7 @@ curl -s "https://nuts024.com/health/alexa.php?tick=1" > /dev/null
 
 - `put` のヘッダ `X-Base-Rev`：この端末が最後に送った／読み込んだ版。はじめては `none`、上書きは `force`。
   サーバの今の版と違えば（`none` でサーバにデータがあるときも）**409** `{"error":"conflict", rev, savedAt, device}` を返して**保存しない**（別の端末のデータを黙って消さない）。
-- エラー：400 `empty`/`format`/`id`/`action`、405 `method`、413 `too_large`、500 `mkdir`/`lock`/`write`。
+- エラー：400 `empty`/`format`/`id`/`action`/`name`、403 `readonly`（読み取り専用トークンで書こうとした・v2.1）、405 `method`、413 `too_large`、500 `mkdir`/`lock`/`write`。
 
 ### 11-3. 本文の形（クライアントが作る）
 `"HS1"`(3byte) ＋ 圧縮フラグ(1byte：1＝gzip／0＝なし) ＋ IV(12byte) ＋ AES-GCM の暗号文。

@@ -1,11 +1,26 @@
 <?php
 // ─────────────────────────────────────────────────────────────
-// 体調管理 ☁️ 同期サーバ（sync.php） v2
+// 体調管理 ☁️ 同期サーバ（sync.php） v2.1（v2 ＋ 読み取り専用トークン）
+//
+// ※ v2.1 は v2 に「読み取り専用トークン」の仕組みを足した版（Muse など、読むだけの道具用）。元の動作は変えていない。
+//    追加したのは次の3点だけ：
+//      ・SYNC_READ_HASH が設定されていれば、その SHA-256 に対応する
+//        読み取り専用トークン（64桁の16進）でも meta / list / get /
+//        alist / aget が通る
+//      ・読み取り専用トークンでの put / aput は 403 で断る（書けない）
+//      ・それ以外の処理（版の保持ルール、アーカイブ、マージ前提の応答）は元のまま
+//    読み取り専用トークンはアプリの合言葉とは無関係のランダム値でよい。
+//    漏れてもアプリ本体の合言葉や暗号鍵は漏れず、無効化も
+//    SYNC_READ_HASH を空にする（または作り直す）だけで済む。
+//    ※ このトークンで取れるのは暗号化されたままのデータだけ。中身を読むには、アプリの合言葉から作る鍵が別に要る
+//      （鍵を渡した相手は、過去の版・年ごとの記録も含めて全部読める。トークンは「書けない・消せない」を守る仕組み）。
 //
 // 使い方：
 //   1. このファイルを sync.php という名前にして、api.php と同じフォルダ（例：public_html/health/）に置く
 //   2. 下の SYNC_AUTH_HASH に、アプリの「⚙設定 → ☁️ ConoHa 同期 → サーバに貼る値」をそのまま貼る
-//   3. 同じフォルダに sync_data フォルダが自動で作られ、データはそこに保存される（外からは見えないようにする）
+//   3. 読み取り専用を使いたい場合は SYNC_READ_HASH に、読み取り専用トークンの
+//      SHA-256（64桁の16進）を貼る。使わない場合は '' のままでよい（従来どおり）
+//   4. 同じフォルダに sync_data フォルダが自動で作られ、データはそこに保存される（外からは見えないようにする）
 //
 // ・データはアプリの中で合言葉から作った鍵で暗号化されてから届く。このサーバは中身を読めない。
 // ・SYNC_AUTH_HASH を書き込んだ sync.php はリポジトリにコミットしない（api.php と同じ扱い）。
@@ -14,6 +29,7 @@
 // ─────────────────────────────────────────────────────────────
 
 const SYNC_AUTH_HASH  = 'ここにアプリの「サーバに貼る値」を貼る';
+const SYNC_READ_HASH  = '';   // 読み取り専用トークンの SHA-256（任意。空なら無効）
 const ALLOWED_ORIGINS = ['https://yuradream3838.github.io'];
 const DATA_DIR        = __DIR__ . '/sync_data';
 const MAX_BYTES       = 20 * 1024 * 1024;   // 1回に送れる大きさ（暗号化・圧縮したあと）
@@ -44,13 +60,19 @@ function out($code, $arr) {
 // 許可していないサイトからの呼び出しは断る（ブラウザ以外の呼び出しは合言葉の確認で守る）
 if ($origin !== '' && !in_array($origin, ALLOWED_ORIGINS, true)) out(403, ['error' => 'origin']);
 
-// 合言葉の確認：アプリが送る値（64桁の16進）の SHA-256 が SYNC_AUTH_HASH と同じか
+// 合言葉の確認：送られた値（64桁の16進）の SHA-256 が
+//   SYNC_AUTH_HASH（本物：読み書き可）か SYNC_READ_HASH（読み取り専用）のどちらかと一致すれば通す
 $auth = $_SERVER['HTTP_X_SYNC_AUTH'] ?? '';
-if (!preg_match('/^[0-9a-f]{64}$/', $auth) || !preg_match('/^[0-9a-f]{64}$/', SYNC_AUTH_HASH)
-    || !hash_equals(SYNC_AUTH_HASH, hash('sha256', $auth))) {
+$authHash = preg_match('/^[0-9a-f]{64}$/', $auth) ? hash('sha256', $auth) : '';
+$isFull = $authHash !== '' && preg_match('/^[0-9a-f]{64}$/', SYNC_AUTH_HASH)
+    && hash_equals(SYNC_AUTH_HASH, $authHash);
+$isRead = $authHash !== '' && preg_match('/^[0-9a-f]{64}$/', SYNC_READ_HASH)
+    && hash_equals(SYNC_READ_HASH, $authHash);
+if (!$isFull && !$isRead) {
   usleep(400000);
   out(401, ['error' => 'auth']);
 }
+$readOnly = !$isFull;   // 読み取り専用トークンで来た場合は、後段の put / aput を断る
 
 // 保存先（外から見えないようにする）
 if (!is_dir(DATA_DIR . '/hist')) { @mkdir(DATA_DIR . '/hist', 0700, true); }
@@ -118,6 +140,7 @@ if ($a === 'get') {
 // 新しい版を預ける。X-Base-Rev＝この端末が最後に送った／読み込んだ版（はじめては none、上書きは force）。
 // サーバの版と違えば 409 を返して保存しない（別の端末のデータを消さないため）
 if ($a === 'put') {
+  if ($readOnly) out(403, ['error' => 'readonly']);   // 読み取り専用トークンでは書けない
   if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') out(405, ['error' => 'method']);
   $len = (int)($_SERVER['CONTENT_LENGTH'] ?? 0);
   if ($len > MAX_BYTES) out(413, ['error' => 'too_large']);
@@ -180,6 +203,7 @@ if ($a === 'aget') {
 }
 // 預ける。ヘッダ X-Archive＝名前（例 y2025）。同じ名前があれば、前のものは「名前_日時」で残す
 if ($a === 'aput') {
+  if ($readOnly) out(403, ['error' => 'readonly']);   // 読み取り専用トークンでは書けない
   if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') out(405, ['error' => 'method']);
   $n = safeName($_SERVER['HTTP_X_ARCHIVE'] ?? '');
   if ($n === null) out(400, ['error' => 'name']);

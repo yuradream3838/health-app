@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// ☁️ ConoHa 同期の結合テスト（v15.69・双方向 v15.70）：本物の server/sync.php.example を PHP の組み込みサーバで動かし、
+// ☁️ ConoHa 同期の結合テスト（v15.69・双方向 v15.70・sync.php v2.1 の読み取り専用トークン）：本物の server/sync.php.example を PHP の組み込みサーバで動かし、
 // スマホ・PC の2つの端末（別々のブラウザ）で、設定 → 送る → PCで読み込む → 自動で届く → 両方で記録したとき自動で混ぜる（新しいほうが残る）
 // → 過去の版に戻す → 合言葉違い・サーバの中身が暗号化されていること を確かめる。
 // php が無い環境では SKIP（終了コード0）。実行: node test/sync.js
@@ -41,7 +41,9 @@ const EXE = findChromium();
 (async () => {
   const SRV = fs.mkdtempSync(path.join(os.tmpdir(), 'health-sync-'));
   const tpl = fs.readFileSync(path.join(ROOT, 'server/sync.php.example'), 'utf8').replace("['https://yuradream3838.github.io']", "['https://yuradream3838.github.io','null']");
-  const writePhp = hash => fs.writeFileSync(path.join(SRV, 'sync.php'), tpl.replace("'ここにアプリの「サーバに貼る値」を貼る'", `'${hash}'`));
+  // 読み取り専用トークン（v2.1）：テスト用の値とその SHA-256
+  const RO_TOKEN = 'b'.repeat(64), RO_HASH = require('crypto').createHash('sha256').update(RO_TOKEN).digest('hex');
+  const writePhp = hash => fs.writeFileSync(path.join(SRV, 'sync.php'), tpl.replace("'ここにアプリの「サーバに貼る値」を貼る'", `'${hash}'`).replace("const SYNC_READ_HASH  = '';", `const SYNC_READ_HASH  = '${RO_HASH}';`));
   writePhp('ここにアプリの「サーバに貼る値」を貼る');
   // 空いているポートを使う（前のテストの PHP が残っていても混ざらないように）
   const PORT = await new Promise(res => { const srv = require('net').createServer(); srv.listen(0, '127.0.0.1', () => { const p = srv.address().port; srv.close(() => res(p)); }); });
@@ -192,6 +194,18 @@ const EXE = findChromium();
   // 合言葉が違う端末
   const C = await mk(); await setup(C, 'wrong passphrase 12345', 'X'); r.wrong = await click(C, 'check');
   await A.evaluate(() => { state.tab = '設定'; state.syncHistOpen = false; state.syncArchOpen = true; render(); document.querySelector('[data-syncpanel]').scrollIntoView(); });
+  // ── 読み取り専用トークン（sync.php v2.1）：読む（meta/list/get/alist/aget）は通り、書く（put/aput）は 403 ──
+  {
+    const H = { 'X-Sync-Auth': RO_TOKEN }, st = async (q, o) => (await fetch(URL + q, { headers: H, ...(o || {}) })).status;
+    const body = Buffer.concat([Buffer.from('HS1'), Buffer.alloc(40, 2)]);
+    const metaBefore = JSON.parse(fs.readFileSync(path.join(SRV, 'sync_data/meta.json'), 'utf8')).rev;
+    r.ro = [await st('?a=meta'), await st('?a=list'), await st('?a=get'), await st('?a=alist'), await st(`?a=aget&name=y${LY}`),
+      await st('?a=put', { method: 'POST', headers: { ...H, 'X-Base-Rev': 'force' }, body }), await st('?a=aput', { method: 'POST', headers: { ...H, 'X-Archive': 'y1999' }, body })].join(',');
+    r.roNoWrite = JSON.parse(fs.readFileSync(path.join(SRV, 'sync_data/meta.json'), 'utf8')).rev === metaBefore && !fs.existsSync(path.join(SRV, 'sync_data/archive/y1999.bin'));
+    // 読み取り専用で取ったデータは暗号化されたまま（中身の文字は見えない）
+    const blob = Buffer.from(await (await fetch(URL + '?a=get', { headers: H })).arrayBuffer());
+    r.roEncrypted = blob.slice(0, 3).toString() === 'HS1' && !blob.includes(Buffer.from('PCで記録'));
+  }
   // ── 版の残し方（sync.php v2）：直近50＋1日1つを30日分＋1か月に1つを12か月分。古い日付の版を作ってから1回送る ──
   {
     const auth = await A.evaluate(() => getSyncCfg().auth), meta = JSON.parse(fs.readFileSync(path.join(SRV, 'sync_data/meta.json'), 'utf8'));
@@ -225,6 +239,7 @@ const EXE = findChromium();
     && r.arch === 'ok:false' && r.archFile && /^1\|ConoHa \d{4}年の記録\|\d{4}-06-15\|1\.7\|true\|false\|true\|false\|1\.7\|true$/.test(r.archView)
     && /^true\|2\|1$/.test(r.archAgain) && r.revView === 'true|0'
     && /^200\|\d+\|true\|true\|true\|true$/.test(r.keep)
+    && r.ro === '200,200,200,200,200,403,403' && r.roNoWrite && r.roEncrypted
     && /合言葉がサーバと合いません/.test(r.wrong) && errs.length === 0;
   console.log(ok ? '✓ 同期テスト PASS' : '✗ 同期テスト FAIL', errs); await b.close(); php.kill(); fs.rmSync(SRV, { recursive: true, force: true }); process.exit(ok ? 0 : 1);
 })();
