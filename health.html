@@ -258,7 +258,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.74"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.75"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -689,6 +689,8 @@ const DRINK_TYPES = [
   {id:"chuhai",  label:"チューハイ", emoji:"🍹",pct:5,  ml:350},
   {id:"strong",  label:"ストロング", emoji:"⚡",pct:9,  ml:500},
   {id:"plum",    label:"梅酒",       emoji:"🍸",pct:12, ml:90 },
+  {id:"liqueur_w",label:"果実酒水割", emoji:"🍑",pct:4,  ml:150},   // 杏露酒・ゆず酒・ライチ酒など（14%前後を45ml＋水105ml≒4%・純アルコール約5g）。ソーダ割りもこれで
+  {id:"liqueur_r",label:"果実酒ロック",emoji:"🍑",pct:14, ml:60 },   // 杏露酒などをロック・ストレートで（グラス1杯≒60ml）
   {id:"cocktail_s",label:"ショートカクテル",emoji:"🍸",pct:25, ml:90 },   // マティーニ・マルガリータなど（グラス1杯≒90ml・25%）
 ];
 
@@ -7174,7 +7176,7 @@ function nutriIntake(vd,uptoMin,log){
 }
 // お酒1杯の「炭水化物として数える量」(g)＝糖質（種類ごとの100mlあたりの目安・食品成分表（八訂）をもとにした概算）
 //   ＋ アルコール（純アルコールg×7kcal÷4kcal＝同じエネルギーの炭水化物のg）
-const DRINK_CARB_PER100={beer:3.1,beer_lg:3.1,happo:3.6,sake:4.9,shochu_w:0,shochu_r:0,wine:2,whisky:0,highball:0,chuhai:3,strong:2.5,plum:20.7,cocktail_s:5};
+const DRINK_CARB_PER100={beer:3.1,beer_lg:3.1,happo:3.6,sake:4.9,shochu_w:0,shochu_r:0,wine:2,whisky:0,highball:0,chuhai:3,strong:2.5,plum:20.7,liqueur_w:6,liqueur_r:20,cocktail_s:5};
 function drinkCarbG(dr){ const dt=resolveDT(dr), ml=+dr.ml||0, pct=dr.pct!=null?dr.pct:dt.pct;
   return ml*(DRINK_CARB_PER100[dr.id]||0)/100 + pureAlcohol(ml,pct)*7/4; }
 // その日の「0時からの分」（0時を過ぎた夜は1440以上）
