@@ -258,7 +258,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.73"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.74"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -2172,30 +2172,6 @@ function backupDaysAgo(){
   try{const v=localStorage.getItem(STORAGE_KEY+"_lastbackup");if(v)last=parseInt(v)||0;}catch{}
   if(!last)return null;
   return Math.floor((Date.now()-last)/86400000);
-}
-// バックアップ促しバナー（データ量が十分＋14日以上未実施のとき、ウィジェット先頭に常設）
-function backupBanner(){
-  if((state.logs.length + state.dailies.length) < 10) return null;
-  if(state.backupBannerDismissed) return null;
-  const d=backupDaysAgo();
-  if(d!==null && d<14) return null; // 最近バックアップ済みなら出さない
-  const msg = d===null ? "まだ一度もバックアップしていません" : `前回のバックアップから${d}日経過`;
-  const c=div({className:"card",style:{padding:"11px 13px",marginBottom:"10px",border:"1px solid #f59e0b66",background:"#f59e0b12"}});
-  c.appendChild(div({style:{display:"flex",alignItems:"center",gap:"8px",marginBottom:"8px"}},[
-    span({style:{fontSize:"16px",flexShrink:0}},"💾"),
-    div({style:{flex:1,minWidth:0}},[
-      div({style:{fontSize:"12px",fontWeight:700,color:"#fbbf24"}},"データのバックアップをおすすめします"),
-      div({style:{fontSize:"10px",color:"#94a3b8",marginTop:"2px",lineHeight:1.5}},`${msg}。この端末のデータはブラウザ内のみ保存で、キャッシュ削除や機種変更で消えることがあります。`)
-    ])
-  ]));
-  const row=div({style:{display:"flex",gap:"7px"}});
-  const exp=btn({style:{flex:1,padding:"9px",background:"#f59e0b22",border:"1px solid #f59e0b",borderRadius:"8px",color:"#fbbf24",fontSize:"12px",fontWeight:700,cursor:"pointer"}},"⬇ 今すぐ出力");
-  exp.addEventListener('click',()=>{ exportData(); });
-  const dis=btn({style:{flexShrink:0,padding:"9px 14px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#64748b",fontSize:"12px",cursor:"pointer"}},"後で");
-  dis.addEventListener('click',()=>{ state.backupBannerDismissed=true; render(); });
-  row.appendChild(exp);row.appendChild(dis);
-  c.appendChild(row);
-  return c;
 }
 // ════════════════════════════════════════════════════
 // 🌙 睡眠前モード（寝支度を始めると全画面で起動する専用画面）
@@ -4638,7 +4614,6 @@ function renderWidgetView(vd,ds){
   const _smActive = vd===todayStr() && !!windDownAt() && getDaily(sleepNightDay()).bedTime==null;
   const _smReturned = !!getDaily(sleepNightDay()).smReturned;
   if(_smActive && !_smReturned) wrap.appendChild(sleepModeEntryCard()); // 一番上に固定
-  { const bb=backupBanner(); if(bb && vd===todayStr()) wrap.appendChild(bb); }
   // 表示項目のカスタマイズ
   if(state.widgetEditMode){
     const sc=div({className:"card",style:{padding:"12px 14px",marginBottom:"10px",border:"1px solid #38bdf844",background:"#38bdf80d"}});
@@ -10299,9 +10274,9 @@ function renderSettingsHub(){
   dataCard.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"10px",lineHeight:1.6}},"全データをJSONで出力・読込できます（機種変更やバックアップに）。"));
   const pct=(getStorageUsage()||{}).pct;
   if(pct!=null)dataCard.appendChild(div({style:{fontSize:"11px",color:"#94a3b8",marginBottom:"4px"}},`保存容量の使用状況: 約${pct}%`));
-  { const d=backupDaysAgo(); const stale=(d===null||d>=14);
-    dataCard.appendChild(div({style:{fontSize:"11px",color:stale?"#fbbf24":"#94a3b8",marginBottom:"12px"}},
-      `最終バックアップ: ${d===null?"未実施":d===0?"今日":`${d}日前`}${stale?"　⚠ 出力をおすすめします":""}`)); }
+  { const d=backupDaysAgo();
+    dataCard.appendChild(div({style:{fontSize:"11px",color:"#94a3b8",marginBottom:"12px"}},
+      `最終バックアップ（ファイル）: ${d===null?"未実施":d===0?"今日":`${d}日前`}`)); }
   dataCard.appendChild(btn({style:{width:"100%",padding:"11px",marginBottom:"8px",background:"#0ea5e918",border:"1px solid #0ea5e9",borderRadius:"8px",color:"#38bdf8",fontSize:"13px",fontWeight:600,cursor:"pointer"},
     onClick:exportData},"💾 データを出力（バックアップ）"));
   const importLbl=document.createElement('label');
@@ -18844,21 +18819,6 @@ function renderSyncPanel(){
   card.appendChild(bigBtn("合言葉・URLを設定し直す","#64748b",()=>{ state.syncSetup=true; state.syncMsg=null; render(); },"reset"));
   return card;
 }
-// ── バックアップ促進リマインダー ──
-// localStorage はブラウザ側のみの保存で、キャッシュ削除等で消えるリスクがある。
-// 一定期間バックアップしていない場合、起動時にやさしく促す。
-function checkBackupReminder(){
-  // データが少ないうちは促さない
-  if(state.logs.length + state.dailies.length < 10) return;
-  let last=0;
-  try{const v=localStorage.getItem(STORAGE_KEY+"_lastbackup");if(v)last=parseInt(v)||0;}catch{}
-  const days = last ? (Date.now()-last)/86400000 : 999;
-  if(days>=14){
-    setTimeout(()=>{
-      showToast(last?"💾 前回のバックアップから2週間以上経過。設定からデータ出力をおすすめします":"💾 データのバックアップをおすすめします（設定→データ出力）","#38bdf8");
-    },1500);
-  }
-}
 function importData(e){
   const file=e.target.files[0];if(!file)return;
   const reader=new FileReader();
@@ -20115,7 +20075,6 @@ if(state._goalsMigratedCount){ setTimeout(()=>{ showToast(`過去の目標 ${sta
 if(state.modeLogWarn){ setTimeout(()=>{ const w=state.modeLogWarn||{};
   showToast(`⚠ モードの記録に重なりが${w.n}件（分析→🕒モード別の時間で直せます）`,"#fb923c"); state.modeLogWarn=null; },1400); }
 checkStorageAndAlert();
-checkBackupReminder();
 // PWA: Service Worker登録＋自動更新
 if('serviceWorker' in navigator){
   // 既に別のSWが制御している状態で新SWが有効化されたら1度だけリロード（最新版を確実に表示）
