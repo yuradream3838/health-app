@@ -247,7 +247,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.70"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.71"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -18441,7 +18441,8 @@ function syncMarkDirty(){
   syncStampSoon();
 }
 // ── 双方向の同期（v15.70）：項目ごとの「最後に変えた時刻」を持ち、両方の端末で変えたときは新しいほうを残して混ぜる ──
-// 項目（ユニット）の単位：日記＝日ごと・項目ごと（dailies|日付|water など）／体調記録＝日ごと／ルーティン＝日ごと・項目ごと／
+// 項目（ユニット）の単位：日記＝日ごと・項目ごと（dailies|日付|water など）。一覧の項目（飲酒・服薬・食べたもの…）は1件ずつ
+// （dailies|日付|drinks|#u123。一覧があること自体は dailies|日付|drinks|[]）／体調記録＝日ごと・時ごと（logs|日付|h9）／ルーティン＝日ごと・項目ごと／
 // 予定・天気＝日ごと／モードの記録＝始まった日ごと／それ以外の設定などは丸ごと1つ。
 // 時刻は端末ごとに _syncstamps（{ユニット:変えた時刻}）。消したユニットも消した時刻を残す（消したことも新しいほうが勝つ）。
 function syncUnits(p){
@@ -18449,9 +18450,12 @@ function syncUnits(p){
   Object.keys(p||{}).forEach(K=>{
     if(K==="version"||K==="exportedAt"||K==="_syncStamps") return;
     const v=p[K];
-    if(K==="dailies"&&Array.isArray(v)){ v.forEach(d=>{ if(d&&d.dateStr) Object.keys(d).forEach(f=>{ if(f!=="dateStr") put(`dailies|${d.dateStr}|${f}`,d[f]); }); }); return; }
-    if((K==="logs"||K==="modeLog")&&Array.isArray(v)){ const g={};
-      v.forEach(x=>{ const ds=K==="logs"?((x&&x.dateStr)||"?"):((x&&x.start)?fmtDS(new Date(x.start)):"?"); (g[ds]=g[ds]||[]).push(x); });
+    if(K==="dailies"&&Array.isArray(v)){ v.forEach(d=>{ if(d&&d.dateStr) Object.keys(d).forEach(f=>{ if(f==="dateStr") return; const val=d[f];
+      if(Array.isArray(val)){ put(`dailies|${d.dateStr}|${f}|[]`,1); val.forEach(x=>put(`dailies|${d.dateStr}|${f}|#${syncElKey(x)}`,x)); }
+      else put(`dailies|${d.dateStr}|${f}`,val); }); }); return; }
+    if(K==="logs"&&Array.isArray(v)){ v.forEach(x=>{ if(x) put(`logs|${x.dateStr||"?"}|h${x.hour!=null?x.hour:"?"}`,x); }); return; }
+    if(K==="modeLog"&&Array.isArray(v)){ const g={};
+      v.forEach(x=>{ const ds=(x&&x.start)?fmtDS(new Date(x.start)):"?"; (g[ds]=g[ds]||[]).push(x); });
       Object.keys(g).forEach(ds=>put(`${K}|${ds}`,g[ds])); return; }
     if(K==="todos"&&v&&typeof v==="object"){ Object.keys(v).forEach(ds=>{ const o=v[ds]; if(o&&typeof o==="object"&&!Array.isArray(o)) Object.keys(o).forEach(id=>put(`todos|${ds}|${id}`,o[id])); else put(`todos|${ds}`,o); }); return; }
     if((K==="schedule"||K==="weather")&&v&&typeof v==="object"&&!Array.isArray(v)){ Object.keys(v).forEach(ds=>put(`${K}|${ds}`,v[ds])); return; }
@@ -18459,18 +18463,30 @@ function syncUnits(p){
   });
   return u;
 }
+// 一覧の1件を見分ける鍵：uid → t（記録した時刻）→ 中身そのもの（食べたものの名前など）
+function syncElKey(x){ if(x&&typeof x==="object"){ if(x.uid!=null) return "u"+x.uid; if(x.t!=null) return "t"+x.t; } return "v"+JSON.stringify(x); }
+// 一覧の並び：時刻のあるものは時刻順（翌日のものは後ろ）、ないものは入れた順
+function syncElTime(x){ if(!x||typeof x!=="object") return null;
+  if(x.hour!=null) return x.hour*60+(x.min||0)+(x.startNextDay?1440:0);
+  if(typeof x.t==="number") return x.t; if(typeof x.t==="string"){ const n=Date.parse(x.t); return isNaN(n)?null:n/60000; }
+  if(x.start!=null) return +x.start/60000; return null; }
 // ユニットから中身を組み立て直す（syncUnits の逆）
 function syncBuild(units){
   const p={version:2,exportedAt:new Date().toISOString()}, dl={}, grp={logs:{},modeLog:{}};
   units.forEach((js,k)=>{ const v=JSON.parse(js), a=k.split("|"), K=a[0];
-    if(K==="dailies"&&a.length===3){ (dl[a[1]]=dl[a[1]]||{dateStr:a[1]})[a[2]]=v; }
-    else if((K==="logs"||K==="modeLog")&&a.length===2){ grp[K][a[1]]=v; }
+    if(K==="dailies"&&a.length>=4){ const d=(dl[a[1]]=dl[a[1]]||{dateStr:a[1]}), rest=a.slice(3).join("|");
+      if(!Array.isArray(d[a[2]])) d[a[2]]=[]; if(rest!=="[]") d[a[2]].push(v); }
+    else if(K==="dailies"&&a.length===3){ (dl[a[1]]=dl[a[1]]||{dateStr:a[1]})[a[2]]=v; }
+    else if(K==="logs"&&a.length===3){ (grp.logs[a[1]]=grp.logs[a[1]]||[]).push(v); }
+    else if(K==="modeLog"&&a.length===2){ grp.modeLog[a[1]]=v; }
     else if(K==="todos"&&a.length===3){ p.todos=p.todos||{}; (p.todos[a[1]]=p.todos[a[1]]||{})[a[2]]=v; }
     else if((K==="todos"||K==="schedule"||K==="weather")&&a.length===2){ p[K]=p[K]||{}; p[K][a[1]]=v; }
     else p[k]=v;
   });
+  Object.values(dl).forEach(d=>Object.keys(d).forEach(f=>{ const arr=d[f]; if(!Array.isArray(arr)||arr.length<2) return;
+    const tm=arr.map(syncElTime); if(tm.every(t=>t!=null)){ const ix=arr.map((x,i)=>i).sort((i,j)=>tm[i]-tm[j]||i-j); d[f]=ix.map(i=>arr[i]); } }));
   p.dailies=Object.keys(dl).sort().map(d=>dl[d]);
-  p.logs=Object.keys(grp.logs).sort().flatMap(d=>grp.logs[d]);
+  p.logs=Object.keys(grp.logs).sort().flatMap(d=>grp.logs[d].sort((x,y)=>(x.hour||0)-(y.hour||0)));
   p.modeLog=Object.keys(grp.modeLog).sort().flatMap(d=>grp.modeLog[d]).sort((x,y)=>(x.start||0)-(y.start||0));
   return p;
 }
@@ -18488,6 +18504,9 @@ function syncStampNow(){
   _syncPrevUnits=cur; if(ch) saveSyncStamps(st);
 }
 function syncStampSoon(){ if(_syncStampTimer) clearTimeout(_syncStampTimer); _syncStampTimer=setTimeout(()=>{ try{ syncStampNow(); }catch(_){} },1500); }
+// 重複を見分けるしるし：種類・名前と時刻（時刻のない記録は重複を見ない）
+function syncDupSig(x){ if(!x||typeof x!=="object") return null; if(x.hour==null&&x.t==null&&x.start==null) return null;
+  const o={}; ["id","name","label","tag","cat","hour","min","startNextDay","t","start"].forEach(f=>{ if(x[f]!=null) o[f]=x[f]; }); return JSON.stringify(o); }
 // 2つを混ぜる：ユニットごとに変えた時刻が新しいほう。時刻が同じ（どちらも記録なし）なら、片方にしかなければそれを残し、
 // 両方にあって違えば、新しく書き出したほうを残す。返す {p, stamps, fromL(この端末から採った数), fromS(サーバから採った数)}
 function syncMerge(L,Ls,S,Ss){
@@ -18500,6 +18519,14 @@ function syncMerge(L,Ls,S,Ss){
     if(lv!==sv){ if(takeL) fromL++; else fromS++; }
     const m=Math.max(tl,ts); if(m) st[k]=m;
   });
+  // 重複：同じ日の同じ一覧で、片方の端末にしかない記録どうしが同じ種類・同じ時刻（両方の端末で同じものを記録した）なら、
+  // 変えた時刻が新しいほうだけ残す。消した方には今の時刻を付ける（次に混ぜたとき、消した方が勝つように）
+  { const now=Date.now(), groups={};
+    out.forEach((v,k)=>{ if(!k.startsWith("dailies|")||k.indexOf("|#")<0) return; const inL=Lu.has(k), inS=Su.has(k); if(inL===inS) return;
+      const x=JSON.parse(v); const sig=syncDupSig(x); if(!sig) return;
+      const g=k.slice(0,k.indexOf("|#"))+"|"+sig; (groups[g]=groups[g]||[]).push({k,side:inL?"L":"S",t:st[k]||0}); });
+    Object.values(groups).forEach(list=>{ if(list.length<2||!list.some(x=>x.side==="L")||!list.some(x=>x.side==="S")) return;
+      list.sort((a,b)=>b.t-a.t); list.slice(1).forEach(x=>{ out.delete(x.k); st[x.k]=now; }); }); }
   return {p:syncBuild(out), stamps:st, fromL, fromS};
 }
 const _syncTE=new TextEncoder();

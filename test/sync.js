@@ -109,6 +109,32 @@ const EXE = findChromium();
   r.m4up = [await up(B), await up(A)].join(' ');
   await B.evaluate(() => syncCheckRemote());
   r.m4 = await A.evaluate(() => `${state.logs.some(l => l.note === 'ひみつのメモABC')}|${(getDaily(addDays(todayStr(), -1)).foods || []).join()}`) + ' ' + await B.evaluate(() => `${state.logs.some(l => l.note === 'ひみつのメモABC')}|${(getDaily(addDays(todayStr(), -1)).foods || []).join()}`);
+  // ⑤ 一覧は1件ずつ（v15.71）：同じ夜にスマホでビール、PCでハイボール → 両方残る。食べたものも両方の分が残る
+  const dk = id => `DRINK_TYPES.find(x => x.id === '${id}')`;
+  await chg(A, `setDaily(todayStr(), { drinks: [{ uid: 501, id: 'beer', drinkType: ${dk('beer')}, ml: 350, hour: 19, min: 0 }], foods: [...(getDaily(todayStr()).foods || []), '玄米'] })`); await wait(20);
+  await chg(B, `setDaily(todayStr(), { drinks: [{ uid: 601, id: 'highball', drinkType: ${dk('highball')}, ml: 350, hour: 20, min: 0 }], foods: [...(getDaily(todayStr()).foods || []), '鮭'] })`);
+  r.m5up = [await up(A), await up(B)].join(' ');
+  await A.evaluate(() => syncCheckRemote());
+  const drinksOf = p => p.evaluate(() => { const d = getDaily(todayStr()); return `${(d.drinks || []).map(x => `${x.id}@${x.hour}:${x.uid}`).join(',')}|${[...(d.foods || [])].sort().join('/')}`; });
+  r.m5 = await drinksOf(A) + ' ' + await drinksOf(B);
+  // ⑥ 重複：同じ21:00のビールを両方で記録 → 後で記録した PC の1件だけ
+  await chg(A, `setDaily(todayStr(), { drinks: [...getDaily(todayStr()).drinks, { uid: 502, id: 'beer', drinkType: ${dk('beer')}, ml: 350, hour: 21, min: 0 }] })`); await wait(20);
+  await chg(B, `setDaily(todayStr(), { drinks: [...getDaily(todayStr()).drinks, { uid: 602, id: 'beer', drinkType: ${dk('beer')}, ml: 350, hour: 21, min: 0 }] })`);
+  r.m6up = [await up(A), await up(B)].join(' ');
+  await A.evaluate(() => syncCheckRemote());
+  r.m6 = await drinksOf(A) + ' ' + await drinksOf(B);
+  // ⑦ スマホで19:00のビールを消し、PCで22:00の日本酒を足す → 消したこと・足したこと両方
+  await chg(A, "setDaily(todayStr(), { drinks: getDaily(todayStr()).drinks.filter(x => x.uid !== 501) })"); await wait(20);
+  await chg(B, `setDaily(todayStr(), { drinks: [...getDaily(todayStr()).drinks, { uid: 603, id: 'sake', drinkType: ${dk('sake')}, ml: 180, hour: 22, min: 0 }] })`);
+  r.m7up = [await up(B), await up(A)].join(' ');
+  await B.evaluate(() => syncCheckRemote());
+  r.m7 = await drinksOf(A) + ' ' + await drinksOf(B);
+  // ⑧ 体調記録は時ごと：スマホは9時、PCは20時 → 両方
+  await chg(A, "state.logs.push({ dateStr: todayStr(), hour: 9, score: 6, mental: 5, symptoms: [], note: 'スマホ9時' }); saveStorage()"); await wait(20);
+  await chg(B, "state.logs.push({ dateStr: todayStr(), hour: 20, score: 8, mental: 7, symptoms: [], note: 'PC20時' }); saveStorage()");
+  r.m8up = [await up(A), await up(B)].join(' ');
+  await A.evaluate(() => syncCheckRemote());
+  r.m8 = await A.evaluate(() => state.logs.filter(l => l.dateStr === todayStr()).map(l => l.note).join(',')) + ' ' + await B.evaluate(() => state.logs.filter(l => l.dateStr === todayStr()).map(l => l.note).join(','));
   r.noConflict = await A.evaluate(() => !getSyncCfg().conflict && !document.querySelector('[data-syncconflict]')) && await B.evaluate(() => !getSyncCfg().conflict);
   // 上書き（混ぜられないときの手段）も動く
   r.force = await A.evaluate(async () => { const x = await syncUpload(true); return `${x.ok}:${x.rev}`; });
@@ -129,7 +155,11 @@ const EXE = findChromium();
   const ok = r.hashOk && /合言葉がサーバと合いません/.test(r.check401) && /サーバはまだ空です/.test(r.checkEmpty) && /送りました（版1）/.test(r.up1) && r.encrypted && r.htaccess
     && /版1/.test(r.pcCheck) && /読み込みました/.test(r.pcDown) && r.pcData === '5:true:1:false' && r.pcDownloads === 0 && /版2/.test(r.pcUp) && r.phoneAuto === 'PCで記録:2'
     && r.m1A === '2.5|卵' && r.m1Ay === '9|納豆' && r.m1B === '2.5|卵 9|納豆' && r.m2 === '3.5|卵 3.5|卵' && r.m3 === '4.5|卵 4.5|卵'
-    && r.m4 === 'false|鮭 false|鮭' && r.noConflict && /^true:\d+$/.test(r.force) && /^\d+->\d+:false$/.test(r.auto) && /:1:true$/.test(r.hist) && r.histB === '1|納豆'
+    && r.m4 === 'false|鮭 false|鮭'
+    && r.m5 === 'beer@19:501,highball@20:601|卵/玄米/鮭 beer@19:501,highball@20:601|卵/玄米/鮭'
+    && r.m6 === 'beer@19:501,highball@20:601,beer@21:602|卵/玄米/鮭 beer@19:501,highball@20:601,beer@21:602|卵/玄米/鮭'
+    && r.m7 === 'highball@20:601,beer@21:602,sake@22:603|卵/玄米/鮭 highball@20:601,beer@21:602,sake@22:603|卵/玄米/鮭'
+    && r.m8 === 'スマホ9時,PC20時 スマホ9時,PC20時' && r.noConflict && /^true:\d+$/.test(r.force) && /^\d+->\d+:false$/.test(r.auto) && /:1:true$/.test(r.hist) && r.histB === '1|納豆'
     && /合言葉がサーバと合いません/.test(r.wrong) && errs.length === 0;
   console.log(ok ? '✓ 同期テスト PASS' : '✗ 同期テスト FAIL', errs); await b.close(); php.kill(); fs.rmSync(SRV, { recursive: true, force: true }); process.exit(ok ? 0 : 1);
 })();
