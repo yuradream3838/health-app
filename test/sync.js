@@ -86,6 +86,14 @@ const EXE = findChromium();
   await B.evaluate(() => { document.querySelector('[data-syncbtn="auto"]').click(); setDaily(todayStr(), { meds: [{ uid: 1, name: 'PCで記録', hour: 10, min: 0 }] }); flushStorage(); });
   r.pcUp = await click(B, 'up');
   r.phoneAuto = await A.evaluate(async () => { await syncCheckRemote(); return `${(getDaily(todayStr()).meds || []).map(m => m.name).join()}:${getSyncCfg().rev}`; });
+  // 開いたままでも3分ごとに確かめる（v15.73）：入力中（記録の画面を開いている）は待ち、閉じたら取り込む
+  await B.evaluate(async () => { setDaily(todayStr(), { meds: [...(getDaily(todayStr()).meds || []), { uid: 2, name: 'PC2', hour: 11, min: 0 }] }); flushStorage(); await syncUpload(false); });
+  r.periodic = await A.evaluate(async () => {
+    const names = () => (getDaily(todayStr()).meds || []).map(m => m.name).join();
+    state.modal = 'addMed'; syncPeriodicCheck(Date.now() + 4 * 60000); await new Promise(r => setTimeout(r, 800)); const during = names();
+    state.modal = null; syncPeriodicCheck(Date.now() + 8 * 60000); for (let i = 0; i < 50 && !/PC2/.test(names()); i++) await new Promise(r => setTimeout(r, 100));
+    const after = names(); const t = Date.now() + 9 * 60000; syncPeriodicCheck(t); const soon = _syncLastCheck === t;   // 3分たっていなければ確かめない
+    return `${during}|${after}|${!soon}`; });
   // ── 両方の端末で記録したとき（双方向・v15.70）：日ごと・項目ごとに、新しく変えたほうを残して自動で混ぜる ──
   const T = () => 'todayStr()';
   const wait = ms => new Promise(r => setTimeout(r, ms));
@@ -207,7 +215,7 @@ const EXE = findChromium();
   console.log(JSON.stringify(r, null, 1));
   const errs = [...A.errs, ...B.errs, ...C.errs];
   const ok = r.hashOk && /合言葉がサーバと合いません/.test(r.check401) && /サーバはまだ空です/.test(r.checkEmpty) && /送りました（版1）/.test(r.up1) && r.encrypted && r.htaccess
-    && /版1/.test(r.pcCheck) && /読み込みました/.test(r.pcDown) && r.pcData === '5:true:1:false' && r.pcDownloads === 0 && /版2/.test(r.pcUp) && r.phoneAuto === 'PCで記録:2'
+    && /版1/.test(r.pcCheck) && /読み込みました/.test(r.pcDown) && r.pcData === '5:true:1:false' && r.pcDownloads === 0 && /版2/.test(r.pcUp) && r.phoneAuto === 'PCで記録:2' && r.periodic === 'PCで記録|PCで記録,PC2|true'
     && r.m1A === '2.5|卵' && r.m1Ay === '9|納豆' && r.m1B === '2.5|卵 9|納豆' && r.m2 === '3.5|卵 3.5|卵' && r.m3 === '4.5|卵 4.5|卵'
     && r.m4 === 'false|鮭 false|鮭'
     && r.m5 === 'beer@19:501,highball@20:601|卵/玄米/鮭 beer@19:501,highball@20:601|卵/玄米/鮭'

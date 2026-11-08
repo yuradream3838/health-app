@@ -258,7 +258,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.72"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.73"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -1558,7 +1558,7 @@ function render(){
       [_rgb('#f1f5f9'),_t0],[_rgb('#e2e8f0'),_t1],[_rgb('#cbd5e1'),_t1b],[_rgb('#94a3b8'),_t2],[_rgb('#64748b'),_t3],[_rgb('#475569'),_t4],[_rgb('#334155'),_tdim]
     ];
   }catch(_){}
-  if(!window._autoTick) window._autoTick=setInterval(()=>{ const changed=autoModeTick(); nudgeNotifyTick(); try{alexaMaybeSyncPlan();}catch(_){} try{syncAutoTick(Date.now());}catch(_){} if(changed) render(); },60000);
+  if(!window._autoTick) window._autoTick=setInterval(()=>{ const changed=autoModeTick(); nudgeNotifyTick(); try{alexaMaybeSyncPlan();}catch(_){} try{syncAutoTick(Date.now());}catch(_){} try{syncPeriodicCheck(Date.now());}catch(_){} if(changed) render(); },60000);
 
   // 🌙 睡眠前モード：起動中は全画面で専用画面に切り替える（他は描画しない）
   if(state.sleepMode){ content.appendChild(renderSleepMode()); appendModeOverlayModals(content); tintSurfaces(content); return; }
@@ -18714,10 +18714,21 @@ async function syncCheckRemote(){
     showToast(`☁️ ${m.device||"別の端末"}のデータ（${fmtSyncTime(m.savedAt)}）を読み込みました`,"#22c55e");
   }catch(_){}
 }
+// 画面を開いたままでも、SYNC_CHECK_MS ごとにサーバの新しいデータを確かめる（v15.73）。
+// 入力中（文字を入れている・記録の画面を開いている）は、書きかけが消えないように次の回に回す
+const SYNC_CHECK_MS=3*60000; let _syncLastCheck=0;
+function syncPeriodicCheck(now){
+  const c=getSyncCfg(); if(!c.on||!syncReady()||_syncBusy||state.viewingBackup) return;
+  if(typeof document!=="undefined"&&document.hidden) return;
+  if(now-_syncLastCheck<SYNC_CHECK_MS) return;
+  if(state.modal) return;
+  try{ const ae=document.activeElement, tg=ae&&ae.tagName; if(tg==="INPUT"||tg==="TEXTAREA"||tg==="SELECT"||(ae&&ae.isContentEditable)) return; }catch(_){}
+  _syncLastCheck=now; syncCheckRemote();
+}
 if(typeof document!=="undefined"){
   document.addEventListener('visibilitychange',()=>{ try{
     if(document.hidden){ const c=getSyncCfg(); if(c.on&&syncReady()&&c.dirtyAt&&!c.conflict) syncUpload(false); }
-    else syncCheckRemote();
+    else { _syncLastCheck=Date.now(); syncCheckRemote(); }
   }catch(_){} });
   setTimeout(()=>{ try{ if(syncReady()&&!_syncPrevUnits) syncStampNow(); }catch(_){} },0);   // 起動時の中身を基準に（ここからの変更に時刻を付ける）
   setTimeout(()=>{ try{ syncCheckRemote().then(()=>syncAutoTick(Date.now()+SYNC_DEBOUNCE_MS)); }catch(_){} },4000);
@@ -18763,7 +18774,7 @@ function renderSyncPanel(){
   // 自動で送る
   { const on=!!c.on; const b=btn({style:{width:"100%",padding:"9px",margin:"6px 0 8px",borderRadius:"8px",border:`1px solid ${on?"#22c55e":"#334155"}`,background:on?"#22c55e22":"transparent",color:on?"#4ade80":"#94a3b8",fontSize:"13px",fontWeight:700,cursor:"pointer",fontFamily:"inherit"}},on?"✓ 自動で同期する：ON":"自動で同期する：OFF");
     b.setAttribute('data-syncbtn','auto'); b.addEventListener('click',()=>{ setSyncCfg({on:!on}); if(!on){ syncCheckRemote(); } render(); }); card.appendChild(b);
-    card.appendChild(div({style:{fontSize:"10px",color:"#64748b",lineHeight:1.6,marginBottom:"9px"}},"ON：記録してから2分たつか、アプリを閉じたときに送ります。開いたときにサーバの方が新しければ自動で読み込みます。両方の端末で記録したときは、同じ日の同じ項目なら新しく変えたほうを残して自動で混ぜます。")); }
+    card.appendChild(div({style:{fontSize:"10px",color:"#64748b",lineHeight:1.6,marginBottom:"9px"}},"ON：記録してから2分たつか、アプリを閉じたときに送ります。開いたとき・開いている間も3分ごとに、サーバの方が新しければ自動で読み込みます（入力中は待ちます）。両方の端末で記録したときは、同じ日の同じ項目なら新しく変えたほうを残して自動で混ぜます。")); }
   // 別の端末の新しいデータ
   if(c.conflict){
     const cf=c.conflict, box=div({style:{padding:"10px 12px",borderRadius:"10px",border:"1px solid #f9731688",background:"#f973160f",marginBottom:"9px"}}); box.setAttribute('data-syncconflict','1');

@@ -3,7 +3,7 @@
 > AIが参照しやすいよう、`api.php`（Geminiプロキシ）と、それを呼ぶクライアント関数の
 > **正確な契約**をまとめた常設リファレンス。実装は `health.html`（クライアント）と
 > サーバー上の `api.php` / `alexa.php` / `sync.php`（どれもリポジトリ管理外。sync.php はひな形 `server/sync.php.example` だけを管理）。
-> 最終更新: アプリ v15.72 / api.php v4.1 / alexa.php v2.3 / sync.php v2。
+> 最終更新: アプリ v15.73 / api.php v4.1 / alexa.php v2.3 / sync.php v2。
 
 ---
 
@@ -346,7 +346,7 @@ curl -s "https://nuts024.com/health/alexa.php?tick=1" > /dev/null
 ### 11-4. クライアント側（health.html）
 - 設定は端末ごと：`localStorage["health_v2_sync"]`＝`{url, device, auth, key, authHash, on, rev, upAt, downAt, dirtyAt, conflict, err, errAt}`（合言葉そのものは保存しない）。
 - `safeSet` で `health_v2…` に保存するたびに「送っていない変更あり」（`dirtyAt`）。`_sync`・`_nudges`・`_lastbackup` は除く。サーバから読み込んでいる最中の保存も除く。
-- 自動（`on`）：変更から2分たったら毎分のチェックで送る（失敗が続くときは5分あける）／画面を閉じたとき（`visibilitychange`）に送る／開いたとき・画面に戻ったときに `meta` を見て、サーバの方が新しく送っていない変更がなければ自動で読み込む。両方に変更があれば `conflict` にして選んでもらう。
+- 自動（`on`）：変更から2分たったら毎分のチェックで送る（失敗が続くときは5分あける）／画面を閉じたとき（`visibilitychange`）に送る／開いたとき・画面に戻ったとき・**開いている間も3分ごと（`SYNC_CHECK_MS`・v15.73。画面が隠れているとき・記録の画面を開いているとき・文字を入力中は待つ）**に `meta` を見て、サーバの方が新しく送っていない変更がなければ自動で読み込む。両方に変更があれば `conflict` にして選んでもらう。
 - 読み込むときに送っていない変更があれば、先に今のデータをファイル（`health_backup_日付_before_sync.json`）に書き出す。
 - **年ごとの記録（v15.72）**：「データがいっぱい」で年を書き出すと（`exportArchiveYear`）、☁️同期を設定していれば `aput` で `y年` として預ける（中身は書き出すファイルと同じ `kind:"archive"`・同じ暗号化）。⚙設定の「🗄 年ごとの記録」で一覧（`alist`）→「👁 見る」（`aget` → `viewBackupPayload`＝見るだけ・今のデータは触らない）／「📥 戻す」（`mergeArchive`＝今のデータに足す）／まだ消していない年も「☁️ この年を預ける」。
 - **過去の版を見る（v15.72）**：「🕘 過去の版」の「👁 見る」は `get&id=` を見るだけで開く（「この版に戻す」は置き換え）。
