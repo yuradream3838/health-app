@@ -258,7 +258,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.75"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.76"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -1302,6 +1302,100 @@ function workTimeField(val, setter){
 // ═══════════════════════════════════════════════════
 // BACグラフ（Canvas）
 // ═══════════════════════════════════════════════════
+// 📊 血中アルコール推移のカード（アルコールタブと🍶飲みモードで共通）。opts.noCfg＝体重・性別の設定を出さない
+function bacGraphCard(vd,drinks,isToday,opts){
+  // BAC計算
+  let nowMin=new Date().getHours()*60+new Date().getMinutes();
+  const dd=drinks.map(d=>{let startMin=d.hour*60+(d.min||0);if(d.startNextDay)startMin+=1440;let endMin=d.endHour!=null?d.endHour*60+(d.endMin||0):startMin+20;if(d.startNextDay&&d.endHour!=null)endMin+=1440;if(endMin<startMin)endMin+=1440;return{startMin,endMin,alcoholG:pureAlcohol(d.ml,d.pct!=null?d.pct:resolveDT(d).pct)};});
+
+  const hasNextDay=drinks.some(d=>d.startNextDay);
+
+  // 表示日の翌日が今日か判定（日をまたいで継続中のケース）
+  const isViewingYesterday=(()=>{
+    const p=vd.split('-');
+    const viewD=new Date(parseInt(p[0]),parseInt(p[1])-1,parseInt(p[2]));
+    viewD.setDate(viewD.getDate()+1);
+    const nextStr=`${viewD.getFullYear()}-${String(viewD.getMonth()+1).padStart(2,'0')}-${String(viewD.getDate()).padStart(2,'0')}`;
+    return nextStr===todayStr();
+  })();
+
+  // 現在BACを計算すべきか＆計算用の現在時刻
+  let showCurrent=false, nowMinCalc=nowMin;
+  if(isToday){
+    showCurrent=true;
+    nowMinCalc=hasNextDay?nowMin+1440:nowMin;
+  } else if(isViewingYesterday){
+    // 昨日を表示中：今の時刻は「昨日の24時以降」として扱う
+    showCurrent=true;
+    nowMinCalc=nowMin+1440;
+  }
+
+  const curBac=(drinks.length&&showCurrent)?userBAC(dd,nowMinCalc):0;
+  const lv=bacLevel(curBac);
+
+  // 今以降のピーク値
+  const peakBac=(drinks.length&&showCurrent)?(() => {
+    let peak=curBac;
+    for(let t=nowMinCalc;t<=nowMinCalc+8*60;t+=5){
+      const b=userBAC(dd,t);
+      if(b>peak)peak=b;
+    }
+    return peak;
+  })():0;
+  const peakLv=bacLevel(peakBac);
+
+  const graphCard=div({className:"card"},[
+    div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0",marginBottom:"12px"}},"📊 血中アルコール推移"),
+    div({style:{display:"flex",justifyContent:"space-between",alignItems:"flex-end",marginBottom:"10px"}},[
+      div({},[
+        div({style:{fontSize:"10px",color:"#64748b",marginBottom:"2px"}},"現在の血中アルコール濃度"),
+        div({style:{fontSize:"28px",fontWeight:800,color:lv.color,lineHeight:1}},[txt(`${curBac.toFixed(2)}`),span({style:{fontSize:"13px",color:"#64748b"}},"‰")]),
+        div({style:{marginTop:"4px",display:"inline-block",fontSize:"11px",padding:"2px 10px",borderRadius:"12px",background:lv.bg,color:lv.color,fontWeight:700,border:`1px solid ${lv.color}55`}},lv.label)
+      ]),
+      div({style:{textAlign:"right"}},[
+        div({style:{fontSize:"10px",color:"#64748b"}},"素面になる目安"),
+        div({style:{fontSize:"14px",fontWeight:700,color:"#94a3b8"}},getSoberTime(drinks))
+      ])
+    ]),
+    // 今後のピーク値
+    drinks.length>0?div({style:{display:"flex",alignItems:"center",gap:"12px",padding:"8px 12px",background:"#0f172a",borderRadius:"8px",marginBottom:"10px"}},[
+      div({},[
+        div({style:{fontSize:"10px",color:"#64748b",marginBottom:"2px"}},"今後の最大血中アルコール濃度"),
+        div({style:{display:"flex",alignItems:"baseline",gap:"6px"}},[
+          div({style:{fontSize:"22px",fontWeight:800,color:peakLv.color}},[txt(`${peakBac.toFixed(2)}`),span({style:{fontSize:"11px",color:"#64748b"}},"‰")]),
+          div({style:{fontSize:"11px",padding:"1px 8px",borderRadius:"10px",background:peakLv.bg,color:peakLv.color,border:`1px solid ${peakLv.color}55`}},peakLv.label)
+        ])
+      ])
+    ]):null,
+    renderBACChart(drinks, showCurrent, nowMinCalc),
+    div({style:{display:"flex",gap:"10px",marginTop:"8px",flexWrap:"wrap"}},[
+      {c:"#ef4444",dash:true,l:"酩酊(0.8‰)"},{c:"#eab308",dot:true,l:"飲み始め"},
+      {c:"#a78bfa",dot:true,l:"飲み終わり"},{c:"#38bdf8",dot:true,l:"現在"}
+    ].map(({c,dash,dot,l})=>div({style:{display:"flex",alignItems:"center",gap:"4px"}},[
+      div({style:{width:dot?"8px":"14px",height:dot?"8px":"2px",borderRadius:dot?"50%":"0",background:dot?c:`repeating-linear-gradient(90deg,${c} 0,${c} 3px,transparent 3px,transparent 6px)`}}),
+      span({style:{fontSize:"10px",color:"#64748b"}},l)
+    ])))
+  ]);
+  if(!(opts&&opts.noCfg)){
+    // ⚙️ 計算条件（体重・性別）— BACはWidmark式で体重・性別に依存
+    const cfg=div({style:{display:"flex",alignItems:"center",gap:"8px",marginTop:"10px",paddingTop:"10px",borderTop:"1px solid #1e293b",flexWrap:"wrap"}});
+    cfg.appendChild(span({style:{fontSize:"11px",color:"#64748b",flexShrink:0}},"⚙️ 計算条件"));
+    const wIn=document.createElement('input');wIn.type='number';wIn.min="30";wIn.max="200";wIn.value=String(bacWeightKg());
+    wIn.style.cssText="width:60px;padding:5px 7px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#e2e8f0;font-size:12px;font-family:inherit";
+    wIn.addEventListener('change',e=>{ state.bacWeight=Math.max(30,Math.min(200,parseFloat(e.target.value)||60)); saveBacProfile(); render(); });
+    cfg.appendChild(wIn);
+    cfg.appendChild(span({style:{fontSize:"11px",color:"#94a3b8",flexShrink:0}},"kg"));
+    [['m','男性'],['f','女性']].forEach(([k,l])=>{
+      const on=bacSexV()===k;
+      const b=btn({style:{padding:"5px 12px",borderRadius:"7px",cursor:"pointer",fontSize:"12px",fontWeight:600,border:`1px solid ${on?"#38bdf8":"#334155"}`,background:on?"#0ea5e922":"transparent",color:on?"#38bdf8":"#64748b"}},l);
+      b.addEventListener('click',()=>{state.bacSex=k;saveBacProfile();render();});
+      cfg.appendChild(b);
+    });
+    graphCard.appendChild(cfg);
+    graphCard.appendChild(div({style:{fontSize:"10px",color:"#475569",marginTop:"6px",lineHeight:1.5}},"※ 体重・性別から血中アルコール濃度を推定（Widmark式）。あくまで目安で、体質・体調・食事により個人差があります。"));
+  }
+  return graphCard;
+}
 function renderBACChart(drinks, showCurrent, nowMinPassed){
   const H=140;
   const PX_PER_MIN=4;
@@ -1326,7 +1420,7 @@ function renderBACChart(drinks, showCurrent, nowMinPassed){
     if(d.startNextDay && d.endHour!=null) endMin+=1440;
     // 終了が開始より前は+24h補正
     if(endMin<startMin) endMin+=1440;
-    return {uid:d.uid, startMin, endMin, alcoholG:pureAlcohol(d.ml,d.drinkType.pct)};
+    return {uid:d.uid, startMin, endMin, alcoholG:pureAlcohol(d.ml,d.pct!=null?d.pct:resolveDT(d).pct)};
   });
   const firstMin=Math.min(...dd.map(d=>d.startMin));
   const lastDrinkEnd=Math.max(...dd.map(d=>d.endMin||d.startMin+60));
@@ -3701,7 +3795,7 @@ function drinkRecordList(vd){
   const drinkList=(getDaily(vd).drinks||[]).map(dr=>({...dr,drinkType:resolveDT(dr)}));
   if(!drinkList.length) return null;
   const list=div({style:{marginTop:"8px",display:"flex",flexDirection:"column",gap:"4px"}});
-  drinkList.forEach(dr=>{ const pct=dr.drinkType.pct, gG=Math.round(pureAlcohol(dr.ml,pct)); const hasEnd=dr.endHour!=null;
+  drinkList.forEach(dr=>{ const pct=dr.pct!=null?dr.pct:resolveDT(dr).pct, gG=Math.round(pureAlcohol(dr.ml,pct)); const hasEnd=dr.endHour!=null;
     const row=div({style:{display:"flex",alignItems:"center",gap:"7px",padding:"6px 8px",borderRadius:"8px",background:"#ffffff08"}});
     row.appendChild(div({style:{fontSize:"15px"}},dr.drinkType.emoji||"🍺"));
     row.appendChild(div({style:{flex:1,minWidth:0,fontSize:"12px",color:"#f0e9dd"}},[div({},`${dr.drinkType.label} ${dr.ml}ml・${pct}%`),div({style:{fontSize:"9px",color:"#a89e8c"}},`${hhmm(dr.hour,dr.min||0)}${hasEnd?`〜${hhmm(dr.endHour,dr.endMin||0)}`:""}・純ｱﾙｺｰﾙ${gG}g`)]));
@@ -3990,6 +4084,7 @@ function renderLifeScreen(){
     { const dl=drinkRecordList(vd);                       // 飲んだものの一覧（🍶飲みモードと同じ）
       if(dl){ const w=div({style:{background:'#ffffff0d',border:'1px solid #ffffff14',borderRadius:'11px',padding:'9px 10px',marginBottom:'10px'}}); w.setAttribute('data-drinkoutlist','1');
         w.appendChild(div({style:{fontSize:'11px',color:'#94a3b8'}},'🍺 飲んだもの')); w.appendChild(dl); inner.appendChild(w); } }
+    { const dr=getDaily(vd).drinks||[]; if(dr.length){ const bc=bacGraphCard(vd,dr,vd===todayStr(),{noCfg:true}); bc.setAttribute('data-modebac','1'); inner.appendChild(bc); } }   // 📊 血中アルコール推移
     inner.appendChild(lifeActionBtn('💧 水を1杯 飲んだ（+0.2L）',def.color,()=>addWaterGlass(vd)));
     // 🍽 食べたもの・今の栄養（🍚食事・🍽️外食モードと同じ）
     { const foodN=(getDaily(vd).foods||[]).length; inner.appendChild(lifeActionBtn(`🍽 食べたものを記録${foodN?`（${foodN}品）`:''}`,def.color,openFoodRecord));
@@ -4459,6 +4554,8 @@ function renderSelfMode(){
     // 記録済みの一覧（種類・度数・時刻）＋各行の飲み終わり・削除（🍻外飲モードと共通）
     { const dl=drinkRecordList(vd); if(dl) recWrap.appendChild(dl); }
     inner.appendChild(recWrap);
+    // 📊 血中アルコール推移（アルコールタブと同じカード。飲んだ記録があるとき）
+    { const dr=getDaily(vd).drinks||[]; if(dr.length){ const bc=bacGraphCard(vd,dr,vd===todayStr(),{noCfg:true}); bc.setAttribute('data-modebac','1'); inner.appendChild(bc); } }
     // 🍽 食べたもの・今の栄養（🍚食事・🍽️外食モードと同じ。おつまみも記録できる）
     { const foodN=(getDaily(vd).foods||[]).length, fb=lifeActionBtn(`🍽 食べたものを記録${foodN?`（${foodN}品）`:''}`,M.accent,openFoodRecord);
       inner.appendChild(peek?peekDisabled(fb):fb); inner.appendChild(nutriCard(vd,{next:true,plain:true})); }
@@ -5324,7 +5421,7 @@ function renderSleepPanel(vd,ds,isToday){
 function renderDailyPanel(vd){
   const d=getDaily(vd);
   const drinks=(d.drinks||[]).map(dr=>({...dr,drinkType:resolveDT(dr)}));
-  const totalG=drinks.reduce((a,b)=>a+pureAlcohol(b.ml,b.drinkType.pct),0);
+  const totalG=drinks.reduce((a,b)=>a+pureAlcohol(b.ml,b.pct!=null?b.pct:resolveDT(b).pct),0);
   const foods=d.foods||[];
   const sh=getNightSleepHours(vd);
   const wh=d.workStart!=null&&d.workEnd!=null?Math.max(0,Math.round(((d.workEnd-d.workStart+24)%24-1)*10)/10):null;
@@ -14676,7 +14773,7 @@ function tastingLogBody(body){
 function renderAlcohol(vd,isToday){
   const d=getDaily(vd);
   const drinks=(d.drinks||[]).map(dr=>({...dr,drinkType:resolveDT(dr)}));
-  const totalG=drinks.reduce((a,b)=>a+pureAlcohol(b.ml,b.drinkType.pct),0);
+  const totalG=drinks.reduce((a,b)=>a+pureAlcohol(b.ml,b.pct!=null?b.pct:resolveDT(b).pct),0);
   const wrap=div({style:{maxWidth:"600px",margin:"0 auto",padding:"12px 16px 60px"}},[]);
 
   // 🚪 外に飲みに行きたくなったら（踏みとどまりボタン）
@@ -14728,97 +14825,7 @@ function renderAlcohol(vd,isToday){
     wrap.appendChild(gc);
   }
 
-  // BAC計算
-  let nowMin=new Date().getHours()*60+new Date().getMinutes();
-  const dd=drinks.map(d=>{let startMin=d.hour*60+(d.min||0);if(d.startNextDay)startMin+=1440;let endMin=d.endHour!=null?d.endHour*60+(d.endMin||0):startMin+20;if(d.startNextDay&&d.endHour!=null)endMin+=1440;if(endMin<startMin)endMin+=1440;return{startMin,endMin,alcoholG:pureAlcohol(d.ml,d.drinkType.pct)};});
-
-  const hasNextDay=drinks.some(d=>d.startNextDay);
-
-  // 表示日の翌日が今日か判定（日をまたいで継続中のケース）
-  const isViewingYesterday=(()=>{
-    const p=vd.split('-');
-    const viewD=new Date(parseInt(p[0]),parseInt(p[1])-1,parseInt(p[2]));
-    viewD.setDate(viewD.getDate()+1);
-    const nextStr=`${viewD.getFullYear()}-${String(viewD.getMonth()+1).padStart(2,'0')}-${String(viewD.getDate()).padStart(2,'0')}`;
-    return nextStr===todayStr();
-  })();
-
-  // 現在BACを計算すべきか＆計算用の現在時刻
-  let showCurrent=false, nowMinCalc=nowMin;
-  if(isToday){
-    showCurrent=true;
-    nowMinCalc=hasNextDay?nowMin+1440:nowMin;
-  } else if(isViewingYesterday){
-    // 昨日を表示中：今の時刻は「昨日の24時以降」として扱う
-    showCurrent=true;
-    nowMinCalc=nowMin+1440;
-  }
-
-  const curBac=(drinks.length&&showCurrent)?userBAC(dd,nowMinCalc):0;
-  const lv=bacLevel(curBac);
-
-  // 今以降のピーク値
-  const peakBac=(drinks.length&&showCurrent)?(() => {
-    let peak=curBac;
-    for(let t=nowMinCalc;t<=nowMinCalc+8*60;t+=5){
-      const b=userBAC(dd,t);
-      if(b>peak)peak=b;
-    }
-    return peak;
-  })():0;
-  const peakLv=bacLevel(peakBac);
-
-  const graphCard=div({className:"card"},[
-    div({style:{fontSize:"13px",fontWeight:700,color:"#e2e8f0",marginBottom:"12px"}},"📊 血中アルコール推移"),
-    div({style:{display:"flex",justifyContent:"space-between",alignItems:"flex-end",marginBottom:"10px"}},[
-      div({},[
-        div({style:{fontSize:"10px",color:"#64748b",marginBottom:"2px"}},"現在の血中アルコール濃度"),
-        div({style:{fontSize:"28px",fontWeight:800,color:lv.color,lineHeight:1}},[txt(`${curBac.toFixed(2)}`),span({style:{fontSize:"13px",color:"#64748b"}},"‰")]),
-        div({style:{marginTop:"4px",display:"inline-block",fontSize:"11px",padding:"2px 10px",borderRadius:"12px",background:lv.bg,color:lv.color,fontWeight:700,border:`1px solid ${lv.color}55`}},lv.label)
-      ]),
-      div({style:{textAlign:"right"}},[
-        div({style:{fontSize:"10px",color:"#64748b"}},"素面になる目安"),
-        div({style:{fontSize:"14px",fontWeight:700,color:"#94a3b8"}},getSoberTime(drinks))
-      ])
-    ]),
-    // 今後のピーク値
-    drinks.length>0?div({style:{display:"flex",alignItems:"center",gap:"12px",padding:"8px 12px",background:"#0f172a",borderRadius:"8px",marginBottom:"10px"}},[
-      div({},[
-        div({style:{fontSize:"10px",color:"#64748b",marginBottom:"2px"}},"今後の最大血中アルコール濃度"),
-        div({style:{display:"flex",alignItems:"baseline",gap:"6px"}},[
-          div({style:{fontSize:"22px",fontWeight:800,color:peakLv.color}},[txt(`${peakBac.toFixed(2)}`),span({style:{fontSize:"11px",color:"#64748b"}},"‰")]),
-          div({style:{fontSize:"11px",padding:"1px 8px",borderRadius:"10px",background:peakLv.bg,color:peakLv.color,border:`1px solid ${peakLv.color}55`}},peakLv.label)
-        ])
-      ])
-    ]):null,
-    renderBACChart(drinks, showCurrent, nowMinCalc),
-    div({style:{display:"flex",gap:"10px",marginTop:"8px",flexWrap:"wrap"}},[
-      {c:"#ef4444",dash:true,l:"酩酊(0.8‰)"},{c:"#eab308",dot:true,l:"飲み始め"},
-      {c:"#a78bfa",dot:true,l:"飲み終わり"},{c:"#38bdf8",dot:true,l:"現在"}
-    ].map(({c,dash,dot,l})=>div({style:{display:"flex",alignItems:"center",gap:"4px"}},[
-      div({style:{width:dot?"8px":"14px",height:dot?"8px":"2px",borderRadius:dot?"50%":"0",background:dot?c:`repeating-linear-gradient(90deg,${c} 0,${c} 3px,transparent 3px,transparent 6px)`}}),
-      span({style:{fontSize:"10px",color:"#64748b"}},l)
-    ])))
-  ]);
-  // ⚙️ 計算条件（体重・性別）— BACはWidmark式で体重・性別に依存
-  {
-    const cfg=div({style:{display:"flex",alignItems:"center",gap:"8px",marginTop:"10px",paddingTop:"10px",borderTop:"1px solid #1e293b",flexWrap:"wrap"}});
-    cfg.appendChild(span({style:{fontSize:"11px",color:"#64748b",flexShrink:0}},"⚙️ 計算条件"));
-    const wIn=document.createElement('input');wIn.type='number';wIn.min="30";wIn.max="200";wIn.value=String(bacWeightKg());
-    wIn.style.cssText="width:60px;padding:5px 7px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#e2e8f0;font-size:12px;font-family:inherit";
-    wIn.addEventListener('change',e=>{ state.bacWeight=Math.max(30,Math.min(200,parseFloat(e.target.value)||60)); saveBacProfile(); render(); });
-    cfg.appendChild(wIn);
-    cfg.appendChild(span({style:{fontSize:"11px",color:"#94a3b8",flexShrink:0}},"kg"));
-    [['m','男性'],['f','女性']].forEach(([k,l])=>{
-      const on=bacSexV()===k;
-      const b=btn({style:{padding:"5px 12px",borderRadius:"7px",cursor:"pointer",fontSize:"12px",fontWeight:600,border:`1px solid ${on?"#38bdf8":"#334155"}`,background:on?"#0ea5e922":"transparent",color:on?"#38bdf8":"#64748b"}},l);
-      b.addEventListener('click',()=>{state.bacSex=k;saveBacProfile();render();});
-      cfg.appendChild(b);
-    });
-    graphCard.appendChild(cfg);
-    graphCard.appendChild(div({style:{fontSize:"10px",color:"#475569",marginTop:"6px",lineHeight:1.5}},"※ 体重・性別から血中アルコール濃度を推定（Widmark式）。あくまで目安で、体質・体調・食事により個人差があります。"));
-  }
-  wrap.appendChild(graphCard);
+  wrap.appendChild(bacGraphCard(vd,drinks,isToday));
 
   // 飲酒欲求グラフ（閲覧のみ・入力は体調記録の各時間から）
   wrap.appendChild(renderCravingGraph(vd, isToday));
@@ -14842,7 +14849,7 @@ function renderAlcohol(vd,isToday){
       const bm=b.hour*60+(b.min||0)+(b.startNextDay?1440:0);
       return am-bm;
     }).forEach(d=>{
-      const g=pureAlcohol(d.ml,d.drinkType.pct);
+      const g=pureAlcohol(d.ml,d.pct!=null?d.pct:resolveDT(d).pct);
       const hasEnd=d.endHour!=null;
       const sL=`${d.startNextDay?"翌":""}${String(d.hour).padStart(2,"0")}:${String(d.min||0).padStart(2,"0")}`;
       const startMinV=d.hour*60+(d.min||0)+(d.startNextDay?1440:0);
@@ -14852,7 +14859,7 @@ function renderAlcohol(vd,isToday){
       const item=div({style:{background:"#0f172a",borderRadius:"10px",overflow:"hidden",marginBottom:"8px"}},[
         div({style:{display:"flex",alignItems:"center",gap:"10px",padding:"8px 10px"}},[
           span({style:{fontSize:"22px"}},d.drinkType.emoji),
-          div({style:{flex:1,cursor:"pointer"},onClick:(()=>{const dr=d;return()=>{ state.modal="addDrink"; state.newDrink={typeId:dr.id||dr.drinkType.id,ml:dr.ml,hour:dr.hour,min:dr.min||0,pct:dr.drinkType.pct,startNextDay:!!dr.startNextDay,editUid:dr.uid,tasting:{...tastingOf(dr)}}; state.drinkNoteOpen=undefined; render(); };})()},[
+          div({style:{flex:1,cursor:"pointer"},onClick:(()=>{const dr=d;return()=>{ state.modal="addDrink"; state.newDrink={typeId:dr.id||resolveDT(dr).id,ml:dr.ml,hour:dr.hour,min:dr.min||0,pct:dr.pct!=null?dr.pct:resolveDT(dr).pct,startNextDay:!!dr.startNextDay,editUid:dr.uid,tasting:{...tastingOf(dr)}}; state.drinkNoteOpen=undefined; render(); };})()},[
             div({style:{fontSize:"13px",fontWeight:600,color:"#e2e8f0"}},`${d.drinkType.label} ${d.ml}ml`),
             div({style:{fontSize:"10px",color:"#64748b"}},[txt(`🕐 ${sL}`),hasEnd?span({style:{color:"#a78bfa"}},` → 🍵 ${eL}`):null,txt(` ${g.toFixed(1)}g ・ タップで編集`)])
           ]),
@@ -14966,7 +14973,7 @@ function renderAlcohol(vd,isToday){
 
 function getSoberTime(drinks){
   if(!drinks.length)return"—";
-  const dd=drinks.map(d=>{let startMin=d.hour*60+(d.min||0);if(d.startNextDay)startMin+=1440;let endMin=d.endHour!=null?d.endHour*60+(d.endMin||0):startMin+20;if(d.startNextDay&&d.endHour!=null)endMin+=1440;if(endMin<startMin)endMin+=1440;return{startMin,endMin,alcoholG:pureAlcohol(d.ml,d.drinkType.pct)};});
+  const dd=drinks.map(d=>{let startMin=d.hour*60+(d.min||0);if(d.startNextDay)startMin+=1440;let endMin=d.endHour!=null?d.endHour*60+(d.endMin||0):startMin+20;if(d.startNextDay&&d.endHour!=null)endMin+=1440;if(endMin<startMin)endMin+=1440;return{startMin,endMin,alcoholG:pureAlcohol(d.ml,d.pct!=null?d.pct:resolveDT(d).pct)};});
   // 全ての杯を吸収し終えた後はBACは単調減少するので、そこから素面(≦0.02‰)になる絶対時刻を探す。
   // 「今」に依存させない（翌日記録の飲酒や過去日の表示でも正しく出す）。
   const lastDone=Math.max(...dd.map(d=>d.endMin+15));
@@ -16514,7 +16521,7 @@ function renderLog(){
     const d=getDaily(ds);
     const avg=dl.length?(dl.reduce((a,b)=>a+b.score,0)/dl.length).toFixed(1):null;
     const drinks=(d.drinks||[]).map(dr=>({...dr,drinkType:resolveDT(dr)}));
-    const tg=drinks.reduce((a,b)=>a+pureAlcohol(b.ml,b.drinkType.pct),0);
+    const tg=drinks.reduce((a,b)=>a+pureAlcohol(b.ml,b.pct!=null?b.pct:resolveDT(b).pct),0);
     const _sh=getNightSleepHours(d.dateStr);const sh=_sh!=null?Math.round(_sh*10)/10:null;
     const parts2=ds.split('-');
     const label=new Date(parseInt(parts2[0]),parseInt(parts2[1])-1,parseInt(parts2[2])).toLocaleDateString("ja-JP",{month:"short",day:"numeric",weekday:"short"});
@@ -16602,7 +16609,7 @@ function renderWeekly(){
     const logs = state.logs.filter(l=>l.dateStr===d&&l.score!=null);
     const avgScore = logs.length ? logs.reduce((a,b)=>a+b.score,0)/logs.length : null;
     const drinks = (daily.drinks||[]).map(dr=>({...dr,drinkType:resolveDT(dr)}));
-    const alcG = drinks.reduce((a,b)=>a+pureAlcohol(b.ml,b.drinkType.pct),0);
+    const alcG = drinks.reduce((a,b)=>a+pureAlcohol(b.ml,b.pct!=null?b.pct:resolveDT(b).pct),0);
     const sleepH = getNightSleepHours(daily.dateStr)!=null?Math.round(getNightSleepHours(daily.dateStr)*10)/10:null;
     const todo = state.todos[d]||{};
     const todoDone = getTodoItems().filter(item=>isTodoDone(d,item)).length;
@@ -17577,7 +17584,7 @@ function renderAnalysis(){
     const a=dayAvgScore(d.dateStr);
     const aTomorrow=dayAvgScore(nextD(d.dateStr));
     const drinks=(d.drinks||[]).map(dr=>({...dr,drinkType:resolveDT(dr)}));
-    const tg=drinks.reduce((x,b)=>x+pureAlcohol(b.ml,b.drinkType.pct),0);
+    const tg=drinks.reduce((x,b)=>x+pureAlcohol(b.ml,b.pct!=null?b.pct:resolveDT(b).pct),0);
     const _sh=getNightSleepHours(d.dateStr);const sh=_sh!=null?Math.round(_sh*10)/10:null;
 
     // 睡眠→当日
@@ -17717,7 +17724,7 @@ function renderAnalysis(){
       if(!vals.length)return null;
       const maxCr=Math.max(...vals);
       const drinks=(d.drinks||[]).map(dr=>({...dr,drinkType:resolveDT(dr)}));
-      const alcG2=drinks.reduce((x,b)=>x+pureAlcohol(b.ml,b.drinkType.pct),0);
+      const alcG2=drinks.reduce((x,b)=>x+pureAlcohol(b.ml,b.pct!=null?b.pct:resolveDT(b).pct),0);
       return {dateStr:d.dateStr, maxCr, drank:alcG2>0, score:dayAvgScore(d.dateStr)};
     })
     .filter(Boolean);
@@ -17950,7 +17957,7 @@ function buildAnalysisContext(){
   const scored=(state.logs||[]).filter(l=>l.score!=null);
   const ds2=dailies.slice(-14).map(d=>{
     const drinks=(d.drinks||[]).map(dr=>({...dr,drinkType:resolveDT(dr)}));
-    const g=drinks.reduce((a,b)=>a+pureAlcohol(b.ml,b.drinkType.pct),0);
+    const g=drinks.reduce((a,b)=>a+pureAlcohol(b.ml,b.pct!=null?b.pct:resolveDT(b).pct),0);
     const _sh=getNightSleepHours(d.dateStr);const sh=_sh!=null?Math.round(_sh*10)/10:null;
     const shift=d.workStart==null?'休み':(d.workStart<12?'1直':'2直');
     const acts=getActualActivities(d.dateStr).map(a=>a.title.replace(/^[✓]/,'')).slice(0,10).join(',');
@@ -18193,7 +18200,7 @@ function qaDateLine(ds){
   const shift=d.workStart==null?'休':(d.workStart<12?'1直':'2直');
   const _sh=getNightSleepHours(ds); const sh=_sh!=null?Math.round(_sh*10)/10:null;
   const drinks=(d.drinks||[]).map(dr=>({...dr,drinkType:resolveDT(dr)}));
-  const g=drinks.reduce((a,b)=>a+pureAlcohol(b.ml,b.drinkType.pct),0);
+  const g=drinks.reduce((a,b)=>a+pureAlcohol(b.ml,b.pct!=null?b.pct:resolveDT(b).pct),0);
   const drinkNames=[...new Set(drinks.map(dr=>dr.drinkType.label))].join(',');
   const logs=(state.logs||[]).filter(l=>l.dateStr===ds && l.score!=null);
   const cond=logs.map(l=>`${l.hour}時${l.score}/10${(l.symptoms&&l.symptoms.length)?`[${l.symptoms.join('・')}]`:''}${l.note?`「${l.note}」`:''}`).join(' ');
