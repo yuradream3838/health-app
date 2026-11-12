@@ -258,7 +258,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.76"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.77"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -8910,7 +8910,13 @@ function allWorkouts(){ const out=[]; (state.dailies||[]).forEach(d=>{ (d.workou
 function workoutNames(){ const seen=new Set(),arr=[]; allWorkouts().forEach(w=>{ const n=(w.name||"").trim(); if(n&&!seen.has(n)){seen.add(n);arr.push(n);} }); return arr; }
 // その種目の直近記録（今日vd以外の最新、無ければ全体の最新）
 function lastWorkout(name,vd){ const n=(name||"").trim().toLowerCase(); const all=allWorkouts().filter(w=>(w.name||"").trim().toLowerCase()===n); const notToday=all.filter(w=>w.date!==vd); return (notToday[0]||all[0])||null; }
-function bestWorkout(name){ const n=(name||"").trim().toLowerCase(); const all=allWorkouts().filter(w=>(w.name||"").trim().toLowerCase()===n&&w.weight!=null); if(!all.length)return null; return all.reduce((m,w)=>w.weight>m.weight?w:m,all[0]); }
+// 最高の負荷：重量がいちばん重い回（同じ重量なら回数×セットが多い回）
+function bestWorkout(name){ const n=(name||"").trim().toLowerCase(); const all=allWorkouts().filter(w=>(w.name||"").trim().toLowerCase()===n&&w.weight!=null); if(!all.length)return null; return all.reduce((m,w)=>(w.weight>m.weight||(w.weight===m.weight&&woTotalReps(w)>woTotalReps(m)))?w:m,all[0]); }
+// 回数×セット（セットが無ければ1セット）
+function woTotalReps(w){ return (w&&w.reps!=null)?(+w.reps||0)*((+w.sets)||1):0; }
+// 最高の回数：回数×セットがいちばん多い回（同じなら重い回）
+function bestVolumeWorkout(name){ const n=(name||"").trim().toLowerCase(); const all=allWorkouts().filter(w=>(w.name||"").trim().toLowerCase()===n&&w.reps!=null&&woTotalReps(w)>0); if(!all.length)return null;
+  return all.reduce((m,w)=>{ const a=woTotalReps(w), b=woTotalReps(m); return (a>b||(a===b&&(+w.weight||0)>(+m.weight||0)))?w:m; },all[0]); }
 // ── 有酸素（ランニングマシン等：速度km/h・時間min・距離km）。日次に保存 ──
 const CARDIO_DEFAULT_NAMES=["ランニングマシン","エアロバイク","ウォーキング","クロストレーナー"];
 function cardioOn(vd){ const a=getDaily(vd).cardio; return Array.isArray(a)?a:[]; }
@@ -9028,11 +9034,15 @@ function renderTrainingPanel(vd,ds,isToday){
     nameI.addEventListener('change',()=>render());
     r1.appendChild(nameI); c.appendChild(r1);
     // 直近記録の表示
-    if((state.woName||"").trim()){ const lw=lastWorkout(state.woName,vd), bw=bestWorkout(state.woName);
-      if(lw||bw) c.appendChild(div({style:{fontSize:"10px",color:"#94a3b8",marginBottom:"6px"}},[
-        lw?span({},`前回 ${lw.weight!=null?`${lw.weight}kg`:""}${lw.reps!=null?`×${lw.reps}`:""}${lw.sets?`×${lw.sets}set`:""}（${mdLabel(lw.date)}）`):null,
-        bw?span({style:{color:"#fbbf24",marginLeft:lw?"8px":"0"}},`自己ベスト ${bw.weight}kg`):null
-      ]));
+    // 前回・最高の負荷・最高の回数（回数×セット）
+    if((state.woName||"").trim()){ const lw=lastWorkout(state.woName,vd), bw=bestWorkout(state.woName), bv=bestVolumeWorkout(state.woName);
+      const one=w=>`${w.weight!=null?`${w.weight}kg`:""}${w.reps!=null?`×${w.reps}回`:""}${w.sets?`×${w.sets}set`:""}`;
+      const line=(icon,lab,txt,col,attr)=>{ const d=div({style:{display:"flex",gap:"6px",fontSize:"11px",color:col,lineHeight:1.7}},[span({style:{flexShrink:0,minWidth:"86px"}},`${icon} ${lab}`),span({},txt)]); d.setAttribute('data-wobest',attr); return d; };
+      if(lw||bw||bv){ const box=div({style:{padding:"6px 9px",borderRadius:"8px",background:"#0f172a",border:"1px solid #1e293b",marginBottom:"8px"}});
+        if(lw) box.appendChild(line("🕘","前回",`${one(lw)}（${mdLabel(lw.date)}）`,"#94a3b8","last"));
+        if(bw) box.appendChild(line("🏆","最高の負荷",`${one(bw)}（${mdLabel(bw.date)}）`,"#fbbf24","weight"));
+        if(bv) box.appendChild(line("🔁","最高の回数",`${woTotalReps(bv)}回（${one(bv)}・${mdLabel(bv.date)}）`,"#34d399","volume"));
+        c.appendChild(box); }
     }
     const numF=(ph,val,set,step)=>{const i=document.createElement('input');i.type='number';i.placeholder=ph;i.step=step||"1";i.min="0";i.value=val!==""&&val!=null?String(val):"";i.style.cssText="width:100%;box-sizing:border-box;padding:8px 6px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:14px;font-family:inherit;text-align:center";i.addEventListener('input',e=>set(e.target.value));return i;};
     const r2=div({style:{display:"grid",gridTemplateColumns:"1fr 1fr 1fr auto",gap:"6px",alignItems:"end",marginBottom:"8px"}});

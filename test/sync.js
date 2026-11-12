@@ -24,7 +24,7 @@ function findChromium() {
   try {
     const dirs = fs.readdirSync(base).filter(d => d.startsWith('chromium'));
     for (const d of dirs) {
-      for (const rel of ['chrome-linux/chrome', 'chrome-linux/headless_shell', 'chrome-mac/Chromium.app/Contents/MacOS/Chromium']) {
+      for (const rel of ['chrome-linux64/chrome', 'chrome-linux/chrome', 'chrome-linux/headless_shell', 'chrome-mac/Chromium.app/Contents/MacOS/Chromium']) {
         const p = path.join(base, d, rel);
         if (fs.existsSync(p)) return p;
       }
