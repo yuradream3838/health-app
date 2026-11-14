@@ -258,7 +258,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.80"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.81"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -7315,10 +7315,14 @@ function foodMealNearest(vd,t,withNightcap){ const T=foodMealTimes(vd); let best
 function foodMealOf(vd,e){ return FOOD_MEALS.some(m=>m.k===e.meal)?e.meal:foodMealNearest(vd,+e.t||0,false); }
 // 記録に入れる t：区分の目安の時刻。ただし今日の記録で目安がまだ先なら今の時刻（食べたから記録する＝もう「とった」量に数える）
 function foodMealT(vd,k){ const t=foodMealTimes(vd)[k]; return vd===todayStr()?Math.max(0,Math.min(t,nutriNowMin(vd))):t; }
+// 同じ品目を別の食事でも食べた（2行目以降）ときの区分：いつもの区分がまだ使われていなければそれ、使われていれば次の食事から空いているもの
+function foodMealNextFree(vd,used){ const d=foodMealDefault(vd); if(!used.includes(d)) return d;
+  const ks=FOOD_MEALS.map(m=>m.k), i=ks.indexOf(d); for(let j=1;j<=ks.length;j++){ const k=ks[(i+j)%ks.length]; if(!used.includes(k)) return k; } return d; }
 // 新しく選んだ品目の区分：🍺飲みモードの上から開いたら晩酌、ほかは今の時刻にいちばん近い食事（基準日が今日でなければ夕食）
 function foodMealDefault(vd){ if(state.selfMode&&!state.lifeScreen) return "nightcap";
   return vd===todayStr()?foodMealNearest(vd,nutriNowMin(vd),false):"dinner"; }
-function foodDraftAdd(vd,name){ const L=foodDraft(vd), meal=foodMealDefault(vd); L.push({uid:newFoodLogUid(L),name,qty:1,meal,t:foodMealT(vd,meal)}); }
+// meal を渡せばその区分で（渡さなければ foodMealDefault）
+function foodDraftAdd(vd,name,mealK){ const L=foodDraft(vd), meal=mealK||foodMealDefault(vd); L.push({uid:newFoodLogUid(L),name,qty:1,meal,t:foodMealT(vd,meal)}); }
 function fmtFoodT(t){ const m=((t%1440)+1440)%1440; return hhmm(Math.floor(m/60),m%60); }
 // 品目の栄養（1人前あたり）を直す欄
 function foodNutriEditor(item){
@@ -7482,7 +7486,7 @@ function renderFoodModal(vd){
   m.appendChild(hdr);
   const list=div({style:{flex:1,overflowY:"auto",padding:"8px 16px"}});   // 選んだ品目・今の栄養・一覧を1つのスクロールに
   const D=edit?null:foodDraft(state.viewDate);
-  // 品目ボタン＝タップで選ぶ。選ぶとその場で「量（−／＋）・時刻・×」の入力になる（1品目を2回とった記録は2行）
+  // 品目ボタン＝タップで選ぶ。選ぶとその場で「量（−／＋）・食事の区分・×」の入力になる（別の食事でも食べたら「＋ 別の食事でも食べた」で2行目）
   const mini=(t,fn,attr)=>{ const b=btn({style:{flexShrink:0,minWidth:"28px",boxSizing:"border-box",padding:"3px 6px",borderRadius:"6px",border:"1px solid #334155",background:"#0f172a",color:"#cbd5e1",fontSize:"12px",cursor:"pointer",fontFamily:"inherit"}},t); if(attr) b.setAttribute(attr[0],attr[1]); b.addEventListener('click',fn); return b; };
   const unselect=name=>{ state.foodSelected=state.foodSelected.filter(x=>x!==name); state.foodLogDraft.list=foodDraft(state.viewDate).filter(e=>e.name!==name); render(); };
   const pickedRows=name=>{
@@ -7492,7 +7496,7 @@ function renderFoodModal(vd){
       b.setAttribute('data-foodpicked',name); b.addEventListener('click',()=>unselect(name)); return b; };
     if(!es.length){   // 量・時刻のない今までの記録（栄養には数えない）
       const r=rowBox({}); r.appendChild(nameBtn()); r.appendChild(mini("＋ 量と食事",()=>{ foodDraftAdd(state.viewDate,name); render(); },['data-foodlogadd',name])); return [r]; }
-    return es.map(e=>{ const r=rowBox({});
+    const rows=es.map(e=>{ const r=rowBox({});
       r.appendChild(nameBtn());
       r.appendChild(mini("−",()=>{ e.qty=Math.max(0.5,Math.round(((+e.qty||1)-0.5)*2)/2); render(); },['data-foodqtydown',name]));
       // 量は数量で（1人前の単位を量に合わせて：例「1.5パック」＋小さく「(68g)」。単位が無ければ数だけ）
@@ -7508,6 +7512,11 @@ function renderFoodModal(vd){
       r.appendChild(ti);
       r.appendChild(mini("×",()=>{ state.foodLogDraft.list=D.filter(x=>x.uid!==e.uid); if(!state.foodLogDraft.list.some(x=>x.name===name)) state.foodSelected=state.foodSelected.filter(x=>x!==name); render(); },['data-foodlogdel',name]));
       return r; });
+    // 同じ品目を別の食事でも食べた → 行を足す（例：小麦を朝食と夕食に）
+    { const used=es.map(e=>foodMealOf(state.viewDate,e));
+      const ab=btn({style:{flexBasis:"100%",textAlign:"right",background:"transparent",border:"none",padding:"0 10px 2px",marginTop:"-2px",cursor:"pointer",fontSize:"11px",color:"#38bdf8",fontFamily:"inherit"}},"＋ 別の食事でも食べた");
+      ab.setAttribute('data-foodlogmore',name); ab.addEventListener('click',()=>{ foodDraftAdd(state.viewDate,name,foodMealNextFree(state.viewDate,used)); render(); }); rows.push(ab); }
+    return rows;
   };
   if(!edit){
     // 今の栄養（ウィジェットと同じ表示・保存前の内容で）
