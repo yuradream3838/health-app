@@ -3,7 +3,7 @@
 > AIが参照しやすいよう、`api.php`（Geminiプロキシ）と、それを呼ぶクライアント関数の
 > **正確な契約**をまとめた常設リファレンス。実装は `health.html`（クライアント）と
 > サーバー上の `api.php` / `alexa.php` / `sync.php` / `propose.php`（どれもリポジトリ管理外。sync.php・propose.php はひな形 `server/*.php.example` だけを管理）。
-> 最終更新: アプリ v15.79 / api.php v4.1 / alexa.php v2.3 / sync.php v2.1 / propose.php v1。
+> 最終更新: アプリ v15.80 / api.php v4.1 / alexa.php v2.3 / sync.php v2.1 / propose.php v1。
 
 ---
 
