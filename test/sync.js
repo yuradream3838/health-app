@@ -250,6 +250,21 @@ const EXE = findChromium();
     r.propLeft = (await (await fetch(PURL + '?a=plist', { headers: { 'X-Sync-Auth': PROP_TOKEN } })).json()).items.length;
     // 二重に反映しない：処理済みの ID は、サーバに残っていても表示しない
     r.propOnce = await A.evaluate(async P1 => { const c = getPropCache(); c.items.push({ id: P1, at: '', p: { v: 1, ops: [] } }); propSave('_propcache', c); return propItems().good.some(x => x.id === P1); }, P1);
+    // 🛒 買物リストへの追加（shopping.add・v15.79）：未購入の同じ物は足さない・買った物は足す・分類なしは食品・同じ提案の中の重複は1つ・分類違いは読めない側
+    await A.evaluate(() => { state.tasks.shopping = [...(state.tasks.shopping || []), { uid: 11, text: '牛乳', done: false, cat: 'food' }, { uid: 12, text: '生姜', done: true, cat: 'food' }]; saveTasks(); });
+    const P7 = await put(enc({ v: 1, reason: '鍋の材料', ops: [{ type: 'shopping.add', text: '生姜', cat: 'food' }, { type: 'shopping.add', text: '牛乳' }, { type: 'shopping.add', text: ' 白菜 ' }, { type: 'shopping.add', text: '白菜' }, { type: 'shopping.add', text: '電球', cat: 'daily', done: true, uid: 1 }] }));
+    const P8 = await put(enc({ v: 1, ops: [{ type: 'shopping.add', text: 'x', cat: 'other' }] }));
+    const P9 = await put(enc({ v: 1, ops: [{ type: 'shopping.add', text: '   ' }] }));
+    r.shopShow = await A.evaluate(async P7 => { await propRefresh(true); state.widget = true; state.tab = '予定'; render();
+      const it = document.querySelector(`[data-propitem="${P7}"]`), t = it ? it.innerText : '';
+      return `${/買物リストに追加：「生姜」（🍎 食品）/.test(t)}|${/「牛乳」.*すでにある/.test(t)}|${/「電球」（🧴 消耗品）/.test(t)}|${propItems().bad.length}`; }, P7);
+    r.shopOk = await A.evaluate(async P7 => { const before = getSyncCfg().rev; await propDecide(P7, true); const L = state.tasks.shopping;
+      const f = t => L.filter(x => x.text === t && !x.done);
+      const ok = f('生姜').length === 1 && f('牛乳').length === 1 && f('白菜').length === 1 && f('白菜')[0].cat === 'food' && f('電球').length === 1 && f('電球')[0].cat === 'daily' && f('電球')[0].uid !== 1
+        && new Set(L.map(x => x.uid)).size === L.length;
+      return `${ok}|${getSyncCfg().rev > before}`; }, P7);
+    r.shopB = await B.evaluate(async () => { await syncCheckRemote(); return (state.tasks.shopping || []).filter(x => !x.done).map(x => x.text).join(','); });
+    r.shopBadClean = await A.evaluate(async () => { window.confirm = () => true; await propDeleteBad(); return propItems().bad.length; });
   }
   // ── 版の残し方（sync.php v2）：直近50＋1日1つを30日分＋1か月に1つを12か月分。古い日付の版を作ってから1回送る ──
   {
@@ -287,6 +302,7 @@ const EXE = findChromium();
     && r.ro === '200,200,200,200,200,403,403' && r.roNoWrite && r.roEncrypted
     && r.propAuth === '403,403,401' && r.propHt && r.propShow === '2|true|true' && r.propOk === 'true|true|true|true|true' && r.propB === 'true|true'
     && r.propNg === 'false|true' && r.propDup === 'true|1' && r.propBad === 0 && r.propLeft === 0 && r.propOnce === false
+    && r.shopShow === 'true|true|true|2' && r.shopOk === 'true|true' && r.shopB === '牛乳,生姜,白菜,電球' && r.shopBadClean === 0
     && /合言葉がサーバと合いません/.test(r.wrong) && errs.length === 0;
   console.log(ok ? '✓ 同期テスト PASS' : '✗ 同期テスト FAIL', errs); await b.close(); php.kill(); fs.rmSync(SRV, { recursive: true, force: true }); process.exit(ok ? 0 : 1);
 })();

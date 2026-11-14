@@ -258,7 +258,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.78"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.79"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -18731,9 +18731,10 @@ if(typeof document!=="undefined"){
 }
 // ═══════════════════════════════════════════════════
 // 📨 Claude からの提案（限定書き込み・v15.78）：Muse が propose.php に置いた暗号化された提案を、同期のついでに取ってきて、
-// 決まった形（goal.add＝目標ツリーへの追加 / schedule.add＝予定の追加）だけを表示する。反映は本人が「反映する」を押したときだけ。
+// 決まった形（goal.add＝目標ツリーへの追加 / schedule.add＝予定の追加 / shopping.add＝買物リストへの追加・v15.79）だけを表示する。反映は本人が「反映する」を押したときだけ。
 // 承認・却下は提案ごと。反映の直前にサーバの最新と混ぜ、直後に送る。決めたら pdel で片付ける。契約は API.md 12章。
 // ・処理した提案の ID を端末に残す（直近100件・_propdone）＝二重に反映しない。予定は同じ日・同じ時刻・同じ名前があれば足さない。
+//   買物は同じ文面の「まだ買っていない」項目があれば足さない（同じ提案の中の重複も、反映するときに1つにする）。
 // ・取ってきた提案は端末に控える（_propcache。同期の対象ではない）。読めない・形が違う提案は表示せず、⚙設定の同期カードから消せる。
 // ═══════════════════════════════════════════════════
 const PROP_PERIODS=["yearly","quarterly","monthly","weekly","daily"], PROP_DONE_MAX=100;
@@ -18788,8 +18789,16 @@ function propCheckOp(op){
     const dup=(state.schedule[d]||[]).some(x=>(x.title||"").trim()===entry.title&&(x.startH||0)===entry.startH&&(x.startM||0)===entry.startM);
     return {op:{type:"schedule.add",date:d,entry},dup};
   }
+  if(op.type==="shopping.add"){
+    if(!_propStr(op.text,100)) return {err:"買物の文面がありません"};
+    if(op.cat!=null&&!SHOP_CATS.some(s=>s.k===op.cat)) return {err:"買物の分類が違います"};
+    const text=op.text.trim(), cat=op.cat==null?"food":op.cat;   // 分類なしはアプリの既定（🍎 食品）
+    return {op:{type:"shopping.add",text,cat},dup:propShopDup(text)};
+  }
   return {err:`受け付けない操作です（${String(op.type||"?").slice(0,30)}）`};
 }
+// 買物リストに同じ文面の、まだ買っていない項目があるか
+function propShopDup(text){ return ((state.tasks&&state.tasks.shopping)||[]).some(x=>!x.done&&(x.text||"").trim()===text); }
 // 提案全体を確かめる → {ok, ops:[{op,dup}], reason, err}
 function propValidate(p){
   if(!p||typeof p!=="object"||p.v!==1) return {ok:false,err:"提案の形が違います"};
@@ -18839,17 +18848,22 @@ async function propDecide(id,approve){
         try{ _syncBusy=true; await syncMergeFromServer(); }catch(_){} finally{ _syncBusy=false; } }
       const it=getPropCache().items.find(x=>x.id===id); const v=it&&!it.bad?propValidate(it.p):null;
       if(!v||!v.ok){ showToast(`⚠ この提案は反映できません（${(v&&v.err)||"見つかりません"}）`,"#f97316"); return; }
-      let g=0, sc=0, skip=0;
+      let g=0, sc=0, sh=0, skip=0;
       v.ops.forEach(({op,dup})=>{ if(dup){ skip++; return; }
         if(op.type==="goal.add"){ const node={id:gtNewId(),text:op.node.text,done:false,collapsed:false,children:[],periodType:op.node.periodType,periodKey:op.node.periodKey,...(op.node.note?{note:op.node.note}:{})};
           if(op.parentId===null) state.goalTree=[...(state.goalTree||[]),node]; else { const f=gtFind(op.parentId); if(!f){ skip++; return; } f.node.children=[...(f.node.children||[]),node]; f.node.collapsed=false; }
           g++; }
         else if(op.type==="schedule.add"){ const e=op.entry; if(!state.schedule[op.date]) state.schedule[op.date]=[];
           state.schedule[op.date].push({uid:Date.now()+Math.random(),title:e.title,startH:e.startH,startM:e.startM,endH:e.endH,endM:e.endM,endNextDay:false,color:EV_DEFAULT,allDay:e.allDay,refOnly:false,...(e.note?{note:e.note}:{})});
-          sc++; } });
-      if(g) saveGoalTree(); if(sc){ saveSchedule(); try{ alexaSyncPlan(true); }catch(_){} }
+          sc++; }
+        else if(op.type==="shopping.add"){ if(propShopDup(op.text)){ skip++; return; }   // 同じ提案の中で同じ物が2回あっても1つだけ
+          if(!state.tasks||typeof state.tasks!=="object") state.tasks={todo:[],shopping:[]};
+          const list=state.tasks.shopping||[]; let uid=Date.now(); while(list.some(x=>x.uid===uid)) uid++;
+          state.tasks.shopping=[...list,{uid,text:op.text,done:false,cat:op.cat}];
+          sh++; } });
+      if(g) saveGoalTree(); if(sc){ saveSchedule(); try{ alexaSyncPlan(true); }catch(_){} } if(sh) saveTasks();
       markPropDone(id);
-      showToast(`📨 提案を反映しました（${[g?`目標${g}件`:"",sc?`予定${sc}件`:"",skip?`すでにある${skip}件は足さず`:""].filter(Boolean).join("・")||"変更なし"}）`,"#22c55e");
+      showToast(`📨 提案を反映しました（${[g?`目標${g}件`:"",sc?`予定${sc}件`:"",sh?`買物${sh}件`:"",skip?`すでにある${skip}件は足さず`:""].filter(Boolean).join("・")||"変更なし"}）`,"#22c55e");
     } else { markPropDone(id); showToast("📨 提案を却下しました","#94a3b8"); }
     propSave("_propcache",{items:getPropCache().items.filter(x=>x.id!==id)});
     try{ await propFetch("pdel",{post:true,q:`id=${encodeURIComponent(id)}`}); }catch(_){}   // 失敗しても、次の見回りでもう一度片付ける
@@ -18866,6 +18880,7 @@ async function propDeleteBad(){
 function propOpText(op,dup){
   if(op.type==="goal.add"){ const n=op.node, par=op.parentId?gtFind(op.parentId):null;
     return `🎯 目標を追加：「${n.text}」（${GT_PERIOD_LABELS[n.periodType]||n.periodType}・${pkLabel(n.periodKey)}${par?`・「${par.node.text}」の下`:"・いちばん上"}）${n.note?` 📝${n.note}`:""}${dup?"　※同じ目標がすでにあるので足しません":""}`; }
+  if(op.type==="shopping.add") return `🛒 買物リストに追加：「${op.text}」（${shopCatLabel(op.cat)}）${dup?"　※まだ買っていない同じ物がすでにあるので足しません":""}`;
   const e=op.entry, d=parseDS(op.date), wd=WEEKDAYS_JP[d.getDay()];
   return `📅 予定を追加：${d.getMonth()+1}/${d.getDate()}(${wd}) ${e.allDay?"終日":`${hhmm(e.startH,e.startM)}〜${hhmm(e.endH,e.endM)}`}「${e.title}」${e.note?` 📝${e.note}`:""}${dup?"　※同じ予定がすでにあるので足しません":""}`;
 }

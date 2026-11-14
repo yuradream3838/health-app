@@ -3,7 +3,7 @@
 > AIが参照しやすいよう、`api.php`（Geminiプロキシ）と、それを呼ぶクライアント関数の
 > **正確な契約**をまとめた常設リファレンス。実装は `health.html`（クライアント）と
 > サーバー上の `api.php` / `alexa.php` / `sync.php` / `propose.php`（どれもリポジトリ管理外。sync.php・propose.php はひな形 `server/*.php.example` だけを管理）。
-> 最終更新: アプリ v15.78 / api.php v4.1 / alexa.php v2.3 / sync.php v2.1 / propose.php v1。
+> 最終更新: アプリ v15.79 / api.php v4.1 / alexa.php v2.3 / sync.php v2.1 / propose.php v1。
 
 ---
 
@@ -392,18 +392,20 @@ Muse（読むだけの道具）が、本体のデータ（`sync.php` の `put`�
 {"v":1, "createdAt":"…", "reason":"なぜ提案するか（任意・1000文字まで）",
  "ops":[
    {"type":"goal.add", "parentId":null, "node":{"text":"…", "periodType":"weekly", "periodKey":"weekly_2026-11-16", "note":""}},
-   {"type":"schedule.add", "date":"2026-11-20", "entry":{"title":"…", "startH":10, "startM":0, "endH":11, "endM":0, "allDay":false, "note":""}}
+   {"type":"schedule.add", "date":"2026-11-20", "entry":{"title":"…", "startH":10, "startM":0, "endH":11, "endM":0, "allDay":false, "note":""}},
+   {"type":"shopping.add", "text":"生姜", "cat":"food"}
  ]}
 ```
-- `ops` は1〜20個。**受け付けるのは `goal.add` と `schedule.add` だけ**（それ以外がひとつでもあれば、その提案は「読めない提案」扱い）。
+- `ops` は1〜20個。**受け付けるのは `goal.add`・`schedule.add`・`shopping.add`（v15.79〜）だけ**（それ以外がひとつでもあれば、その提案は「読めない提案」扱い）。
 - `goal.add`：目標ツリー（`state.goalTree`）への追加だけ（変更・削除は対象外）。`text` 1〜200文字、`periodType`＝yearly/quarterly/monthly/weekly/daily、`periodKey` はアプリの形（`pkParse` で読めて、weekly は月曜の日付・daily は正しい日付・monthly は1〜12月・quarterly は Q1〜Q4）、`note` 1000文字まで。`parentId` は null（いちばん上）か、ある目標の id（無ければ「読めない提案」）。`id`・`done:false`・`children:[]`・`collapsed:false` はアプリが付ける。同じ親に同じ文面・同じ期間の目標があれば足さない。
 - `schedule.add`：`date` は正しい日付。受け付ける項目は `title`（1〜100文字）・`startH`/`startM`/`endH`/`endM`（終日でなければ必須・0〜23/0〜59、endH は24まで）・`allDay`・`note`（1000文字まで）だけで、**ほかの項目は捨てる**。`uid`（`Date.now()+Math.random()`）・色（`EV_DEFAULT`）はアプリが付ける。同じ日・同じ開始時刻・同じ名前の予定があれば足さない。
+- `shopping.add`（v15.79〜）：買物リスト（`state.tasks.shopping`）への追加だけ（変更・削除・買った印は対象外）。`text` 1〜100文字（前後の空白は除く）、`cat` は省略可で、付けるなら `want`/`daily`/`food` のどれか（それ以外は「読めない提案」）。省略時はアプリの既定の `food`（🍎 食品）。ほかの項目（`done`・`uid` など）は捨てる。`uid`（`Date.now()`。重ならないよう1ずつずらす）・`done:false` はアプリが付け、末尾に足す。同じ文面の**まだ買っていない**項目があれば足さない（同じ提案の中の重複も1つにする）。買った（done）項目と同じ文面なら足す。保存は通常の `saveTasks`（同期の単位は `tasks` 全体）。
 
 ### 12-4. アプリ側（health.html）
 - **取り込み**（`propRefresh`）：同期の見回り（起動して4秒後・画面に戻ったとき・開いている間3分ごと）のついでに `plist` → まだ持っていない提案を `pget` → `syncDecode` で復号して端末に控える（`localStorage["health_v2_propcache"]`。同期の対象にしない）。サーバに無くなった提案（期限切れ・別の端末で決めた）は控えからも外す。☁️同期が ON のときだけ（⚙設定の「📨 提案を確かめる」はいつでも）。
-- **表示**：ホームの「📨 Claude からの提案 N件」（ウィジェットの項目 `proposals`・宣言の下・反映待ちがあるときだけ）。提案ごとに、届いた日時・理由（`reason`）・操作を読みやすく（目標＝文面・期間・親／予定＝日時・名前・メモ。すでにあるものは「足しません」）出し、［✓ 反映する］［却下する］。決まった形を確かめてから出す（`propValidate`。表示するたびに今のデータで確かめ直す）。
+- **表示**：ホームの「📨 Claude からの提案 N件」（ウィジェットの項目 `proposals`・宣言の下・反映待ちがあるときだけ）。提案ごとに、届いた日時・理由（`reason`）・操作を読みやすく（目標＝文面・期間・親／予定＝日時・名前・メモ／買物＝「🛒 買物リストに追加：「生姜」（🍎 食品）」。すでにあるものは「足しません」）出し、［✓ 反映する］［却下する］。決まった形を確かめてから出す（`propValidate`。表示するたびに今のデータで確かめ直す）。
 - **読めない・形が違う提案**は表示せず、⚙設定の同期カードに「⚠ 読めない提案が N件あります［消す］」（`pdel` で片付ける）。
-- **反映**（`propDecide(id,true)`・提案ごと）：直前にサーバの最新と混ぜる（`syncMergeFromServer`）→ 確かめ直す → 目標・予定に追加（`saveGoalTree`/`saveSchedule`。変えた時刻は通常どおり付く）→ 処理済みの ID を記録 → `pdel` → すぐに送る（`syncUpload(false)`）。却下は反映せずに記録と `pdel` だけ。
-- **二重に反映しない**：処理済みの ID を端末に残す（直近100件・`localStorage["health_v2_propdone"]`）。サーバに残っていても表示しない（`pdel` に失敗していたら次の見回りでもう一度片付ける）。予定・目標は同じものがあれば足さない。
+- **反映**（`propDecide(id,true)`・提案ごと）：直前にサーバの最新と混ぜる（`syncMergeFromServer`）→ 確かめ直す → 目標・予定・買物リストに追加（`saveGoalTree`/`saveSchedule`/`saveTasks`。変えた時刻は通常どおり付く）→ 処理済みの ID を記録 → `pdel` → すぐに送る（`syncUpload(false)`）。却下は反映せずに記録と `pdel` だけ。
+- **二重に反映しない**：処理済みの ID を端末に残す（直近100件・`localStorage["health_v2_propdone"]`）。サーバに残っていても表示しない（`pdel` に失敗していたら次の見回りでもう一度片付ける）。予定・目標・買物（まだ買っていないもの）は同じものがあれば足さない。
 - 自動では反映しない。バックアップを見ている間は取り込まない・決められない。
 

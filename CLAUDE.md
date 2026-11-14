@@ -12,7 +12,7 @@
 - データは **localStorage のみ**（サーバDBなし）。キー接頭辞 `health_v2`。
 - AIは外部プロキシ **`api.php`（ConoHa上）経由で Gemini** を呼ぶ。
 - ☁️ 同期（任意）：**`sync.php`（ConoHa上）**に、端末の中で暗号化したデータを預ける（PCなど別の端末で読み込む）。契約は API.md 11章。
-- 📨 提案（任意）：**`propose.php`（ConoHa上）**に Muse が置いた提案（目標・予定の追加だけ）を、アプリが確かめて本人の承認で反映する。契約は API.md 12章。
+- 📨 提案（任意）：**`propose.php`（ConoHa上）**に Muse が置いた提案（目標・予定・買物リストの追加だけ）を、アプリが確かめて本人の承認で反映する。契約は API.md 12章。
 - 配信は **GitHub Pages**（`https://yuradream3838.github.io`）。
 
 ## ドキュメント
