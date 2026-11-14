@@ -4,3 +4,5 @@ alexa.php
 sync.php
 sync_data/
 server/sync.php
+propose.php
+server/propose.php

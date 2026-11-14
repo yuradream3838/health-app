@@ -2,8 +2,8 @@
 
 > AIが参照しやすいよう、`api.php`（Geminiプロキシ）と、それを呼ぶクライアント関数の
 > **正確な契約**をまとめた常設リファレンス。実装は `health.html`（クライアント）と
-> サーバー上の `api.php` / `alexa.php` / `sync.php`（どれもリポジトリ管理外。sync.php はひな形 `server/sync.php.example` だけを管理）。
-> 最終更新: アプリ v15.73 / api.php v4.1 / alexa.php v2.3 / sync.php v2.1。
+> サーバー上の `api.php` / `alexa.php` / `sync.php` / `propose.php`（どれもリポジトリ管理外。sync.php・propose.php はひな形 `server/*.php.example` だけを管理）。
+> 最終更新: アプリ v15.78 / api.php v4.1 / alexa.php v2.3 / sync.php v2.1 / propose.php v1。
 
 ---
 
@@ -360,4 +360,50 @@ curl -s "https://nuts024.com/health/alexa.php?tick=1" > /dev/null
   - `put` が **409** のとき：サーバの最新を取ってきて、ユニットごとに**時刻が新しいほう**を残して混ぜ、この端末に反映してから、その版を基準に送り直す（最大2回）。時刻が同じ（どちらも記録なし）なら、片方にしかなければそれを残し、両方にあって違えば新しく書き出したほうを残す。混ぜられないとき（読めない等）だけ `conflict` にして選んでもらう。
   - 開いたとき：サーバの方が新しく、この端末にも送っていない変更があれば、送る（＝混ぜて送る）。変更がなければそのまま読み込み、サーバの時刻も取り込む。
   - 過去の版に戻したときは、戻して変わったユニットに今の時刻を付ける（次に送ると、ほかの端末でも戻した内容が残る）。
+
+---
+
+## 12. 📨 提案の受け箱（`propose.php` v1・アプリ v15.78〜）
+
+Muse（読むだけの道具）が、本体のデータ（`sync.php` の `put`）には触らずに、**目標の追加・予定の追加の「提案」だけ**を置く入口。
+アプリが取り込んで確かめ、本人がアプリで「反映する」を押したものだけを、アプリ自身が反映する（設計：連携ハブ `handoff/2026-11-14-scoped-write-design.md`）。
+
+- 置き場所：`sync.php` と同じフォルダ（`https://nuts024.com/health/propose.php`）。アプリは同期のURLの `sync.php` を `propose.php` に替えて使う（`propUrl()`。`_sync.propUrl` があればそれ）。
+- ひな形：`server/propose.php.example`。`SYNC_AUTH_HASH`（sync.php と同じ値）・`PROP_CREATE_HASH`（提案トークンの SHA-256）を書き込んだ `propose.php` は**コミットしない**（`.gitignore` 済み）。
+- 保存先：`sync_data/proposals/{id}.bin`＋`index.json`（暗号文のまま）。初回に `proposals/.htaccess` と空の `index.html` を自分で作る（sync.php の `.htaccess` が無くても外から読めない）。保留は **14日**で期限切れ、保留が **50件**あると `pcreate` は 429。
+
+### 12-1. 認証・CORS
+- どちらも `X-Sync-Auth`（予備に `X-Prop-Auth`）で受け、SHA-256 で見分ける：本物（`SYNC_AUTH_HASH`）／提案トークン（`PROP_CREATE_HASH`・空なら無効）。どちらでもなければ 401（0.4秒待つ）。読み取り専用トークンでは通らない。
+- CORS は sync.php と同じ（`ALLOWED_ORIGINS`・許可外の Origin は 403・Origin なしは通す・OPTIONS 204・許可ヘッダ `X-Sync-Auth, X-Prop-Auth, Content-Type`）。
+
+### 12-2. 操作（`?a=`）
+| a | メソッド | 認証 | 内容 | 返事 |
+|---|---|---|---|---|
+| `pcreate` | POST | 提案トークンだけ | 提案を置く（本文は先頭 `HS1` の暗号文・最大64KB） | 200 `{id, createdAt}`／403 `forbidden`（本物では作れない）／400 `empty`/`format`／413／429 `too_many` |
+| `plist` | GET | どちらでも | 保留中の一覧（中身は返さない）。期限切れはここで掃除 | 200 `{items:[{id, createdAt, size}]}`（新しい順） |
+| `pget` | GET | 本物だけ | 提案の中身（暗号文のまま）。`&id=` | 200 バイナリ／403／404／400 `id` |
+| `pdel` | POST | 本物だけ | 提案を片付ける（反映・却下どちらでも）。`&id=` | 200 `{deleted}`／403／400 `id` |
+
+- `id` は `YYYYMMDDHHMMSS_8桁16進`（`[0-9A-Za-z_-]{1,40}` 以外は 400）。
+
+### 12-3. 提案の中身（復号すると JSON）
+暗号化は同期と同じ（11-3：`HS1`＋圧縮フラグ＋IV＋AES-GCM。鍵は合言葉から作る前半32バイト）。
+```json
+{"v":1, "createdAt":"…", "reason":"なぜ提案するか（任意・1000文字まで）",
+ "ops":[
+   {"type":"goal.add", "parentId":null, "node":{"text":"…", "periodType":"weekly", "periodKey":"weekly_2026-11-16", "note":""}},
+   {"type":"schedule.add", "date":"2026-11-20", "entry":{"title":"…", "startH":10, "startM":0, "endH":11, "endM":0, "allDay":false, "note":""}}
+ ]}
+```
+- `ops` は1〜20個。**受け付けるのは `goal.add` と `schedule.add` だけ**（それ以外がひとつでもあれば、その提案は「読めない提案」扱い）。
+- `goal.add`：目標ツリー（`state.goalTree`）への追加だけ（変更・削除は対象外）。`text` 1〜200文字、`periodType`＝yearly/quarterly/monthly/weekly/daily、`periodKey` はアプリの形（`pkParse` で読めて、weekly は月曜の日付・daily は正しい日付・monthly は1〜12月・quarterly は Q1〜Q4）、`note` 1000文字まで。`parentId` は null（いちばん上）か、ある目標の id（無ければ「読めない提案」）。`id`・`done:false`・`children:[]`・`collapsed:false` はアプリが付ける。同じ親に同じ文面・同じ期間の目標があれば足さない。
+- `schedule.add`：`date` は正しい日付。受け付ける項目は `title`（1〜100文字）・`startH`/`startM`/`endH`/`endM`（終日でなければ必須・0〜23/0〜59、endH は24まで）・`allDay`・`note`（1000文字まで）だけで、**ほかの項目は捨てる**。`uid`（`Date.now()+Math.random()`）・色（`EV_DEFAULT`）はアプリが付ける。同じ日・同じ開始時刻・同じ名前の予定があれば足さない。
+
+### 12-4. アプリ側（health.html）
+- **取り込み**（`propRefresh`）：同期の見回り（起動して4秒後・画面に戻ったとき・開いている間3分ごと）のついでに `plist` → まだ持っていない提案を `pget` → `syncDecode` で復号して端末に控える（`localStorage["health_v2_propcache"]`。同期の対象にしない）。サーバに無くなった提案（期限切れ・別の端末で決めた）は控えからも外す。☁️同期が ON のときだけ（⚙設定の「📨 提案を確かめる」はいつでも）。
+- **表示**：ホームの「📨 Claude からの提案 N件」（ウィジェットの項目 `proposals`・宣言の下・反映待ちがあるときだけ）。提案ごとに、届いた日時・理由（`reason`）・操作を読みやすく（目標＝文面・期間・親／予定＝日時・名前・メモ。すでにあるものは「足しません」）出し、［✓ 反映する］［却下する］。決まった形を確かめてから出す（`propValidate`。表示するたびに今のデータで確かめ直す）。
+- **読めない・形が違う提案**は表示せず、⚙設定の同期カードに「⚠ 読めない提案が N件あります［消す］」（`pdel` で片付ける）。
+- **反映**（`propDecide(id,true)`・提案ごと）：直前にサーバの最新と混ぜる（`syncMergeFromServer`）→ 確かめ直す → 目標・予定に追加（`saveGoalTree`/`saveSchedule`。変えた時刻は通常どおり付く）→ 処理済みの ID を記録 → `pdel` → すぐに送る（`syncUpload(false)`）。却下は反映せずに記録と `pdel` だけ。
+- **二重に反映しない**：処理済みの ID を端末に残す（直近100件・`localStorage["health_v2_propdone"]`）。サーバに残っていても表示しない（`pdel` に失敗していたら次の見回りでもう一度片付ける）。予定・目標は同じものがあれば足さない。
+- 自動では反映しない。バックアップを見ている間は取り込まない・決められない。
 

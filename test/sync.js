@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// ☁️ ConoHa 同期の結合テスト（v15.69・双方向 v15.70・sync.php v2.1 の読み取り専用トークン）：本物の server/sync.php.example を PHP の組み込みサーバで動かし、
+// ☁️ ConoHa 同期の結合テスト（v15.69・双方向 v15.70・sync.php v2.1 の読み取り専用トークン・propose.php の提案 v15.78）：本物の server/sync.php.example を PHP の組み込みサーバで動かし、
 // スマホ・PC の2つの端末（別々のブラウザ）で、設定 → 送る → PCで読み込む → 自動で届く → 両方で記録したとき自動で混ぜる（新しいほうが残る）
 // → 過去の版に戻す → 合言葉違い・サーバの中身が暗号化されていること を確かめる。
 // php が無い環境では SKIP（終了コード0）。実行: node test/sync.js
@@ -43,7 +43,11 @@ const EXE = findChromium();
   const tpl = fs.readFileSync(path.join(ROOT, 'server/sync.php.example'), 'utf8').replace("['https://yuradream3838.github.io']", "['https://yuradream3838.github.io','null']");
   // 読み取り専用トークン（v2.1）：テスト用の値とその SHA-256
   const RO_TOKEN = 'b'.repeat(64), RO_HASH = require('crypto').createHash('sha256').update(RO_TOKEN).digest('hex');
-  const writePhp = hash => fs.writeFileSync(path.join(SRV, 'sync.php'), tpl.replace("'ここにアプリの「サーバに貼る値」を貼る'", `'${hash}'`).replace("const SYNC_READ_HASH  = '';", `const SYNC_READ_HASH  = '${RO_HASH}';`));
+  // 提案トークン（propose.php）：テスト用の値とその SHA-256
+  const PROP_TOKEN = 'd'.repeat(64), PROP_HASH = require('crypto').createHash('sha256').update(PROP_TOKEN).digest('hex');
+  const ptpl = fs.readFileSync(path.join(ROOT, 'server/propose.php.example'), 'utf8').replace("['https://yuradream3838.github.io']", "['https://yuradream3838.github.io','null']");
+  const writePhp = hash => { fs.writeFileSync(path.join(SRV, 'sync.php'), tpl.replace("'ここにアプリの「サーバに貼る値」を貼る'", `'${hash}'`).replace("const SYNC_READ_HASH  = '';", `const SYNC_READ_HASH  = '${RO_HASH}';`));
+    fs.writeFileSync(path.join(SRV, 'propose.php'), ptpl.replace("const SYNC_AUTH_HASH   = '';", `const SYNC_AUTH_HASH   = '${hash}';`).replace("const PROP_CREATE_HASH = '';", `const PROP_CREATE_HASH = '${PROP_HASH}';`)); };
   writePhp('ここにアプリの「サーバに貼る値」を貼る');
   // 空いているポートを使う（前のテストの PHP が残っていても混ざらないように）
   const PORT = await new Promise(res => { const srv = require('net').createServer(); srv.listen(0, '127.0.0.1', () => { const p = srv.address().port; srv.close(() => res(p)); }); });
@@ -206,6 +210,47 @@ const EXE = findChromium();
     const blob = Buffer.from(await (await fetch(URL + '?a=get', { headers: H })).arrayBuffer());
     r.roEncrypted = blob.slice(0, 3).toString() === 'HS1' && !blob.includes(Buffer.from('PCで記録'));
   }
+  // ── 📨 提案（propose.php・v15.78）：Muse の代わりに Node で暗号化した提案を置き、アプリで 反映／却下／読めないものを消す ──
+  {
+    const PURL = URL.replace('sync.php', 'propose.php');
+    const keyB64 = await A.evaluate(() => getSyncCfg().key), KEY = Buffer.from(keyB64, 'base64');
+    const enc = (obj, key) => { const iv = require('crypto').randomBytes(12), c = require('crypto').createCipheriv('aes-256-gcm', key || KEY, iv);
+      const ct = Buffer.concat([c.update(require('zlib').gzipSync(Buffer.from(JSON.stringify(obj)))), c.final(), c.getAuthTag()]);
+      return Buffer.concat([Buffer.from('HS1'), Buffer.from([1]), iv, ct]); };
+    const put = async b => { const x = await fetch(PURL + '?a=pcreate', { method: 'POST', headers: { 'X-Sync-Auth': PROP_TOKEN, 'Content-Type': 'application/octet-stream' }, body: b }); return (await x.json()).id; };
+    const nextMon = (() => { const d = new Date(); d.setDate(d.getDate() + ((8 - d.getDay()) % 7 || 7)); return d.toISOString().slice(0, 10); })();
+    const mkSched = (title, h) => ({ type: 'schedule.add', date: '2026-12-20', entry: { title, startH: h, startM: 0, endH: h + 1, endM: 0, allDay: false, note: '提案のメモ', color: '#ff0000', refOnly: true, uid: 1 } });
+    const P1 = await put(enc({ v: 1, createdAt: new Date().toISOString(), reason: '週末に歯医者を入れて、来週の目標も足しませんか', ops: [mkSched('歯医者（提案）', 10), { type: 'goal.add', parentId: null, node: { text: '週3回は休肝日', periodType: 'weekly', periodKey: `weekly_${nextMon}`, note: '' } }] }));
+    const P2 = await put(enc({ v: 1, reason: '古い形', ops: [{ type: 'goal.set', key: 'weekly_2026-11-16', value: { text: 'x' } }] }));
+    const P3 = await put(enc({ v: 1, ops: [mkSched('読めない', 9)] }, Buffer.alloc(32, 7)));
+    const P4 = await put(enc({ v: 1, reason: '却下するもの', ops: [mkSched('ジム（提案）', 18)] }));
+    const P5 = await put(enc({ v: 1, ops: [{ type: 'goal.add', parentId: 'no-such-id', node: { text: '親なし', periodType: 'weekly', periodKey: `weekly_${nextMon}` } }] }));
+    // 提案トークンでは中身を取れない・片付けられない／読み取り専用トークンは通らない
+    r.propAuth = [(await fetch(PURL + `?a=pget&id=${P1}`, { headers: { 'X-Sync-Auth': PROP_TOKEN } })).status, (await fetch(PURL + `?a=pdel&id=${P1}`, { method: 'POST', headers: { 'X-Sync-Auth': PROP_TOKEN } })).status, (await fetch(PURL + '?a=plist', { headers: { 'X-Sync-Auth': RO_TOKEN } })).status].join(',');
+    r.propHt = fs.existsSync(path.join(SRV, 'sync_data/proposals/.htaccess'));
+    // アプリ：取ってくる → ホームのカード（形の正しい2件）／設定に「読めない提案 3件」
+    r.propShow = await A.evaluate(async () => { await propRefresh(true); state.widget = true; state.tab = '予定'; render();
+      const card = document.querySelector('[data-propcard]'); const items = card ? card.querySelectorAll('[data-propitem]').length : 0;
+      state.widget = false; state.tab = '設定'; render(); const sp = (document.querySelector('[data-syncprop]') || {}).innerText || '';
+      return `${items}|${/読めない提案が 3件/.test(sp)}|${card ? /週3回は休肝日/.test(card.innerText) && /歯医者（提案）/.test(card.innerText) && /歯医者を入れて/.test(card.innerText) : false}`; });
+    // 反映する（提案ごと）→ 予定と目標が増え、提案は片付き、サーバにも送られる
+    r.propOk = await A.evaluate(async P1 => { const before = getSyncCfg().rev; await propDecide(P1, true);
+      const ev = (state.schedule['2026-12-20'] || []).find(e => e.title === '歯医者（提案）'); const gl = (state.goalTree || []).find(n => n.text === '週3回は休肝日');
+      return `${!!ev}|${ev && ev.color === EV_DEFAULT && ev.refOnly === false && ev.note === '提案のメモ' && typeof ev.uid === 'number' && ev.uid !== 1}|${!!gl && gl.done === false && gl.periodType === 'weekly' && Array.isArray(gl.children)}|${getSyncCfg().rev > before}|${getPropDone().includes(P1)}`; }, P1);
+    // 別の端末（PC）にも届く
+    r.propB = await B.evaluate(async () => { await syncCheckRemote(); return `${(state.schedule['2026-12-20'] || []).some(e => e.title === '歯医者（提案）')}|${(state.goalTree || []).some(n => n.text === '週3回は休肝日')}`; });
+    // 却下する → データは変わらない
+    r.propNg = await A.evaluate(async P4 => { await propDecide(P4, false); return `${(state.schedule['2026-12-20'] || []).some(e => e.title === 'ジム（提案）')}|${getPropDone().includes(P4)}`; }, P4);
+    // 同じ予定をもう一度提案 → 「すでにある」として足さない
+    const P6 = await put(enc({ v: 1, ops: [mkSched('歯医者（提案）', 10)] }));
+    r.propDup = await A.evaluate(async P6 => { await propRefresh(true); const it = propItems().good.find(x => x.id === P6); const dup = it && it.v.ops[0].dup;
+      await propDecide(P6, true); return `${dup}|${(state.schedule['2026-12-20'] || []).filter(e => e.title === '歯医者（提案）').length}`; }, P6);
+    // 読めない提案を消す → サーバの保留は空に
+    r.propBad = await A.evaluate(async () => { window.confirm = () => true; await propDeleteBad(); return propItems().bad.length; });
+    r.propLeft = (await (await fetch(PURL + '?a=plist', { headers: { 'X-Sync-Auth': PROP_TOKEN } })).json()).items.length;
+    // 二重に反映しない：処理済みの ID は、サーバに残っていても表示しない
+    r.propOnce = await A.evaluate(async P1 => { const c = getPropCache(); c.items.push({ id: P1, at: '', p: { v: 1, ops: [] } }); propSave('_propcache', c); return propItems().good.some(x => x.id === P1); }, P1);
+  }
   // ── 版の残し方（sync.php v2）：直近50＋1日1つを30日分＋1か月に1つを12か月分。古い日付の版を作ってから1回送る ──
   {
     const auth = await A.evaluate(() => getSyncCfg().auth), meta = JSON.parse(fs.readFileSync(path.join(SRV, 'sync_data/meta.json'), 'utf8'));
@@ -240,6 +285,8 @@ const EXE = findChromium();
     && /^true\|2\|1$/.test(r.archAgain) && r.revView === 'true|0'
     && /^200\|\d+\|true\|true\|true\|true$/.test(r.keep)
     && r.ro === '200,200,200,200,200,403,403' && r.roNoWrite && r.roEncrypted
+    && r.propAuth === '403,403,401' && r.propHt && r.propShow === '2|true|true' && r.propOk === 'true|true|true|true|true' && r.propB === 'true|true'
+    && r.propNg === 'false|true' && r.propDup === 'true|1' && r.propBad === 0 && r.propLeft === 0 && r.propOnce === false
     && /合言葉がサーバと合いません/.test(r.wrong) && errs.length === 0;
   console.log(ok ? '✓ 同期テスト PASS' : '✗ 同期テスト FAIL', errs); await b.close(); php.kill(); fs.rmSync(SRV, { recursive: true, force: true }); process.exit(ok ? 0 : 1);
 })();

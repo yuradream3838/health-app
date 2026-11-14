@@ -1,0 +1,160 @@
+<?php
+// ─────────────────────────────────────────────────────────────
+// 体調管理 ☁️ 「限定書き込み提案」受け箱（propose.php） v1
+//
+// Muse がアプリ本体のデータ（sync.php の put）には一切触らず、
+// 「目標の追加・変更」「予定の追加」の提案だけを置くための専用入口。
+// 提案はアプリの合言葉から作った鍵で暗号化されたまま（HS1形式）で届き、
+// このサーバは中身を読めない。アプリが取り込んで検証し、本人が
+// アプリで承認した提案だけが、アプリ自身の手でデータに反映される。
+//
+// 使い方：
+//   1. このファイルを sync.php と同じフォルダ（例：public_html/health/）に置く
+//   2. SYNC_AUTH_HASH に、sync.php と同じ「サーバに貼る値」を貼る
+//   3. PROP_CREATE_HASH に、提案トークン（64桁の16進ランダム値）の
+//      SHA-256 を貼る。提案トークンは読み取り専用トークンとは別のもの
+//   4. 提案は sync_data/proposals/ に保存される（sync.php が作る
+//      sync_data/.htaccess で外からは読めない）
+// ・提案トークンでできるのは「提案を作る」「保留中の一覧を見る」だけ。
+//   本体データの読み書きは一切できない。漏れても被害は提案の迷惑投稿までで、
+//   無効化は PROP_CREATE_HASH を空にするだけ（端末側に影響なし）。
+// ・提案の取得（pget）と削除（pdel）は本物の認証値でだけ通す（アプリ用）。
+//   本人がアプリで承認／却下を決めたら、アプリが pdel で片付ける。
+// ・保留中の提案は14日で自動的に期限切れとして削除する。
+// ・SYNC_AUTH_HASH / PROP_CREATE_HASH を書き込んだ propose.php はリポジトリにコミットしない（sync.php と同じ扱い）。
+// ・提案の中身の形（ops）は API.md 12章。アプリは決まった形（goal.add / schedule.add）しか表示・反映しない。
+// ─────────────────────────────────────────────────────────────
+
+const SYNC_AUTH_HASH   = '';
+const PROP_CREATE_HASH = '';   // 提案トークンの SHA-256（空なら提案の作成は無効）
+const ALLOWED_ORIGINS  = ['https://yuradream3838.github.io'];
+const PROP_DIR         = __DIR__ . '/sync_data/proposals';
+const MAX_BYTES        = 64 * 1024;        // 提案は小さいものだけ
+const EXPIRE_DAYS      = 14;               // 保留の期限
+
+$origin = $_SERVER['HTTP_ORIGIN'] ?? '';
+if (in_array($origin, ALLOWED_ORIGINS, true)) {
+  header('Access-Control-Allow-Origin: ' . $origin);
+  header('Vary: Origin');
+  header('Access-Control-Allow-Headers: X-Sync-Auth, X-Prop-Auth, Content-Type');
+  header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
+  header('Access-Control-Max-Age: 600');
+}
+if (($_SERVER['REQUEST_METHOD'] ?? '') === 'OPTIONS') { http_response_code(204); exit; }
+header('Cache-Control: no-store');
+header('X-Content-Type-Options: nosniff');
+
+function out($code, $arr) {
+  http_response_code($code);
+  header('Content-Type: application/json; charset=utf-8');
+  echo json_encode($arr, JSON_UNESCAPED_UNICODE);
+  exit;
+}
+
+if ($origin !== '' && !in_array($origin, ALLOWED_ORIGINS, true)) out(403, ['error' => 'origin']);
+
+// 認証：本物（アプリ用）と提案トークン（Muse 用）は、どちらも X-Sync-Auth
+// ヘッダーで受けてハッシュで見分ける（sync.php の $isFull / $isRead と同じ書き方。
+// アプリ側は sync.php と同じ送り方でよい）。X-Prop-Auth も予備として受ける。
+$candidates = [$_SERVER['HTTP_X_SYNC_AUTH'] ?? '', $_SERVER['HTTP_X_PROP_AUTH'] ?? ''];
+$isFull = false; $isProp = false;
+foreach ($candidates as $v) {
+  if (!preg_match('/^[0-9a-f]{64}$/', $v)) continue;
+  $h = hash('sha256', $v);
+  if (preg_match('/^[0-9a-f]{64}$/', SYNC_AUTH_HASH) && hash_equals(SYNC_AUTH_HASH, $h)) $isFull = true;
+  if (preg_match('/^[0-9a-f]{64}$/', PROP_CREATE_HASH) && hash_equals(PROP_CREATE_HASH, $h)) $isProp = true;
+}
+if (!$isFull && !$isProp) {
+  usleep(400000);
+  out(401, ['error' => 'auth']);
+}
+
+if (!is_dir(PROP_DIR)) { @mkdir(PROP_DIR, 0700, true); }
+if (!is_dir(PROP_DIR)) out(500, ['error' => 'mkdir']);
+// 外から見えないようにする（sync.php が sync_data/.htaccess を作る前に使っても守られるように、提案のフォルダにも置く）
+if (!file_exists(PROP_DIR . '/.htaccess')) {
+  @file_put_contents(PROP_DIR . '/.htaccess',
+    "<IfModule mod_authz_core.c>\nRequire all denied\n</IfModule>\n<IfModule !mod_authz_core.c>\nOrder allow,deny\nDeny from all\n</IfModule>\n");
+}
+if (!file_exists(PROP_DIR . '/index.html')) { @file_put_contents(PROP_DIR . '/index.html', ''); }
+$indexFile = PROP_DIR . '/index.json';
+function readIndex($f) { if (!file_exists($f)) return []; $a = json_decode((string)@file_get_contents($f), true); return is_array($a) ? $a : []; }
+function writeIndex($f, $items) { $t = $f . '.tmp'; file_put_contents($t, json_encode($items, JSON_UNESCAPED_UNICODE)); rename($t, $f); }
+function safeId($n) { return (is_string($n) && preg_match('/^[0-9A-Za-z_-]{1,40}$/', $n)) ? $n : null; }
+
+// 期限切れの掃除をしてから今の索引を返す
+function pruneIndex($f) {
+  $items = readIndex($f);
+  $limit = time() - EXPIRE_DAYS * 86400;
+  $kept = [];
+  foreach ($items as $it) {
+    $t = strtotime($it['createdAt'] ?? '') ?: 0;
+    if ($t >= $limit) { $kept[] = $it; }
+    else { @unlink(PROP_DIR . '/' . ($it['id'] ?? '') . '.bin'); }
+  }
+  if (count($kept) !== count($items)) writeIndex($f, $kept);
+  return $kept;
+}
+
+$a = $_GET['a'] ?? '';
+
+// 提案を作る（提案トークンのみ）。本文は HS1 形式の暗号文だけを受ける
+if ($a === 'pcreate') {
+  if (!$isProp) out(403, ['error' => 'forbidden']);
+  if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') out(405, ['error' => 'method']);
+  $len = (int)($_SERVER['CONTENT_LENGTH'] ?? 0);
+  if ($len > MAX_BYTES) out(413, ['error' => 'too_large']);
+  $body = file_get_contents('php://input');
+  if ($body === false || strlen($body) < 32) out(400, ['error' => 'empty']);
+  if (strlen($body) > MAX_BYTES) out(413, ['error' => 'too_large']);
+  if (substr($body, 0, 3) !== 'HS1') out(400, ['error' => 'format']);
+  $lock = fopen(PROP_DIR . '/.lock', 'c');
+  if (!$lock || !flock($lock, LOCK_EX)) out(500, ['error' => 'lock']);
+  $items = pruneIndex($indexFile);
+  if (count($items) >= 50) { flock($lock, LOCK_UN); out(429, ['error' => 'too_many']); }   // 保留の上限（トークン漏れ時の容量守り）
+  $id = gmdate('YmdHis') . '_' . bin2hex(random_bytes(4));
+  $now = gmdate('Y-m-d\TH:i:s\Z');
+  $tmp = PROP_DIR . '/' . $id . '.tmp';
+  if (file_put_contents($tmp, $body) !== strlen($body) || !rename($tmp, PROP_DIR . '/' . $id . '.bin')) {
+    @unlink($tmp); flock($lock, LOCK_UN); out(500, ['error' => 'write']);
+  }
+  array_unshift($items, ['id' => $id, 'createdAt' => $now, 'size' => strlen($body)]);
+  writeIndex($indexFile, $items);
+  flock($lock, LOCK_UN);
+  out(200, ['id' => $id, 'createdAt' => $now]);
+}
+
+// 保留中の一覧（本物・提案トークンのどちらでも。中身は返さない）
+if ($a === 'plist') {
+  out(200, ['items' => pruneIndex($indexFile)]);
+}
+
+// 提案の中身（暗号化されたまま）。アプリ用：本物の認証だけ
+if ($a === 'pget') {
+  if (!$isFull) out(403, ['error' => 'forbidden']);
+  $id = safeId($_GET['id'] ?? '');
+  if ($id === null) out(400, ['error' => 'id']);
+  $f = PROP_DIR . '/' . $id . '.bin';
+  if (!file_exists($f)) out(404, ['error' => 'none']);
+  header('Content-Type: application/octet-stream');
+  header('Content-Length: ' . filesize($f));
+  readfile($f);
+  exit;
+}
+
+// 提案を片付ける（承認して反映済み／却下のどちらでも、アプリが呼ぶ）。本物の認証だけ
+if ($a === 'pdel') {
+  if (!$isFull) out(403, ['error' => 'forbidden']);
+  if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') out(405, ['error' => 'method']);
+  $id = safeId($_GET['id'] ?? '');
+  if ($id === null) out(400, ['error' => 'id']);
+  $lock = fopen(PROP_DIR . '/.lock', 'c');
+  if (!$lock || !flock($lock, LOCK_EX)) out(500, ['error' => 'lock']);
+  $items = array_values(array_filter(readIndex($indexFile), function ($it) use ($id) { return ($it['id'] ?? '') !== $id; }));
+  writeIndex($indexFile, $items);
+  @unlink(PROP_DIR . '/' . $id . '.bin');
+  flock($lock, LOCK_UN);
+  out(200, ['deleted' => $id]);
+}
+
+out(400, ['error' => 'action']);

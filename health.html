@@ -258,7 +258,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.77"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.78"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -1938,6 +1938,7 @@ function nextDate(){
 // ── ウィジェットの表示項目（ユーザーが表示/非表示を選べる）──
 const WIDGET_SECTIONS=[
   {k:'decl',      l:'✍️ わたしの宣言'},
+  {k:'proposals', l:'📨 Claude からの提案'},
   {k:'sober',     l:'🚱 休肝日（今週）'},
   {k:'sched',     l:'📅 今日の予定'},
   {k:'quick',     l:'⚡ クイック記録'},
@@ -4840,6 +4841,7 @@ function renderWidgetView(vd,ds){
   }
   if(wSecOn('nextdrink')) secNodes.nextdrink=nextDrinkCard(); // 🍺 次に飲みに行く予定（踏みとどまるの下）
   if(wSecOn('sober')) secNodes.sober=soberWeekCard(); // 🚱 休肝日（今週）
+  if(wSecOn('proposals')){ const pc=proposalsCard(); if(pc) secNodes.proposals=pc; }   // 📨 Claude からの提案（反映待ちがあるとき）
   if(vd===todayStr() && wSecOn('nightritual')) secNodes.nightritual=nightRitualCard(vd,false); // 🌙 飲まない夜のルーティン
 
   // ── 🫂 つながり習慣（今日・今週の進捗） ──
@@ -18717,15 +18719,174 @@ function syncPeriodicCheck(now){
   if(now-_syncLastCheck<SYNC_CHECK_MS) return;
   if(state.modal) return;
   try{ const ae=document.activeElement, tg=ae&&ae.tagName; if(tg==="INPUT"||tg==="TEXTAREA"||tg==="SELECT"||(ae&&ae.isContentEditable)) return; }catch(_){}
-  _syncLastCheck=now; syncCheckRemote();
+  _syncLastCheck=now; syncCheckRemote().then(()=>propRefresh());
 }
 if(typeof document!=="undefined"){
   document.addEventListener('visibilitychange',()=>{ try{
     if(document.hidden){ const c=getSyncCfg(); if(c.on&&syncReady()&&c.dirtyAt&&!c.conflict) syncUpload(false); }
-    else { _syncLastCheck=Date.now(); syncCheckRemote(); }
+    else { _syncLastCheck=Date.now(); syncCheckRemote().then(()=>propRefresh()); }
   }catch(_){} });
   setTimeout(()=>{ try{ if(syncReady()&&!_syncPrevUnits) syncStampNow(); }catch(_){} },0);   // 起動時の中身を基準に（ここからの変更に時刻を付ける）
-  setTimeout(()=>{ try{ syncCheckRemote().then(()=>syncAutoTick(Date.now()+SYNC_DEBOUNCE_MS)); }catch(_){} },4000);
+  setTimeout(()=>{ try{ syncCheckRemote().then(()=>{ syncAutoTick(Date.now()+SYNC_DEBOUNCE_MS); return propRefresh(); }); }catch(_){} },4000);
+}
+// ═══════════════════════════════════════════════════
+// 📨 Claude からの提案（限定書き込み・v15.78）：Muse が propose.php に置いた暗号化された提案を、同期のついでに取ってきて、
+// 決まった形（goal.add＝目標ツリーへの追加 / schedule.add＝予定の追加）だけを表示する。反映は本人が「反映する」を押したときだけ。
+// 承認・却下は提案ごと。反映の直前にサーバの最新と混ぜ、直後に送る。決めたら pdel で片付ける。契約は API.md 12章。
+// ・処理した提案の ID を端末に残す（直近100件・_propdone）＝二重に反映しない。予定は同じ日・同じ時刻・同じ名前があれば足さない。
+// ・取ってきた提案は端末に控える（_propcache。同期の対象ではない）。読めない・形が違う提案は表示せず、⚙設定の同期カードから消せる。
+// ═══════════════════════════════════════════════════
+const PROP_PERIODS=["yearly","quarterly","monthly","weekly","daily"], PROP_DONE_MAX=100;
+function propUrl(){ const c=getSyncCfg(); if(c.propUrl) return c.propUrl; const u=c.url||SYNC_URL_DEFAULT; return /sync\.php(\?.*)?$/.test(u)?u.replace(/sync\.php(\?.*)?$/,"propose.php"):u.replace(/\/[^\/]*$/,"/propose.php"); }
+async function propFetch(a,opt){
+  const c=getSyncCfg(), o=opt||{}, url=propUrl();
+  return fetch(`${url}${url.includes("?")?"&":"?"}a=${a}${o.q?"&"+o.q:""}`,{method:o.post?"POST":"GET",headers:{"X-Sync-Auth":c.auth||""},cache:"no-store"});
+}
+function propLoad(key,def){ try{ const v=JSON.parse(localStorage.getItem(STORAGE_KEY+key)||"null"); return v==null?def:v; }catch(_){ return def; } }
+function propSave(key,v){ try{ localStorage.setItem(STORAGE_KEY+key,JSON.stringify(v)); }catch(_){} }   // safeSet を通さない（同期の「変更」にしない）
+function getPropCache(){ const c=propLoad("_propcache",null); return (c&&Array.isArray(c.items))?c:{items:[]}; }
+function getPropDone(){ const a=propLoad("_propdone",[]); return Array.isArray(a)?a:[]; }
+function markPropDone(id){ const a=getPropDone().filter(x=>x!==id); a.unshift(id); propSave("_propdone",a.slice(0,PROP_DONE_MAX)); }
+// 期間キーがアプリの形か（pkParse で読めて、中身も正しい）
+function propPeriodKeyOk(type,key){
+  if(typeof key!=="string"||!key.startsWith(type+"_")) return false;
+  const p=pkParse(key); if(!p) return false;
+  const okDate=ds=>/^\d{4}-\d{2}-\d{2}$/.test(ds)&&fmtDS(parseDS(ds))===ds;
+  if(type==="yearly") return /^yearly_\d{4}$/.test(key);
+  if(type==="quarterly") return /^quarterly_\d{4}-Q[1-4]$/.test(key);
+  if(type==="monthly") return /^monthly_\d{4}-\d{1,2}$/.test(key)&&p.m>=1&&p.m<=12;
+  if(type==="weekly") return okDate(p.monday)&&parseDS(p.monday).getDay()===1;
+  if(type==="daily") return okDate(p.date);
+  return false;
+}
+const _propStr=(v,max)=>typeof v==="string"&&v.trim().length>0&&v.length<=max;
+const _propInt=(v,lo,hi)=>Number.isInteger(v)&&v>=lo&&v<=hi;
+// 1つの op を確かめて、受け付ける項目だけにした形を返す（だめなら {err}）。dup＝もうあるので反映しない
+function propCheckOp(op){
+  if(!op||typeof op!=="object") return {err:"形が違います"};
+  if(op.type==="goal.add"){
+    const n=op.node||{};
+    if(!_propStr(n.text,200)) return {err:"目標の文面がありません"};
+    if(!PROP_PERIODS.includes(n.periodType)) return {err:"目標の期間の種類が違います"};
+    if(!propPeriodKeyOk(n.periodType,n.periodKey)) return {err:"目標の期間の形が違います"};
+    if(n.note!=null&&(typeof n.note!=="string"||n.note.length>1000)) return {err:"目標のメモが長すぎます"};
+    const parentId=op.parentId==null?null:op.parentId;
+    if(parentId!==null&&(typeof parentId!=="string"||!gtFind(parentId))) return {err:"親の目標が見つかりません"};
+    const node={text:n.text.trim(),periodType:n.periodType,periodKey:n.periodKey,note:(n.note||"").trim()};
+    const sibs=parentId===null?(state.goalTree||[]):((gtFind(parentId).node.children)||[]);
+    const dup=sibs.some(x=>(x.text||"").trim()===node.text&&x.periodKey===node.periodKey);
+    return {op:{type:"goal.add",parentId,node},dup};
+  }
+  if(op.type==="schedule.add"){
+    const d=op.date, e=op.entry||{};
+    if(typeof d!=="string"||!/^\d{4}-\d{2}-\d{2}$/.test(d)||fmtDS(parseDS(d))!==d) return {err:"予定の日付が違います"};
+    if(!_propStr(e.title,100)) return {err:"予定の名前がありません"};
+    const allDay=e.allDay===true;
+    if(!allDay&&!(_propInt(e.startH,0,23)&&_propInt(e.startM,0,59)&&_propInt(e.endH,0,24)&&_propInt(e.endM,0,59))) return {err:"予定の時刻が違います"};
+    if(e.note!=null&&(typeof e.note!=="string"||e.note.length>1000)) return {err:"予定のメモが長すぎます"};
+    const entry={title:e.title.trim(),startH:allDay?(_propInt(e.startH,0,23)?e.startH:9):e.startH,startM:allDay?0:e.startM,endH:allDay?(_propInt(e.endH,0,24)?e.endH:10):e.endH,endM:allDay?0:e.endM,allDay,note:(e.note||"").trim()};
+    const dup=(state.schedule[d]||[]).some(x=>(x.title||"").trim()===entry.title&&(x.startH||0)===entry.startH&&(x.startM||0)===entry.startM);
+    return {op:{type:"schedule.add",date:d,entry},dup};
+  }
+  return {err:`受け付けない操作です（${String(op.type||"?").slice(0,30)}）`};
+}
+// 提案全体を確かめる → {ok, ops:[{op,dup}], reason, err}
+function propValidate(p){
+  if(!p||typeof p!=="object"||p.v!==1) return {ok:false,err:"提案の形が違います"};
+  if(!Array.isArray(p.ops)||!p.ops.length||p.ops.length>20) return {ok:false,err:"操作の数が違います"};
+  const ops=[];
+  for(const o of p.ops){ const r=propCheckOp(o); if(r.err) return {ok:false,err:r.err}; ops.push(r); }
+  const reason=typeof p.reason==="string"?p.reason.slice(0,1000):"";
+  return {ok:true,ops,reason,createdAt:typeof p.createdAt==="string"?p.createdAt:null};
+}
+let _propBusy=false;
+// サーバの保留中の一覧を見て、新しい提案を取ってくる（同期のついで）
+async function propRefresh(force){
+  const c=getSyncCfg(); if(!syncReady()||(!c.on&&!force)||state.viewingBackup||_propBusy) return;
+  if(typeof navigator!=="undefined"&&navigator.onLine===false) return;
+  _propBusy=true;
+  try{
+    const r=await propFetch("plist"); const j=await r.json().catch(()=>({}));
+    if(!r.ok){ state.propErr=r.status===404?"propose.php がまだ置かれていません":syncErrMsg(r.status,j); return; }
+    state.propErr=null;
+    const ids=(j.items||[]).map(x=>x.id).filter(Boolean), done=getPropDone(), cache=getPropCache();
+    // 決めたのに残っているもの（片付けに失敗した）はもう一度片付ける
+    for(const id of ids.filter(id=>done.includes(id))){ try{ await propFetch("pdel",{post:true,q:`id=${encodeURIComponent(id)}`}); }catch(_){} }
+    const items=cache.items.filter(x=>ids.includes(x.id)&&!done.includes(x.id));   // サーバに無くなったもの（期限切れ・別の端末で決めた）は外す
+    const metas=j.items||[];
+    for(const meta of metas){ const id=meta.id; if(!id||done.includes(id)||items.some(x=>x.id===id)) continue;
+      try{ const rr=await propFetch("pget",{q:`id=${encodeURIComponent(id)}`});
+        if(!rr.ok){ items.push({id,at:meta.createdAt,bad:true,err:`取ってこられませんでした（${rr.status}）`}); continue; }
+        const p=await syncDecode(await rr.arrayBuffer()); items.push({id,at:meta.createdAt,p}); }
+      catch(e){ items.push({id,at:meta.createdAt,bad:true,err:(e&&e.message)||"読めません"}); } }
+    propSave("_propcache",{items});
+    render();
+  }catch(_){ }
+  finally{ _propBusy=false; }
+}
+// 表示用：今のデータで確かめ直した提案の一覧（反映待ち）と、読めない・形が違うもの
+function propItems(){ const done=getPropDone(), good=[], bad=[];
+  getPropCache().items.forEach(x=>{ if(done.includes(x.id)) return; if(x.bad){ bad.push(x); return; } const v=propValidate(x.p); if(v.ok) good.push({...x,v}); else bad.push({...x,err:v.err}); });
+  return {good,bad}; }
+async function propDecide(id,approve){
+  if(state.viewingBackup){ showToast("⚠ バックアップを見ている間は決められません"); return; }
+  if(state.propWorking) return;
+  state.propWorking=id; render();
+  try{
+    if(approve){
+      // 反映の直前にサーバの最新と混ぜる（ユニット単位で混ぜるときに、ほかの端末の変更とぶつかる時間を短くする）
+      if(getSyncCfg().on){ for(let i=0;i<50&&_syncBusy;i++) await new Promise(r=>setTimeout(r,100));
+        try{ _syncBusy=true; await syncMergeFromServer(); }catch(_){} finally{ _syncBusy=false; } }
+      const it=getPropCache().items.find(x=>x.id===id); const v=it&&!it.bad?propValidate(it.p):null;
+      if(!v||!v.ok){ showToast(`⚠ この提案は反映できません（${(v&&v.err)||"見つかりません"}）`,"#f97316"); return; }
+      let g=0, sc=0, skip=0;
+      v.ops.forEach(({op,dup})=>{ if(dup){ skip++; return; }
+        if(op.type==="goal.add"){ const node={id:gtNewId(),text:op.node.text,done:false,collapsed:false,children:[],periodType:op.node.periodType,periodKey:op.node.periodKey,...(op.node.note?{note:op.node.note}:{})};
+          if(op.parentId===null) state.goalTree=[...(state.goalTree||[]),node]; else { const f=gtFind(op.parentId); if(!f){ skip++; return; } f.node.children=[...(f.node.children||[]),node]; f.node.collapsed=false; }
+          g++; }
+        else if(op.type==="schedule.add"){ const e=op.entry; if(!state.schedule[op.date]) state.schedule[op.date]=[];
+          state.schedule[op.date].push({uid:Date.now()+Math.random(),title:e.title,startH:e.startH,startM:e.startM,endH:e.endH,endM:e.endM,endNextDay:false,color:EV_DEFAULT,allDay:e.allDay,refOnly:false,...(e.note?{note:e.note}:{})});
+          sc++; } });
+      if(g) saveGoalTree(); if(sc){ saveSchedule(); try{ alexaSyncPlan(true); }catch(_){} }
+      markPropDone(id);
+      showToast(`📨 提案を反映しました（${[g?`目標${g}件`:"",sc?`予定${sc}件`:"",skip?`すでにある${skip}件は足さず`:""].filter(Boolean).join("・")||"変更なし"}）`,"#22c55e");
+    } else { markPropDone(id); showToast("📨 提案を却下しました","#94a3b8"); }
+    propSave("_propcache",{items:getPropCache().items.filter(x=>x.id!==id)});
+    try{ await propFetch("pdel",{post:true,q:`id=${encodeURIComponent(id)}`}); }catch(_){}   // 失敗しても、次の見回りでもう一度片付ける
+    if(approve&&getSyncCfg().on){ try{ await syncUpload(false); }catch(_){} }   // 反映した直後に送る
+  } finally { state.propWorking=null; render(); }
+}
+async function propDeleteBad(){
+  const {bad}=propItems(); if(!bad.length) return;
+  if(!confirm(`読めない・形が違う提案 ${bad.length}件を消しますか？（データには何も反映しません）`)) return;
+  for(const x of bad){ markPropDone(x.id); try{ await propFetch("pdel",{post:true,q:`id=${encodeURIComponent(x.id)}`}); }catch(_){} }
+  propSave("_propcache",{items:getPropCache().items.filter(x=>!bad.some(b=>b.id===x.id))}); render();
+}
+// 提案の1つの操作を読みやすく
+function propOpText(op,dup){
+  if(op.type==="goal.add"){ const n=op.node, par=op.parentId?gtFind(op.parentId):null;
+    return `🎯 目標を追加：「${n.text}」（${GT_PERIOD_LABELS[n.periodType]||n.periodType}・${pkLabel(n.periodKey)}${par?`・「${par.node.text}」の下`:"・いちばん上"}）${n.note?` 📝${n.note}`:""}${dup?"　※同じ目標がすでにあるので足しません":""}`; }
+  const e=op.entry, d=parseDS(op.date), wd=WEEKDAYS_JP[d.getDay()];
+  return `📅 予定を追加：${d.getMonth()+1}/${d.getDate()}(${wd}) ${e.allDay?"終日":`${hhmm(e.startH,e.startM)}〜${hhmm(e.endH,e.endM)}`}「${e.title}」${e.note?` 📝${e.note}`:""}${dup?"　※同じ予定がすでにあるので足しません":""}`;
+}
+// ホームの「📨 Claude からの提案」カード（反映待ちがあるときだけ）
+function proposalsCard(){
+  const {good}=propItems(); if(!good.length) return null;
+  const c=div({className:"card",style:{padding:"12px 14px",marginBottom:"10px",border:"1px solid #a78bfa66",background:"#8b5cf612"}}); c.setAttribute('data-propcard','1');
+  c.appendChild(div({style:{fontSize:"13px",fontWeight:800,color:"#c4b5fd",marginBottom:"4px"}},`📨 Claude からの提案 ${good.length}件`));
+  c.appendChild(div({style:{fontSize:"10px",color:"#94a3b8",lineHeight:1.6,marginBottom:"8px"}},"「反映する」を押すまで、データは何も変わりません。提案ごとに、まとめて反映するか却下するかを選びます。"));
+  good.forEach(x=>{ const busy=state.propWorking===x.id;
+    const box=div({style:{padding:"9px 11px",borderRadius:"9px",background:"#0f172a",border:"1px solid #334155",marginBottom:"7px"}}); box.setAttribute('data-propitem',x.id);
+    box.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"4px"}},`${fmtSyncTime(x.v.createdAt||x.at)} に届いた提案`));
+    if(x.v.reason) box.appendChild(div({style:{fontSize:"12px",color:"#e2e8f0",lineHeight:1.6,marginBottom:"6px",whiteSpace:"pre-wrap"}},`💬 ${x.v.reason}`));
+    x.v.ops.forEach(o=>box.appendChild(div({style:{fontSize:"12px",color:o.dup?"#64748b":"#cbd5e1",lineHeight:1.6,marginBottom:"3px"}},propOpText(o.op,o.dup))));
+    const row=div({style:{display:"flex",gap:"7px",marginTop:"7px"}});
+    const ok=btn({style:{flex:1,padding:"9px",borderRadius:"8px",border:"none",background:"#8b5cf6",color:"#fff",fontSize:"13px",fontWeight:700,cursor:"pointer",fontFamily:"inherit",opacity:busy?0.6:1}},busy?"⏳ 反映しています…":"✓ 反映する");
+    ok.setAttribute('data-propok',x.id); ok.addEventListener('click',()=>propDecide(x.id,true));
+    const ng=btn({style:{padding:"9px 14px",borderRadius:"8px",border:"1px solid #334155",background:"transparent",color:"#94a3b8",fontSize:"12px",cursor:"pointer",fontFamily:"inherit"}},"却下する");
+    ng.setAttribute('data-propng',x.id); ng.addEventListener('click',()=>{ if(confirm("この提案を却下しますか？（データには何も反映しません）")) propDecide(x.id,false); });
+    row.appendChild(ok); row.appendChild(ng); box.appendChild(row); c.appendChild(box); });
+  return c;
 }
 // ⚙設定のカード
 function renderSyncPanel(){
@@ -18827,6 +18988,15 @@ function renderSyncPanel(){
           state.syncMsg=r.ok?`✅ ${y}年の記録を預けました`:`⚠ ${r.msg}`; try{ state.syncArch={items:await syncListArchives()}; }catch(_){} render(); });
         r2.appendChild(pb); box.appendChild(r2); } }
       card.appendChild(box); } }
+  // 📨 提案（propose.php）
+  { const {good,bad}=propItems(); const box=div({style:{fontSize:"11px",color:"#94a3b8",margin:"2px 0 9px",lineHeight:1.7}}); box.setAttribute('data-syncprop','1');
+    box.appendChild(div({},`📨 Claude からの提案：反映待ち ${good.length}件${state.propErr?`（${state.propErr}）`:""}`));
+    if(bad.length){ const r=div({style:{display:"flex",alignItems:"center",gap:"8px",color:"#fbbf24"}},[span({style:{flex:1}},`⚠ 読めない提案が ${bad.length}件あります`)]);
+      const b=btn({style:{flexShrink:0,padding:"3px 10px",borderRadius:"7px",border:"1px solid #f59e0b",background:"transparent",color:"#fbbf24",fontSize:"11px",cursor:"pointer",fontFamily:"inherit"}},"消す");
+      b.setAttribute('data-propbaddel','1'); b.addEventListener('click',()=>propDeleteBad()); r.appendChild(b); box.appendChild(r); }
+    const rf=btn({style:{marginTop:"3px",padding:"3px 10px",borderRadius:"7px",border:"1px solid #334155",background:"transparent",color:"#94a3b8",fontSize:"11px",cursor:"pointer",fontFamily:"inherit"}},"📨 提案を確かめる");
+    rf.setAttribute('data-syncbtn','prop'); rf.addEventListener('click',async()=>{ await propRefresh(true); render(); }); box.appendChild(rf);
+    card.appendChild(box); }
   // サーバに貼る値・設定し直す
   { const sh=!!state.syncShowHash; const b=btn({style:{width:"100%",padding:"7px",marginBottom:"7px",borderRadius:"8px",border:"1px solid #334155",background:"transparent",color:"#94a3b8",fontSize:"12px",cursor:"pointer",fontFamily:"inherit"}},sh?"▲ サーバに貼る値を閉じる":"🔐 サーバに貼る値（sync.php の SYNC_AUTH_HASH）");
     b.addEventListener('click',()=>{ state.syncShowHash=!sh; render(); }); card.appendChild(b);
