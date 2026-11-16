@@ -2,7 +2,7 @@
 
 > このドキュメントはアプリの現状仕様をまとめた常設リファレンスです。
 > GitHub 上でいつでも閲覧でき、コードと一緒にバージョン管理されます。
-> 最終更新時点のアプリバージョン: **v15.82**
+> 最終更新時点のアプリバージョン: **v15.83**
 
 ---
 
@@ -387,6 +387,11 @@ if-then・つながり・MI各種・ウィジェット表示など）を**新し
 
 ### 4-5. 減酒・飲酒コントロール支援
 - 踏みとどまりボタン＋クールオフ
+- **🩹 次にケアをする日（v15.83）**（`nextCareCard`。ウィジェットの項目 `nextcare`＝飲み予定の下 ＋ モード切替画面の🩹ケア欄の下）。
+  下の「次に飲みに行く予定」と**同じ仕組み**を種類で分けて使う（`NP_KINDS`＝`drink`／`care`、共通の `nextPlanCard(k)`・`npGet`・`npSave`・`npEvents`・`npOpenAsEvent`・`npLinkEvent`）。
+  日付とメモを決める → 「あと◯日」を表示 → **📅 予定に追加**（その日の**21:00〜22:00**・タイトル「🩹 ＜メモ＞」、メモが無ければ「🩹 ケア」）／**🔗 既存の予定から選ぶ**／結びついた予定の「解除」／
+  予定を別の日に動かすとケアの日も合わせる／日を変えたら次の機会として立て直す（前の予定は残す）／過ぎたら決め直しを促す。決めた日は予定タブ「日」の「📌 終日…」欄に「🩹 ケアをする日」を出す。
+  保存は `state.nextCare={id,date,note}`（`localStorage["health_v2_nextcare"]`・バックアップと☁️同期の対象）。予定との結びつきは飲み予定と同じ予定側の `ndId`（ケアの id は `nc…`、飲みは `nd…` で始まる）。
 - **次に飲みに行く予定（計画飲酒）**（`nextDrinkCard`。アルコールタブ＋ウィジェット）。設定した日は予定タブ「日」の
   「📌 終日…」欄に「🍺 外に飲みに行く予定」を表示。
   - **📅 予定に追加**（`openNextDrinkAsEvent`）：その日の**19:00〜22:00**・タイトル「🍺 ＜メモ＞」（メモが無ければ「🍺 飲みに行く」）で
@@ -897,7 +902,7 @@ if-then・つながり・MI各種・ウィジェット表示など）を**新し
 `_customtodos`（定期ルーティン）, `_schedule` / `_repeat`（予定）, `_planpatterns`（パターン予定）,
 `_tasks`（TODO/買物）, `_goaltree`（目標）, `_routines`（実績まとめグループ）, `_shift`（シフト）,
 `_rewards` / `_investactions` / `_investspends`（達成・未来投資）, `_modeinvest`（モード画面に出す未来投資の分類）, `_ifthen`,
-`_bacprofile` / `_alclimit` / `_cooloff` / `_nextdrink` / `_nightritual` / `_lifevision`（減酒系）,
+`_bacprofile` / `_alclimit` / `_cooloff` / `_nextdrink` / `_nextcare`（🩹 次にケアをする日・v15.83） / `_nightritual` / `_lifevision`（減酒系）,
 `_connectgoal` / `_ctjournal` / `_decisbalance` / `_values` / `_changeplan`（つながり・MI）,
 `_sleepgoal`（就寝リズム）, `_bodycomp`（体組成）, `_selfmodelog`（セルフモード履歴）, `_selfchecks`（セルフモードのチェック項目）,
 `_lifemodes`（ライフモード定義）, `_modelog`（ライフモードのタイムライン）, `_defaultmode`（既定モード）, `_automode`（自動切替ON/OFF＋直近の自動判定）,

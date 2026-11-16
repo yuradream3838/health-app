@@ -258,7 +258,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.82"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.83"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -296,6 +296,7 @@ const SAVE_TARGETS=[
   ["saveInvestSpends","investSpends","💰 未来投資の記録"],
   ["saveIfThenPlans","ifThenPlans","🔀 if-thenプラン"],
   ["saveNextDrinkPlan","nextDrink","🍺 次の飲み予定"],
+  ["saveNextCarePlan","nextCare","🩹 次のケアの日"],
   ["saveLifeVision","lifeVision","💜 なりたい自分"],
   ["saveNightRitual","nightRitual","🌙 飲まない夜のルーティン"],
   ["saveConnectGoal","connectGoal","🫂 つながり目標"],
@@ -987,6 +988,7 @@ const state = {
   nudgeRules:null, notifyQuiet:null, notifyRepeat:30, // 🔔 通知：項目別のON/OFFと時間・静かな時間帯・再通知間隔
   dayCutoffH:12, // 就寝未記録時のフォールバック切替時刻（既定12:00＝正午）
   nextDrink:null, nextDrinkEdit:false, // 次に飲みに行く予定（計画飲酒）
+  nextCare:null, nextCareEdit:false, // 🩹 次にケアをする日（v15.83・飲み予定と同じ仕組み）
   investHistExpanded:false, // 未来投資履歴の全件展開
   lifeVision:null, nightRitual:null, connectGoal:null, // 根本解決の習慣機能
   ctJournal:null, ctPromptIdx:0, ctDraft:"", // 動機づけ面談：チェンジトーク・ジャーナル
@@ -1066,6 +1068,8 @@ function loadStorage(){
     if(ctj){try{const a=JSON.parse(ctj); if(Array.isArray(a))state.ctJournal=a;}catch{}}
     const ndp=localStorage.getItem(STORAGE_KEY+"_nextdrink");
     if(ndp){try{const o=JSON.parse(ndp); if(o&&typeof o==="object"&&o.date)state.nextDrink=o;}catch{}}
+    const ncp=localStorage.getItem(STORAGE_KEY+"_nextcare");
+    if(ncp){try{const o=JSON.parse(ncp); if(o&&typeof o==="object"&&o.date)state.nextCare=o;}catch{}}
     const wsec=localStorage.getItem(STORAGE_KEY+"_widgetsections");
     if(wsec){try{const o=JSON.parse(wsec); if(o&&typeof o==="object")state.widgetSections=o;}catch{}}
     const slg=localStorage.getItem(STORAGE_KEY+"_sleepgoal");
@@ -1946,6 +1950,7 @@ const WIDGET_SECTIONS=[
   {k:'ifthen',    l:'🔀 今のプラン（if-then）'},
   {k:'invest',    l:'💰 未来投資・踏みとどまる'},
   {k:'nextdrink', l:'🍺 次に飲みに行く予定'},
+  {k:'nextcare',  l:'🩹 次にケアをする日'},
   {k:'connect',   l:'🫂 つながり習慣'},
   {k:'rewards',   l:'🎁 ご褒美'},
   {k:'goals',     l:'☀️ 今日の目標'},
@@ -3560,6 +3565,7 @@ function renderModeSwitcher(){
     const b=btn({style:{padding:'11px 8px',borderRadius:'10px',border:`1px solid ${c.on?cm.color:'#334155'}`,background:c.on?cm.color+'22':'#111827',color:c.on?cm.color:'#cbd5e1',fontSize:'13px',fontWeight:600,cursor:'pointer',fontFamily:'inherit'}},`${c.icon} ${c.label}${c.on?' ●':''}`);
     b.addEventListener('click',c.fn); cgrid.appendChild(b); });
   inner.appendChild(cgrid);
+  inner.appendChild(nextCareCard());   // 🩹 次にケアをする日（v15.83。ホームのウィジェットと同じカード）
   // モードの各種設定（色・既定・自動切替・提案・通知など）は設定画面へ
   const eb=btn({style:{width:'100%',padding:'11px',borderRadius:'10px',border:'1px solid #334155',background:'transparent',color:'#94a3b8',fontSize:'12px',cursor:'pointer',fontFamily:'inherit'}},'⚙️ モードの設定（色・既定・自動切替・提案）→ 設定へ');
   eb.addEventListener('click',()=>{ state.modeSwitcher=false; state.modeEditMode=false; state.nudgeCfgOpen=false; state.widget=false; state.tab='設定'; state.settingsModeCfg=true; render(); });
@@ -4840,6 +4846,7 @@ function renderWidgetView(vd,ds){
     secNodes.invest=c;
   }
   if(wSecOn('nextdrink')) secNodes.nextdrink=nextDrinkCard(); // 🍺 次に飲みに行く予定（踏みとどまるの下）
+  if(wSecOn('nextcare')) secNodes.nextcare=nextCareCard();    // 🩹 次にケアをする日（飲み予定の下）
   if(wSecOn('sober')) secNodes.sober=soberWeekCard(); // 🚱 休肝日（今週）
   if(wSecOn('proposals')){ const pc=proposalsCard(); if(pc) secNodes.proposals=pc; }   // 📨 Claude からの提案（反映待ちがあるとき）
   if(vd===todayStr() && wSecOn('nightritual')) secNodes.nightritual=nightRitualCard(vd,false); // 🌙 飲まない夜のルーティン
@@ -10800,7 +10807,8 @@ function renderDaySchedule(vd,ds,isToday){
     const gCarry=gtCollectByPeriodCarry("daily", vd).carry.filter(n=>!isRangeDaily(n) && !gGoalIds.has(n.id));
     const gPend=gtCollectPeriodlessActive(vd).filter(x=>!gGoalIds.has(x.node.id));
     const ndPlan=getNextDrinkPlan(); const ndToday=!!(ndPlan&&ndPlan.date===vd); // 🍺 外に飲みに行く予定の当日
-    if(allDayEvents.length||dueTodos.length||preItems.length||gGoals.length||gCarry.length||gPend.length||ndToday){
+    const ncPlan=getNextCarePlan(); const ncToday=!!(ncPlan&&ncPlan.date===vd); // 🩹 ケアをする日の当日
+    if(allDayEvents.length||dueTodos.length||preItems.length||gGoals.length||gCarry.length||gPend.length||ndToday||ncToday){
       const ad=div({className:"card",style:{padding:"8px 10px",marginBottom:"8px"}});
       ad.appendChild(div({style:{fontSize:"10px",fontWeight:700,color:"#94a3b8",marginBottom:"6px"}},"📌 終日・目標・TODO"));
       // 🍺 外に飲みに行く予定（計画飲酒）— 設定した日にプランとして表示
@@ -10811,6 +10819,14 @@ function renderDaySchedule(vd,ds,isToday){
         ]);
         chip.addEventListener('click',()=>{ exitWidget&&exitWidget(); state.tab="日記"; state.diarySubTab="アルコール"; render(); });
         ad.appendChild(chip);
+      }
+      // 🩹 ケアをする日 — 決めた日に表示
+      if(ncToday){
+        const c=NP_KINDS.care.col;
+        const chip=div({style:{display:"flex",alignItems:"center",gap:"6px",padding:"6px 10px",background:c+"1f",border:`1px solid ${c}66`,borderRadius:"6px",marginBottom:"4px"}},[
+          div({style:{flex:1,minWidth:0,fontSize:"13px",fontWeight:600,color:NP_KINDS.care.colT,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},`🩹 ${NP_KINDS.care.dayChip}${ncPlan.note?`：${ncPlan.note}`:""}`)
+        ]);
+        chip.setAttribute('data-ncchip','1'); ad.appendChild(chip);
       }
       // 🎯 目標セクション
       if(gGoals.length||gCarry.length||gPend.length){
@@ -12111,7 +12127,7 @@ function renderAddEventModal(vd){
         saveSchedule();saveRepeatEvents();
         try{ alexaSyncPlan(true); }catch(_){}      // 🔊 鳴らす予約はサーバに預け直す
         if(_goalMoved) showToast(`🎯 目標の期間も ${_goalMoved} に合わせました`,"#a5b4fc");
-        if(_ndMoved) showToast(`🍺 次に飲みに行く予定も ${_ndMoved} に合わせました`,"#f59e0b");
+        if(_ndMoved){ const NK=NP_KINDS[_ndMoved.kind]; showToast(`${NK.icon} ${NK.title}も ${_ndMoved.label} に合わせました`,NK.col); }
         if(!isRepEdit && targetDate!==vd){ state.viewDate=targetDate; state.scheduleSubTab="日"; }
         state.modal=null;render();
       }},"保存")
@@ -12748,15 +12764,41 @@ function alcGaugeMiniCard(vd){
   return c;
 }
 // ── 次に飲みに行く予定（計画飲酒：次の飲酒日を先に決めて、それまでの目標にする）──
-function getNextDrinkPlan(){ return (state.nextDrink&&typeof state.nextDrink==="object"&&state.nextDrink.date)?state.nextDrink:null; }
-function saveNextDrinkPlan(){ try{ if(getNextDrinkPlan())safeSet(STORAGE_KEY+"_nextdrink",JSON.stringify(state.nextDrink)); else localStorage.removeItem(STORAGE_KEY+"_nextdrink"); }catch{} }
-// ── 🍺 飲みに行く予定 ↔ 予定タブ ────────────────────────────────
+// ── 🩹 次にケアをする日（v15.83）：同じ仕組みを「種類」で分けて使う（drink＝飲みに行く／care＝ケア）──
+// どちらも {id,date,note}。予定タブの予定とは、予定側の ndId（＝この予定の id。飲み＝nd…／ケア＝nc…）で結びつく。
+const NP_KINDS={
+  drink:{sk:"nextDrink",ls:"_nextdrink",pre:"nd",icon:"🍺",col:"#f59e0b",colT:"#fbbf24",colBig:"#fef3c7",grad:"linear-gradient(135deg,#f59e0b,#f97316)",
+    title:"次に飲みに行く予定",evTitle:"飲みに行く",evH:19,evEndH:22,evColor:"#f97316",
+    waitMsg:"その日まで外飲みはお預け。今日踏みとどまれば、この日をもっと楽しめて貯金も増えます。",
+    pastMsg:"次に飲みに行く日を決め直しましょう。",
+    intro:"次に飲む日を先に決めておくと、それまでは「その日まで待つ」という目標になり、衝動的な外飲みを防げます。",
+    memoPh:"メモ（例：会社の飲み会／◯◯と）",toast:"次の飲み予定",plan:"飲み予定",
+    pickMsg:"すでに入れてある予定を、次に飲みに行く予定として結びつけます。選ぶと飲み予定の日付もその予定の日になります（繰り返しの予定は選べません）。",
+    linkNote:"タップでその日の予定へ。「解除」は予定を残したまま結びつきだけ外します。この予定を別の日に動かすと上の日付も合わせます。",
+    dayChip:"外に飲みに行く予定"},
+  care:{sk:"nextCare",ls:"_nextcare",pre:"nc",icon:"🩹",col:"#a78bfa",colT:"#c4b5fd",colBig:"#ede9fe",grad:"linear-gradient(135deg,#8b5cf6,#6366f1)",
+    title:"次にケアをする日",evTitle:"ケア",evH:21,evEndH:22,evColor:"#8b5cf6",
+    waitMsg:"その日までケアはお預け。決めた日に、ゆっくり時間を取りましょう。",
+    pastMsg:"次にケアをする日を決め直しましょう。",
+    intro:"次にケアをする日を先に決めておくと、それまでは「その日まで待つ」という目標になり、衝動に流されにくくなります。",
+    memoPh:"メモ（例：休みの前の夜／ゆっくり時間を取る）",toast:"次のケアの日",plan:"ケアの日",
+    pickMsg:"すでに入れてある予定を、次にケアをする日として結びつけます。選ぶとケアの日もその予定の日になります（繰り返しの予定は選べません）。",
+    linkNote:"タップでその日の予定へ。「解除」は予定を残したまま結びつきだけ外します。この予定を別の日に動かすと上の日付も合わせます。",
+    dayChip:"ケアをする日"}
+};
+function npGet(k){ const v=state[NP_KINDS[k].sk]; return (v&&typeof v==="object"&&v.date)?v:null; }
+function npSave(k){ const K=NP_KINDS[k]; try{ if(npGet(k))safeSet(STORAGE_KEY+K.ls,JSON.stringify(state[K.sk])); else localStorage.removeItem(STORAGE_KEY+K.ls); }catch{} }
+function getNextDrinkPlan(){ return npGet("drink"); }
+function saveNextDrinkPlan(){ npSave("drink"); }
+function getNextCarePlan(){ return npGet("care"); }
+function saveNextCarePlan(){ npSave("care"); }
+// ── 🍺🩹 予定 ↔ 予定タブ ────────────────────────────────
 // 予定と結びつけるためのid（古いデータには使うときに補う）
 // 時刻だけだと同じミリ秒に作り直した予定が前の予定と同じidになってしまうので、乱数を足す
-function ensureNextDrinkId(){ const p=getNextDrinkPlan(); if(!p)return null; if(!p.id){ p.id="nd"+Date.now().toString(36)+Math.random().toString(36).slice(2,7); saveNextDrinkPlan(); } return p.id; }
-// この飲み予定から作った予定（単発＋繰り返し）。予定側の ndId で結びつく
-function nextDrinkEvents(){
-  const p=getNextDrinkPlan(); const out=[];
+function npEnsureId(k){ const p=npGet(k); if(!p)return null; if(!p.id){ p.id=NP_KINDS[k].pre+Date.now().toString(36)+Math.random().toString(36).slice(2,7); npSave(k); } return p.id; }
+// この予定から作った予定（単発＋繰り返し）。予定側の ndId で結びつく
+function npEvents(k){
+  const p=npGet(k); const out=[];
   if(!p||!p.id) return out;
   const sch=state.schedule||{};
   Object.keys(sch).forEach(ds=>{ (sch[ds]||[]).forEach(e=>{ if(e.ndId===p.id) out.push({ds,ev:e,repeat:false}); }); });
@@ -12764,46 +12806,49 @@ function nextDrinkEvents(){
   out.sort((a,b)=>String(a.ds).localeCompare(String(b.ds)));
   return out;
 }
+function nextDrinkEvents(){ return npEvents("drink"); }
 // 「📅 予定に追加」：予定タブの追加画面を、その日・夜の時間で開く
-function openNextDrinkAsEvent(){
-  const p=getNextDrinkPlan(); if(!p) return;
-  const id=ensureNextDrinkId();
+function npOpenAsEvent(k){
+  const p=npGet(k); if(!p) return; const K=NP_KINDS[k];
+  const id=npEnsureId(k);
   const target=p.date;
-  state.tab="予定"; state.scheduleSubTab="日"; state.widget=false; state.viewDate=target; state.lifeScreen=null;
+  state.tab="予定"; state.scheduleSubTab="日"; state.widget=false; state.viewDate=target; state.lifeScreen=null; state.modeSwitcher=false;
   state.modal="addEvent"; state.editEventUid=null; state.editEventIsRepeat=false; state.editEventDate=target;
   state.newEvDate=target; state.newEvEndDate=null;
-  state.newEvTitle="🍺 "+(((p.note||"").trim())||"飲みに行く");
-  state.newEvH=19; state.newEvM=0; state.newEvEndH=22; state.newEvEndM=0; state.newEvEndNextDay=false;
-  state.newEvRepeat="none"; state.newEvColor="#f97316";
+  state.newEvTitle=K.icon+" "+(((p.note||"").trim())||K.evTitle);
+  state.newEvH=K.evH; state.newEvM=0; state.newEvEndH=K.evEndH; state.newEvEndM=0; state.newEvEndNextDay=false;
+  state.newEvRepeat="none"; state.newEvColor=K.evColor;
   state.newEvWeekdays=[parseDS(target).getDay()];
   state.newEvFromTask=null; state.newEvGoalId=null; state.newEvAllDay=false; state.newEvRefOnly=false;
   state.newEvPlace=""; state.newEvNote=""; state.newEvPreDays=0;
-  state.newEvNdId=id;   // この予定がどの飲み予定から来たかを覚える
+  state.newEvNdId=id;   // この予定がどの予定（飲み／ケア）から来たかを覚える
   state.newEvAlexa=null;
   render();
 }
-// ── 🔗 すでに入れてある予定を、この飲み予定に結びつける ──
+function openNextDrinkAsEvent(){ npOpenAsEvent("drink"); }
+// ── 🔗 すでに入れてある予定を、この予定に結びつける ──
 // 候補＝今日以降の単発の予定（繰り返しは1回ぶんを指せないので出さない）
-function ndCandidateEvents(days){
+function ndCandidateEvents(days,k){
   const out=[], from=todayStr(), to=addDays(from,days||180);
-  const p=getNextDrinkPlan();
+  const p=npGet(k||"drink");
   Object.keys(state.schedule||{}).forEach(ds=>{
     if(ds<from||ds>to) return;
-    // すでにこの飲み予定と結びついている予定は候補に出さない（idが無いうちは全部が候補）
+    // すでにこの予定と結びついている予定は候補に出さない（idが無いうちは全部が候補）
     (state.schedule[ds]||[]).forEach(e=>{ if(p&&p.id&&e.ndId===p.id) return; out.push({ds,ev:e,repeat:false}); });
   });
-  out.sort((a,b)=>{ const k=String(a.ds).localeCompare(String(b.ds)); return k||((a.ev.startH||0)*60+(a.ev.startM||0))-((b.ev.startH||0)*60+(b.ev.startM||0)); });
+  out.sort((a,b)=>{ const kk=String(a.ds).localeCompare(String(b.ds)); return kk||((a.ev.startH||0)*60+(a.ev.startM||0))-((b.ev.startH||0)*60+(b.ev.startM||0)); });
   return out;
 }
-// 結びつける：予定に ndId を付け、飲み予定の日付もその予定の日に合わせる
-function linkNextDrinkEvent(g){
-  const id=ensureNextDrinkId(); if(!id) return;
-  const p=getNextDrinkPlan();
+// 結びつける：予定に ndId を付け、こちらの日付もその予定の日に合わせる
+function npLinkEvent(k,g){
+  const id=npEnsureId(k); if(!id) return; const K=NP_KINDS[k];
+  const p=npGet(k);
   g.ev.ndId=id; saveSchedule();
-  if(p.date!==g.ds){ state.nextDrink={...p,date:g.ds}; saveNextDrinkPlan(); }
+  if(p.date!==g.ds){ state[K.sk]={...p,date:g.ds}; npSave(k); }
   state.modal=null;
-  showToast(`🔗 ${mdLabel(g.ds)} の予定と結びつけました`,"#f59e0b"); render();
+  showToast(`🔗 ${mdLabel(g.ds)} の予定と結びつけました`,K.col); render();
 }
+function linkNextDrinkEvent(g){ npLinkEvent("drink",g); }
 // 結びつきだけ外す（予定そのものは消さない）
 function unlinkNextDrinkEvent(g){
   delete g.ev.ndId;
@@ -12811,12 +12856,12 @@ function unlinkNextDrinkEvent(g){
   showToast("🔗 結びつきを外しました"); render();
 }
 function renderNdPickModal(){
+  const k=NP_KINDS[state.ndPickKind]?state.ndPickKind:"drink", K=NP_KINDS[k];
   const bg=div({className:"modal-center"}); const m=div({className:"modal-box",style:{maxHeight:"82vh",overflowY:"auto"}});
   bg.addEventListener('click',()=>{ state.modal=null; render(); }); m.addEventListener('click',e=>e.stopPropagation());
   m.appendChild(div({style:{fontSize:"15px",fontWeight:700,color:"#e2e8f0",marginBottom:"3px"}},"🔗 既存の予定から選ぶ"));
-  m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"10px",lineHeight:1.6}},
-    "すでに入れてある予定を、次に飲みに行く予定として結びつけます。選ぶと飲み予定の日付もその予定の日になります（繰り返しの予定は選べません）。"));
-  const list=ndCandidateEvents(180);
+  m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"10px",lineHeight:1.6}},K.pickMsg));
+  const list=ndCandidateEvents(180,k);
   if(!list.length){
     m.appendChild(div({style:{fontSize:"12px",color:"#475569",textAlign:"center",padding:"18px 0",lineHeight:1.6}},"今日以降の予定がありません。\n「📅 予定に追加」から新しく作れます。"));
   } else {
@@ -12828,7 +12873,7 @@ function renderNdPickModal(){
         span({style:{fontSize:"10px",color:"#64748b",flexShrink:0}},goalEventTimeLabel(g)),
       ]);
       b.dataset.ndpick=`${g.ds}:${g.ev.uid}`;
-      b.addEventListener('click',(()=>{const gg=g;return()=>linkNextDrinkEvent(gg);})());
+      b.addEventListener('click',(()=>{const gg=g;return()=>npLinkEvent(k,gg);})());
       m.appendChild(b);
     });
   }
@@ -12836,44 +12881,47 @@ function renderNdPickModal(){
   bg.appendChild(m); return bg;
 }
 // その予定を予定タブで開く
-function goToNextDrinkEvent(g){ state.widget=false; state.lifeScreen=null; state.tab="予定"; state.scheduleSubTab="日"; state.viewDate=g.ds; render(); }
-// 🍺の日付 ↔ 予定の日付 を連動させる（目標と同じ考え方。行き来で呼び合わないよう同期中は入口で止める）
+function goToNextDrinkEvent(g){ state.widget=false; state.lifeScreen=null; state.modeSwitcher=false; state.tab="予定"; state.scheduleSubTab="日"; state.viewDate=g.ds; render(); }
+// 🍺🩹の日付 ↔ 予定の日付 を連動させる（目標と同じ考え方。行き来で呼び合わないよう同期中は入口で止める）
 let _ndDateSyncing=false;
-// ① 予定を動かした → 飲み予定の日付も合わせる。変えたときは新しい日付のラベルを返す
+// ① 予定を動かした → 結びついている飲み予定／ケアの日の日付も合わせる。変えたときは「どれを・何日に」を返す
 function syncNextDrinkFromEvent(ndId,newDs){
   if(_ndDateSyncing||!ndId||!newDs) return null;
-  const p=getNextDrinkPlan(); if(!p||p.id!==ndId||p.date===newDs) return null;
+  const k=Object.keys(NP_KINDS).find(x=>{ const q=npGet(x); return q&&q.id===ndId; }); if(!k) return null;
+  const p=npGet(k); if(p.date===newDs) return null;
   _ndDateSyncing=true;
-  try{ state.nextDrink={...p,date:newDs}; saveNextDrinkPlan(); }finally{ _ndDateSyncing=false; }
-  return mdLabel(newDs);
+  try{ state[NP_KINDS[k].sk]={...p,date:newDs}; npSave(k); }finally{ _ndDateSyncing=false; }
+  return {kind:k,label:mdLabel(newDs)};
 }
-// ※ 飲み予定の日付を変えたときは、予定を動かさない。飲みに行く機会そのものが別なので、
-//    前の日に作った予定は記録として残し、新しい日にはまた「📅 予定に追加」を出す（上の保存処理）。
+// ※ こちらの日付を変えたときは、予定を動かさない。機会そのものが別なので、
+//    前の日に作った予定は記録として残し、新しい日にはまた「📅 予定に追加」を出す（下の保存処理）。
 // ウィジェットでもアルコールタブでも同じものを出す（作った予定もそのまま見える）
-function nextDrinkCard(){
-  const p=getNextDrinkPlan();
+function nextDrinkCard(){ return nextPlanCard("drink"); }
+function nextCareCard(){ return nextPlanCard("care"); }
+function nextPlanCard(k){
+  const K=NP_KINDS[k], p=npGet(k), eKey=K.sk+"Edit", dKey="npDraftDate_"+k, nKey="npDraftNote_"+k;
   const today=todayStr();
   const isFuture=p && p.date>=today;
-  const c=div({className:"card",style:{marginBottom:"10px",border:`1px solid ${isFuture?"#f59e0b55":"#33415588"}`,background:isFuture?"#f59e0b0d":"transparent"}});
+  const c=div({className:"card",style:{marginBottom:"10px",border:`1px solid ${isFuture?K.col+"55":"#33415588"}`,background:isFuture?K.col+"0d":"transparent"}}); c.setAttribute('data-nextplan',k);
   const head=div({style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"6px"}});
-  head.appendChild(div({style:{fontSize:"13px",fontWeight:800,color:"#fbbf24"}},"🍺 次に飲みに行く予定"));
-  if(p && !state.nextDrinkEdit){
-    const ed=btn({style:{padding:"4px 10px",borderRadius:"7px",border:"1px solid #f59e0b55",background:"transparent",color:"#fbbf24",fontSize:"11px",cursor:"pointer",fontFamily:"inherit"}},"✏️ 変更");
-    ed.addEventListener('click',()=>{ state.nextDrinkEdit=true; state.ndDraftDate=p.date; state.ndDraftNote=p.note||""; render(); });
+  head.appendChild(div({style:{fontSize:"13px",fontWeight:800,color:K.colT}},`${K.icon} ${K.title}`));
+  if(p && !state[eKey]){
+    const ed=btn({style:{padding:"4px 10px",borderRadius:"7px",border:`1px solid ${K.col}55`,background:"transparent",color:K.colT,fontSize:"11px",cursor:"pointer",fontFamily:"inherit"}},"✏️ 変更");
+    ed.addEventListener('click',()=>{ state[eKey]=true; state[dKey]=p.date; state[nKey]=p.note||""; render(); });
     head.appendChild(ed);
   }
   c.appendChild(head);
-  const showForm = state.nextDrinkEdit || !p;
+  const showForm = state[eKey] || !p;
   if(!showForm){
     // 表示（未来 or 過去）
     const diff=Math.round((parseDS(p.date)-parseDS(today))/86400000);
     if(p.date>=today){
-      c.appendChild(div({style:{fontSize:"18px",fontWeight:800,color:"#fef3c7",lineHeight:1.2}},[
-        txt(mdLabel(p.date)), span({style:{fontSize:"13px",color:"#fbbf24",marginLeft:"8px",fontWeight:700}}, diff===0?"今日":`あと${diff}日`)
+      c.appendChild(div({style:{fontSize:"18px",fontWeight:800,color:K.colBig,lineHeight:1.2}},[
+        txt(mdLabel(p.date)), span({style:{fontSize:"13px",color:K.colT,marginLeft:"8px",fontWeight:700}}, diff===0?"今日":`あと${diff}日`)
       ]));
       if(p.note)c.appendChild(div({style:{fontSize:"12px",color:"#e2e8f0",marginTop:"4px",lineHeight:1.5}},p.note));
-      // 📅 予定に追加。すでにこの飲み予定から作ってあれば、ボタンではなく**その予定**を出す（タップでその日へ）
-      { const evs=nextDrinkEvents();
+      // 📅 予定に追加。すでにここから作ってあれば、ボタンではなく**その予定**を出す（タップでその日へ）
+      { const evs=npEvents(k);
         if(evs.length){
           evs.forEach(g=>{
             const row=btn({style:{width:"100%",marginTop:"7px",padding:"8px 10px",borderRadius:"8px",cursor:"pointer",fontFamily:"inherit",textAlign:"left",
@@ -12889,57 +12937,58 @@ function nextDrinkCard(){
             row.appendChild(un);
             c.appendChild(row);
           });
-          c.appendChild(div({style:{fontSize:"9px",color:"#475569",marginTop:"5px",lineHeight:1.5}},"タップでその日の予定へ。「解除」は予定を残したまま結びつきだけ外します。この予定を別の日に動かすと上の日付も合わせます。"));
+          c.appendChild(div({style:{fontSize:"9px",color:"#475569",marginTop:"5px",lineHeight:1.5}},K.linkNote));
         } else {
           const row=div({style:{display:"flex",gap:"6px",marginTop:"8px"}});
           const b=btn({style:{flex:1,padding:"9px",borderRadius:"8px",cursor:"pointer",fontFamily:"inherit",fontSize:"12px",fontWeight:600,
             border:"1px solid #0ea5e9",background:"#0ea5e918",color:"#38bdf8"}},"📅 予定に追加");
-          b.addEventListener('click',openNextDrinkAsEvent);
+          b.setAttribute('data-npaddev',k); b.addEventListener('click',()=>npOpenAsEvent(k));
           row.appendChild(b);
-          // すでに入れてある予定を、この飲み予定に結びつける
+          // すでに入れてある予定を、ここに結びつける
           const pk=btn({style:{flex:1,padding:"9px",borderRadius:"8px",cursor:"pointer",fontFamily:"inherit",fontSize:"12px",fontWeight:600,
             border:"1px solid #334155",background:"transparent",color:"#94a3b8"}},"🔗 既存の予定から選ぶ");
-          pk.addEventListener('click',()=>{ state.modal="ndPickEvent"; render(); });
+          pk.setAttribute('data-nppick',k); pk.addEventListener('click',()=>{ state.modal="ndPickEvent"; state.ndPickKind=k; state.modeSwitcher=false; render(); });
           row.appendChild(pk);
           c.appendChild(row);
         } }
-      c.appendChild(div({style:{fontSize:"11px",color:"#94a3b8",marginTop:"7px",lineHeight:1.6}},"その日まで外飲みはお預け。今日踏みとどまれば、この日をもっと楽しめて貯金も増えます。"));
+      c.appendChild(div({style:{fontSize:"11px",color:"#94a3b8",marginTop:"7px",lineHeight:1.6}},K.waitMsg));
     } else {
       c.appendChild(div({style:{fontSize:"13px",color:"#f87171",fontWeight:700,lineHeight:1.5}},`前回の予定日（${mdLabel(p.date)}）は過ぎています。`));
-      c.appendChild(div({style:{fontSize:"11px",color:"#94a3b8",marginTop:"4px",lineHeight:1.6}},"次に飲みに行く日を決め直しましょう。"));
-      const b=btn({style:{width:"100%",marginTop:"8px",padding:"9px",borderRadius:"8px",border:"1px dashed #f59e0b",background:"#f59e0b0d",color:"#fbbf24",fontSize:"12px",fontWeight:600,cursor:"pointer",fontFamily:"inherit"}},"次の予定を決める");
-      b.addEventListener('click',()=>{ state.nextDrinkEdit=true; state.ndDraftDate=""; state.ndDraftNote=p.note||""; render(); });
+      c.appendChild(div({style:{fontSize:"11px",color:"#94a3b8",marginTop:"4px",lineHeight:1.6}},K.pastMsg));
+      const b=btn({style:{width:"100%",marginTop:"8px",padding:"9px",borderRadius:"8px",border:`1px dashed ${K.col}`,background:K.col+"0d",color:K.colT,fontSize:"12px",fontWeight:600,cursor:"pointer",fontFamily:"inherit"}},"次の予定を決める");
+      b.addEventListener('click',()=>{ state[eKey]=true; state[dKey]=""; state[nKey]=p.note||""; render(); });
       c.appendChild(b);
     }
     return c;
   }
   // 入力フォーム
-  if(!p) c.appendChild(div({style:{fontSize:"11px",color:"#94a3b8",lineHeight:1.6,marginBottom:"8px"}},"次に飲む日を先に決めておくと、それまでは「その日まで待つ」という目標になり、衝動的な外飲みを防げます。"));
-  const de=document.createElement('input');de.type='date';de.value=state.ndDraftDate||"";de.min=today;
+  if(!p) c.appendChild(div({style:{fontSize:"11px",color:"#94a3b8",lineHeight:1.6,marginBottom:"8px"}},K.intro));
+  const de=document.createElement('input');de.type='date';de.value=state[dKey]||"";de.min=today; de.setAttribute('data-npdate',k);
   de.style.cssText="width:100%;box-sizing:border-box;padding:9px 11px;margin-bottom:8px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:14px;font-family:inherit;color-scheme:dark";
-  de.addEventListener('change',e=>{state.ndDraftDate=e.target.value;});
+  de.addEventListener('change',e=>{state[dKey]=e.target.value;});
   c.appendChild(de);
-  const ne=document.createElement('input');ne.type='text';ne.placeholder="メモ（例：会社の飲み会／◯◯と）";ne.value=state.ndDraftNote||"";
+  const ne=document.createElement('input');ne.type='text';ne.placeholder=K.memoPh;ne.value=state[nKey]||"";
   ne.style.cssText="width:100%;box-sizing:border-box;padding:8px 11px;margin-bottom:10px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit";
-  ne.addEventListener('input',e=>{state.ndDraftNote=e.target.value;});
+  ne.addEventListener('input',e=>{state[nKey]=e.target.value;});
   c.appendChild(ne);
   const row=div({style:{display:"flex",gap:"8px"}});
-  if(p){ const cancel=btn({className:"btn-ghost",style:{flex:1},onClick:()=>{ state.nextDrinkEdit=false; render(); }},"キャンセル"); row.appendChild(cancel); }
-  const save=btn({style:{flex:2,padding:"10px",borderRadius:"8px",border:"none",background:"linear-gradient(135deg,#f59e0b,#f97316)",color:"#fff",fontSize:"13px",fontWeight:700,cursor:"pointer"}},"✅ 予定を決める");
-  save.addEventListener('click',()=>{ const dt=state.ndDraftDate; if(!dt){showToast("日付を選んでください");return;}
+  if(p){ const cancel=btn({className:"btn-ghost",style:{flex:1},onClick:()=>{ state[eKey]=false; render(); }},"キャンセル"); row.appendChild(cancel); }
+  const save=btn({style:{flex:2,padding:"10px",borderRadius:"8px",border:"none",background:K.grad,color:"#fff",fontSize:"13px",fontWeight:700,cursor:"pointer"}},"✅ 予定を決める");
+  save.setAttribute('data-npsave',k);
+  save.addEventListener('click',()=>{ const dt=state[dKey]; if(!dt){showToast("日付を選んでください");return;}
     const old=p&&p.date;
     const newDay=!!(old&&old!==dt);
-    const hadEv=newDay&&nextDrinkEvents().length>0;
+    const hadEv=newDay&&npEvents(k).length>0;
     // 日を変えたら**次の機会**として立て直す。前の日に作った予定は動かさず、そのまま残す
     // （結びつきだけ切るので、新しい日でまた「📅 予定に追加」ができる）
     const base={...(p||{})}; if(newDay) delete base.id;
-    state.nextDrink={...base,date:dt,note:(state.ndDraftNote||"").trim()}; saveNextDrinkPlan();
-    state.nextDrinkEdit=false;
-    showToast(hadEv?`🍺 次の飲み予定：${mdLabel(dt)}（前の予定はそのまま残ります）`:`🍺 次の飲み予定：${mdLabel(dt)}`,"#f59e0b"); render(); });
+    state[K.sk]={...base,date:dt,note:(state[nKey]||"").trim()}; npSave(k);
+    state[eKey]=false;
+    showToast(hadEv?`${K.icon} ${K.toast}：${mdLabel(dt)}（前の予定はそのまま残ります）`:`${K.icon} ${K.toast}：${mdLabel(dt)}`,K.col); render(); });
   row.appendChild(save);
   c.appendChild(row);
   if(p){ const clr=btn({style:{width:"100%",marginTop:"8px",padding:"9px",background:"transparent",border:"1px solid #7f1d1d",borderRadius:"8px",color:"#f87171",fontSize:"12px",cursor:"pointer"}},"🗑 予定を削除");
-    clr.addEventListener('click',()=>{ state.nextDrink=null; saveNextDrinkPlan(); state.nextDrinkEdit=false; render(); }); c.appendChild(clr); }
+    clr.addEventListener('click',()=>{ state[K.sk]=null; npSave(k); state[eKey]=false; render(); }); c.appendChild(clr); }
   return c;
 }
 // ── 気持ち（外飲みの引き金）の記録と集計 ──
@@ -18422,6 +18471,7 @@ function buildBackupPayload(){
     connectGoal:state.connectGoal,
     ctJournal:state.ctJournal,
     nextDrink:state.nextDrink,
+    nextCare:state.nextCare,           // 🩹 次にケアをする日
     foodCats:(Array.isArray(state.foodCats)&&state.foodCats.length)?{cats:state.foodCats,emoji:state.foodEmoji||{}}:null,
     anaChanges:state.anaChanges||[],
     foodNutri:state.foodNutri||{},
@@ -19120,6 +19170,7 @@ function applyBackupPayload(p){
   if(p.connectGoal&&typeof p.connectGoal==="object"){state.connectGoal=p.connectGoal;saveConnectGoal();}
   if(Array.isArray(p.ctJournal)){state.ctJournal=p.ctJournal;saveCTJournal();}
   if(p.nextDrink&&typeof p.nextDrink==="object"){state.nextDrink=p.nextDrink;saveNextDrinkPlan();}
+  if(p.nextCare&&typeof p.nextCare==="object"){state.nextCare=p.nextCare;saveNextCarePlan();}
   if(p.sleepGoal&&typeof p.sleepGoal==="object"&&p.sleepGoal.bedH!=null){state.sleepGoal=p.sleepGoal;saveSleepGoal();}
   if(Array.isArray(p.bodyComps)){state.bodyComps=p.bodyComps;saveBodyComps();}
   if(Array.isArray(p.todoItems)&&p.todoItems.length){state.todoItems=p.todoItems;saveTodoItems();}
