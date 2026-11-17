@@ -258,7 +258,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.84"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.85"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -5754,7 +5754,7 @@ function openGoalAsEvent(node, targetDate){
   state.newEvEndH=Math.min(23,now.getHours()+1); state.newEvEndM=0; state.newEvEndNextDay=false;
   state.newEvRepeat="none"; state.newEvColor=EV_DEFAULT;
   state.newEvWeekdays=[parseDS(target).getDay()];
-  state.newEvFromTask=null; state.newEvAllDay=false; state.newEvRefOnly=false; state.newEvPlace=""; state.newEvNote=""; state.newEvPreDays=0;state.newEvRemind=null;
+  state.newEvFromTask=null; state.newEvAllDay=false; state.newEvRefOnly=false; state.newEvPlace=""; state.newEvNote=""; state.newEvPreDays=0;state.newEvRemind=evRemindOf(node);   // ⏰ 目標のリマインドの印は、作る予定にも引き継ぐ
   state.newEvGoalId=(node&&node.id)||null;   // この予定がどの目標から来たかを覚える
   state.newEvNdId=null; state.newEvAlexa=null;
   render();
@@ -6255,6 +6255,9 @@ function renderGoalTreeModal(){
   noteTa.value=m0.note||"";noteTa.placeholder="進捗・気づきをメモ...";
   noteTa.addEventListener('input',e=>{state.goalTreeModal.note=e.target.value;});
   m.appendChild(noteTa);
+  // ⏰ リマインドの印
+  if(m0.remind===undefined){ const f=m0.mode==="edit"?gtFind(m0.id):null; m0.remind=f?evRemindOf(f.node):null; }
+  m.appendChild(remindBox(m0.remind,{key:"goal",timeLabel:"知らせる時刻",defT:()=>"",onSet:(r,rr)=>{ state.goalTreeModal.remind=r; if(rr) render(); }}));
   // ✅ 完了日時の編集（達成済みの目標のみ）。予定タブの「実績」の表示位置に反映される。
   if(m0.mode==="edit"){
     const cf=gtFind(m0.id); const cnode=cf&&cf.node;
@@ -6351,7 +6354,7 @@ function renderGoalTreeModal(){
       if(m0.mode==="add"){
         gtAddChild(m0.parentId==null?null:m0.parentId, text);
         const list=m0.parentId==null?state.goalTree:(gtFind(m0.parentId)?.node.children||[]); const created=list[list.length-1];
-        if(created){ if(pt){created.periodType=pt;created.periodKey=pk;} if(dailyEnd)created.dailyEnd=dailyEnd; if(note)created.note=note; if(linked.length)created.linkedRoutines=linked; saveGoalTree();
+        if(created){ if(pt){created.periodType=pt;created.periodKey=pk;} if(dailyEnd)created.dailyEnd=dailyEnd; if(note)created.note=note; if(linked.length)created.linkedRoutines=linked; if(m0.remind)created.remind=remindStored(m0.remind); saveGoalTree();
           if((m0.reward||"").trim()) setGoalReward(created.id,m0.reward); }
         // 下位目標を作るときに選んだ「上位目標の達成判定」を親に保存する
         if(m0.parentId!=null && m0.parentRule){ gtUpdate(m0.parentId, m0.parentRule==="all"?{doneRule:null}:{doneRule:{mode:"manual"}}); }
@@ -6359,6 +6362,7 @@ function renderGoalTreeModal(){
         // 期間を変えたら、この目標から作った予定も同じ日数だけずらす（連動）
         const _pf=gtFind(m0.id), _oldT=_pf&&_pf.node.periodType, _oldK=_pf&&_pf.node.periodKey;
         gtUpdate(m0.id,{text, periodType:pt, periodKey:pk, note, linkedRoutines:linked, dailyEnd:dailyEnd||null});
+        { const gf=gtFind(m0.id); if(gf){ if(m0.remind) gf.node.remind=remindStored(m0.remind); else delete gf.node.remind; saveGoalTree(); } }   // ⏰ リマインドの印
         setGoalReward(m0.id,m0.reward||"");
         if(pt && _oldT===pt && _oldK && _oldK!==pk){
           const moved=syncEventsFromGoal(m0.id,_oldT,_oldK);
@@ -9342,7 +9346,18 @@ function renderRoutinePanel(){
     const swatch=btn({style:{width:"26px",height:"26px",borderRadius:"6px",flexShrink:0,cursor:"pointer",background:item.color||"#334155",border:`2px solid ${state.itemColorEdit===item.id?"#fff":"transparent"}`},title:"色"},item.color?"":"🎨");
     swatch.addEventListener('click',(()=>{const id=item.id;return()=>{ state.itemColorEdit=state.itemColorEdit===id?null:id; render(); };})());
     r2.appendChild(swatch);
+    // ⏰ リマインドの印
+    { const hasR=!!evRemindOf(item), open=state.itemRemindEdit===item.id;
+      const rb=btn({style:{width:"26px",height:"26px",borderRadius:"6px",flexShrink:0,cursor:"pointer",padding:0,fontSize:"13px",background:hasR?"#f59e0b22":"transparent",border:`1px solid ${hasR?"#f59e0b":open?"#94a3b8":"#334155"}`},title:"リマインド"},"⏰");
+      rb.setAttribute('data-itemremindbtn',item.id);
+      rb.addEventListener('click',(()=>{const id=item.id;return()=>{ state.itemRemindEdit=state.itemRemindEdit===id?null:id; render(); };})());
+      r2.appendChild(rb); }
     box.appendChild(r2);
+    if(evRemindOf(item)||state.itemRemindEdit===item.id){
+      const wrap=div({style:{paddingLeft:"28px"}});
+      wrap.appendChild(remindBox(evRemindOf(item),{key:"item:"+item.id,compact:true,commitOnChange:true,defT:()=>"",onSet:(()=>{const id=item.id;return (r,rr)=>{ getTodoItems().forEach(x=>{ if(x.id===id){ if(r) x.remind=remindStored(r); else delete x.remind; } }); saveTodoItems(); if(rr) render(); };})()}));
+      box.appendChild(wrap);
+    }
     // 表示するモード（このルーティンをどのモードの画面に出すか）
     // 複数選べる：ボタンで開いて、モードをタップで付け外し
     { const cur=itemModes(item), open=state.itemModeEdit===item.id;
@@ -11590,6 +11605,7 @@ function todoItemBox(item){
     state.newEvWeekdays=[parseDS(target).getDay()];
     state.newEvFromTask=it.uid; state.newEvGoalId=null; state.newEvNdId=null; state.newEvAlexa=null;
     state.newEvPlace="";state.newEvNote=(it.note||"");
+    state.newEvPreDays=0; state.newEvRemind=evRemindOf(it);   // ⏰ TODO のリマインドの印は、作る予定にも引き継ぐ
     state.scheduleSubTab="日";
     render();
   };})());
@@ -11603,6 +11619,13 @@ function todoItemBox(item){
     border:`1px solid ${hasNote?"#a78bfa":"#334155"}`,background:hasNote?"#a78bfa18":"transparent",color:hasNote?"#a78bfa":"#475569"}},hasNote?"📝 メモを編集":(memoOpen?"📝 メモを閉じる":"📝 メモを追加"));
   memoB.addEventListener('click',(()=>{const uid=item.uid;return()=>{ if(!state.taskMemoOpen)state.taskMemoOpen={}; state.taskMemoOpen[uid]=!state.taskMemoOpen[uid]; render(); };})());
   row3.appendChild(memoB);
+  // ⏰ リマインドの印
+  const hasRemind=!!evRemindOf(item), remindOpen=!!(state.taskRemindOpen&&state.taskRemindOpen[item.uid]);
+  { const rb=btn({style:{fontSize:"10px",padding:"3px 8px",borderRadius:"6px",cursor:"pointer",whiteSpace:"nowrap",
+      border:`1px solid ${hasRemind?"#f59e0b":"#334155"}`,background:hasRemind?"#f59e0b18":"transparent",color:hasRemind?"#fbbf24":"#475569"}},hasRemind?"⏰ リマインドあり":(remindOpen?"⏰ 閉じる":"⏰ リマインド"));
+    rb.setAttribute('data-taskremindbtn',item.uid);
+    rb.addEventListener('click',(()=>{const uid=item.uid;return()=>{ if(!state.taskRemindOpen)state.taskRemindOpen={}; state.taskRemindOpen[uid]=!state.taskRemindOpen[uid]; render(); };})());
+    row3.appendChild(rb); }
   // 入れる場所を間違えても、ここで移せる
   { const cur=todoKindOf(item), other=todoKindDef(cur==='do'?'want':'do');
     const mv=btn({style:{fontSize:"10px",padding:"3px 8px",borderRadius:"6px",cursor:"pointer",whiteSpace:"nowrap",marginLeft:"auto",
@@ -11617,6 +11640,10 @@ function todoItemBox(item){
     ta.addEventListener('change',(()=>{const uid=item.uid;return e=>updateTask(uid,{note:e.target.value});})());
     ta.addEventListener('blur',(()=>{const uid=item.uid;return e=>updateTask(uid,{note:e.target.value});})());
     box.appendChild(ta);
+  }
+  if(remindOpen||hasRemind){
+    box.appendChild(remindBox(evRemindOf(item),{key:"task:"+item.uid,compact:true,commitOnChange:true,timeLabel:item.due?"期日の":"その日の",defT:()=>"",
+      onSet:(()=>{const uid=item.uid;return (r,rr)=>{ state.tasks.todo=state.tasks.todo.map(x=>x.uid===uid?{...x,remind:remindStored(r)}:x); saveTasks(); if(rr) render(); };})()}));
   }
   return box;
 }
@@ -11922,30 +11949,7 @@ function renderAddEventModal(vd){
     m.appendChild(preRow);
   }
   // ⏰ リマインド（印・時刻・メモ。AI が同期データを読んだときに分かる。アプリ自身は通知しない）
-  {
-    const R=state.newEvRemind, on=!!R;
-    const box=div({style:{marginBottom:"12px",padding:"9px 11px",borderRadius:"8px",border:`1px solid ${on?"#f59e0b88":"#334155"}`,background:on?"#f59e0b0d":"transparent"}}); box.setAttribute('data-evremind',on?'1':'0');
-    const tg=btn({style:{width:"100%",display:"flex",alignItems:"center",gap:"8px",background:"transparent",border:"none",padding:"0",cursor:"pointer",fontFamily:"inherit",textAlign:"left"}},[
-      span({style:{fontSize:"16px"}},on?"☑":"☐"), span({style:{fontSize:"13px",fontWeight:600,color:on?"#fbbf24":"#94a3b8"}},"⏰ リマインドする")]);
-    tg.setAttribute('data-evremindtoggle','1');
-    tg.addEventListener('click',()=>{ state.newEvRemind=on?null:{t:state.newEvAllDay?"09:00":hhmm(state.newEvH||0,state.newEvM||0),note:""}; render(); });
-    box.appendChild(tg);
-    if(on){
-      const row=div({style:{display:"flex",alignItems:"center",gap:"8px",marginTop:"8px"}});
-      row.appendChild(span({style:{fontSize:"12px",color:"#94a3b8",flexShrink:0}},"その日の"));
-      const ti=document.createElement('input'); ti.type='time'; ti.value=R.t||""; ti.setAttribute('data-evremindtime','1');
-      ti.style.cssText="padding:7px 9px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:14px;font-family:inherit;color-scheme:dark";
-      ti.addEventListener('change',e=>{ state.newEvRemind={...state.newEvRemind,t:e.target.value||""}; });
-      row.appendChild(ti); row.appendChild(span({style:{fontSize:"12px",color:"#94a3b8"}},"に知らせる"));
-      box.appendChild(row);
-      const ni=document.createElement('input'); ni.type='text'; ni.placeholder="リマインドのメモ（例：出る30分前に声をかけて／持ち物を確認）"; ni.value=R.note||""; ni.maxLength=200; ni.setAttribute('data-evremindnote','1');
-      ni.style.cssText="width:100%;box-sizing:border-box;margin-top:8px;padding:8px 11px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit";
-      ni.addEventListener('input',e=>{ state.newEvRemind={...state.newEvRemind,note:e.target.value}; });
-      box.appendChild(ni);
-      box.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginTop:"6px",lineHeight:1.5}},"この予定に印を付けます。AI（Claude）が同期したデータを読んだときに、リマインドする予定だと分かります。アプリ自身は通知しません。"));
-    }
-    m.appendChild(box);
-  }
+  m.appendChild(remindBox(state.newEvRemind,{key:"ev",defT:()=>state.newEvAllDay?"09:00":hhmm(state.newEvH||0,state.newEvM||0),onSet:(r,rr)=>{ state.newEvRemind=r; if(rr) render(); }}));
   // 🔊 この予定の時刻にAlexaを鳴らす（時刻のある予定だけ。設定でONにしていれば出す）
   if(state.alexaOn && state.alexaPlanOn && alexaUsingRelay() && !state.newEvAllDay){
     m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"5px"}},"🔊 Alexa（この予定の開始時刻に鳴らす）"));
@@ -12113,7 +12117,7 @@ function renderAddEventModal(vd){
         const isNone=state.newEvRepeat==="none";
         // 複数日予定（開始日<終了日・単発のみ）は終日扱いで endDate を保存
         const mdEnd=(!isRepEdit && isNone && state.newEvEndDate && state.newEvEndDate>targetDate)?state.newEvEndDate:null;
-        const evData={title:state.newEvTitle.trim(),startH:state.newEvH,startM:state.newEvM,endH:state.newEvEndH,endM:state.newEvEndM,endNextDay:!!state.newEvEndNextDay,color:state.newEvColor,allDay:mdEnd?true:!!state.newEvAllDay,refOnly:!!state.newEvRefOnly,...(mdEnd?{endDate:mdEnd}:{}),...(evPlace?{place:evPlace}:{}),...(evNote?{note:evNote}:{}),...(ft?{fromTask:ft}:{}),...(evPre>0?{preDays:evPre}:{}),...(state.newEvRemind?{remind:{t:state.newEvRemind.t||"",...((state.newEvRemind.note||"").trim()?{note:state.newEvRemind.note.trim()}:{})}}:{}),...(state.newEvGoalId?{goalId:state.newEvGoalId}:{}),...(state.newEvNdId?{ndId:state.newEvNdId}:{}),...(state.newEvAlexa&&state.newEvAlexa.t?{alexa:state.newEvAlexa}:{})};
+        const evData={title:state.newEvTitle.trim(),startH:state.newEvH,startM:state.newEvM,endH:state.newEvEndH,endM:state.newEvEndM,endNextDay:!!state.newEvEndNextDay,color:state.newEvColor,allDay:mdEnd?true:!!state.newEvAllDay,refOnly:!!state.newEvRefOnly,...(mdEnd?{endDate:mdEnd}:{}),...(evPlace?{place:evPlace}:{}),...(evNote?{note:evNote}:{}),...(ft?{fromTask:ft}:{}),...(evPre>0?{preDays:evPre}:{}),...(state.newEvRemind?{remind:remindStored(state.newEvRemind)}:{}),...(state.newEvGoalId?{goalId:state.newEvGoalId}:{}),...(state.newEvNdId?{ndId:state.newEvNdId}:{}),...(state.newEvAlexa&&state.newEvAlexa.t?{alexa:state.newEvAlexa}:{})};
         const newWds=isW(state.newEvRepeat)?((state.newEvWeekdays&&state.newEvWeekdays.length)?[...state.newEvWeekdays].sort((a,b)=>a-b):[parseDS(targetDate).getDay()]):null;
         // 単発の予定を編集したときは**同じuidのまま**保存する。uidが変わると、この予定を指している
         // 他の記録（🫂つながる予定・実績のメモ・「やった」印など）との結びつきが切れてしまうため。
@@ -18181,6 +18185,35 @@ function qaDsOf(iso){ try{ return fmtDS(new Date(iso)); }catch(_){ return null; 
 // 印があるときだけ予定に持つ。アプリ自身は通知しない（AI が同期データを読んだときに「この予定はリマインドする」と分かるための印）。
 function evRemindOf(e){ const r=e&&e.remind; if(!r||typeof r!=="object") return null;
   return {t:/^\d{1,2}:\d{2}$/.test(r.t||"")?r.t:"", note:typeof r.note==="string"?r.note:""}; }
+// ⏰ リマインドの入力欄（印・時刻・メモ）。予定・ルーティン・定期ルーティン・TODO・目標で同じものを使う（v15.85）。
+// R＝今の値（null＝印なし）。o.onSet(新しい値, 画面を描き直すか)・o.defT()＝印を付けたときに入れる時刻・o.key＝どの欄か（data-remindkey）
+function remindBox(R,o){
+  o=o||{}; const on=!!R;
+  const box=div({style:{marginBottom:o.compact?"0":"12px",marginTop:o.compact?"6px":"0",padding:o.compact?"7px 9px":"9px 11px",borderRadius:"8px",border:`1px solid ${on?"#f59e0b88":"#334155"}`,background:on?"#f59e0b0d":"transparent"}});
+  box.setAttribute('data-remind',on?'1':'0'); if(o.key!=null) box.setAttribute('data-remindkey',String(o.key));
+  const tg=btn({style:{width:"100%",display:"flex",alignItems:"center",gap:"8px",background:"transparent",border:"none",padding:"0",cursor:"pointer",fontFamily:"inherit",textAlign:"left"}},[
+    span({style:{fontSize:o.compact?"14px":"16px"}},on?"☑":"☐"), span({style:{fontSize:o.compact?"12px":"13px",fontWeight:600,color:on?"#fbbf24":"#94a3b8"}},"⏰ リマインドする")]);
+  tg.setAttribute('data-remindtoggle','1');
+  tg.addEventListener('click',()=>o.onSet(on?null:{t:(o.defT?o.defT():"")||"",note:""},true));
+  box.appendChild(tg);
+  if(on){
+    const row=div({style:{display:"flex",alignItems:"center",gap:"8px",marginTop:"8px"}});
+    row.appendChild(span({style:{fontSize:"12px",color:"#94a3b8",flexShrink:0}},o.timeLabel||"その日の"));
+    const ti=document.createElement('input'); ti.type='time'; ti.value=R.t||""; ti.setAttribute('data-remindtime','1');
+    ti.style.cssText="padding:7px 9px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:14px;font-family:inherit;color-scheme:dark";
+    ti.addEventListener('change',e=>o.onSet({t:e.target.value||"",note:R.note||""},false,(R={...R,t:e.target.value||""})));
+    row.appendChild(ti); row.appendChild(span({style:{fontSize:"12px",color:"#94a3b8"}},"に知らせる"));
+    box.appendChild(row);
+    const ni=document.createElement('input'); ni.type='text'; ni.placeholder="リマインドのメモ（例：出る30分前に声をかけて／持ち物を確認）"; ni.value=R.note||""; ni.maxLength=200; ni.setAttribute('data-remindnote','1');
+    ni.style.cssText="width:100%;box-sizing:border-box;margin-top:8px;padding:8px 11px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit";
+    ni.addEventListener(o.commitOnChange?'change':'input',e=>o.onSet({t:R.t||"",note:e.target.value},false,(R={...R,note:e.target.value})));
+    box.appendChild(ni);
+    box.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginTop:"6px",lineHeight:1.5}},"印を付けます。AI（Claude）が同期したデータを読んだときに、リマインドするものだと分かります。アプリ自身は通知しません。"));
+  }
+  return box;
+}
+// 保存する形（メモが空なら note を持たない）。印なしは undefined（項目ごと消える）
+function remindStored(R){ return R?{t:R.t||"",...((R.note||"").trim()?{note:R.note.trim()}:{})}:undefined; }
 function evRemindLabel(r){ return r?`${r.t?r.t+" に":""}リマインド${r.note?`：${r.note}`:""}`:""; }
 function qaEvText(e){
   const tm=e.allDay?"終日":`${hhmm(e.startH||0,e.startM||0)}〜${hhmm(e.endH!=null?e.endH:(e.startH||0),e.endM||0)}`;
@@ -18220,13 +18253,13 @@ function qaRecords(){
     if((d.ejaculations||[]).length) push(ds,"ejac",`${d.ejaculations.length}回`);
   });
   (state.bodyComps||[]).forEach(b=>push(b.date,"body",`体重${b.weight??"?"}kg 体脂肪${b.bodyFat??"?"}%`));
-  const tsk=(arr,src)=>(arr||[]).forEach(t=>{ const ds=(typeof t.uid==="number"&&t.uid>1e12)?fmtDS(new Date(t.uid)):today; push(ds,src,`${t.text||""}${t.done?"（完了）":"（未完了）"}${t.kind==="wish"?"（やりたいこと）":""}${t.note?` メモ:${t.note}`:""}`); });
+  const tsk=(arr,src)=>(arr||[]).forEach(t=>{ const ds=(typeof t.uid==="number"&&t.uid>1e12)?fmtDS(new Date(t.uid)):today; push(ds,src,`${t.text||""}${t.done?"（完了）":"（未完了）"}${t.kind==="wish"?"（やりたいこと）":""}${t.note?` メモ:${t.note}`:""}${evRemindOf(t)?` 🔔${evRemindLabel(evRemindOf(t))}`:""}`); });
   tsk((state.tasks||{}).todo,"task"); tsk((state.tasks||{}).shopping,"shop");
-  (state.customTodos||[]).forEach(ct=>push(ct.startDate,"ctdef",`${ct.label}（${customTodoIntervalLabel(ct)}・${ct.startDate}〜）${ct.note?` メモ:${ct.note}`:""}${ctPausedNow(ct)?"（休止中）":""}`));
+  (state.customTodos||[]).forEach(ct=>push(ct.startDate,"ctdef",`${ct.label}（${customTodoIntervalLabel(ct)}・${ct.startDate}〜）${ct.note?` メモ:${ct.note}`:""}${evRemindOf(ct)?` 🔔${evRemindLabel(evRemindOf(ct))}`:""}${ctPausedNow(ct)?"（休止中）":""}`));
   getModeLog().forEach(x=>{ if(!x.tag) return; const def=lifeModeDef(x.key)||{}; const st=new Date(x.start); push(fmtDS(st),"mode",`${def.icon||""}${def.label||x.key} ${hhmm(st.getHours(),st.getMinutes())}〜 タグ:${x.tag}`); });
   (state.selfModeLog||[]).forEach(x=>{ if(!x.note) return; const def=lifeModeDef(x.mode)||{}; push(qaDsOf(x.t),"care",`${def.icon||""}${def.label||x.mode} 「${x.note}」`); });
   (state.ctJournal||[]).forEach(x=>{ if(x.text) push(qaDsOf(x.t),"ctj",`${x.prompt?x.prompt+" → ":""}${x.text}`); });
-  const walk=ns=>(ns||[]).forEach(n=>{ if(n.text) push(n.doneAt?qaDsOf(n.doneAt):(n.start||n.date||n.deadline||today),"goal",`${n.text}${n.done?`（達成${n.doneAt?" "+qaDsOf(n.doneAt):""}）`:""}${n.note?` メモ:${n.note}`:""}`); if(n.children) walk(n.children); });
+  const walk=ns=>(ns||[]).forEach(n=>{ if(n.text) push(n.doneAt?qaDsOf(n.doneAt):(n.start||n.date||n.deadline||today),"goal",`${n.text}${n.done?`（達成${n.doneAt?" "+qaDsOf(n.doneAt):""}）`:""}${n.note?` メモ:${n.note}`:""}${evRemindOf(n)?` 🔔${evRemindLabel(evRemindOf(n))}`:""}`); if(n.children) walk(n.children); });
   walk(state.goalTree);
   return R;
 }
@@ -19936,6 +19969,8 @@ function renderCustomTodoModal(){
   });
   m.appendChild(cwWrap);
   } // end !byShiftSchedule
+  // ⏰ リマインドの印
+  m.appendChild(remindBox(evRemindOf(m0),{key:"ct",defT:()=>m0.timeH!=null?hhmm(m0.timeH,m0.timeM||0):"",onSet:(r,rr)=>{ if(r) m0.remind=r; else delete m0.remind; if(rr) render(); }}));
   // 🎨 色
   m.appendChild(div({style:{fontSize:"11px",color:"#64748b",margin:"4px 0 6px"}},"🎨 色"));
   m.appendChild(colorPickerRow(m0.color||"#38bdf8",c=>{ m0.color=c; render(); }));
@@ -19951,6 +19986,7 @@ function renderCustomTodoModal(){
       onClick:()=>{
         if(!(m0.label||"").trim()){alert("名前を入力してください");return;}
         const data={uid:m0.uid||Date.now(),label:m0.label.trim(),mode:m0.mode==='timer'?'timer':'check',itype:m0.itype||"week",n:Math.max(1,m0.n||1),startDate:m0.startDate||todayStr(),timeH:m0.timeH!=null?m0.timeH:null,timeM:m0.timeH!=null?(m0.timeM||0):0,endH:m0.timeH!=null&&m0.endH!=null?m0.endH:null,endM:m0.timeH!=null&&m0.endH!=null?(m0.endM||0):null,endNextDay:!!(m0.timeH!=null&&m0.endH!=null&&m0.endNextDay),startNextDay:!!(m0.timeH!=null&&m0.startNextDay),color:m0.color||"#38bdf8",weekdays:(m0.itype==="week"&&m0.weekdays)?[...m0.weekdays]:[],shifts:m0.shifts?[...m0.shifts]:[],weekdayTimes:(m0.weekdayTimes&&Object.keys(m0.weekdayTimes).length)?JSON.parse(JSON.stringify(m0.weekdayTimes)):undefined,byShiftSchedule:!!m0.byShiftSchedule,shiftSchedule:(m0.byShiftSchedule&&m0.shiftSchedule)?JSON.parse(JSON.stringify(m0.shiftSchedule)):undefined,reschedules:(Array.isArray(m0.reschedules)&&m0.reschedules.length)?JSON.parse(JSON.stringify(m0.reschedules)):undefined,fromDone:!!m0.fromDone,alexa:(m0.alexa&&m0.alexa.t)?{...m0.alexa}:undefined};
+        { const _r=remindStored(evRemindOf(m0)); if(_r) data.remind=_r; }   // ⏰ リマインドの印
         if(m0.uid){
           const prev=(state.customTodos||[]).find(x=>x.uid===m0.uid);
           // 既存の編集は「今日以降のみ」反映：変更前の定義を昨日までの過去バージョンとして凍結
