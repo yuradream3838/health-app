@@ -258,7 +258,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.87"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.88"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -11953,7 +11953,7 @@ function renderAddEventModal(vd){
     m.appendChild(preRow);
   }
   // ⏰ リマインド（印・時刻・メモ。AI が同期データを読んだときに分かる。アプリ自身は通知しない）
-  m.appendChild(remindBox(state.newEvRemind,{key:"ev",relative:!state.newEvAllDay,startMin:()=>(state.newEvH||0)*60+(state.newEvM||0),defT:()=>"09:00",onSet:(r,rr)=>{ state.newEvRemind=r; if(rr) render(); }}));
+  m.appendChild(remindBox(state.newEvRemind,{key:"ev",relative:!state.newEvAllDay&&!(state.newEvRepeat==="none"&&state.newEvEndDate&&state.newEvEndDate>(state.newEvDate||vd)),   /* 終日・複数日（＝終日）は時刻で */startMin:()=>(state.newEvH||0)*60+(state.newEvM||0),defT:()=>"09:00",onSet:(r,rr)=>{ state.newEvRemind=r; if(rr) render(); }}));
   // 🔊 この予定の時刻にAlexaを鳴らす（時刻のある予定だけ。設定でONにしていれば出す）
   if(state.alexaOn && state.alexaPlanOn && alexaUsingRelay() && !state.newEvAllDay){
     m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"5px"}},"🔊 Alexa（この予定の開始時刻に鳴らす）"));
@@ -18296,6 +18296,17 @@ function remindBox(R0,o){
   }
   return box;
 }
+// 定期ルーティンの開始時刻（分）を全部集める：基本の時刻・曜日別の時刻（直で分けた分も）・直ごとモードの時刻。
+// 1つでもあれば「予定の時間／◯分前」で選べる。全部同じ時刻ならその時刻を返す（違えば null＝日によって変わる）
+function ctRemindStarts(ct){ const out=[], add=o=>{ if(o&&o.timeH!=null) out.push(o.timeH*60+(o.timeM||0)); };
+  if(ct.byShiftSchedule){
+    Object.values(ct.shiftSchedule||{}).forEach(ss=>{ if(!ss||!ss.on) return; add(ss); Object.values(ss.weekdayTimes||{}).forEach(add); });
+  } else {
+    add(ct); Object.values(ct.weekdayTimes||{}).forEach(w=>{ if(!w) return; if(w.byShift) Object.values(w.shiftTimes||{}).forEach(t=>{ if(t&&t.on!==false) add(t); }); else add(w); });
+  }
+  return out; }
+function ctRemindRelative(ct){ return ctRemindStarts(ct).length>0; }
+function ctRemindStart(ct){ const a=ctRemindStarts(ct); return a.length&&a.every(x=>x===a[0])?a[0]:null; }
 // 保存する形（メモが空なら note を持たない）。印なしは undefined（項目ごと消える）。relative＝◯分前の形で持つ
 function remindStored(R,relative,startMin){ if(!R) return undefined; const n=remindNorm(R,!!relative,startMin), note=(n.note||"").trim();
   return relative?{before:n.before||0,...(note?{note}:{})}:{t:n.t||"",...(note?{note}:{})}; }
@@ -20058,7 +20069,7 @@ function renderCustomTodoModal(){
   m.appendChild(cwWrap);
   } // end !byShiftSchedule
   // ⏰ リマインドの印
-  m.appendChild(remindBox(m0.remind?(m0._remindRaw||evRemindOf(m0)):null,{key:"ct",relative:m0.timeH!=null,startMin:()=>m0.timeH!=null?m0.timeH*60+(m0.timeM||0):null,defT:()=>"",onSet:(r,rr)=>{ if(r){ m0.remind=r; m0._remindRaw=r; } else { delete m0.remind; delete m0._remindRaw; } if(rr) render(); }}));
+  m.appendChild(remindBox(evRemindOf(m0),{key:"ct",relative:ctRemindRelative(m0),startMin:()=>ctRemindStart(m0),defT:()=>"",onSet:(r,rr)=>{ if(r) m0.remind=r; else delete m0.remind; if(rr) render(); }}));
   // 🎨 色
   m.appendChild(div({style:{fontSize:"11px",color:"#64748b",margin:"4px 0 6px"}},"🎨 色"));
   m.appendChild(colorPickerRow(m0.color||"#38bdf8",c=>{ m0.color=c; render(); }));
@@ -20074,7 +20085,7 @@ function renderCustomTodoModal(){
       onClick:()=>{
         if(!(m0.label||"").trim()){alert("名前を入力してください");return;}
         const data={uid:m0.uid||Date.now(),label:m0.label.trim(),mode:m0.mode==='timer'?'timer':'check',itype:m0.itype||"week",n:Math.max(1,m0.n||1),startDate:m0.startDate||todayStr(),timeH:m0.timeH!=null?m0.timeH:null,timeM:m0.timeH!=null?(m0.timeM||0):0,endH:m0.timeH!=null&&m0.endH!=null?m0.endH:null,endM:m0.timeH!=null&&m0.endH!=null?(m0.endM||0):null,endNextDay:!!(m0.timeH!=null&&m0.endH!=null&&m0.endNextDay),startNextDay:!!(m0.timeH!=null&&m0.startNextDay),color:m0.color||"#38bdf8",weekdays:(m0.itype==="week"&&m0.weekdays)?[...m0.weekdays]:[],shifts:m0.shifts?[...m0.shifts]:[],weekdayTimes:(m0.weekdayTimes&&Object.keys(m0.weekdayTimes).length)?JSON.parse(JSON.stringify(m0.weekdayTimes)):undefined,byShiftSchedule:!!m0.byShiftSchedule,shiftSchedule:(m0.byShiftSchedule&&m0.shiftSchedule)?JSON.parse(JSON.stringify(m0.shiftSchedule)):undefined,reschedules:(Array.isArray(m0.reschedules)&&m0.reschedules.length)?JSON.parse(JSON.stringify(m0.reschedules)):undefined,fromDone:!!m0.fromDone,alexa:(m0.alexa&&m0.alexa.t)?{...m0.alexa}:undefined};
-        { const _r=remindStored(m0._remindRaw||evRemindOf(m0),m0.timeH!=null,m0.timeH!=null?m0.timeH*60+(m0.timeM||0):null); if(_r) data.remind=_r; }   // ⏰ リマインドの印
+        { const _r=remindStored(evRemindOf(m0),ctRemindRelative(m0),ctRemindStart(m0)); if(_r) data.remind=_r; }   // ⏰ リマインドの印
         if(m0.uid){
           const prev=(state.customTodos||[]).find(x=>x.uid===m0.uid);
           // 既存の編集は「今日以降のみ」反映：変更前の定義を昨日までの過去バージョンとして凍結
