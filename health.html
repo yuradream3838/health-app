@@ -258,7 +258,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.83"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.84"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -5754,7 +5754,7 @@ function openGoalAsEvent(node, targetDate){
   state.newEvEndH=Math.min(23,now.getHours()+1); state.newEvEndM=0; state.newEvEndNextDay=false;
   state.newEvRepeat="none"; state.newEvColor=EV_DEFAULT;
   state.newEvWeekdays=[parseDS(target).getDay()];
-  state.newEvFromTask=null; state.newEvAllDay=false; state.newEvRefOnly=false; state.newEvPlace=""; state.newEvNote=""; state.newEvPreDays=0;
+  state.newEvFromTask=null; state.newEvAllDay=false; state.newEvRefOnly=false; state.newEvPlace=""; state.newEvNote=""; state.newEvPreDays=0;state.newEvRemind=null;
   state.newEvGoalId=(node&&node.id)||null;   // この予定がどの目標から来たかを覚える
   state.newEvNdId=null; state.newEvAlexa=null;
   render();
@@ -8123,7 +8123,7 @@ function openAddEvent(vd, startH, startM){
   state.newEvEndH=(sh+1)%24;state.newEvEndM=sm;state.newEvEndNextDay=(sh+1)>=24;
   state.newEvRepeat="none";state.newEvColor=EV_DEFAULT;
   state.newEvWeekdays=[parseDS(vd).getDay()];
-  state.newEvFromTask=null;state.newEvGoalId=null;state.newEvNdId=null;state.newEvAlexa=null;state.newEvAllDay=false;state.newEvRefOnly=false;state.newEvPlace="";state.newEvNote="";state.newEvPreDays=0;
+  state.newEvFromTask=null;state.newEvGoalId=null;state.newEvNdId=null;state.newEvAlexa=null;state.newEvAllDay=false;state.newEvRefOnly=false;state.newEvPlace="";state.newEvNote="";state.newEvPreDays=0;state.newEvRemind=null;
   render();
 }
 // ルーティン実績ブロックの「その日だけ」表示名・メモを編集
@@ -10461,7 +10461,7 @@ function collectSearchItems(){
           state.modal="addEvent";state.editEventUid=e.uid;state.editEventIsRepeat=false;state.editEventDate=dsk;state.eventEditMode=false;
           state.newEvTitle=e.title;state.newEvH=e.startH;state.newEvM=e.startM;state.newEvEndH=e.endH;state.newEvEndM=e.endM;
           state.newEvRepeat="none";state.newEvColor=e.color||EV_DEFAULT;state.newEvWeekdays=[parseDS(dsk).getDay()];state.newEvDate=dsk;state.newEvEndDate=e.endDate||null;
-          state.newEvFromTask=e.fromTask||null;state.newEvGoalId=e.goalId||null;state.newEvNdId=e.ndId||null;state.newEvAlexa=e.alexa||null;state.newEvAllDay=!!e.allDay;state.newEvRefOnly=!!e.refOnly;state.newEvPlace=e.place||"";state.newEvNote=e.note||"";state.newEvPreDays=e.preDays||0;state.editScope="this";render(); }});
+          state.newEvFromTask=e.fromTask||null;state.newEvGoalId=e.goalId||null;state.newEvNdId=e.ndId||null;state.newEvAlexa=e.alexa||null;state.newEvAllDay=!!e.allDay;state.newEvRefOnly=!!e.refOnly;state.newEvPlace=e.place||"";state.newEvNote=e.note||"";state.newEvPreDays=e.preDays||0;state.newEvRemind=evRemindOf(e);state.editScope="this";render(); }});
     });
   });
   // 2. 予定（繰り返し）
@@ -10475,7 +10475,7 @@ function collectSearchItems(){
         state.newEvTitle=e.title;state.newEvH=e.startH;state.newEvM=e.startM;state.newEvEndH=e.endH;state.newEvEndM=e.endM;
         state.newEvRepeat=e.repeatType||"weekly";state.newEvColor=e.color||EV_DEFAULT;
         state.newEvWeekdays=(e.weekdays&&e.weekdays.length)?[...e.weekdays]:[parseDS(e.startDate||todayStr()).getDay()];state.newEvDate=todayStr();state.newEvEndDate=null;
-        state.newEvFromTask=e.fromTask||null;state.newEvGoalId=e.goalId||null;state.newEvNdId=e.ndId||null;state.newEvAlexa=e.alexa||null;state.newEvAllDay=!!e.allDay;state.newEvRefOnly=!!e.refOnly;state.newEvPlace=e.place||"";state.newEvNote=e.note||"";state.newEvPreDays=e.preDays||0;state.editScope="this";render(); }});
+        state.newEvFromTask=e.fromTask||null;state.newEvGoalId=e.goalId||null;state.newEvNdId=e.ndId||null;state.newEvAlexa=e.alexa||null;state.newEvAllDay=!!e.allDay;state.newEvRefOnly=!!e.refOnly;state.newEvPlace=e.place||"";state.newEvNote=e.note||"";state.newEvPreDays=e.preDays||0;state.newEvRemind=evRemindOf(e);state.editScope="this";render(); }});
   });
   // 3. 定期ルーティン
   (state.customTodos||[]).forEach(ct=>{
@@ -10867,7 +10867,7 @@ function renderDaySchedule(vd,ds,isToday){
           state.newEvRepeat=e2.isRepeat?e2.repeatType:"none";state.newEvColor=e2.color||EV_DEFAULT;
           state.newEvWeekdays=(e2.weekdays&&e2.weekdays.length)?[...e2.weekdays]:[parseDS(e2.startDate||vd).getDay()];
           state.newEvDate=owner;state.newEvEndDate=e2.endDate||e2._mdEnd||null;
-          state.newEvFromTask=e2.fromTask||null;state.newEvGoalId=e2.goalId||null;state.newEvNdId=e2.ndId||null;state.newEvAlexa=e2.alexa||null;state.newEvAllDay=true;state.newEvRefOnly=!!e2.refOnly;state.newEvPlace=e2.place||"";state.newEvNote=e2.note||"";state.newEvPreDays=e2.preDays||0;state.editScope="this";render();
+          state.newEvFromTask=e2.fromTask||null;state.newEvGoalId=e2.goalId||null;state.newEvNdId=e2.ndId||null;state.newEvAlexa=e2.alexa||null;state.newEvAllDay=true;state.newEvRefOnly=!!e2.refOnly;state.newEvPlace=e2.place||"";state.newEvNote=e2.note||"";state.newEvPreDays=e2.preDays||0;state.newEvRemind=evRemindOf(e2);state.editScope="this";render();
         };})());
         ad.appendChild(chip);
       });
@@ -11111,7 +11111,7 @@ function renderDaySchedule(vd,ds,isToday){
     state.newEvFromTask=ev.fromTask||null;
     state.newEvGoalId=ev.goalId||null; state.newEvNdId=ev.ndId||null; state.newEvAlexa=ev.alexa||null;
     state.newEvAllDay=!!ev.allDay;state.newEvRefOnly=!!ev.refOnly;
-    state.newEvPlace=ev.place||"";state.newEvNote=ev.note||"";state.newEvPreDays=ev.preDays||0;
+    state.newEvPlace=ev.place||"";state.newEvNote=ev.note||"";state.newEvPreDays=ev.preDays||0;state.newEvRemind=evRemindOf(ev);
     state.editScope="this";
     render();
   },(ev,newStartMin,durMin)=>{
@@ -11796,6 +11796,7 @@ function renderAddEventModal(vd){
     addInfo("📝 詳細", (state.newEvNote||"").trim()||null);
     if(state.newEvRepeat && state.newEvRepeat!=="none") addInfo("🔁 繰り返し", repeatLabel(state.newEvRepeat, startD)||null);
     if(Math.max(0,parseInt(state.newEvPreDays)||0)>0) addInfo("🔔 事前表示", `${parseInt(state.newEvPreDays)}日前から予定上部に表示`);
+    if(state.newEvRemind) addInfo("⏰ リマインド", evRemindLabel(state.newEvRemind));
     m.appendChild(btn({className:"btn-ghost",style:{width:"100%",marginTop:"6px"},onClick:()=>{state.modal=null;render();}},"閉じる"));
     bg.appendChild(m);return bg;
   }
@@ -11919,6 +11920,31 @@ function renderAddEventModal(vd){
     preRow.appendChild(pin);
     preRow.appendChild(span({style:{fontSize:"12px",color:"#94a3b8"}},"日前から表示"));
     m.appendChild(preRow);
+  }
+  // ⏰ リマインド（印・時刻・メモ。AI が同期データを読んだときに分かる。アプリ自身は通知しない）
+  {
+    const R=state.newEvRemind, on=!!R;
+    const box=div({style:{marginBottom:"12px",padding:"9px 11px",borderRadius:"8px",border:`1px solid ${on?"#f59e0b88":"#334155"}`,background:on?"#f59e0b0d":"transparent"}}); box.setAttribute('data-evremind',on?'1':'0');
+    const tg=btn({style:{width:"100%",display:"flex",alignItems:"center",gap:"8px",background:"transparent",border:"none",padding:"0",cursor:"pointer",fontFamily:"inherit",textAlign:"left"}},[
+      span({style:{fontSize:"16px"}},on?"☑":"☐"), span({style:{fontSize:"13px",fontWeight:600,color:on?"#fbbf24":"#94a3b8"}},"⏰ リマインドする")]);
+    tg.setAttribute('data-evremindtoggle','1');
+    tg.addEventListener('click',()=>{ state.newEvRemind=on?null:{t:state.newEvAllDay?"09:00":hhmm(state.newEvH||0,state.newEvM||0),note:""}; render(); });
+    box.appendChild(tg);
+    if(on){
+      const row=div({style:{display:"flex",alignItems:"center",gap:"8px",marginTop:"8px"}});
+      row.appendChild(span({style:{fontSize:"12px",color:"#94a3b8",flexShrink:0}},"その日の"));
+      const ti=document.createElement('input'); ti.type='time'; ti.value=R.t||""; ti.setAttribute('data-evremindtime','1');
+      ti.style.cssText="padding:7px 9px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:14px;font-family:inherit;color-scheme:dark";
+      ti.addEventListener('change',e=>{ state.newEvRemind={...state.newEvRemind,t:e.target.value||""}; });
+      row.appendChild(ti); row.appendChild(span({style:{fontSize:"12px",color:"#94a3b8"}},"に知らせる"));
+      box.appendChild(row);
+      const ni=document.createElement('input'); ni.type='text'; ni.placeholder="リマインドのメモ（例：出る30分前に声をかけて／持ち物を確認）"; ni.value=R.note||""; ni.maxLength=200; ni.setAttribute('data-evremindnote','1');
+      ni.style.cssText="width:100%;box-sizing:border-box;margin-top:8px;padding:8px 11px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit";
+      ni.addEventListener('input',e=>{ state.newEvRemind={...state.newEvRemind,note:e.target.value}; });
+      box.appendChild(ni);
+      box.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginTop:"6px",lineHeight:1.5}},"この予定に印を付けます。AI（Claude）が同期したデータを読んだときに、リマインドする予定だと分かります。アプリ自身は通知しません。"));
+    }
+    m.appendChild(box);
   }
   // 🔊 この予定の時刻にAlexaを鳴らす（時刻のある予定だけ。設定でONにしていれば出す）
   if(state.alexaOn && state.alexaPlanOn && alexaUsingRelay() && !state.newEvAllDay){
@@ -12087,7 +12113,7 @@ function renderAddEventModal(vd){
         const isNone=state.newEvRepeat==="none";
         // 複数日予定（開始日<終了日・単発のみ）は終日扱いで endDate を保存
         const mdEnd=(!isRepEdit && isNone && state.newEvEndDate && state.newEvEndDate>targetDate)?state.newEvEndDate:null;
-        const evData={title:state.newEvTitle.trim(),startH:state.newEvH,startM:state.newEvM,endH:state.newEvEndH,endM:state.newEvEndM,endNextDay:!!state.newEvEndNextDay,color:state.newEvColor,allDay:mdEnd?true:!!state.newEvAllDay,refOnly:!!state.newEvRefOnly,...(mdEnd?{endDate:mdEnd}:{}),...(evPlace?{place:evPlace}:{}),...(evNote?{note:evNote}:{}),...(ft?{fromTask:ft}:{}),...(evPre>0?{preDays:evPre}:{}),...(state.newEvGoalId?{goalId:state.newEvGoalId}:{}),...(state.newEvNdId?{ndId:state.newEvNdId}:{}),...(state.newEvAlexa&&state.newEvAlexa.t?{alexa:state.newEvAlexa}:{})};
+        const evData={title:state.newEvTitle.trim(),startH:state.newEvH,startM:state.newEvM,endH:state.newEvEndH,endM:state.newEvEndM,endNextDay:!!state.newEvEndNextDay,color:state.newEvColor,allDay:mdEnd?true:!!state.newEvAllDay,refOnly:!!state.newEvRefOnly,...(mdEnd?{endDate:mdEnd}:{}),...(evPlace?{place:evPlace}:{}),...(evNote?{note:evNote}:{}),...(ft?{fromTask:ft}:{}),...(evPre>0?{preDays:evPre}:{}),...(state.newEvRemind?{remind:{t:state.newEvRemind.t||"",...((state.newEvRemind.note||"").trim()?{note:state.newEvRemind.note.trim()}:{})}}:{}),...(state.newEvGoalId?{goalId:state.newEvGoalId}:{}),...(state.newEvNdId?{ndId:state.newEvNdId}:{}),...(state.newEvAlexa&&state.newEvAlexa.t?{alexa:state.newEvAlexa}:{})};
         const newWds=isW(state.newEvRepeat)?((state.newEvWeekdays&&state.newEvWeekdays.length)?[...state.newEvWeekdays].sort((a,b)=>a-b):[parseDS(targetDate).getDay()]):null;
         // 単発の予定を編集したときは**同じuidのまま**保存する。uidが変わると、この予定を指している
         // 他の記録（🫂つながる予定・実績のメモ・「やった」印など）との結びつきが切れてしまうため。
@@ -12108,7 +12134,7 @@ function renderAddEventModal(vd){
             if(isNone) addSingle(); else state.repeatEvents.push(mkRepeat(vd));
           } else { // すべて
             if(isNone){ state.repeatEvents=state.repeatEvents.filter(e=>e.uid!==orig.uid); addSingle(); }
-            else { Object.assign(orig,evData,{repeatType:state.newEvRepeat}); if(newWds)orig.weekdays=newWds; else delete orig.weekdays; }
+            else { Object.assign(orig,evData,{repeatType:state.newEvRepeat}); if(newWds)orig.weekdays=newWds; else delete orig.weekdays; if(!evData.remind) delete orig.remind; }
           }
         } else {
           // 単発の編集 or 新規作成（日付を変更した場合は元の日から移動。複数日予定は起点日が所有日）
@@ -12820,7 +12846,7 @@ function npOpenAsEvent(k){
   state.newEvRepeat="none"; state.newEvColor=K.evColor;
   state.newEvWeekdays=[parseDS(target).getDay()];
   state.newEvFromTask=null; state.newEvGoalId=null; state.newEvAllDay=false; state.newEvRefOnly=false;
-  state.newEvPlace=""; state.newEvNote=""; state.newEvPreDays=0;
+  state.newEvPlace=""; state.newEvNote=""; state.newEvPreDays=0;state.newEvRemind=null;
   state.newEvNdId=id;   // この予定がどの予定（飲み／ケア）から来たかを覚える
   state.newEvAlexa=null;
   render();
@@ -15804,7 +15830,7 @@ function renderAchievement(vd){
           state.newEvEndH=Math.min(23,now.getHours()+1); state.newEvEndM=0; state.newEvEndNextDay=false;
           state.newEvRepeat="none"; state.newEvColor=EV_DEFAULT;
           state.newEvWeekdays=[parseDS(target).getDay()];
-          state.newEvFromTask=null; state.newEvGoalId=null; state.newEvNdId=null; state.newEvAlexa=null; state.newEvAllDay=false; state.newEvRefOnly=false; state.newEvPlace=""; state.newEvNote=""; state.newEvPreDays=0;
+          state.newEvFromTask=null; state.newEvGoalId=null; state.newEvNdId=null; state.newEvAlexa=null; state.newEvAllDay=false; state.newEvRefOnly=false; state.newEvPlace=""; state.newEvNote=""; state.newEvPreDays=0;state.newEvRemind=null;
           render();
         };})());
         row.appendChild(planB);
@@ -18151,9 +18177,14 @@ function qaNorm(t){ return String(t||"").normalize("NFKC").toLowerCase().replace
 const QA_SRC={plan:"予定",rplan:"繰り返し予定",act:"実績",cond:"体調メモ",sleep:"睡眠メモ",drink:"お酒",food:"食事",task:"TODO",shop:"買物",
   ctdef:"定期ルーティン",mode:"モードのタグ",care:"ケアのメモ",ctj:"チェンジトーク",goal:"目標",train:"トレーニング",body:"体組成",ejac:"射精"};
 function qaDsOf(iso){ try{ return fmtDS(new Date(iso)); }catch(_){ return null; } }
+// 🔔 リマインド（v15.84）：予定ごとの印。remind={t:"HH:MM"（その日の何時に知らせてほしいか・空でもよい）, note（何を知らせるか・空でもよい）}。
+// 印があるときだけ予定に持つ。アプリ自身は通知しない（AI が同期データを読んだときに「この予定はリマインドする」と分かるための印）。
+function evRemindOf(e){ const r=e&&e.remind; if(!r||typeof r!=="object") return null;
+  return {t:/^\d{1,2}:\d{2}$/.test(r.t||"")?r.t:"", note:typeof r.note==="string"?r.note:""}; }
+function evRemindLabel(r){ return r?`${r.t?r.t+" に":""}リマインド${r.note?`：${r.note}`:""}`:""; }
 function qaEvText(e){
   const tm=e.allDay?"終日":`${hhmm(e.startH||0,e.startM||0)}〜${hhmm(e.endH!=null?e.endH:(e.startH||0),e.endM||0)}`;
-  return `${tm} ${e.title||"(無題)"}${e.endDate?`（〜${e.endDate}）`:""}${e.place?` 場所:${e.place}`:""}${e.note?` メモ:${e.note}`:""}${e.refOnly?"（参考）":""}`;
+  return `${tm} ${e.title||"(無題)"}${e.endDate?`（〜${e.endDate}）`:""}${e.place?` 場所:${e.place}`:""}${e.note?` メモ:${e.note}`:""}${evRemindOf(e)?` 🔔${evRemindLabel(evRemindOf(e))}`:""}${e.refOnly?"（参考）":""}`;
 }
 function qaRecordDays(){
   const set=new Set();
