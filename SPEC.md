@@ -2,7 +2,7 @@
 
 > このドキュメントはアプリの現状仕様をまとめた常設リファレンスです。
 > GitHub 上でいつでも閲覧でき、コードと一緒にバージョン管理されます。
-> 最終更新時点のアプリバージョン: **v15.85**
+> 最終更新時点のアプリバージョン: **v15.86**
 
 ---
 
@@ -389,6 +389,11 @@ if-then・つながり・MI各種・ウィジェット表示など）を**新し
 
 ### 4-5. 減酒・飲酒コントロール支援
 - 踏みとどまりボタン＋クールオフ
+- **♨️ 次に温泉に行く日 ＋ 🔄 6週間のサイクル（v15.86）**（`nextOnsenCard`。ウィジェットの項目 `nextonsen`＝ケアの下）。飲み予定・ケアの日と同じ仕組みの3つめ（`NP_KINDS.onsen`。予定に追加は**14:00〜17:00**・「♨️ ＜メモ＞」、メモが無ければ「♨️ 温泉」。保存は `state.nextOnsen={id,date,note}`・`localStorage["health_v2_nextonsen"]`・バックアップと☁️同期の対象。予定側の `ndId` は `no…` で始まる）。決めた日は予定タブ「日」の「📌 終日…」欄に「♨️ 温泉に行く日」を出す。
+  - **🔄 サイクル**：🍺外飲み → 🩹ケア → ♨️温泉 を**2週間おき**に回し、**6週間で1周**（それぞれは6週間に1回。`NP_ORDER`・`NP_STEP_DAYS=14`・`NP_CYCLE_DAYS=42`）。**自動では日付を動かさない**。
+    ① 3つのカード（未来の日が決まっているとき）の下に、3つの日付を日付順に並べた行「🔄 🩹11/20 → ♨️12/4 → 🍺12/18」と「この次は ◯/◯（6週間後）」を出す（`npCycleRow`）。2週間おきに並んでいれば緑で「（2週間おき・6週間で1周）」（6週間ずれた分は同じ並びとみなす `npCycleAligned`）。
+    ② 並んでいないときは「🔄 この日を起点に、3つを2週間おきにそろえる」（`npAlignCycle`）：そのカードの日を起点に、順番で次の種類を+2週間・その次を+4週間に置く（確認あり。メモは残す。予定タブに作った予定は動かさず、結びつきだけ切る `npSetDate`）。
+    ③ 予定日を過ぎたカードには「🔄 次の周（◯/◯）にする」＝過ぎた日から6週間ずつ進めて今日以降で最初の日（`npNextCycle`）。今までの「次の予定を決める」（日付を自分で選ぶ）も残す。
 - **🩹 次にケアをする日（v15.83）**（`nextCareCard`。ウィジェットの項目 `nextcare`＝飲み予定の下 ＋ モード切替画面の🩹ケア欄の下）。
   下の「次に飲みに行く予定」と**同じ仕組み**を種類で分けて使う（`NP_KINDS`＝`drink`／`care`、共通の `nextPlanCard(k)`・`npGet`・`npSave`・`npEvents`・`npOpenAsEvent`・`npLinkEvent`）。
   日付とメモを決める → 「あと◯日」を表示 → **📅 予定に追加**（その日の**21:00〜22:00**・タイトル「🩹 ＜メモ＞」、メモが無ければ「🩹 ケア」）／**🔗 既存の予定から選ぶ**／結びついた予定の「解除」／
@@ -904,7 +909,7 @@ if-then・つながり・MI各種・ウィジェット表示など）を**新し
 `_customtodos`（定期ルーティン）, `_schedule` / `_repeat`（予定）, `_planpatterns`（パターン予定）,
 `_tasks`（TODO/買物）, `_goaltree`（目標）, `_routines`（実績まとめグループ）, `_shift`（シフト）,
 `_rewards` / `_investactions` / `_investspends`（達成・未来投資）, `_modeinvest`（モード画面に出す未来投資の分類）, `_ifthen`,
-`_bacprofile` / `_alclimit` / `_cooloff` / `_nextdrink` / `_nextcare`（🩹 次にケアをする日・v15.83） / `_nightritual` / `_lifevision`（減酒系）,
+`_bacprofile` / `_alclimit` / `_cooloff` / `_nextdrink` / `_nextcare`（🩹 次にケアをする日・v15.83） / `_nextonsen`（♨️ 次に温泉に行く日・v15.86） / `_nightritual` / `_lifevision`（減酒系）,
 `_connectgoal` / `_ctjournal` / `_decisbalance` / `_values` / `_changeplan`（つながり・MI）,
 `_sleepgoal`（就寝リズム）, `_bodycomp`（体組成）, `_selfmodelog`（セルフモード履歴）, `_selfchecks`（セルフモードのチェック項目）,
 `_lifemodes`（ライフモード定義）, `_modelog`（ライフモードのタイムライン）, `_defaultmode`（既定モード）, `_automode`（自動切替ON/OFF＋直近の自動判定）,

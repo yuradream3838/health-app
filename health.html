@@ -258,7 +258,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.85"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.86"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -297,6 +297,7 @@ const SAVE_TARGETS=[
   ["saveIfThenPlans","ifThenPlans","🔀 if-thenプラン"],
   ["saveNextDrinkPlan","nextDrink","🍺 次の飲み予定"],
   ["saveNextCarePlan","nextCare","🩹 次のケアの日"],
+  ["saveNextOnsenPlan","nextOnsen","♨️ 次の温泉の日"],
   ["saveLifeVision","lifeVision","💜 なりたい自分"],
   ["saveNightRitual","nightRitual","🌙 飲まない夜のルーティン"],
   ["saveConnectGoal","connectGoal","🫂 つながり目標"],
@@ -989,6 +990,7 @@ const state = {
   dayCutoffH:12, // 就寝未記録時のフォールバック切替時刻（既定12:00＝正午）
   nextDrink:null, nextDrinkEdit:false, // 次に飲みに行く予定（計画飲酒）
   nextCare:null, nextCareEdit:false, // 🩹 次にケアをする日（v15.83・飲み予定と同じ仕組み）
+  nextOnsen:null, nextOnsenEdit:false, // ♨️ 次に温泉に行く日（v15.86）
   investHistExpanded:false, // 未来投資履歴の全件展開
   lifeVision:null, nightRitual:null, connectGoal:null, // 根本解決の習慣機能
   ctJournal:null, ctPromptIdx:0, ctDraft:"", // 動機づけ面談：チェンジトーク・ジャーナル
@@ -1070,6 +1072,8 @@ function loadStorage(){
     if(ndp){try{const o=JSON.parse(ndp); if(o&&typeof o==="object"&&o.date)state.nextDrink=o;}catch{}}
     const ncp=localStorage.getItem(STORAGE_KEY+"_nextcare");
     if(ncp){try{const o=JSON.parse(ncp); if(o&&typeof o==="object"&&o.date)state.nextCare=o;}catch{}}
+    const nop=localStorage.getItem(STORAGE_KEY+"_nextonsen");
+    if(nop){try{const o=JSON.parse(nop); if(o&&typeof o==="object"&&o.date)state.nextOnsen=o;}catch{}}
     const wsec=localStorage.getItem(STORAGE_KEY+"_widgetsections");
     if(wsec){try{const o=JSON.parse(wsec); if(o&&typeof o==="object")state.widgetSections=o;}catch{}}
     const slg=localStorage.getItem(STORAGE_KEY+"_sleepgoal");
@@ -1951,6 +1955,7 @@ const WIDGET_SECTIONS=[
   {k:'invest',    l:'💰 未来投資・踏みとどまる'},
   {k:'nextdrink', l:'🍺 次に飲みに行く予定'},
   {k:'nextcare',  l:'🩹 次にケアをする日'},
+  {k:'nextonsen', l:'♨️ 次に温泉に行く日'},
   {k:'connect',   l:'🫂 つながり習慣'},
   {k:'rewards',   l:'🎁 ご褒美'},
   {k:'goals',     l:'☀️ 今日の目標'},
@@ -4847,6 +4852,7 @@ function renderWidgetView(vd,ds){
   }
   if(wSecOn('nextdrink')) secNodes.nextdrink=nextDrinkCard(); // 🍺 次に飲みに行く予定（踏みとどまるの下）
   if(wSecOn('nextcare')) secNodes.nextcare=nextCareCard();    // 🩹 次にケアをする日（飲み予定の下）
+  if(wSecOn('nextonsen')) secNodes.nextonsen=nextOnsenCard(); // ♨️ 次に温泉に行く日（ケアの下）
   if(wSecOn('sober')) secNodes.sober=soberWeekCard(); // 🚱 休肝日（今週）
   if(wSecOn('proposals')){ const pc=proposalsCard(); if(pc) secNodes.proposals=pc; }   // 📨 Claude からの提案（反映待ちがあるとき）
   if(vd===todayStr() && wSecOn('nightritual')) secNodes.nightritual=nightRitualCard(vd,false); // 🌙 飲まない夜のルーティン
@@ -10822,7 +10828,7 @@ function renderDaySchedule(vd,ds,isToday){
     const gCarry=gtCollectByPeriodCarry("daily", vd).carry.filter(n=>!isRangeDaily(n) && !gGoalIds.has(n.id));
     const gPend=gtCollectPeriodlessActive(vd).filter(x=>!gGoalIds.has(x.node.id));
     const ndPlan=getNextDrinkPlan(); const ndToday=!!(ndPlan&&ndPlan.date===vd); // 🍺 外に飲みに行く予定の当日
-    const ncPlan=getNextCarePlan(); const ncToday=!!(ncPlan&&ncPlan.date===vd); // 🩹 ケアをする日の当日
+    const npTodays=["care","onsen"].filter(x=>{ const q=npGet(x); return q&&q.date===vd; }); const ncToday=npTodays.length>0; // 🩹 ケア・♨️ 温泉の当日
     if(allDayEvents.length||dueTodos.length||preItems.length||gGoals.length||gCarry.length||gPend.length||ndToday||ncToday){
       const ad=div({className:"card",style:{padding:"8px 10px",marginBottom:"8px"}});
       ad.appendChild(div({style:{fontSize:"10px",fontWeight:700,color:"#94a3b8",marginBottom:"6px"}},"📌 終日・目標・TODO"));
@@ -10835,14 +10841,12 @@ function renderDaySchedule(vd,ds,isToday){
         chip.addEventListener('click',()=>{ exitWidget&&exitWidget(); state.tab="日記"; state.diarySubTab="アルコール"; render(); });
         ad.appendChild(chip);
       }
-      // 🩹 ケアをする日 — 決めた日に表示
-      if(ncToday){
-        const c=NP_KINDS.care.col;
+      // 🩹 ケアをする日・♨️ 温泉に行く日 — 決めた日に表示
+      npTodays.forEach(x=>{ const NK=NP_KINDS[x], q=npGet(x), c=NK.col;
         const chip=div({style:{display:"flex",alignItems:"center",gap:"6px",padding:"6px 10px",background:c+"1f",border:`1px solid ${c}66`,borderRadius:"6px",marginBottom:"4px"}},[
-          div({style:{flex:1,minWidth:0,fontSize:"13px",fontWeight:600,color:NP_KINDS.care.colT,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},`🩹 ${NP_KINDS.care.dayChip}${ncPlan.note?`：${ncPlan.note}`:""}`)
+          div({style:{flex:1,minWidth:0,fontSize:"13px",fontWeight:600,color:NK.colT,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},`${NK.icon} ${NK.dayChip}${q.note?`：${q.note}`:""}`)
         ]);
-        chip.setAttribute('data-ncchip','1'); ad.appendChild(chip);
-      }
+        chip.setAttribute('data-ncchip',x); ad.appendChild(chip); });
       // 🎯 目標セクション
       if(gGoals.length||gCarry.length||gPend.length){
         const goalRow=(n, subTxt, done, onToggle)=>{
@@ -12814,14 +12818,59 @@ const NP_KINDS={
     memoPh:"メモ（例：休みの前の夜／ゆっくり時間を取る）",toast:"次のケアの日",plan:"ケアの日",
     pickMsg:"すでに入れてある予定を、次にケアをする日として結びつけます。選ぶとケアの日もその予定の日になります（繰り返しの予定は選べません）。",
     linkNote:"タップでその日の予定へ。「解除」は予定を残したまま結びつきだけ外します。この予定を別の日に動かすと上の日付も合わせます。",
-    dayChip:"ケアをする日"}
+    dayChip:"ケアをする日"},
+  onsen:{sk:"nextOnsen",ls:"_nextonsen",pre:"no",icon:"♨️",col:"#14b8a6",colT:"#5eead4",colBig:"#ccfbf1",grad:"linear-gradient(135deg,#14b8a6,#0ea5e9)",
+    title:"次に温泉に行く日",evTitle:"温泉",evH:14,evEndH:17,evColor:"#14b8a6",
+    waitMsg:"その日まで温泉はお預け。決めた日に、ゆっくり浸かりましょう。",
+    pastMsg:"次に温泉に行く日を決め直しましょう。",
+    intro:"次に温泉に行く日を先に決めておくと、それまでの楽しみになります。",
+    memoPh:"メモ（例：◯◯の湯／サウナも）",toast:"次の温泉の日",plan:"温泉の日",
+    pickMsg:"すでに入れてある予定を、次に温泉に行く日として結びつけます。選ぶと温泉の日もその予定の日になります（繰り返しの予定は選べません）。",
+    linkNote:"タップでその日の予定へ。「解除」は予定を残したまま結びつきだけ外します。この予定を別の日に動かすと上の日付も合わせます。",
+    dayChip:"温泉に行く日"}
 };
+// 🔄 6週間のサイクル（v15.86）：🍺外飲み → 🩹ケア → ♨️温泉 を2週間おきに回す（それぞれは6週間に1回）。
+// 自動では動かさない。①過ぎた予定に「次の周（6週間後）にする」 ②カードの「2週間おきにそろえる」で、その日を起点に残り2つを +2週・+4週に置く
+const NP_ORDER=["drink","care","onsen"], NP_STEP_DAYS=14, NP_CYCLE_DAYS=NP_STEP_DAYS*NP_ORDER.length;
+// 起点の種類 k の日付 ds から見た、種類 o のサイクル上の日（k→o が順に何個先か × 2週間）
+function npCycleDate(k,ds,o){ const n=NP_ORDER.length, st=((NP_ORDER.indexOf(o)-NP_ORDER.indexOf(k))%n+n)%n; return addDays(ds,st*NP_STEP_DAYS); }
+// 過ぎた日から6週間ずつ進めて、今日以降で最初の日
+function npNextCycle(ds){ const t=todayStr(); let d=addDays(ds,NP_CYCLE_DAYS), i=0; while(d<t&&i++<200) d=addDays(d,NP_CYCLE_DAYS); return d; }
+// 日付だけ入れ替える（別の機会なので予定との結びつきは切る。前の予定は残る）
+function npSetDate(k,ds){ const K=NP_KINDS[k], p=npGet(k); if(p&&p.date===ds) return; const base={...(p||{})}; delete base.id; state[K.sk]={...base,date:ds,note:(base.note||"")}; npSave(k); }
+// 3つが2週間おきに並んでいるか（k の日を起点に見て）
+// （6週間ずれた分は同じ並びとみなす。例：ケア11/20・温泉12/4・外飲み12/18 は、どのカードから見てもそろっている）
+function npCycleAligned(k){ const p=npGet(k); if(!p) return false; return NP_ORDER.every(o=>{ const q=npGet(o); if(!q) return false;
+  const df=Math.round((parseDS(q.date)-parseDS(npCycleDate(k,p.date,o)))/86400000); return df%NP_CYCLE_DAYS===0; }); }
+function npAlignCycle(k){
+  const p=npGet(k); if(!p) return; const others=NP_ORDER.filter(o=>o!==k);
+  const plan=others.map(o=>({o,ds:npCycleDate(k,p.date,o)}));
+  const lines=plan.map(x=>`${NP_KINDS[x.o].icon} ${NP_KINDS[x.o].title}：${npGet(x.o)?mdLabel(npGet(x.o).date)+" → ":""}${mdLabel(x.ds)}`).join("\n");
+  if(!confirm(`${NP_KINDS[k].icon} ${mdLabel(p.date)} を起点に、2週間おきに並べます（6週間で1周）。\n\n${lines}\n\nよろしいですか？（予定タブに作った予定は動かしません）`)) return;
+  plan.forEach(x=>npSetDate(x.o,x.ds));
+  showToast("🔄 2週間おきに並べました","#22c55e"); render();
+}
+// カードの下に出すサイクルの行：3つの日付を日付順に並べ、そろっていなければ「そろえる」ボタン
+function npCycleRow(k){
+  const p=npGet(k); if(!p||p.date<todayStr()) return null;
+  const w=div({style:{marginTop:"8px",paddingTop:"7px",borderTop:"1px solid #33415566"}}); w.setAttribute('data-npcycle',k);
+  const aligned=npCycleAligned(k);
+  const parts=NP_ORDER.map(o=>({o,q:npGet(o)})).sort((a,b)=>String((a.q&&a.q.date)||"9").localeCompare(String((b.q&&b.q.date)||"9")))
+    .map(x=>`${NP_KINDS[x.o].icon}${x.q?mdLabel(x.q.date):"未定"}`).join(" → ");
+  w.appendChild(div({style:{fontSize:"11px",color:aligned?"#86efac":"#94a3b8",lineHeight:1.6}},`🔄 ${parts}${aligned?"（2週間おき・6週間で1周）":""}`));
+  w.appendChild(div({style:{fontSize:"10px",color:"#64748b",lineHeight:1.5}},`この次は ${mdLabel(addDays(p.date,NP_CYCLE_DAYS))}（6週間後）`));
+  if(!aligned){ const b=btn({style:{width:"100%",marginTop:"6px",padding:"7px",borderRadius:"8px",border:"1px solid #334155",background:"transparent",color:"#94a3b8",fontSize:"11px",cursor:"pointer",fontFamily:"inherit"}},"🔄 この日を起点に、3つを2週間おきにそろえる");
+    b.setAttribute('data-npalign',k); b.addEventListener('click',()=>npAlignCycle(k)); w.appendChild(b); }
+  return w;
+}
 function npGet(k){ const v=state[NP_KINDS[k].sk]; return (v&&typeof v==="object"&&v.date)?v:null; }
 function npSave(k){ const K=NP_KINDS[k]; try{ if(npGet(k))safeSet(STORAGE_KEY+K.ls,JSON.stringify(state[K.sk])); else localStorage.removeItem(STORAGE_KEY+K.ls); }catch{} }
 function getNextDrinkPlan(){ return npGet("drink"); }
 function saveNextDrinkPlan(){ npSave("drink"); }
 function getNextCarePlan(){ return npGet("care"); }
 function saveNextCarePlan(){ npSave("care"); }
+function getNextOnsenPlan(){ return npGet("onsen"); }
+function saveNextOnsenPlan(){ npSave("onsen"); }
 // ── 🍺🩹 予定 ↔ 予定タブ ────────────────────────────────
 // 予定と結びつけるためのid（古いデータには使うときに補う）
 // 時刻だけだと同じミリ秒に作り直した予定が前の予定と同じidになってしまうので、乱数を足す
@@ -12928,6 +12977,7 @@ function syncNextDrinkFromEvent(ndId,newDs){
 // ウィジェットでもアルコールタブでも同じものを出す（作った予定もそのまま見える）
 function nextDrinkCard(){ return nextPlanCard("drink"); }
 function nextCareCard(){ return nextPlanCard("care"); }
+function nextOnsenCard(){ return nextPlanCard("onsen"); }
 function nextPlanCard(k){
   const K=NP_KINDS[k], p=npGet(k), eKey=K.sk+"Edit", dKey="npDraftDate_"+k, nKey="npDraftNote_"+k;
   const today=todayStr();
@@ -12982,9 +13032,14 @@ function nextPlanCard(k){
           c.appendChild(row);
         } }
       c.appendChild(div({style:{fontSize:"11px",color:"#94a3b8",marginTop:"7px",lineHeight:1.6}},K.waitMsg));
+      { const cr=npCycleRow(k); if(cr) c.appendChild(cr); }
     } else {
       c.appendChild(div({style:{fontSize:"13px",color:"#f87171",fontWeight:700,lineHeight:1.5}},`前回の予定日（${mdLabel(p.date)}）は過ぎています。`));
       c.appendChild(div({style:{fontSize:"11px",color:"#94a3b8",marginTop:"4px",lineHeight:1.6}},K.pastMsg));
+      // 🔄 6週間のサイクル：次の周の日にそのまま進める
+      { const nx=npNextCycle(p.date);
+        const nb=btn({style:{width:"100%",marginTop:"8px",padding:"9px",borderRadius:"8px",border:"none",background:K.grad,color:"#fff",fontSize:"12px",fontWeight:700,cursor:"pointer",fontFamily:"inherit"}},`🔄 次の周（${mdLabel(nx)}）にする`);
+        nb.setAttribute('data-npnext',k); nb.addEventListener('click',()=>{ npSetDate(k,nx); showToast(`${K.icon} ${K.toast}：${mdLabel(nx)}`,K.col); render(); }); c.appendChild(nb); }
       const b=btn({style:{width:"100%",marginTop:"8px",padding:"9px",borderRadius:"8px",border:`1px dashed ${K.col}`,background:K.col+"0d",color:K.colT,fontSize:"12px",fontWeight:600,cursor:"pointer",fontFamily:"inherit"}},"次の予定を決める");
       b.addEventListener('click',()=>{ state[eKey]=true; state[dKey]=""; state[nKey]=p.note||""; render(); });
       c.appendChild(b);
@@ -18536,6 +18591,7 @@ function buildBackupPayload(){
     ctJournal:state.ctJournal,
     nextDrink:state.nextDrink,
     nextCare:state.nextCare,           // 🩹 次にケアをする日
+    nextOnsen:state.nextOnsen,         // ♨️ 次に温泉に行く日
     foodCats:(Array.isArray(state.foodCats)&&state.foodCats.length)?{cats:state.foodCats,emoji:state.foodEmoji||{}}:null,
     anaChanges:state.anaChanges||[],
     foodNutri:state.foodNutri||{},
@@ -19235,6 +19291,7 @@ function applyBackupPayload(p){
   if(Array.isArray(p.ctJournal)){state.ctJournal=p.ctJournal;saveCTJournal();}
   if(p.nextDrink&&typeof p.nextDrink==="object"){state.nextDrink=p.nextDrink;saveNextDrinkPlan();}
   if(p.nextCare&&typeof p.nextCare==="object"){state.nextCare=p.nextCare;saveNextCarePlan();}
+  if(p.nextOnsen&&typeof p.nextOnsen==="object"){state.nextOnsen=p.nextOnsen;saveNextOnsenPlan();}
   if(p.sleepGoal&&typeof p.sleepGoal==="object"&&p.sleepGoal.bedH!=null){state.sleepGoal=p.sleepGoal;saveSleepGoal();}
   if(Array.isArray(p.bodyComps)){state.bodyComps=p.bodyComps;saveBodyComps();}
   if(Array.isArray(p.todoItems)&&p.todoItems.length){state.todoItems=p.todoItems;saveTodoItems();}
