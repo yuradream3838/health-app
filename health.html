@@ -258,7 +258,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.90"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.91"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -1301,6 +1301,8 @@ function clockField(h, m, onSet, extraCss){
   return i;
 }
 // 勤務時刻用（10進の時＝7.5等／空欄＝null）。時計タイプ。
+// 実際の勤務の退勤（その日の0時からの時間・h）。「退勤は翌日」か、退勤が出勤以前なら翌日（＋24h）（v15.91）
+function workEndAbsH(d){ if(!d||d.workStart==null||d.workEnd==null) return null; return d.workEnd+((d.workEndNextDay||d.workEnd<=d.workStart)?24:0); }
 function workTimeField(val, setter){
   const i=document.createElement('input'); i.type='time';
   i.value=(val==null)?"":`${String(Math.floor(val)).padStart(2,'0')}:${String(Math.round((val-Math.floor(val))*60)).padStart(2,'0')}`;
@@ -5441,7 +5443,7 @@ function renderDailyPanel(vd){
   const totalG=drinks.reduce((a,b)=>a+pureAlcohol(b.ml,b.pct!=null?b.pct:resolveDT(b).pct),0);
   const foods=d.foods||[];
   const sh=getNightSleepHours(vd);
-  const wh=d.workStart!=null&&d.workEnd!=null?Math.max(0,Math.round(((d.workEnd-d.workStart+24)%24-1)*10)/10):null;
+  const wh=d.workStart!=null&&d.workEnd!=null?Math.max(0,Math.round((workEndAbsH(d)-d.workStart-1)*10)/10):null;
   const ot=d.overtime||0;
   const scol=sh==null?"#475569":sh>=7?"#22c55e":sh<=5?"#ef4444":"#eab308";
   const wcol=d.water==null?"#475569":d.water>=2?"#22c55e":d.water<=1?"#f97316":"#eab308";
@@ -5506,7 +5508,7 @@ function renderDailyPanel(vd){
           style:{flex:1,padding:"5px",borderRadius:"8px",fontSize:"12px",fontWeight:600,cursor:"pointer",border:"1px solid #334155",
             background:active?"#0ea5e933":"transparent",
             color:active?"#38bdf8":"#64748b"},
-          onClick:()=>{setDaily(vd,{workStart:p.start,workEnd:p.end,overtime:0});render();}
+          onClick:()=>{setDaily(vd,{workStart:p.start,workEnd:p.end,workEndNextDay:null,overtime:0});render();}
         },p.label);
       })),
       // 予定シフトの表示＋ワンタップで実績へ（予定と実績は独立）
@@ -5521,8 +5523,14 @@ function renderDailyPanel(vd){
       div({style:{display:"flex",alignItems:"center",gap:"8px",marginBottom:"6px"}},[
         div({style:{flex:1}},[div({style:{fontSize:"10px",color:"#64748b",marginBottom:"3px"}},"出勤"),workTimeField(d.workStart,v=>{setDaily(vd,{workStart:v});render();})]),
         span({style:{color:"#475569",marginTop:"14px"}},"→"),
-        div({style:{flex:1}},[div({style:{fontSize:"10px",color:"#64748b",marginBottom:"3px"}},"退勤"),workTimeField(d.workEnd,v=>{setDaily(vd,{workEnd:v});render();})])
+        div({style:{flex:1}},[div({style:{fontSize:"10px",color:"#64748b",marginBottom:"3px"}},`退勤${workEndAbsH(d)!=null&&workEndAbsH(d)>=24?"（翌日）":""}`),workTimeField(d.workEnd,v=>{setDaily(vd,{workEnd:v});render();})])
       ]),
+      // 🌙 退勤は翌日（日をまたぐ勤務。退勤が出勤より前の時刻なら、切り替えなくても翌日として扱う）
+      (()=>{ const on=!!d.workEndNextDay;
+        const b=btn({style:{width:"100%",padding:"6px",marginBottom:"6px",borderRadius:"8px",cursor:"pointer",fontSize:"11px",fontWeight:600,fontFamily:"inherit",
+          border:`1px solid ${on?"#38bdf8":"#334155"}`,background:on?"#0ea5e922":"transparent",color:on?"#38bdf8":"#64748b"}},on?"🌙 退勤は翌日: ON":"🌙 退勤は翌日: OFF");
+        b.setAttribute('data-worknextday','1'); b.addEventListener('click',()=>{ setDaily(vd,{workEndNextDay:on?null:true}); render(); });
+        return b; })(),
       div({style:{display:"flex",alignItems:"center",gap:"8px"}},[
         span({style:{fontSize:"11px",color:"#94a3b8"}},"残業"),
         (()=>{
@@ -8070,7 +8078,7 @@ function getActualActivities(vd){
     const dd=getDaily(D);
     if(dd.workStart==null||dd.workEnd==null)continue;
     const wsAbs=off*1440+Math.round(dd.workStart*60);
-    const weAbs=off*1440+Math.round((dd.workEnd+(dd.overtime||0))*60);
+    const weAbs=off*1440+Math.round((workEndAbsH(dd)+(dd.overtime||0))*60);   // 退勤は翌日（v15.91）・退勤が出勤以前なら翌日
     const s=Math.max(0,wsAbs), e=Math.min(1440,weAbs);
     const k=`work:${D}`;
     if(e>s) acts.push({title:"💼 仕事"+aNote(k),startMin:s,endMin:e,color:"#2dd4bf",noteKey:k});
