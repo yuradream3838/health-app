@@ -258,7 +258,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.89"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.90"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -14101,6 +14101,8 @@ function customTodoDue(ct, ds){
   if(!ct||!ct.startDate)return false;
   // 特定日を別の日へ移動してきた臨時オカレンス（moved）は、その日を該当日として扱う
   if((state.todos[ds]||{})[ct.uid]?.moved) return true;
+  // 🆕 臨時でやる回（extra・v15.90）：該当日でなくても、その日に1回ぶん足す（チェック・時間計測ができる）
+  if((state.todos[ds]||{})[ct.uid]?.extra) return true;
   // 休止中の日は該当しない（ただし休止した日にすでに完了していた回は残す）
   if(ctPauseOn(ct,ds) && !(state.todos[ds]||{})[ct.uid]?.checked) return false;
   ct=customTodoCfgFor(ct,ds);
@@ -14791,6 +14793,7 @@ function renderOccasional(vd){
     else if(overdue) statusStr=`🔴 ${occ.daysAgo}日前(${mdc(occ.dueDate)})から未実施`;
     else if(paused&&!occ) statusStr=`⏸ 休止中（${mdc(paused.from)}から）`;
     else if(excludedToday) statusStr="除外中";
+    else if(occ&&_recT.extra) statusStr="🆕 臨時";
     else if(occ) statusStr="今日";
     else statusStr="次:"+mdc(nextCustomTodoDate(ct));
     lab.appendChild(div({style:{fontSize:"9px",color:_runT?ctTimerColor(_recT):(_snToday?"#a78bfa":(overdue?"#f97316":"#64748b"))}},`${customTodoIntervalLabel(ct)}${_timeStr}　${statusStr}`));
@@ -14814,7 +14817,21 @@ function renderOccasional(vd){
       }
     }
     // 除外／戻す
-    if(active&&!done){
+    const _isExtra=!!((state.todos[vd]||{})[ct.uid]||{}).extra;
+    if(!occ){
+      // 🆕 該当日でない日に、臨時で1回ぶん足す（チェック・時間計測ができるようになる）
+      const xb=btn({style:{background:"#0ea5e914",border:"1px solid #0ea5e9",borderRadius:"6px",color:"#38bdf8",cursor:"pointer",fontSize:"10px",padding:"3px 7px",flexShrink:0,fontWeight:600},title:"この日に臨時でやる"},"＋ 臨時");
+      xb.setAttribute('data-ctextra',String(ct.uid));
+      xb.addEventListener('click',(()=>{const id=ct.uid,l=ct.label;return()=>{ merge(vd,id,{extra:true,excluded:false}); showToast(`🆕 ${l||"定期ルーティン"}を臨時で入れました`); };})());
+      row.appendChild(xb);
+    } else if(_isExtra&&active&&!done&&!(isTimer&&ctTimerState((state.todos[vd]||{})[ct.uid]||{})!=='idle')){
+      // 臨時の回をやめる（まだ始めていないとき）
+      const xu=btn({style:{background:"transparent",border:"1px solid #334155",borderRadius:"6px",color:"#64748b",cursor:"pointer",fontSize:"10px",padding:"3px 7px",flexShrink:0},title:"臨時の回をやめる"},"臨時をやめる");
+      xu.setAttribute('data-ctextraoff',String(ct.uid));
+      xu.addEventListener('click',(()=>{const id=ct.uid;return()=>{ const cur={...((state.todos[vd]||{})[id]||{})}; delete cur.extra; setTodo(vd,id,cur); render(); };})());
+      row.appendChild(xu);
+    }
+    if(active&&!done&&!_isExtra){
       const ex=btn({style:{background:"transparent",border:"1px solid #334155",borderRadius:"6px",color:"#64748b",cursor:"pointer",fontSize:"10px",padding:"3px 7px",flexShrink:0},title:"この回を除外"},"除外");
       ex.addEventListener('click',(()=>{const dd=occ.dueDate,id=ct.uid;return()=>{pushUndo("定期ルーティンを除外しました");merge(dd,id,{excluded:true,checked:false});};})());
       row.appendChild(ex);
