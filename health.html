@@ -258,7 +258,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.88"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.89"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -601,7 +601,7 @@ function setShiftPatternConfirm(next){
   const lbl=k=>k&&SHIFT_TYPES[k]?SHIFT_TYPES[k].label:"なし";
   const hit=cand.filter(ds=>{ const nk=getPatternShift(ds); return nk!==olds[ds] && basePlanShiftKey(ds)!==nk; });
   if(!hit.length) return;
-  const lines=hit.slice(0,6).map(ds=>{ const ps=getDaily(ds).planShift, t=(ps&&typeof ps==='object'&&ps.startH!=null)?`（${hhmm(ps.startH,ps.startM)}〜${hhmm(ps.endH,ps.endM)}）`:"";
+  const lines=hit.slice(0,6).map(ds=>{ const ps=getDaily(ds).planShift, t=(ps&&typeof ps==='object'&&ps.startH!=null)?`（${hhmm(ps.startH,ps.startM)}〜${ps.endNextDay?"翌":""}${hhmm(ps.endH,ps.endM)}）`:"";
     return `・${+ds.slice(5,7)}/${+ds.slice(8,10)}(${WEEKDAYS_JP[parseDS(ds).getDay()]})：${lbl(basePlanShiftKey(ds))}${t} → パターンは${lbl(getPatternShift(ds))}`; });
   const keep=confirm(`この日だけシフトを変えた日が ${hit.length}日 あります。\n${lines.join("\n")}${hit.length>6?`\n…ほか ${hit.length-6}日`:""}\n\n新しいパターンでも、この日の変更を残しますか？\n\nOK：この日の変更を残す\nキャンセル：新しいパターンに合わせる`);
   if(!keep){ hit.forEach(ds=>setDayShift(ds,null)); showToast(`${hit.length}日を新しいパターンに合わせました`); }
@@ -641,7 +641,7 @@ function getPlanShiftBlock(ds){
   const ps=d.planShift;
   let b=null;
   if(ps&&typeof ps==='object'&&ps.startH!=null){
-    b={startH:ps.startH,startM:ps.startM||0,endH:ps.endH,endM:ps.endM||0,label:"勤務",color:(SHIFT_TYPES[ps.key]&&SHIFT_TYPES[ps.key].color)||(ps.startH<12?SHIFT_TYPES.s1.color:SHIFT_TYPES.s2.color),custom:true};
+    b={startH:ps.startH,startM:ps.startM||0,endH:ps.endH,endM:ps.endM||0,endNextDay:!!ps.endNextDay,label:"勤務",color:(SHIFT_TYPES[ps.key]&&SHIFT_TYPES[ps.key].color)||(ps.startH<12?SHIFT_TYPES.s1.color:SHIFT_TYPES.s2.color),custom:true};
   } else {
     const key=(ps!=null)?ps:getPatternShift(ds);
     if(!key||key==="off"||key==="off2")return null;
@@ -652,6 +652,8 @@ function getPlanShiftBlock(ds){
   b.ovLabel=d.shiftLabel||""; b.note=d.shiftNote||""; b.place=d.shiftPlace||"";  // その日だけの名前・メモ・場所
   return b;
 }
+// 勤務の絶対時間（その日の0時からの分）。「終了は翌日」か、終了が開始以前なら翌日まで（v15.89）
+function shiftBlockSpan(b){ const s=b.startH*60+(b.startM||0); let e=b.endH*60+(b.endM||0); if(b.endNextDay||e<=s) e+=1440; return {s,e}; }
 // 週カレンダー等の表示用（＝予定シフト）
 function currentShiftKey(ds){ return getPlanShiftKey(ds); }
 // その日の予定シフトを上書き。key=null でパターンに戻す（※実績のworkStartには触れない）
@@ -666,7 +668,7 @@ function changeDayShift(ds,key){
   const ps=getDaily(ds).planShift, custom=ps&&typeof ps==='object'&&ps.startH!=null;
   const nk=key==null?getPatternShift(ds):key;
   if(custom&&nk&&nk!=="off"&&nk!=="off2"&&SHIFT_TYPES[nk]){
-    const keep=confirm(`この日は勤務時間を自分で変えています（${hhmm(ps.startH,ps.startM)}〜${hhmm(ps.endH,ps.endM)}）。\n${SHIFT_TYPES[nk].label}に変えても、この時間を残しますか？\n\nOK：時間はそのまま残す\nキャンセル：${SHIFT_TYPES[nk].label}の決まった時間にする`);
+    const keep=confirm(`この日は勤務時間を自分で変えています（${hhmm(ps.startH,ps.startM)}〜${ps.endNextDay?"翌":""}${hhmm(ps.endH,ps.endM)}）。\n${SHIFT_TYPES[nk].label}に変えても、この時間を残しますか？\n\nOK：時間はそのまま残す\nキャンセル：${SHIFT_TYPES[nk].label}の決まった時間にする`);
     if(keep){ setDaily(ds,{planShift:{...ps,key:nk}}); return; }
   }
   setDayShift(ds,key);
@@ -3198,11 +3200,11 @@ function openLifeMode(key,opts){
 }
 // ── 自動切替（勤務シフト起点。手動切替は次の境界まで優先）──
 function autoModeKey(now){
-  const blk=getPlanShiftBlock(todayStr()); if(!blk||blk.startH==null) return null;
-  const nd=new Date(now), mins=nd.getHours()*60+nd.getMinutes();
-  let s=blk.startH*60+(blk.startM||0), e=blk.endH*60+(blk.endM||0); if(e<=s)e+=1440;
-  let m=mins; if(m<s && e>1440)m+=1440;
-  return (m>=s && m<e)?'work':null;
+  const nd=new Date(now), mins=nd.getHours()*60+nd.getMinutes(), td=fmtDS(nd);
+  // 今日の勤務、または前日から日をまたいで続く勤務（終了は翌日）の中にいれば仕事
+  for(const off of [0,-1]){ const blk=getPlanShiftBlock(addDays(td,off)); if(!blk||blk.startH==null) continue;
+    const sp=shiftBlockSpan(blk), m=mins-off*1440; if(m>=sp.s && m<sp.e) return 'work'; }
+  return null;
 }
 function saveAutoState(){ safeSet(STORAGE_KEY+'_automode',JSON.stringify({on:state.autoModeOn!==false,lastKey:(state.autoLastKey===undefined?null:state.autoLastKey)})); }
 // 実行：勤務境界をまたいだら自動でモードを切替。true を返したら再描画が必要
@@ -8272,9 +8274,13 @@ function getPlannedExtras(vd){
   const out=[];
   const sk=getPlanShiftKey(vd);
   // シフト計画（パターン or 予定上書き・カスタム時刻）を予定(左)へ。実績(workStart)とは独立
-  const sb=getPlanShiftBlock(vd);
-  if(sb){
-    out.push({title:`💼 ${sb.ovLabel||sb.label}${sb.place?` 📍${sb.place}`:""}${sb.note?" 📝":""}`,color:sb.color,startH:sb.startH,startM:sb.startM,endH:sb.endH,endM:sb.endM,isPattern:true,shiftBlock:true,shiftBaseLabel:sb.label,shiftNote:sb.note,shiftOvLabel:sb.ovLabel,shiftPlace:sb.place});
+  // 日をまたぐ勤務（終了は翌日）は、勤務の日の分と翌日の0時からの分に分けて出す（v15.89）
+  for(let off=-1; off<=0; off++){
+    const SD=addDays(vd,off), sb=getPlanShiftBlock(SD); if(!sb) continue;
+    const sp=shiftBlockSpan(sb), cs=Math.max(0,off*1440+sp.s), ce=Math.min(1440,off*1440+sp.e);
+    if(ce<=cs) continue;
+    out.push({title:`💼 ${sb.ovLabel||sb.label}${sb.place?` 📍${sb.place}`:""}${sb.note?" 📝":""}`,color:sb.color,startH:Math.floor(cs/60),startM:cs%60,endH:Math.floor(ce/60),endM:ce%60,isPattern:true,shiftBlock:true,shiftBaseLabel:sb.label,shiftNote:sb.note,shiftOvLabel:sb.ovLabel,shiftPlace:sb.place,
+      shiftDate:SD,shiftOrig:{startH:sb.startH,startM:sb.startM||0,endH:sb.endH,endM:sb.endM||0,endNextDay:sp.e>1440||!!sb.endNextDay}});
   }
   // パターン予定（睡眠など）。シフト連動なら当日のシフトで時間が変わる。0時またぎは分割
   // 日をまたぐ睡眠などは「就寝する日」を1つの夜として扱う：
@@ -8412,7 +8418,7 @@ function patternCoversDay(p,D,vd){
 
 // パターン予定ブロックのタップ → 編集モーダル
 function openPatternEdit(ev,vd){
-  if(ev.shiftBlock){ state.patternEdit={kind:"shift",startH:ev.startH,startM:ev.startM,endH:ev.endH,endM:ev.endM,baseLabel:ev.shiftBaseLabel||"勤務"}; }
+  if(ev.shiftBlock){ const o=ev.shiftOrig||ev; state.patternEdit={kind:"shift",date:ev.shiftDate||vd,startH:o.startH,startM:o.startM,endH:o.endH,endM:o.endM,endNextDay:!!o.endNextDay,baseLabel:ev.shiftBaseLabel||"勤務"}; }
   else { state.patternEdit={kind:"plan",uid:ev.patternUid,date:ev.ovDate||vd,startH:ev.oSH,startM:ev.oSM,endH:ev.oEH,endM:ev.oEM,nextDay:!!ev.oNext,ovDay:ev.ovDay}; }
   state.modal="patternEdit"; render();
 }
@@ -8427,6 +8433,7 @@ function timeField(getH,getM,setHM){
 }
 function renderPatternEditModal(vd){
   const pe=state.patternEdit||{};
+  if(pe.kind==="shift"&&pe.date) vd=pe.date;   // 翌日の0時からの分を開いたときも、勤務の日として編集する
   const bg=div({className:"modal-center"});
   const m=div({className:"modal-box",style:{maxHeight:"85vh",overflowY:"auto"}});
   let downOnBg=false;
@@ -8465,7 +8472,7 @@ function renderPatternEditModal(vd){
       ]):null;
       const addS=(l,v)=>{ const n=infoRowS(l,v); if(n)m.appendChild(n); };
       addS("📅 日付", dl);
-      addS("🕐 時間", `${hhmm(pe.startH,pe.startM)}〜${hhmm(pe.endH,pe.endM)}`);
+      { const sp=shiftBlockSpan(pe); addS("🕐 時間", `${hhmm(pe.startH,pe.startM)}〜${sp.e>1440?"翌":""}${hhmm(pe.endH,pe.endM)}`); }
       if((dS.shiftPlace||"").trim()){
         const pr=div({style:{marginBottom:"11px"}});
         pr.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"2px"}},"📍 場所"));
@@ -8483,7 +8490,7 @@ function renderPatternEditModal(vd){
     if(pe.lblOv===undefined)pe.lblOv=dS.shiftLabel||"";
     if(pe.noteOv===undefined)pe.noteOv=dS.shiftNote||"";
     if(pe.placeOv===undefined)pe.placeOv=dS.shiftPlace||"";
-    if(pe.shiftTimeInit===undefined)pe.shiftTimeInit=`${pe.startH}:${pe.startM}-${pe.endH}:${pe.endM}`;
+    if(pe.shiftTimeInit===undefined)pe.shiftTimeInit=`${pe.startH}:${pe.startM}-${pe.endH}:${pe.endM}-${!!pe.endNextDay}`;
     const uLabelS=(txt)=>div({style:{fontSize:"11px",color:"#64748b",margin:"0 0 4px"}},txt);
     // 名前
     m.appendChild(uLabelS("📝 名前"));
@@ -8493,6 +8500,12 @@ function renderPatternEditModal(vd){
     // 時間
     m.appendChild(uLabelS("🕐 時間"));
     m.appendChild(timeRow(state.patternEdit));
+    // 🌙 終了は翌日（日をまたぐ勤務。終了が開始より前なら、切り替えなくても翌日として扱う）
+    { const on=!!pe.endNextDay;
+      const ndB=btn({style:{width:"100%",padding:"8px",marginTop:"-4px",marginBottom:"10px",borderRadius:"8px",cursor:"pointer",fontSize:"12px",fontWeight:600,fontFamily:"inherit",
+        border:`1px solid ${on?"#38bdf8":"#334155"}`,background:on?"#0ea5e922":"transparent",color:on?"#38bdf8":"#64748b"}},on?"🌙 終了は翌日: ON":"🌙 終了は翌日: OFF");
+      ndB.setAttribute('data-shiftnextday','1'); ndB.addEventListener('click',()=>{ state.patternEdit.endNextDay=!on; render(); });
+      m.appendChild(ndB); }
     // 場所
     m.appendChild(uLabelS("📍 場所"));
     { const pin=document.createElement('input'); pin.type='text'; pin.placeholder="例：〇〇支店・現場名など"; pin.value=pe.placeOv;
@@ -8507,9 +8520,9 @@ function renderPatternEditModal(vd){
     m.appendChild(btn({style:{width:"100%",padding:"12px",marginBottom:"8px",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"14px",fontWeight:700,cursor:"pointer"},
       onClick:()=>{ const lv=(pe.lblOv||"").trim(), nv=(pe.noteOv||"").trim(), pv=(pe.placeOv||"").trim();
         const patch={shiftLabel:lv||null,shiftNote:nv||null,shiftPlace:pv||null};
-        const timeChanged=`${pe.startH}:${pe.startM}-${pe.endH}:${pe.endM}`!==pe.shiftTimeInit;
+        const timeChanged=`${pe.startH}:${pe.startM}-${pe.endH}:${pe.endM}-${!!pe.endNextDay}`!==pe.shiftTimeInit;
         const isCustom=(typeof dS.planShift==='object' && dS.planShift.startH!=null);
-        if(timeChanged||isCustom) patch.planShift={key:basePlanShiftKey(vd),startH:pe.startH,startM:pe.startM,endH:pe.endH,endM:pe.endM};
+        if(timeChanged||isCustom) patch.planShift={key:basePlanShiftKey(vd),startH:pe.startH,startM:pe.startM,endH:pe.endH,endM:pe.endM,...(pe.endNextDay?{endNextDay:true}:{})};
         setDaily(vd,patch); state.modal=null; showToast("この日だけ保存しました"); render(); }},"✅ この日だけ保存"));
     if(dS.shiftLabel||dS.shiftNote||dS.shiftPlace||(typeof dS.planShift==='object'&&dS.planShift.startH!=null))
       m.appendChild(btn({style:{width:"100%",padding:"8px",marginBottom:"12px",background:"transparent",border:"1px solid #334155",borderRadius:"8px",color:"#94a3b8",cursor:"pointer",fontSize:"12px"},
@@ -10723,7 +10736,7 @@ function eventReflected(ev, vd){
 function planBlockDone(ev, vd){
   if(isPlanMarkedDone(ev,vd)) return true;   // 実績に出さずに付けた「やった」印
   if(ev.customTodo) return !!(((state.todos[ev.ctDate||vd]||{})[ev.ctUid])||{}).checked;
-  if(ev.shiftBlock){ const d=getDaily(vd); return d.workStart!=null && d.workEnd!=null; }
+  if(ev.shiftBlock){ const d=getDaily(ev.shiftDate||vd); return d.workStart!=null && d.workEnd!=null; }
   if(ev.isPattern){ const pp=(state.planPatterns||[]).find(x=>x.uid===ev.patternUid); if(!pp)return false;
     // 連動ルーティンの完了判定に使う日を決める。連動する単体/セットのルーティンは
     // 「実際にやった日」のTODOとしてチェック＝記録されるが、その日は時刻帯で変わる：
@@ -12484,7 +12497,7 @@ function setSoberPlanned(ds,on){ setDaily(ds,{soberPlan:on?true:null}); try{ ale
 // 声をかける時刻（その日の0時からの分）：勤務がある日は勤務の終わり（＝会社を出る時刻）、休みの日は設定の時刻
 function soberRemindMin(ds){
   const b=getPlanShiftBlock(ds);
-  if(b){ const s=b.startH*60+(b.startM||0); let e=b.endH*60+(b.endM||0); if(e<=s) e+=1440; return {min:e,work:true}; }
+  if(b){ return {min:shiftBlockSpan(b).e,work:true}; }
   const c=getSoberCfg(); return {min:c.offH*60+(c.offM||0),work:false};
 }
 function soberMsg(work){ return work?"今日は休肝日。トライアルに寄らずに、まっすぐ帰ろう":"今日は休肝日。夕方の予定を先に入れて、炭酸水を冷やしておこう"; }
