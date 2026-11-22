@@ -258,7 +258,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.92"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.93"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -10935,21 +10935,33 @@ function renderDaySchedule(vd,ds,isToday){
     const pc=div({className:"card",style:{border:"1px solid #6366f155"}});
     pc.appendChild(div({style:{fontSize:"13px",fontWeight:700,color:"#a5b4fc",marginBottom:"8px"}},"🤖 AIのスケジュール提案"));
     if(p.comment)pc.appendChild(div({style:{fontSize:"11px",color:"#94a3b8",marginBottom:"10px",lineHeight:1.6}},p.comment));
-    (p.events||[]).forEach(ev=>{
-      pc.appendChild(div({style:{display:"flex",gap:"8px",alignItems:"center",padding:"5px 8px",background:"#0f172a",borderRadius:"6px",marginBottom:"4px"}},[
+    const _cl=getColorLabels();
+    (p.events||[]).forEach((ev,i)=>{
+      const col=ev.color||EV_DEFAULT, open=state.aiSchedColorIdx===i, lab=(_cl[col.toLowerCase()]||"").trim();
+      // 🎨 色（タップで選ぶ。AI が選んだ色・自分で選んだ色・既定色）
+      const sw=btn({style:{width:"22px",height:"22px",borderRadius:"5px",flexShrink:0,cursor:"pointer",background:col,border:"1px solid #ffffff2e",boxShadow:open?"0 0 0 2px #0f172a, 0 0 0 4px #38bdf8":"none"},title:lab||"色を選ぶ"},"");
+      sw.setAttribute('data-aischedcolor',String(i));
+      sw.addEventListener('click',()=>{ state.aiSchedColorIdx=open?null:i; render(); });
+      pc.appendChild(div({style:{display:"flex",gap:"8px",alignItems:"center",padding:"5px 8px",background:"#0f172a",borderRadius:"6px",marginBottom:"4px",borderLeft:`3px solid ${col}`}},[
+        sw,
         span({style:{fontSize:"11px",color:"#64748b",minWidth:"84px"}},`${String(ev.startH).padStart(2,'0')}:${String(ev.startM).padStart(2,'0')}〜${String(ev.endH).padStart(2,'0')}:${String(ev.endM).padStart(2,'0')}`),
-        span({style:{fontSize:"12px",color:"#e2e8f0"}},ev.title)
+        span({style:{flex:1,minWidth:0,fontSize:"12px",color:"#e2e8f0"}},ev.title),
+        lab?span({style:{flexShrink:0,fontSize:"9px",color:"#94a3b8"}},lab):null
       ]));
+      if(open){ const pw=div({style:{padding:"8px",margin:"0 0 6px",background:"#0b1220",border:"1px solid #1e3a5f",borderRadius:"8px"}}); pw.setAttribute('data-aischedpalette',String(i));
+        pw.appendChild(colorPickerRow(col,c=>{ ev.color=c; ev._userColor=true; state.aiSchedColorIdx=null; render(); }));
+        pc.appendChild(pw); }
     });
+    if((p.events||[]).length) pc.appendChild(div({style:{fontSize:"9px",color:"#475569",margin:"2px 0 0"}},"左の色をタップすると、予定ごとに色を選べます"+(schedColorCtx()?"（AI は設定で名前を付けた色から選びます）":"")));
     pc.appendChild(div({style:{display:"flex",gap:"8px",marginTop:"10px"}},[
-      btn({className:"btn-ghost",style:{flex:1},onClick:()=>{state.aiScheduleProposal=null;render();}},"却下"),
+      btn({className:"btn-ghost",style:{flex:1},onClick:()=>{state.aiScheduleProposal=null;state.aiSchedColorIdx=null;render();}},"却下"),
       btn({style:{flex:2,padding:"9px",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:"8px",color:"#fff",fontSize:"12px",fontWeight:600,cursor:"pointer"},
         onClick:()=>{
           if(!state.schedule[vd])state.schedule[vd]=[];
           (state.aiScheduleProposal.events||[]).forEach(ev=>{
-            state.schedule[vd].push({uid:Date.now()+Math.random(),title:ev.title,startH:ev.startH,startM:ev.startM,endH:ev.endH,endM:ev.endM,color:EV_DEFAULT});
+            state.schedule[vd].push({uid:Date.now()+Math.random(),title:ev.title,startH:ev.startH,startM:ev.startM,endH:ev.endH,endM:ev.endM,color:ev.color||EV_DEFAULT});
           });
-          saveSchedule();state.aiScheduleProposal=null;render();
+          saveSchedule();state.aiScheduleProposal=null;state.aiSchedColorIdx=null;render();
           showToast("📅 スケジュールを登録しました");
         }},"この予定を登録")
     ]));
@@ -13930,8 +13942,9 @@ function rewardStatus(r){
 
 // スケジュール提案のシステムプロンプト（初回提案・対話の両方で共有）
 const SCHED_SYS=`あなたは体調に配慮する生活プランナーです。ユーザーの1日のスケジュールを提案し、以下のJSON形式のみで返答してください:
-{"comment":"提案や調整の説明1〜2文（体調への配慮点や、要望をどう反映したかにも触れる）","events":[{"title":"予定名","startH":9,"startM":0,"endH":10,"endM":30}]}
+{"comment":"提案や調整の説明1〜2文（体調への配慮点や、要望をどう反映したかにも触れる）","events":[{"title":"予定名","startH":9,"startM":0,"endH":10,"endM":30,"color":"#22c55e"}]}
 ルール:
+- color は任意。【色の意味】が与えられたときだけ、予定の内容に合う色をその一覧の色コードから選ぶ（一覧に無い色は使わない。合うものが無ければ color を省く）。
 - 既存の予定と重複しない時間に配置。勤務時間中には予定を入れない。食事時間を確保。無理のない量にする。
 - 「ルーティン」のグループは、中の個々の項目を分割せず、必ずグループ名（例: 🌅モーニングルーティン）のまま【1つのまとまった予定】として1件だけ配置。所要は項目数に応じ15〜45分目安。その他の項目は個別配置可。
 - 【体調を最重要で考慮する】体調が低い(目安6未満)・睡眠不足(6h未満)・症状がある場合は、予定を詰め込まず「休息」「仮眠」「軽いストレッチ」など回復を優先し、[最優先][重要]タスクも短時間・控えめにする。
@@ -13967,9 +13980,19 @@ function buildScheduleContext(vd){
   const conditionCtx=`今日の体調: ${todayAvg!=null?todayAvg.toFixed(1)+"/10":"未記録"} / 直近7日平均: ${recentAvg!=null?recentAvg.toFixed(1)+"/10":"—"} / 前夜の睡眠: ${sleepH!=null?sleepH+"h":"—"}${(()=>{const q=sleepQualDef(sleepQualOf(vd));return q?`（眠りの質 ${q.v}/5 ${q.label}）`:"";})()} / 最近の症状: ${recentSymptoms.join("・")||"なし"} / 時間帯別の平均体調(10点満点): ${todStr}`;
   const now=new Date();
   const timeCtx=(vd===todayStr())?`現在時刻は${now.getHours()}:${String(now.getMinutes()).padStart(2,'0')}です。今の時刻以降のスケジュールだけ提案してください。`:"1日全体のスケジュールを提案してください。";
-  return `日付: ${vd}\n勤務: ${shift}\n${timeCtx}\n\n【体調】\n${conditionCtx}\n\n【既存の予定】\n${existing}\n\n【やることリスト(未完了・優先度付き)】\n${todoTasks}\n\n【ルーティン（各グループはまとめて1件の予定として配置。titleはグループ名のまま）】\n${routineDesc}\n\n【その他の毎日の項目（個別に配置してよい）】\n${soloItems}`;
+  const colorCtx=schedColorCtx();
+  return `${colorCtx?`【色の意味】\n${colorCtx}\n\n`:""}日付: ${vd}\n勤務: ${shift}\n${timeCtx}\n\n【体調】\n${conditionCtx}\n\n【既存の予定】\n${existing}\n\n【やることリスト(未完了・優先度付き)】\n${todoTasks}\n\n【ルーティン（各グループはまとめて1件の予定として配置。titleはグループ名のまま）】\n${routineDesc}\n\n【その他の毎日の項目（個別に配置してよい）】\n${soloItems}`;
 }
 
+// 🎨 予定の色の意味（設定で名前を付けた色だけ）。AI が提案に色を付けるときに使う（v15.93）
+function schedColorCtx(){ const L=getColorLabels(); return EV_COLORS.filter(c=>(L[c.toLowerCase()]||"").trim()).map(c=>`${c}: ${L[c.toLowerCase()].trim()}`).join("\n"); }
+// 提案の色をそろえる：一覧にない色は外す。前の提案で自分で選んだ色は、同じ名前の予定に引き継ぐ
+function schedNormColors(proposal,prev){
+  const ok=c=>typeof c==="string"&&EV_COLORS.some(x=>x.toLowerCase()===c.toLowerCase());
+  const mine={}; ((prev&&prev.events)||[]).forEach(e=>{ if(e._userColor) mine[(e.title||"").trim()]=e.color; });
+  (proposal.events||[]).forEach(e=>{ const t=(e.title||"").trim();
+    if(mine[t]){ e.color=mine[t]; e._userColor=true; } else if(!ok(e.color)) delete e.color; });
+  return proposal; }
 async function runAISchedule(vd){
   if(state.aiScheduleLoading)return;
   state.aiScheduleLoading=true;state.aiScheduleProposal=null;state.aiScheduleChat=[];render();
@@ -13977,7 +14000,7 @@ async function runAISchedule(vd){
     const text=await callAIText(SCHED_SYS, `${buildScheduleContext(vd)}\n\n体調を踏まえてスケジュールを提案してください。`);
     const proposal=parseAIJson(text);
     if(!proposal.events||!proposal.events.length)throw new Error("提案が生成できませんでした");
-    state.aiScheduleProposal=proposal;
+    state.aiScheduleProposal=schedNormColors(proposal,null);
     state.aiScheduleChat=[{role:"ai",text:proposal.comment||"スケジュールを提案しました。調整したいことがあれば教えてください。"}];
   }catch(e){
     showToast(`提案失敗: ${e.message}`,"#ef4444");
@@ -13994,7 +14017,7 @@ async function aiScheduleChatSend(vd){
     const prompt=`${buildScheduleContext(vd)}\n\n【これまでの提案・会話】\n${chatHistoryText(state.aiScheduleChat)}\n\nユーザーの最新の要望を反映し、調整後の1日分の完全なスケジュールをJSONで返してください。`;
     const text=await callAIText(SCHED_SYS, prompt);
     const proposal=parseAIJson(text);
-    if(proposal.events&&proposal.events.length)state.aiScheduleProposal=proposal;
+    if(proposal.events&&proposal.events.length)state.aiScheduleProposal=schedNormColors(proposal,state.aiScheduleProposal);
     state.aiScheduleChat=[...state.aiScheduleChat,{role:"ai",text:proposal.comment||"提案を更新しました。"}];
   }catch(e){
     state.aiScheduleChat=[...state.aiScheduleChat,{role:"ai",text:`（エラー: ${e.message}）`}];
