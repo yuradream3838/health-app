@@ -258,7 +258,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.94"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.95"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -12868,6 +12868,8 @@ const NP_KINDS={
     linkNote:"タップでその日の予定へ。「解除」は予定を残したまま結びつきだけ外します。この予定を別の日に動かすと上の日付も合わせます。",
     dayChip:"温泉に行く日"}
 };
+// 日付＋曜日（例：11/28(土)）。外飲み・ケア・温泉のカードで使う（v15.95）
+function npDayLabel(ds){ return `${mdLabel(ds)}(${WEEKDAYS_JP[parseDS(ds).getDay()]})`; }
 // 🔄 6週間のサイクル（v15.86）：🍺外飲み → 🩹ケア → ♨️温泉 を2週間おきに回す（それぞれは6週間に1回）。
 // 自動では動かさない。①過ぎた予定に「次の周（6週間後）にする」 ②カードの「2週間おきにそろえる」で、その日を起点に残り2つを +2週・+4週に置く
 const NP_ORDER=["drink","care","onsen"], NP_STEP_DAYS=14, NP_CYCLE_DAYS=NP_STEP_DAYS*NP_ORDER.length;
@@ -12884,8 +12886,8 @@ function npCycleAligned(k){ const p=npGet(k); if(!p) return false; return NP_ORD
 function npAlignCycle(k){
   const p=npGet(k); if(!p) return; const others=NP_ORDER.filter(o=>o!==k);
   const plan=others.map(o=>({o,ds:npCycleDate(k,p.date,o)}));
-  const lines=plan.map(x=>`${NP_KINDS[x.o].icon} ${NP_KINDS[x.o].title}：${npGet(x.o)?mdLabel(npGet(x.o).date)+" → ":""}${mdLabel(x.ds)}`).join("\n");
-  if(!confirm(`${NP_KINDS[k].icon} ${mdLabel(p.date)} を起点に、2週間おきに並べます（6週間で1周）。\n\n${lines}\n\nよろしいですか？（予定タブに作った予定は動かしません）`)) return;
+  const lines=plan.map(x=>`${NP_KINDS[x.o].icon} ${NP_KINDS[x.o].title}：${npGet(x.o)?npDayLabel(npGet(x.o).date)+" → ":""}${npDayLabel(x.ds)}`).join("\n");
+  if(!confirm(`${NP_KINDS[k].icon} ${npDayLabel(p.date)} を起点に、2週間おきに並べます（6週間で1周）。\n\n${lines}\n\nよろしいですか？（予定タブに作った予定は動かしません）`)) return;
   plan.forEach(x=>npSetDate(x.o,x.ds));
   showToast("🔄 2週間おきに並べました","#22c55e"); render();
 }
@@ -12895,9 +12897,9 @@ function npCycleRow(k){
   const w=div({style:{marginTop:"8px",paddingTop:"7px",borderTop:"1px solid #33415566"}}); w.setAttribute('data-npcycle',k);
   const aligned=npCycleAligned(k);
   const parts=NP_ORDER.map(o=>({o,q:npGet(o)})).sort((a,b)=>String((a.q&&a.q.date)||"9").localeCompare(String((b.q&&b.q.date)||"9")))
-    .map(x=>`${NP_KINDS[x.o].icon}${x.q?mdLabel(x.q.date):"未定"}`).join(" → ");
+    .map(x=>`${NP_KINDS[x.o].icon}${x.q?npDayLabel(x.q.date):"未定"}`).join(" → ");
   w.appendChild(div({style:{fontSize:"11px",color:aligned?"#86efac":"#94a3b8",lineHeight:1.6}},`🔄 ${parts}${aligned?"（2週間おき・6週間で1周）":""}`));
-  w.appendChild(div({style:{fontSize:"10px",color:"#64748b",lineHeight:1.5}},`この次は ${mdLabel(addDays(p.date,NP_CYCLE_DAYS))}（6週間後）`));
+  w.appendChild(div({style:{fontSize:"10px",color:"#64748b",lineHeight:1.5}},`この次は ${npDayLabel(addDays(p.date,NP_CYCLE_DAYS))}（6週間後）`));
   if(!aligned){ const b=btn({style:{width:"100%",marginTop:"6px",padding:"7px",borderRadius:"8px",border:"1px solid #334155",background:"transparent",color:"#94a3b8",fontSize:"11px",cursor:"pointer",fontFamily:"inherit"}},"🔄 この日を起点に、3つを2週間おきにそろえる");
     b.setAttribute('data-npalign',k); b.addEventListener('click',()=>npAlignCycle(k)); w.appendChild(b); }
   return w;
@@ -12964,7 +12966,7 @@ function npLinkEvent(k,g){
   g.ev.ndId=id; saveSchedule();
   if(p.date!==g.ds){ state[K.sk]={...p,date:g.ds}; npSave(k); }
   state.modal=null;
-  showToast(`🔗 ${mdLabel(g.ds)} の予定と結びつけました`,K.col); render();
+  showToast(`🔗 ${npDayLabel(g.ds)} の予定と結びつけました`,K.col); render();
 }
 function linkNextDrinkEvent(g){ npLinkEvent("drink",g); }
 // 結びつきだけ外す（予定そのものは消さない）
@@ -12986,7 +12988,7 @@ function renderNdPickModal(){
     list.forEach(g=>{
       const b=btn({style:{width:"100%",marginBottom:"6px",padding:"9px 10px",borderRadius:"8px",cursor:"pointer",fontFamily:"inherit",textAlign:"left",
         border:"1px solid #334155",background:"#0f172a",display:"flex",alignItems:"center",gap:"8px"}},[
-        span({style:{fontSize:"11px",color:"#7dd3fc",flexShrink:0,width:"42px"}},mdLabel(g.ds)),
+        span({style:{fontSize:"11px",color:"#7dd3fc",flexShrink:0,width:"62px"}},npDayLabel(g.ds)),
         span({style:{flex:1,minWidth:0,fontSize:"13px",color:"#e2e8f0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},g.ev.title||"(無題)"),
         span({style:{fontSize:"10px",color:"#64748b",flexShrink:0}},goalEventTimeLabel(g)),
       ]);
@@ -13009,7 +13011,7 @@ function syncNextDrinkFromEvent(ndId,newDs){
   const p=npGet(k); if(p.date===newDs) return null;
   _ndDateSyncing=true;
   try{ state[NP_KINDS[k].sk]={...p,date:newDs}; npSave(k); }finally{ _ndDateSyncing=false; }
-  return {kind:k,label:mdLabel(newDs)};
+  return {kind:k,label:npDayLabel(newDs)};
 }
 // ※ こちらの日付を変えたときは、予定を動かさない。機会そのものが別なので、
 //    前の日に作った予定は記録として残し、新しい日にはまた「📅 予定に追加」を出す（下の保存処理）。
@@ -13036,7 +13038,7 @@ function nextPlanCard(k){
     const diff=Math.round((parseDS(p.date)-parseDS(today))/86400000);
     if(p.date>=today){
       c.appendChild(div({style:{fontSize:"18px",fontWeight:800,color:K.colBig,lineHeight:1.2}},[
-        txt(mdLabel(p.date)), span({style:{fontSize:"13px",color:K.colT,marginLeft:"8px",fontWeight:700}}, diff===0?"今日":`あと${diff}日`)
+        txt(npDayLabel(p.date)), span({style:{fontSize:"13px",color:K.colT,marginLeft:"8px",fontWeight:700}}, diff===0?"今日":`あと${diff}日`)
       ]));
       if(p.note)c.appendChild(div({style:{fontSize:"12px",color:"#e2e8f0",marginTop:"4px",lineHeight:1.5}},p.note));
       // 📅 予定に追加。すでにここから作ってあれば、ボタンではなく**その予定**を出す（タップでその日へ）
@@ -13045,7 +13047,7 @@ function nextPlanCard(k){
           evs.forEach(g=>{
             const row=btn({style:{width:"100%",marginTop:"7px",padding:"8px 10px",borderRadius:"8px",cursor:"pointer",fontFamily:"inherit",textAlign:"left",
               border:"1px solid #0ea5e955",background:"#0ea5e90d",display:"flex",alignItems:"center",gap:"8px"}},[
-              span({style:{fontSize:"12px",color:"#7dd3fc",flexShrink:0}},`📅 ${g.repeat?"繰り返し":mdLabel(g.ds)}`),
+              span({style:{fontSize:"12px",color:"#7dd3fc",flexShrink:0}},`📅 ${g.repeat?"繰り返し":npDayLabel(g.ds)}`),
               span({style:{flex:1,minWidth:0,fontSize:"12px",color:"#e2e8f0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},g.ev.title||"(無題)"),
               span({style:{fontSize:"10px",color:"#64748b",flexShrink:0}},goalEventTimeLabel(g)),
             ]);
@@ -13073,12 +13075,12 @@ function nextPlanCard(k){
       c.appendChild(div({style:{fontSize:"11px",color:"#94a3b8",marginTop:"7px",lineHeight:1.6}},K.waitMsg));
       { const cr=npCycleRow(k); if(cr) c.appendChild(cr); }
     } else {
-      c.appendChild(div({style:{fontSize:"13px",color:"#f87171",fontWeight:700,lineHeight:1.5}},`前回の予定日（${mdLabel(p.date)}）は過ぎています。`));
+      c.appendChild(div({style:{fontSize:"13px",color:"#f87171",fontWeight:700,lineHeight:1.5}},`前回の予定日（${npDayLabel(p.date)}）は過ぎています。`));
       c.appendChild(div({style:{fontSize:"11px",color:"#94a3b8",marginTop:"4px",lineHeight:1.6}},K.pastMsg));
       // 🔄 6週間のサイクル：次の周の日にそのまま進める
       { const nx=npNextCycle(p.date);
-        const nb=btn({style:{width:"100%",marginTop:"8px",padding:"9px",borderRadius:"8px",border:"none",background:K.grad,color:"#fff",fontSize:"12px",fontWeight:700,cursor:"pointer",fontFamily:"inherit"}},`🔄 次の周（${mdLabel(nx)}）にする`);
-        nb.setAttribute('data-npnext',k); nb.addEventListener('click',()=>{ npSetDate(k,nx); showToast(`${K.icon} ${K.toast}：${mdLabel(nx)}`,K.col); render(); }); c.appendChild(nb); }
+        const nb=btn({style:{width:"100%",marginTop:"8px",padding:"9px",borderRadius:"8px",border:"none",background:K.grad,color:"#fff",fontSize:"12px",fontWeight:700,cursor:"pointer",fontFamily:"inherit"}},`🔄 次の周（${npDayLabel(nx)}）にする`);
+        nb.setAttribute('data-npnext',k); nb.addEventListener('click',()=>{ npSetDate(k,nx); showToast(`${K.icon} ${K.toast}：${npDayLabel(nx)}`,K.col); render(); }); c.appendChild(nb); }
       const b=btn({style:{width:"100%",marginTop:"8px",padding:"9px",borderRadius:"8px",border:`1px dashed ${K.col}`,background:K.col+"0d",color:K.colT,fontSize:"12px",fontWeight:600,cursor:"pointer",fontFamily:"inherit"}},"次の予定を決める");
       b.addEventListener('click',()=>{ state[eKey]=true; state[dKey]=""; state[nKey]=p.note||""; render(); });
       c.appendChild(b);
@@ -13108,7 +13110,7 @@ function nextPlanCard(k){
     const base={...(p||{})}; if(newDay) delete base.id;
     state[K.sk]={...base,date:dt,note:(state[nKey]||"").trim()}; npSave(k);
     state[eKey]=false;
-    showToast(hadEv?`${K.icon} ${K.toast}：${mdLabel(dt)}（前の予定はそのまま残ります）`:`${K.icon} ${K.toast}：${mdLabel(dt)}`,K.col); render(); });
+    showToast(hadEv?`${K.icon} ${K.toast}：${npDayLabel(dt)}（前の予定はそのまま残ります）`:`${K.icon} ${K.toast}：${npDayLabel(dt)}`,K.col); render(); });
   row.appendChild(save);
   c.appendChild(row);
   if(p){ const clr=btn({style:{width:"100%",marginTop:"8px",padding:"9px",background:"transparent",border:"1px solid #7f1d1d",borderRadius:"8px",color:"#f87171",fontSize:"12px",cursor:"pointer"}},"🗑 予定を削除");
