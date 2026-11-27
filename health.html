@@ -258,7 +258,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.93"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.94"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -5073,6 +5073,12 @@ function renderWidgetView(vd,ds){
   const pinSleep = vd===todayStr() && secNodes.sleep && getSleepGoal() && !windDownAt() && (()=>{ const cd=bedCountdownMin(); return cd!=null && cd<=cdLeadMin() && cd>-240; })();
   if(pinSleep) wrap.appendChild(secNodes.sleep);
   // 指定順で表示項目を並べる（組み立てたノードのみ）
+  // 🍺🩹♨️ 外飲み・ケア・温泉のカードは、日付の早い順に上から並べる（3つが占める位置の中で入れ替える。日が未定のものは下）（v15.94）
+  { const NPK={nextdrink:'drink',nextcare:'care',nextonsen:'onsen'};
+    const slots=widgetOrder().filter(k=>NPK[k]&&secNodes[k]);
+    const dt=k=>{ const q=npGet(NPK[k]); return q&&q.date?q.date:'9999-99-99'; };
+    const nodes=[...slots].sort((a,b)=>dt(a).localeCompare(dt(b))).map(k=>secNodes[k]);
+    slots.forEach((k,i)=>{ secNodes[k]=nodes[i]; }); }
   widgetOrder().forEach(k=>{ if(k==='sleep' && pinSleep)return; if(secNodes[k]) wrap.appendChild(secNodes[k]); });
   if(_smActive && _smReturned) wrap.appendChild(sleepModeEntryCard()); // アプリに戻った後は一番下（他カードの下）
 
@@ -19084,6 +19090,8 @@ function propCheckOp(op){
     if(!allDay&&!(_propInt(e.startH,0,23)&&_propInt(e.startM,0,59)&&_propInt(e.endH,0,24)&&_propInt(e.endM,0,59))) return {err:"予定の時刻が違います"};
     if(e.note!=null&&(typeof e.note!=="string"||e.note.length>1000)) return {err:"予定のメモが長すぎます"};
     const entry={title:e.title.trim(),startH:allDay?(_propInt(e.startH,0,23)?e.startH:9):e.startH,startM:allDay?0:e.startM,endH:allDay?(_propInt(e.endH,0,24)?e.endH:10):e.endH,endM:allDay?0:e.endM,allDay,note:(e.note||"").trim()};
+    // 🎨 色（v15.94・任意）：アプリの色の一覧（EV_COLORS）にある色だけ受け付ける。それ以外は捨てて既定色
+    { const c=typeof e.color==="string"?EV_COLORS.find(x=>x.toLowerCase()===e.color.toLowerCase()):null; if(c) entry.color=c; }
     const dup=(state.schedule[d]||[]).some(x=>(x.title||"").trim()===entry.title&&(x.startH||0)===entry.startH&&(x.startM||0)===entry.startM);
     return {op:{type:"schedule.add",date:d,entry},dup};
   }
@@ -19135,6 +19143,8 @@ async function propRefresh(force){
 function propItems(){ const done=getPropDone(), good=[], bad=[];
   getPropCache().items.forEach(x=>{ if(done.includes(x.id)) return; if(x.bad){ bad.push(x); return; } const v=propValidate(x.p); if(v.ok) good.push({...x,v}); else bad.push({...x,err:v.err}); });
   return {good,bad}; }
+// 🎨 提案の予定に自分で選んだ色（提案ID→操作の番号→色。端末の中だけ・決めたら消す）（v15.94）
+function propPickedColor(id,i){ const m=(state.propColor||{})[id]; return m&&m[i]?m[i]:null; }
 async function propDecide(id,approve){
   if(state.viewingBackup){ showToast("⚠ バックアップを見ている間は決められません"); return; }
   if(state.propWorking) return;
@@ -19147,12 +19157,12 @@ async function propDecide(id,approve){
       const it=getPropCache().items.find(x=>x.id===id); const v=it&&!it.bad?propValidate(it.p):null;
       if(!v||!v.ok){ showToast(`⚠ この提案は反映できません（${(v&&v.err)||"見つかりません"}）`,"#f97316"); return; }
       let g=0, sc=0, sh=0, skip=0;
-      v.ops.forEach(({op,dup})=>{ if(dup){ skip++; return; }
+      v.ops.forEach(({op,dup},_opi)=>{ if(dup){ skip++; return; }
         if(op.type==="goal.add"){ const node={id:gtNewId(),text:op.node.text,done:false,collapsed:false,children:[],periodType:op.node.periodType,periodKey:op.node.periodKey,...(op.node.note?{note:op.node.note}:{})};
           if(op.parentId===null) state.goalTree=[...(state.goalTree||[]),node]; else { const f=gtFind(op.parentId); if(!f){ skip++; return; } f.node.children=[...(f.node.children||[]),node]; f.node.collapsed=false; }
           g++; }
         else if(op.type==="schedule.add"){ const e=op.entry; if(!state.schedule[op.date]) state.schedule[op.date]=[];
-          state.schedule[op.date].push({uid:Date.now()+Math.random(),title:e.title,startH:e.startH,startM:e.startM,endH:e.endH,endM:e.endM,endNextDay:false,color:EV_DEFAULT,allDay:e.allDay,refOnly:false,...(e.note?{note:e.note}:{})});
+          state.schedule[op.date].push({uid:Date.now()+Math.random(),title:e.title,startH:e.startH,startM:e.startM,endH:e.endH,endM:e.endM,endNextDay:false,color:propPickedColor(id,_opi)||e.color||EV_DEFAULT,allDay:e.allDay,refOnly:false,...(e.note?{note:e.note}:{})});
           sc++; }
         else if(op.type==="shopping.add"){ if(propShopDup(op.text)){ skip++; return; }   // 同じ提案の中で同じ物が2回あっても1つだけ
           if(!state.tasks||typeof state.tasks!=="object") state.tasks={todo:[],shopping:[]};
@@ -19164,6 +19174,7 @@ async function propDecide(id,approve){
       showToast(`📨 提案を反映しました（${[g?`目標${g}件`:"",sc?`予定${sc}件`:"",sh?`買物${sh}件`:"",skip?`すでにある${skip}件は足さず`:""].filter(Boolean).join("・")||"変更なし"}）`,"#22c55e");
     } else { markPropDone(id); showToast("📨 提案を却下しました","#94a3b8"); }
     propSave("_propcache",{items:getPropCache().items.filter(x=>x.id!==id)});
+    if(state.propColor) delete state.propColor[id];
     try{ await propFetch("pdel",{post:true,q:`id=${encodeURIComponent(id)}`}); }catch(_){}   // 失敗しても、次の見回りでもう一度片付ける
     if(approve&&getSyncCfg().on){ try{ await syncUpload(false); }catch(_){} }   // 反映した直後に送る
   } finally { state.propWorking=null; render(); }
@@ -19192,7 +19203,18 @@ function proposalsCard(){
     const box=div({style:{padding:"9px 11px",borderRadius:"9px",background:"#0f172a",border:"1px solid #334155",marginBottom:"7px"}}); box.setAttribute('data-propitem',x.id);
     box.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"4px"}},`${fmtSyncTime(x.v.createdAt||x.at)} に届いた提案`));
     if(x.v.reason) box.appendChild(div({style:{fontSize:"12px",color:"#e2e8f0",lineHeight:1.6,marginBottom:"6px",whiteSpace:"pre-wrap"}},`💬 ${x.v.reason}`));
-    x.v.ops.forEach(o=>box.appendChild(div({style:{fontSize:"12px",color:o.dup?"#64748b":"#cbd5e1",lineHeight:1.6,marginBottom:"3px"}},propOpText(o.op,o.dup))));
+    x.v.ops.forEach((o,oi)=>{
+      const tx=div({style:{flex:1,minWidth:0,fontSize:"12px",color:o.dup?"#64748b":"#cbd5e1",lineHeight:1.6}},propOpText(o.op,o.dup));
+      if(o.op.type!=="schedule.add"||o.dup){ box.appendChild(div({style:{marginBottom:"3px"}},[tx])); return; }
+      // 🎨 予定の色：自分で選んだ色＞提案に付いていた色＞既定色。タップでパレット
+      const col=propPickedColor(x.id,oi)||o.op.entry.color||EV_DEFAULT, key=x.id+":"+oi, open=state.propColorOpen===key;
+      const sw=btn({style:{width:"20px",height:"20px",borderRadius:"5px",flexShrink:0,cursor:"pointer",background:col,border:"1px solid #ffffff2e",marginTop:"1px",boxShadow:open?"0 0 0 2px #0f172a, 0 0 0 4px #38bdf8":"none"},title:"色を選ぶ"},"");
+      sw.setAttribute('data-propcolor',key); sw.addEventListener('click',()=>{ state.propColorOpen=open?null:key; render(); });
+      box.appendChild(div({style:{display:"flex",gap:"7px",alignItems:"flex-start",marginBottom:"3px"}},[sw,tx]));
+      if(open){ const pw=div({style:{padding:"7px",margin:"0 0 6px",background:"#0b1220",border:"1px solid #1e3a5f",borderRadius:"8px"}}); pw.setAttribute('data-proppalette',key);
+        pw.appendChild(colorPickerRow(col,c=>{ if(!state.propColor) state.propColor={}; state.propColor[x.id]={...(state.propColor[x.id]||{}),[oi]:c}; state.propColorOpen=null; render(); }));
+        box.appendChild(pw); }
+    });
     const row=div({style:{display:"flex",gap:"7px",marginTop:"7px"}});
     const ok=btn({style:{flex:1,padding:"9px",borderRadius:"8px",border:"none",background:"#8b5cf6",color:"#fff",fontSize:"13px",fontWeight:700,cursor:"pointer",fontFamily:"inherit",opacity:busy?0.6:1}},busy?"⏳ 反映しています…":"✓ 反映する");
     ok.setAttribute('data-propok',x.id); ok.addEventListener('click',()=>propDecide(x.id,true));

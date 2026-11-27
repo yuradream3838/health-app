@@ -3,7 +3,7 @@
 > AIが参照しやすいよう、`api.php`（Geminiプロキシ）と、それを呼ぶクライアント関数の
 > **正確な契約**をまとめた常設リファレンス。実装は `health.html`（クライアント）と
 > サーバー上の `api.php` / `alexa.php` / `sync.php` / `propose.php`（どれもリポジトリ管理外。sync.php・propose.php はひな形 `server/*.php.example` だけを管理）。
-> 最終更新: アプリ v15.93 / api.php v4.1 / alexa.php v2.3 / sync.php v2.1 / propose.php v1。
+> 最終更新: アプリ v15.94 / api.php v4.1 / alexa.php v2.3 / sync.php v2.1 / propose.php v1。
 
 ---
 
@@ -392,13 +392,13 @@ Muse（読むだけの道具）が、本体のデータ（`sync.php` の `put`�
 {"v":1, "createdAt":"…", "reason":"なぜ提案するか（任意・1000文字まで）",
  "ops":[
    {"type":"goal.add", "parentId":null, "node":{"text":"…", "periodType":"weekly", "periodKey":"weekly_2026-11-16", "note":""}},
-   {"type":"schedule.add", "date":"2026-11-20", "entry":{"title":"…", "startH":10, "startM":0, "endH":11, "endM":0, "allDay":false, "note":""}},
+   {"type":"schedule.add", "date":"2026-11-20", "entry":{"title":"…", "startH":10, "startM":0, "endH":11, "endM":0, "allDay":false, "note":"", "color":"#22c55e"}},
    {"type":"shopping.add", "text":"生姜", "cat":"food"}
  ]}
 ```
 - `ops` は1〜20個。**受け付けるのは `goal.add`・`schedule.add`・`shopping.add`（v15.79〜）だけ**（それ以外がひとつでもあれば、その提案は「読めない提案」扱い）。
 - `goal.add`：目標ツリー（`state.goalTree`）への追加だけ（変更・削除は対象外）。`text` 1〜200文字、`periodType`＝yearly/quarterly/monthly/weekly/daily、`periodKey` はアプリの形（`pkParse` で読めて、weekly は月曜の日付・daily は正しい日付・monthly は1〜12月・quarterly は Q1〜Q4）、`note` 1000文字まで。`parentId` は null（いちばん上）か、ある目標の id（無ければ「読めない提案」）。`id`・`done:false`・`children:[]`・`collapsed:false` はアプリが付ける。同じ親に同じ文面・同じ期間の目標があれば足さない。
-- `schedule.add`：`date` は正しい日付。受け付ける項目は `title`（1〜100文字）・`startH`/`startM`/`endH`/`endM`（終日でなければ必須・0〜23/0〜59、endH は24まで）・`allDay`・`note`（1000文字まで）だけで、**ほかの項目は捨てる**。`uid`（`Date.now()+Math.random()`）・色（`EV_DEFAULT`）はアプリが付ける。同じ日・同じ開始時刻・同じ名前の予定があれば足さない。
+- `schedule.add`：`date` は正しい日付。受け付ける項目は `title`（1〜100文字）・`startH`/`startM`/`endH`/`endM`（終日でなければ必須・0〜23/0〜59、endH は24まで）・`allDay`・`note`（1000文字まで）だけで、**ほかの項目は捨てる**。`uid`（`Date.now()+Math.random()`）はアプリが付ける。**色 `color`（v15.94〜・任意）**：アプリの色の一覧 `EV_COLORS`（`#ef4444` `#f97316` `#eab308` `#84cc16` `#22c55e` `#14b8a6` `#22d3ee` `#0ea5e9` `#2563eb` `#4f46e5` `#8b5cf6` `#c026d3` `#ec4899` `#f43f5e` `#000000` `#9ca3af` `#ffffff`。大文字小文字は問わない）にある色だけ受け付け、それ以外・省略は既定色（`EV_DEFAULT`）。承認する前に本人が提案カードで予定ごとに色を選び直せる（選んだ色が優先）。同じ日・同じ開始時刻・同じ名前の予定があれば足さない。
 - `shopping.add`（v15.79〜）：買物リスト（`state.tasks.shopping`）への追加だけ（変更・削除・買った印は対象外）。`text` 1〜100文字（前後の空白は除く）、`cat` は省略可で、付けるなら `want`/`daily`/`food` のどれか（それ以外は「読めない提案」）。省略時はアプリの既定の `food`（🍎 食品）。ほかの項目（`done`・`uid` など）は捨てる。`uid`（`Date.now()`。重ならないよう1ずつずらす）・`done:false` はアプリが付け、末尾に足す。同じ文面の**まだ買っていない**項目があれば足さない（同じ提案の中の重複も1つにする）。買った（done）項目と同じ文面なら足す。保存は通常の `saveTasks`（同期の単位は `tasks` 全体）。
 
 ### 12-4. アプリ側（health.html）
