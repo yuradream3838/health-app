@@ -258,7 +258,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.96"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.97"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -8217,6 +8217,7 @@ function openActualEdit(vd, uid, startH){
   state.actFromEventUid=ex?(ex.fromEventUid||null):null; // 手動追加/編集は予定紐付けなし（反映ボタン経由でのみ紐付く）
   state.actFromTask=null; // 手動の実績編集ではTODO画面へ移動しない
   state.actDate=vd;
+  state.actViewMode=!!ex;   // 既存の実績を開いたら、まず情報だけ表示（予定と同じ。右上の編集で編集へ・v15.97）
   state.modal="addActual";
   render();
 }
@@ -8225,6 +8226,31 @@ function renderActualModal(){
   const m=div({className:"modal-box",style:{maxHeight:"85vh",overflowY:"auto"}});
   bg.addEventListener('click',()=>{state.modal=null;render();});
   m.addEventListener('click',e=>e.stopPropagation());
+  // ── 情報表示（既存の実績を開いたとき）──
+  if(state.actEditUid && state.actViewMode){
+    const c=state.actColor||"#f472b6";
+    m.appendChild(div({style:{display:"flex",alignItems:"flex-start",gap:"8px",marginBottom:"12px"}},[
+      div({style:{width:"4px",alignSelf:"stretch",borderRadius:"2px",background:c,flexShrink:0}}),
+      div({style:{flex:1,minWidth:0}},[
+        div({style:{fontSize:"17px",fontWeight:700,color:"#e2e8f0",wordBreak:"break-word"}},`${state.actUnplanned?"⚡ ":""}${state.actTitle||"(無題)"}`),
+        div({style:{fontSize:"11px",color:"#64748b",marginTop:"2px"}},state.actUnplanned?"✔ 実績（突発・予定外）":"✔ 実績")
+      ]),
+      (()=>{ const eb=btn({style:{flexShrink:0,padding:"6px 12px",borderRadius:"8px",border:"1px solid #22c55e",background:"#22c55e18",color:"#4ade80",fontSize:"12px",fontWeight:700,cursor:"pointer"},
+          onClick:()=>{ state.actViewMode=false; render(); }},"✏️ 編集"); eb.setAttribute('data-actedit','1'); return eb; })()
+    ]));
+    const row=(label,val)=>{ if(!val) return; m.appendChild(div({style:{marginBottom:"11px"}},[
+      div({style:{fontSize:"10px",color:"#64748b",marginBottom:"2px"}},label),
+      div({style:{fontSize:"14px",color:"#e2e8f0",whiteSpace:"pre-wrap",wordBreak:"break-word",lineHeight:1.5}},val)])); };
+    const ds=state.actDate, dd=parseDS(ds);
+    row("📅 日付",`${dd.getMonth()+1}/${dd.getDate()}(${WEEKDAYS_JP[dd.getDay()]})`);
+    const sMin=(state.actStartNextDay?1440:0)+state.actSH*60+(state.actSM||0);
+    let eMin=(state.actEndNextDay?1440:0)+state.actEH*60+(state.actEM||0); if(eMin<=sMin) eMin+=1440;
+    row("🕐 時間",`${state.actStartNextDay?"翌":""}${hhmm(state.actSH,state.actSM||0)}〜${eMin>=1440?"翌":""}${hhmm(state.actEH,state.actEM||0)}（${fmtDur((eMin-sMin)*60000)}）`);
+    row("📝 メモ",(state.actNote||"").trim()||null);
+    if(state.actFromEventUid) row("📅 予定から","予定から反映した実績です");
+    m.appendChild(btn({className:"btn-ghost",style:{width:"100%",marginTop:"6px"},onClick:()=>{state.modal=null;render();}},"閉じる"));
+    bg.appendChild(m); return bg;
+  }
   m.appendChild(div({style:{fontSize:"15px",fontWeight:700,color:"#e2e8f0",marginBottom:"12px"}},state.actEditUid?"✔ 実績を編集":"✔ 実績を追加"));
   m.appendChild(div({style:{fontSize:"11px",color:"#64748b",marginBottom:"4px"}},"内容"));
   const ti=document.createElement('input');ti.type='text';ti.value=state.actTitle||"";ti.placeholder="例：急な来客対応・買い出し など";
