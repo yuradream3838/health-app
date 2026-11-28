@@ -258,7 +258,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.97"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.98"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -8133,6 +8133,12 @@ function getActualActivities(vd){
     if(s>=1440)return;
     acts.push({title:(a.unplanned?"⚡ ":"")+a.title+(a.note?`：${a.note}`:""),startMin:s,endMin:Math.min(1440,e),color:a.color||"#f472b6",manualUid:a.uid,unplanned:!!a.unplanned});
   });
+  // 🧘 ヨガ・ストレッチ（動画で運動）：計測した区間ごと（止めていた間は塗らない）。計測中は「いま」まで（v15.98）
+  { const base=parseDS(vd).getTime();
+    [addDays(vd,-1),vd].forEach(DD=>{ stretchOn(DD).forEach(x=>{ (x.segs||[]).forEach(g=>{
+      const s=Math.round((Date.parse(g.s)-base)/60000), e=Math.round(((g.e?Date.parse(g.e):Date.now())-base)/60000);
+      const cs=Math.max(0,s), ce=Math.min(1440,e); if(ce<=cs-0||e<0||s>=1440) return;
+      acts.push({title:`🧘 ${x.name}${x.running?"（計測中）":""}`,startMin:cs,endMin:Math.max(cs+12,ce),color:"#a78bfa"}); }); }); }); }
   // 達成した目標を実績に反映（達成時刻がvdのもの）。紫の点マーカーで表示。
   goalActualsForDate(vd).forEach(g=>acts.push(g));
   return acts.sort((a,b)=>a.startMin-b.startMin);
@@ -9041,6 +9047,97 @@ function startCardio(vd,name,speed){ const now=new Date().toISOString(); setCard
 function _cardioCloseLastSeg(segs){ const out=[...(segs||[])]; const last=out[out.length-1]; if(last&&last.startTime){ const sec=Math.max(0,Math.round((Date.now()-Date.parse(last.startTime))/1000)); out[out.length-1]={speed:last.speed,seconds:(last.seconds||0)+sec}; } return out; }
 function cardioChangeSpeed(vd,uid,newSpeed){ setCardio(vd, cardioOn(vd).map(w=>{ if(w.uid!==uid||!w.running)return w; const segs=_cardioCloseLastSeg(w.segments); segs.push({speed:newSpeed,startTime:new Date().toISOString()}); return {...w,segments:segs}; })); }
 function stopCardio(vd,uid){ setCardio(vd, cardioOn(vd).map(w=>{ if(w.uid!==uid||!w.running)return w; const segs=_cardioCloseLastSeg(w.segments); const totalSec=cardioSegSeconds(segs); const distKm=cardioSegDistanceKm(segs); const avg=totalSec>0?cardioSegDistanceKm(segs)/(totalSec/3600):null; return {...w,running:false,segments:segs,seconds:totalSec,minutes:Math.round(totalSec/60*100)/100,distance:Math.round(distKm*100)/100,speed:avg!=null?Math.round(avg*100)/100:null}; })); }
+// ═══════════════════════════════════════════════════
+// 🧘 ヨガ・ストレッチ（動画で運動・v15.98）：YouTube の動画を流しながら、その時間を記録する。
+// 記録は daily.stretch=[{uid,name,videoId?,videoTitle?,segs:[{s:ISO,e?:ISO}],running?,seconds?}]（有酸素とは別の一覧）。
+// 動画の再生・一時停止に合わせて区間（segs）を開け閉めする＝止めている間は数えない。動画なしでも手動の▶／⏸で測れる。
+// プレイヤーは画面の描き直しで消えないよう #root の外（body 直下の #yt-dock）に置く。最近の動画は state.ytFavs（_ytfavs）。
+// ═══════════════════════════════════════════════════
+function stretchOn(vd){ const a=getDaily(vd).stretch; return Array.isArray(a)?a:[]; }
+function setStretch(vd,arr){ setDaily(vd,{stretch:arr}); }
+function ytIdFromUrl(u){ u=String(u||"").trim(); if(/^[A-Za-z0-9_-]{11}$/.test(u)) return u;
+  const m=u.match(/(?:youtu\.be\/|[?&]v=|\/shorts\/|\/embed\/|\/live\/)([A-Za-z0-9_-]{11})/); return m?m[1]:null; }
+function getYtFavs(){ if(!Array.isArray(state.ytFavs)){ try{ const a=JSON.parse(localStorage.getItem(STORAGE_KEY+"_ytfavs")||"[]"); state.ytFavs=Array.isArray(a)?a:[]; }catch(_){ state.ytFavs=[]; } } return state.ytFavs; }
+function saveYtFavs(){ safeSet(STORAGE_KEY+"_ytfavs",JSON.stringify(getYtFavs())); }
+function ytFavTouch(id,patch){ const L=getYtFavs().filter(x=>x.id!==id), old=getYtFavs().find(x=>x.id===id)||{id};
+  state.ytFavs=[{...old,...patch,id},...L].slice(0,12); saveYtFavs(); }
+// 区間の合計（秒）。開いている区間は「いま」まで
+function stretchSeconds(r){ return (r.segs||[]).reduce((a,g)=>{ const s=Date.parse(g.s), e=g.e?Date.parse(g.e):Date.now(); return a+Math.max(0,(e-s)/1000); },0); }
+// 計測中の記録（前日から続いていることもある）
+function stretchRunning(){ for(const off of [0,-1]){ const vd=addDays(activeDay(),off); const r=stretchOn(vd).find(x=>x.running); if(r) return {vd,r}; } return null; }
+function stretchUpd(vd,uid,fn){ setStretch(vd,stretchOn(vd).map(x=>x.uid===uid?fn({...x,segs:[...(x.segs||[])]}):x)); }
+function stretchSegOpen(vd,uid){ stretchUpd(vd,uid,x=>{ const l=x.segs[x.segs.length-1]; if(!l||l.e) x.segs.push({s:new Date().toISOString()}); return x; }); }
+function stretchSegClose(vd,uid){ stretchUpd(vd,uid,x=>{ const l=x.segs[x.segs.length-1]; if(l&&!l.e) x.segs[x.segs.length-1]={...l,e:new Date().toISOString()}; return x; }); }
+function stretchIsOn(r){ const l=(r.segs||[])[(r.segs||[]).length-1]; return !!(l&&!l.e); }
+// 始める（videoId なし＝動画なしで、すぐ計測を始める）
+function startStretch(name,videoId){
+  if(stretchRunning()){ showToast("計測中のものがあります。先に終えてください"); return; }
+  const vd=activeDay(), uid=Date.now(), nm=(name||"").trim()||"ヨガ";
+  const fav=videoId?getYtFavs().find(x=>x.id===videoId):null;
+  setStretch(vd,[...stretchOn(vd),{uid,name:nm,...(videoId?{videoId,videoTitle:(fav&&fav.title)||""}:{}),segs:videoId?[]:[{s:new Date().toISOString()}],running:true}]);
+  if(videoId) ytFavTouch(videoId,{name:nm});
+  ytDockOpen();
+}
+// 終えて記録する（1分未満は残さない）
+function finishStretch(){
+  const R=stretchRunning(); if(!R) { ytDockClose(); return; }
+  stretchSegClose(R.vd,R.r.uid); const r=stretchOn(R.vd).find(x=>x.uid===R.r.uid); const sec=Math.round(stretchSeconds(r));
+  ytDockClose();
+  if(sec<60){ setStretch(R.vd,stretchOn(R.vd).filter(x=>x.uid!==r.uid)); showToast("1分未満だったので記録しませんでした"); return; }
+  stretchUpd(R.vd,r.uid,x=>{ delete x.running; x.seconds=sec; return x; });
+  showToast(`🧘 ${r.name} ${Math.round(sec/60)}分を記録しました`,"#a78bfa");
+}
+// ── プレイヤー（#root の外）──
+let _ytPlayer=null, _ytApiP=null, _ytTick=null;
+function ytLoadApi(){ if(window.YT&&window.YT.Player) return Promise.resolve();
+  if(_ytApiP) return _ytApiP;
+  _ytApiP=new Promise((res,rej)=>{ const prev=window.onYouTubeIframeAPIReady; window.onYouTubeIframeAPIReady=()=>{ try{ prev&&prev(); }catch(_){} res(); };
+    const sc=document.createElement('script'); sc.src="https://www.youtube.com/iframe_api"; sc.onerror=()=>{ _ytApiP=null; rej(new Error("YouTube を読み込めませんでした")); }; document.head.appendChild(sc); });
+  return _ytApiP; }
+function ytDockEl(){ let d=document.getElementById('yt-dock'); if(!d){ d=document.createElement('div'); d.id='yt-dock';
+    d.style.cssText="position:fixed;left:0;right:0;bottom:0;z-index:9999;background:#0b1220f2;border-top:1px solid #a78bfa66;padding:8px 10px calc(8px + env(safe-area-inset-bottom));box-sizing:border-box;max-width:600px;margin:0 auto;border-radius:12px 12px 0 0;box-shadow:0 -6px 24px #0008";
+    document.body.appendChild(d); } return d; }
+function ytDockPad(){ const d=document.getElementById('yt-dock'), h=d?(d.offsetHeight+8)+"px":"";
+  document.body.style.paddingBottom=h; document.documentElement.style.setProperty('--ytpad',h||"0px");
+  // モード画面（全画面・中で縦に動く）も、いちばん下がプレイヤーに隠れないように
+  if(!document.getElementById('yt-pad-css')){ const st=document.createElement('style'); st.id='yt-pad-css'; st.textContent='#root div[style*="position: fixed"][style*="inset: 0"]:not(.modal-center){padding-bottom:calc(var(--ytpad,0px) + 12px)!important}'; document.head.appendChild(st); } }   // 下の画面がプレイヤーに隠れないように
+function ytDockClose(){ if(_ytTick){ clearInterval(_ytTick); _ytTick=null; } try{ _ytPlayer&&_ytPlayer.destroy&&_ytPlayer.destroy(); }catch(_){} _ytPlayer=null;
+  const d=document.getElementById('yt-dock'); if(d) d.remove(); ytDockPad(); render(); }
+function ytDockOpen(){
+  const R=stretchRunning(); if(!R) return; const {vd,r}=R;
+  if(_ytTick){ clearInterval(_ytTick); _ytTick=null; } try{ _ytPlayer&&_ytPlayer.destroy&&_ytPlayer.destroy(); }catch(_){} _ytPlayer=null;
+  const d=ytDockEl(); d.innerHTML="";
+  const head=document.createElement('div'); head.style.cssText="display:flex;align-items:center;gap:6px;margin-bottom:6px";
+  const ttl=document.createElement('div'); ttl.style.cssText="flex:1;min-width:0;font-size:13px;font-weight:700;color:#c4b5fd;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"; ttl.textContent=`🧘 ${r.name}`; head.appendChild(ttl);
+  const el=document.createElement('div'); el.id='yt-elapsed'; el.style.cssText="font-size:15px;font-weight:800;color:#e2e8f0;font-variant-numeric:tabular-nums"; head.appendChild(el);
+  const mk=(t,col,fn,attr)=>{ const b=document.createElement('button'); b.textContent=t; b.setAttribute('data-yt',attr); b.style.cssText=`padding:6px 10px;border-radius:8px;border:1px solid ${col};background:${col}22;color:${col};font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;flex-shrink:0`; b.addEventListener('click',fn); return b; };
+  const pb=mk("","#a78bfa",()=>{ const x=stretchOn(vd).find(y=>y.uid===r.uid); if(!x) return;
+    if(stretchIsOn(x)){ stretchSegClose(vd,r.uid); try{ _ytPlayer&&_ytPlayer.pauseVideo&&_ytPlayer.pauseVideo(); }catch(_){} }
+    else { stretchSegOpen(vd,r.uid); try{ _ytPlayer&&_ytPlayer.playVideo&&_ytPlayer.playVideo(); }catch(_){} } tick(); },"toggle");
+  head.appendChild(pb);
+  head.appendChild(mk("⏹ 終了","#f97316",()=>finishStretch(),"finish"));
+  const mini=mk("▾","#64748b",()=>{ const box=document.getElementById('yt-player-wrap'); if(box){ const h=box.style.display==="none"; box.style.display=h?"":"none"; mini.textContent=h?"▾":"▴"; ytDockPad(); } },"mini");
+  head.appendChild(mini);
+  d.appendChild(head);
+  const msg=document.createElement('div'); msg.id='yt-msg'; msg.style.cssText="font-size:10px;color:#94a3b8;line-height:1.5"; d.appendChild(msg);
+  const tick=()=>{ const x=stretchOn(vd).find(y=>y.uid===r.uid); if(!x){ return; } el.textContent=fmtSecMS(stretchSeconds(x)); pb.textContent=stretchIsOn(x)?"⏸":"▶"; };
+  tick(); _ytTick=setInterval(tick,1000);
+  if(!r.videoId){ msg.textContent="動画なしで計測中。⏸で止めている間は数えません。"; ytDockPad(); render(); return; }
+  if(!document.getElementById('yt-dock-css')){ const st=document.createElement('style'); st.id='yt-dock-css'; st.textContent="#yt-player-wrap iframe{position:absolute;inset:0;width:100%!important;height:100%!important;border:0}"; document.head.appendChild(st); }
+  const wrap=document.createElement('div'); wrap.id='yt-player-wrap'; wrap.style.cssText="position:relative;width:100%;aspect-ratio:16/9;background:#000;border-radius:8px;overflow:hidden;max-height:40vh";
+  const host=document.createElement('div'); host.id='yt-player'; host.style.cssText="width:100%;height:100%"; wrap.appendChild(host); d.appendChild(wrap);
+  msg.textContent="動画を再生すると計測が始まり、止めると計測も止まります。画面を消すと動画も計測も止まります。";
+  const openLink=()=>{ msg.innerHTML=""; msg.appendChild(document.createTextNode("この動画はアプリの中で流せません（投稿者が埋め込みを許可していない など）。YouTube で流しながら、上の ▶／⏸ で時間を測ってください。 "));
+    const a=document.createElement('a'); a.href=`https://www.youtube.com/watch?v=${r.videoId}`; a.target="_blank"; a.rel="noopener"; a.textContent="YouTube で開く"; a.style.color="#f87171"; msg.appendChild(a); wrap.style.display="none"; };
+  ytLoadApi().then(()=>{
+    _ytPlayer=new window.YT.Player(host,{width:"100%",height:"100%",videoId:r.videoId,playerVars:{playsinline:1,rel:0,modestbranding:1},events:{
+      onReady:ev=>{ try{ const t=(ev.target.getVideoData&&ev.target.getVideoData().title)||""; if(t){ ytFavTouch(r.videoId,{title:t}); stretchUpd(vd,r.uid,x=>{ x.videoTitle=t; return x; }); ttl.textContent=`🧘 ${r.name}・${t}`; } }catch(_){} },
+      onStateChange:ev=>{ const S=window.YT.PlayerState||{PLAYING:1,PAUSED:2,ENDED:0,BUFFERING:3};
+        if(ev.data===S.PLAYING) stretchSegOpen(vd,r.uid); else if(ev.data===S.PAUSED||ev.data===S.ENDED) stretchSegClose(vd,r.uid); tick(); },
+      onError:()=>{ openLink(); ytDockPad(); } }});
+  }).catch(()=>{ openLink(); ytDockPad(); });
+  ytDockPad(); render();
+}
 function cardioTickFn(){ const el=document.getElementById('cardio-elapsed'); if(!el){ if(window._cardioTick){clearInterval(window._cardioTick);window._cardioTick=null;} return; } const w=cardioRunning(state.viewDate); if(!w){ if(window._cardioTick){clearInterval(window._cardioTick);window._cardioTick=null;} return; } const live=cardioLive(w); el.textContent=fmtSecMS(live.seconds); const de=document.getElementById('cardio-dist'); if(de)de.textContent=live.distance.toFixed(2)+" km"; }
 function lastCardio(name,vd){ const n=(name||"").trim().toLowerCase(); const all=allCardio().filter(w=>(w.name||"").trim().toLowerCase()===n); const notToday=all.filter(w=>w.date!==vd); return (notToday[0]||all[0])||null; }
 function bestCardioDist(name){ const n=(name||"").trim().toLowerCase(); const all=allCardio().filter(w=>(w.name||"").trim().toLowerCase()===n&&w.distance!=null); if(!all.length)return null; return all.reduce((m,w)=>w.distance>m.distance?w:m,all[0]); }
@@ -9274,6 +9371,55 @@ function renderTrainingPanel(vd,ds,isToday){
       del.addEventListener('click',(()=>{const uid=w.uid;return()=>{ setCardio(vd,cardioOn(vd).filter(x=>x.uid!==uid)); if(state.caEditUid===uid)state.caEditUid=null; render(); };})());
       row.appendChild(del); c.appendChild(row);
     });
+    wrap.appendChild(c);
+  }
+  // ── 🧘 ヨガ・ストレッチ（動画で運動・v15.98）──
+  { const c=div({className:"card",style:{marginBottom:"10px"}}); c.setAttribute('data-stretchcard','1');
+    const wk=(()=>{ let sec=0; for(let i=0;i<7;i++) stretchOn(addDays(vd,-i)).filter(x=>!x.running).forEach(x=>{ sec+=x.seconds||stretchSeconds(x); }); return Math.round(sec/60); })();
+    c.appendChild(div({style:{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:"6px"}},[
+      div({style:{fontSize:"13px",fontWeight:700,color:"#a78bfa"}},"🧘 ヨガ・ストレッチ（動画で運動）"),
+      div({style:{fontSize:"11px",color:"#64748b"}},`直近7日 ${wk}分`)]));
+    const R=stretchRunning();
+    const bigBtn=(t,bg,fn,attr)=>{ const b=btn({style:{flex:1,padding:"10px",borderRadius:"8px",border:"none",color:"#fff",fontSize:"13px",fontWeight:800,cursor:"pointer",background:bg,fontFamily:"inherit"}},t); b.setAttribute('data-stretch',attr); b.addEventListener('click',fn); return b; };
+    if(R){
+      const on=stretchIsOn(R.r);
+      c.appendChild(div({style:{fontSize:"12px",color:"#e2e8f0",marginBottom:"8px"}},`${on?"⏱ 計測中":"⏸ 止めています"}：${R.r.name}${R.r.videoTitle?`・${R.r.videoTitle}`:""}（${fmtSecMS(stretchSeconds(R.r))}）`));
+      const row=div({style:{display:"flex",gap:"6px"}});
+      if(!document.getElementById('yt-dock')) row.appendChild(bigBtn("▶ プレイヤーを開く","linear-gradient(135deg,#8b5cf6,#6366f1)",()=>ytDockOpen(),"reopen"));
+      row.appendChild(bigBtn("⏹ 終了して記録","linear-gradient(135deg,#f97316,#ef4444)",()=>finishStretch(),"finish"));
+      c.appendChild(row);
+    } else {
+      const names=[...new Set([].concat(...Array.from({length:60},(_,i)=>stretchOn(addDays(vd,-i)).map(x=>x.name))).filter(Boolean))];
+      const dl=document.createElement('datalist'); dl.id='st-names'; ["ヨガ","ストレッチ","ピラティス",...names].filter((x,i,a)=>a.indexOf(x)===i).forEach(n=>{ const o=document.createElement('option'); o.value=n; dl.appendChild(o); }); c.appendChild(dl);
+      const inp=(ph,val,key,attr,list)=>{ const i=document.createElement('input'); i.type='text'; i.placeholder=ph; i.value=val||""; if(list) i.setAttribute('list',list); i.setAttribute('data-stretchin',attr);
+        i.style.cssText="width:100%;box-sizing:border-box;padding:8px 10px;margin-bottom:6px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit"; i.addEventListener('input',e=>{ state[key]=e.target.value; }); return i; };
+      c.appendChild(inp("何をする？（例：ヨガ）",state.stName,"stName","name","st-names"));
+      c.appendChild(inp("YouTube の URL（貼り付け）",state.stUrl,"stUrl","url"));
+      const row=div({style:{display:"flex",gap:"6px",marginBottom:"8px"}});
+      row.appendChild(bigBtn("▶ 動画で始める","linear-gradient(135deg,#8b5cf6,#6366f1)",()=>{ const id=ytIdFromUrl(state.stUrl); if(!id){ showToast("YouTube の URL を入れてください"); return; } state.stUrl=""; startStretch(state.stName,id); },"video"));
+      row.appendChild(bigBtn("⏱ 動画なしで始める","linear-gradient(135deg,#64748b,#475569)",()=>startStretch(state.stName,null),"novideo"));
+      c.appendChild(row);
+      // 最近の動画（タップでその動画で始める）
+      const favs=getYtFavs();
+      if(favs.length){ c.appendChild(div({style:{fontSize:"10px",color:"#64748b",marginBottom:"4px"}},"最近の動画（タップで始める）"));
+        favs.forEach(f=>{ const r=div({style:{display:"flex",alignItems:"center",gap:"6px",marginBottom:"4px"}});
+          const b=btn({style:{flex:1,minWidth:0,textAlign:"left",padding:"7px 9px",borderRadius:"8px",border:"1px solid #a78bfa44",background:"#a78bfa0d",color:"#e2e8f0",fontSize:"12px",cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},`▶ ${f.name?f.name+"・":""}${f.title||f.id}`);
+          b.setAttribute('data-stretchfav',f.id); b.addEventListener('click',()=>startStretch(state.stName||f.name,f.id)); r.appendChild(b);
+          const x=btn({style:{flexShrink:0,padding:"5px 8px",borderRadius:"6px",border:"1px solid #334155",background:"transparent",color:"#64748b",fontSize:"11px",cursor:"pointer"}},"×");
+          x.addEventListener('click',()=>{ state.ytFavs=getYtFavs().filter(y=>y.id!==f.id); saveYtFavs(); render(); }); r.appendChild(x);
+          c.appendChild(r); }); }
+    }
+    // この日の記録
+    const list=stretchOn(vd).filter(x=>!x.running);
+    if(list.length){ c.appendChild(div({style:{fontSize:"10px",color:"#64748b",margin:"8px 0 4px"}},`${isToday?"今日":mdLabel(vd)}の記録`));
+      list.forEach(x=>{ const segs=(x.segs||[]).filter(g=>g.e); const s0=segs.length?new Date(segs[0].s):null, e0=segs.length?new Date(segs[segs.length-1].e):null;
+        const r=div({style:{display:"flex",alignItems:"center",gap:"6px",padding:"6px 8px",background:"#0f172a",borderRadius:"8px",marginBottom:"4px"}}); r.setAttribute('data-stretchrow',String(x.uid));
+        r.appendChild(div({style:{flex:1,minWidth:0,fontSize:"12px",color:"#e2e8f0"}},[
+          div({},`🧘 ${x.name} ${Math.round((x.seconds||stretchSeconds(x))/60)}分`),
+          div({style:{fontSize:"10px",color:"#64748b",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},`${s0?`${hhmm(s0.getHours(),s0.getMinutes())}〜${hhmm(e0.getHours(),e0.getMinutes())}`:""}${segs.length>1?`（${segs.length}回に分けて）`:""}${x.videoTitle?`　▶ ${x.videoTitle}`:""}`)]));
+        const del=btn({style:{flexShrink:0,padding:"4px 8px",borderRadius:"6px",border:"1px solid #7f1d1d",background:"transparent",color:"#f87171",fontSize:"11px",cursor:"pointer"}},"🗑");
+        del.addEventListener('click',()=>{ if(!confirm(`「${x.name}」の記録を消しますか？`)) return; pushUndo("ヨガ・ストレッチの記録を削除しました"); setStretch(vd,stretchOn(vd).filter(y=>y.uid!==x.uid)); });
+        r.appendChild(del); c.appendChild(r); }); }
     wrap.appendChild(c);
   }
   // ── 📊 体組成 ──
@@ -18729,6 +18875,7 @@ function buildBackupPayload(){
     nextDrink:state.nextDrink,
     nextCare:state.nextCare,           // 🩹 次にケアをする日
     nextOnsen:state.nextOnsen,         // ♨️ 次に温泉に行く日
+    ytFavs:getYtFavs(),                // 🧘 最近の動画（ヨガ・ストレッチ）
     foodCats:(Array.isArray(state.foodCats)&&state.foodCats.length)?{cats:state.foodCats,emoji:state.foodEmoji||{}}:null,
     anaChanges:state.anaChanges||[],
     foodNutri:state.foodNutri||{},
@@ -19466,6 +19613,7 @@ function applyBackupPayload(p){
   if(p.nextDrink&&typeof p.nextDrink==="object"){state.nextDrink=p.nextDrink;saveNextDrinkPlan();}
   if(p.nextCare&&typeof p.nextCare==="object"){state.nextCare=p.nextCare;saveNextCarePlan();}
   if(p.nextOnsen&&typeof p.nextOnsen==="object"){state.nextOnsen=p.nextOnsen;saveNextOnsenPlan();}
+  if(Array.isArray(p.ytFavs)){state.ytFavs=p.ytFavs;saveYtFavs();}
   if(p.sleepGoal&&typeof p.sleepGoal==="object"&&p.sleepGoal.bedH!=null){state.sleepGoal=p.sleepGoal;saveSleepGoal();}
   if(Array.isArray(p.bodyComps)){state.bodyComps=p.bodyComps;saveBodyComps();}
   if(Array.isArray(p.todoItems)&&p.todoItems.length){state.todoItems=p.todoItems;saveTodoItems();}
