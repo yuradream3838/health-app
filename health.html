@@ -258,7 +258,7 @@ function renderStorageAlertModal(){
   bg.appendChild(m);return bg;
 }
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "15.95"; // ★バージョンはここ1箇所を変更すれば全体に反映される
+const APP_VERSION = "15.96"; // ★バージョンはここ1箇所を変更すれば全体に反映される
 const STORAGE_KEY = "health_v2";
 // ── AIプロキシ設定（★キー変更はここ1箇所。公開配信のためキーは露出前提。
 //    実際の防御は api.php 側の Origin/Referer 制限＋レート制限で行うこと）──
@@ -19037,7 +19037,7 @@ if(typeof document!=="undefined"){
 }
 // ═══════════════════════════════════════════════════
 // 📨 Claude からの提案（限定書き込み・v15.78）：Muse が propose.php に置いた暗号化された提案を、同期のついでに取ってきて、
-// 決まった形（goal.add＝目標ツリーへの追加 / schedule.add＝予定の追加 / shopping.add＝買物リストへの追加・v15.79）だけを表示する。反映は本人が「反映する」を押したときだけ。
+// 決まった形（goal.add＝目標ツリーへの追加 / schedule.add＝予定の追加 / shopping.add＝買物リストへの追加・v15.79 / actual.add＝実際にやったこと（実績）の追加・v15.96）だけを表示する。反映は本人が「反映する」を押したときだけ。
 // 承認・却下は提案ごと。反映の直前にサーバの最新と混ぜ、直後に送る。決めたら pdel で片付ける。契約は API.md 12章。
 // ・処理した提案の ID を端末に残す（直近100件・_propdone）＝二重に反映しない。予定は同じ日・同じ時刻・同じ名前があれば足さない。
 //   買物は同じ文面の「まだ買っていない」項目があれば足さない（同じ提案の中の重複も、反映するときに1つにする）。
@@ -19097,6 +19097,19 @@ function propCheckOp(op){
     const dup=(state.schedule[d]||[]).some(x=>(x.title||"").trim()===entry.title&&(x.startH||0)===entry.startH&&(x.startM||0)===entry.startM);
     return {op:{type:"schedule.add",date:d,entry},dup};
   }
+  if(op.type==="actual.add"){
+    // ✅ 実際にやったこと（実績）の追加（v15.96）：その日の実績（daily.actuals）に足す。今日より先の日は受け付けない
+    const d=op.date, e=op.entry||{};
+    if(typeof d!=="string"||!/^\d{4}-\d{2}-\d{2}$/.test(d)||fmtDS(parseDS(d))!==d) return {err:"実績の日付が違います"};
+    if(d>todayStr()) return {err:"これから先の日の実績は入れられません"};
+    if(!_propStr(e.title,100)) return {err:"実績の名前がありません"};
+    if(!(_propInt(e.startH,0,23)&&_propInt(e.startM,0,59)&&_propInt(e.endH,0,24)&&_propInt(e.endM,0,59))) return {err:"実績の時刻が違います"};
+    if(e.note!=null&&(typeof e.note!=="string"||e.note.length>1000)) return {err:"実績のメモが長すぎます"};
+    const entry={title:e.title.trim(),startH:e.startH,startM:e.startM,endH:e.endH,endM:e.endM,startNextDay:e.startNextDay===true,endNextDay:e.endNextDay===true,unplanned:e.unplanned===true,note:(e.note||"").trim()};
+    { const c=typeof e.color==="string"?EV_COLORS.find(x=>x.toLowerCase()===e.color.toLowerCase()):null; if(c) entry.color=c; }
+    const dup=(getDaily(d).actuals||[]).some(x=>(x.title||"").trim()===entry.title&&(x.startH||0)===entry.startH&&(x.startM||0)===entry.startM&&!!x.startNextDay===entry.startNextDay);
+    return {op:{type:"actual.add",date:d,entry},dup};
+  }
   if(op.type==="shopping.add"){
     if(!_propStr(op.text,100)) return {err:"買物の文面がありません"};
     if(op.cat!=null&&!SHOP_CATS.some(s=>s.k===op.cat)) return {err:"買物の分類が違います"};
@@ -19145,6 +19158,7 @@ async function propRefresh(force){
 function propItems(){ const done=getPropDone(), good=[], bad=[];
   getPropCache().items.forEach(x=>{ if(done.includes(x.id)) return; if(x.bad){ bad.push(x); return; } const v=propValidate(x.p); if(v.ok) good.push({...x,v}); else bad.push({...x,err:v.err}); });
   return {good,bad}; }
+const ACT_DEFAULT_COLOR="#f472b6";   // 実績の既定色（実績の追加画面と同じ）
 // 🎨 提案の予定に自分で選んだ色（提案ID→操作の番号→色。端末の中だけ・決めたら消す）（v15.94）
 function propPickedColor(id,i){ const m=(state.propColor||{})[id]; return m&&m[i]?m[i]:null; }
 async function propDecide(id,approve){
@@ -19158,7 +19172,7 @@ async function propDecide(id,approve){
         try{ _syncBusy=true; await syncMergeFromServer(); }catch(_){} finally{ _syncBusy=false; } }
       const it=getPropCache().items.find(x=>x.id===id); const v=it&&!it.bad?propValidate(it.p):null;
       if(!v||!v.ok){ showToast(`⚠ この提案は反映できません（${(v&&v.err)||"見つかりません"}）`,"#f97316"); return; }
-      let g=0, sc=0, sh=0, skip=0;
+      let g=0, sc=0, sh=0, ac=0, skip=0;
       v.ops.forEach(({op,dup},_opi)=>{ if(dup){ skip++; return; }
         if(op.type==="goal.add"){ const node={id:gtNewId(),text:op.node.text,done:false,collapsed:false,children:[],periodType:op.node.periodType,periodKey:op.node.periodKey,...(op.node.note?{note:op.node.note}:{})};
           if(op.parentId===null) state.goalTree=[...(state.goalTree||[]),node]; else { const f=gtFind(op.parentId); if(!f){ skip++; return; } f.node.children=[...(f.node.children||[]),node]; f.node.collapsed=false; }
@@ -19166,6 +19180,11 @@ async function propDecide(id,approve){
         else if(op.type==="schedule.add"){ const e=op.entry; if(!state.schedule[op.date]) state.schedule[op.date]=[];
           state.schedule[op.date].push({uid:Date.now()+Math.random(),title:e.title,startH:e.startH,startM:e.startM,endH:e.endH,endM:e.endM,endNextDay:false,color:propPickedColor(id,_opi)||e.color||EV_DEFAULT,allDay:e.allDay,refOnly:false,...(e.note?{note:e.note}:{})});
           sc++; }
+        else if(op.type==="actual.add"){ const e=op.entry, d0=getDaily(op.date), L=d0.actuals||[];
+          if(L.some(x=>(x.title||"").trim()===e.title&&(x.startH||0)===e.startH&&(x.startM||0)===e.startM&&!!x.startNextDay===e.startNextDay)){ skip++; return; }
+          let uid=Date.now(); while(L.some(x=>x.uid===uid)) uid++;
+          setDaily(op.date,{actuals:[...L,{uid,title:e.title,note:e.note||"",startH:e.startH,startM:e.startM,endH:e.endH,endM:e.endM,startNextDay:e.startNextDay,endNextDay:e.endNextDay,color:propPickedColor(id,_opi)||e.color||ACT_DEFAULT_COLOR,unplanned:e.unplanned}]});
+          ac++; }
         else if(op.type==="shopping.add"){ if(propShopDup(op.text)){ skip++; return; }   // 同じ提案の中で同じ物が2回あっても1つだけ
           if(!state.tasks||typeof state.tasks!=="object") state.tasks={todo:[],shopping:[]};
           const list=state.tasks.shopping||[]; let uid=Date.now(); while(list.some(x=>x.uid===uid)) uid++;
@@ -19173,7 +19192,7 @@ async function propDecide(id,approve){
           sh++; } });
       if(g) saveGoalTree(); if(sc){ saveSchedule(); try{ alexaSyncPlan(true); }catch(_){} } if(sh) saveTasks();
       markPropDone(id);
-      showToast(`📨 提案を反映しました（${[g?`目標${g}件`:"",sc?`予定${sc}件`:"",sh?`買物${sh}件`:"",skip?`すでにある${skip}件は足さず`:""].filter(Boolean).join("・")||"変更なし"}）`,"#22c55e");
+      showToast(`📨 提案を反映しました（${[g?`目標${g}件`:"",sc?`予定${sc}件`:"",ac?`実績${ac}件`:"",sh?`買物${sh}件`:"",skip?`すでにある${skip}件は足さず`:""].filter(Boolean).join("・")||"変更なし"}）`,"#22c55e");
     } else { markPropDone(id); showToast("📨 提案を却下しました","#94a3b8"); }
     propSave("_propcache",{items:getPropCache().items.filter(x=>x.id!==id)});
     if(state.propColor) delete state.propColor[id];
@@ -19191,6 +19210,8 @@ async function propDeleteBad(){
 function propOpText(op,dup){
   if(op.type==="goal.add"){ const n=op.node, par=op.parentId?gtFind(op.parentId):null;
     return `🎯 目標を追加：「${n.text}」（${GT_PERIOD_LABELS[n.periodType]||n.periodType}・${pkLabel(n.periodKey)}${par?`・「${par.node.text}」の下`:"・いちばん上"}）${n.note?` 📝${n.note}`:""}${dup?"　※同じ目標がすでにあるので足しません":""}`; }
+  if(op.type==="actual.add"){ const e=op.entry, d=parseDS(op.date), wd=WEEKDAYS_JP[d.getDay()];
+    return `✅ 実際にやったことを記録：${d.getMonth()+1}/${d.getDate()}(${wd}) ${e.startNextDay?"翌":""}${hhmm(e.startH,e.startM)}〜${e.endNextDay?"翌":""}${hhmm(e.endH,e.endM)}「${e.unplanned?"⚡ ":""}${e.title}」${e.note?` 📝${e.note}`:""}${dup?"　※同じ実績がすでにあるので足しません":""}`; }
   if(op.type==="shopping.add") return `🛒 買物リストに追加：「${op.text}」（${shopCatLabel(op.cat)}）${dup?"　※まだ買っていない同じ物がすでにあるので足しません":""}`;
   const e=op.entry, d=parseDS(op.date), wd=WEEKDAYS_JP[d.getDay()];
   return `📅 予定を追加：${d.getMonth()+1}/${d.getDate()}(${wd}) ${e.allDay?"終日":`${hhmm(e.startH,e.startM)}〜${hhmm(e.endH,e.endM)}`}「${e.title}」${e.note?` 📝${e.note}`:""}${dup?"　※同じ予定がすでにあるので足しません":""}`;
@@ -19207,9 +19228,9 @@ function proposalsCard(){
     if(x.v.reason) box.appendChild(div({style:{fontSize:"12px",color:"#e2e8f0",lineHeight:1.6,marginBottom:"6px",whiteSpace:"pre-wrap"}},`💬 ${x.v.reason}`));
     x.v.ops.forEach((o,oi)=>{
       const tx=div({style:{flex:1,minWidth:0,fontSize:"12px",color:o.dup?"#64748b":"#cbd5e1",lineHeight:1.6}},propOpText(o.op,o.dup));
-      if(o.op.type!=="schedule.add"||o.dup){ box.appendChild(div({style:{marginBottom:"3px"}},[tx])); return; }
+      if((o.op.type!=="schedule.add"&&o.op.type!=="actual.add")||o.dup){ box.appendChild(div({style:{marginBottom:"3px"}},[tx])); return; }
       // 🎨 予定の色：自分で選んだ色＞提案に付いていた色＞既定色。タップでパレット
-      const col=propPickedColor(x.id,oi)||o.op.entry.color||EV_DEFAULT, key=x.id+":"+oi, open=state.propColorOpen===key;
+      const col=propPickedColor(x.id,oi)||o.op.entry.color||(o.op.type==="actual.add"?ACT_DEFAULT_COLOR:EV_DEFAULT), key=x.id+":"+oi, open=state.propColorOpen===key;
       const sw=btn({style:{width:"20px",height:"20px",borderRadius:"5px",flexShrink:0,cursor:"pointer",background:col,border:"1px solid #ffffff2e",marginTop:"1px",boxShadow:open?"0 0 0 2px #0f172a, 0 0 0 4px #38bdf8":"none"},title:"色を選ぶ"},"");
       sw.setAttribute('data-propcolor',key); sw.addEventListener('click',()=>{ state.propColorOpen=open?null:key; render(); });
       box.appendChild(div({style:{display:"flex",gap:"7px",alignItems:"flex-start",marginBottom:"3px"}},[sw,tx]));
